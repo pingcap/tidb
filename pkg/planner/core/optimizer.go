@@ -18,10 +18,10 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -276,10 +277,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
 
 	var cas *cascades.Cascades
 	if cas, err = cascades.NewCascades(logic); err == nil {
@@ -289,12 +286,32 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	cas.GetMemo().
-	physical, cost, err := physicalOptimize(, &planCounter)
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	var (
+		physical base.PhysicalPlan
+		cost     = math.MaxFloat64
+	)
+	if strings.Contains(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select 1") {
+		fmt.Println(1)
+	}
+	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
+		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+		if planCounter == 0 {
+			planCounter = -1
+		}
+		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+		if tmpErr != nil {
+			err = tmpErr
+			return false
+		}
+		if tmpCost < cost {
+			physical = tmpPhysical
+		}
+		return true
+	})
 	if err != nil {
 		return nil, nil, 0, err
 	}
+
 	finalPlan := postOptimize(ctx, sctx, physical)
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {

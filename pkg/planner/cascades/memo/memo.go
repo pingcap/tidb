@@ -340,6 +340,25 @@ type IteratorLP struct {
 	traceID int
 }
 
+// NewIterator new a logical plan iterator from current memo based on its root group.
+func (mm *Memo) NewIterator() *IteratorLP {
+	return &IteratorLP{
+		root:      mm.rootGroup,
+		stackInfo: make([]*list.Element, 0, mm.groups.Len()),
+		traceID:   -1,
+	}
+}
+
+// Each iterator all logical plan from current memo group.
+func (it *IteratorLP) Each(f func(base.LogicalPlan) bool) {
+	cur := it.Next()
+	for ; cur != nil; cur = it.Next() {
+		if !f(cur) {
+			break
+		}
+	}
+}
+
 // Next return valid logical plan implied in memo without duplication.
 func (it *IteratorLP) Next() (logic base.LogicalPlan) {
 	for {
