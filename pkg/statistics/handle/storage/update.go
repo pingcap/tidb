@@ -74,6 +74,7 @@ func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *De
 
 // UpdateStatsMeta updates the stats meta for multiple tables.
 // It uses the INSERT INTO ... ON DUPLICATE KEY UPDATE syntax to fill the missing records.
+// Note: Make sure call this function in a transaction.
 func UpdateStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
