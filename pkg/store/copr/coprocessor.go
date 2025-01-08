@@ -1223,10 +1223,10 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 	taskCh := make(chan *copTask, 1)
-	worker := it.liteWorker.worker
+	worker := w.worker
 	worker.taskCh = taskCh
 	it.wg.Add(1)
-	go worker.run(it.liteWorker.ctx)
+	go worker.run(w.ctx)
 
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
@@ -1234,8 +1234,8 @@ func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
+		respChan: it.respChan,
 	}
-	taskSender.respChan = it.respChan
 	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
