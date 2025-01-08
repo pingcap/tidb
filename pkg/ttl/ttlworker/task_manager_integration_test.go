@@ -387,24 +387,6 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	isc := cache.NewInfoSchemaCache(time.Minute)
 	require.NoError(t, isc.Update(se))
 	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-1", store)
-<<<<<<< HEAD
-	workers := []ttlworker.Worker{}
-	for j := 0; j < 4; j++ {
-		scanWorker := ttlworker.NewMockScanWorker(t)
-		scanWorker.Start()
-		workers = append(workers, scanWorker)
-	}
-
-	startBlockNotifyCh := make(chan struct{})
-	blockCancelCh := make(chan struct{})
-	workers[0].(ttlworker.WorkerTestExt).SetCtx(func(ctx context.Context) context.Context {
-		return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
-			startBlockNotifyCh <- struct{}{}
-			<-blockCancelCh
-		})
-	})
-=======
-
 	startBlockNotifyCh := make(chan struct{})
 	blockCancelCh := make(chan struct{})
 	workers := make([]ttlworker.Worker, 0, taskCnt)
@@ -440,7 +422,6 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 		scanWorker.Start()
 		workers = append(workers, scanWorker)
 	}
->>>>>>> bb9096cac66 (ttl: reschedule task to other instances when shrinking worker (#57703))
 	m.SetScanWorkers4Test(workers)
 
 	m.RescheduleTasks(se, now)

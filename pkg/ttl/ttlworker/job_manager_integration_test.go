@@ -510,10 +510,7 @@ func TestRescheduleJobs(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-<<<<<<< HEAD
 	now := se.Now()
-=======
->>>>>>> bb9096cac66 (ttl: reschedule task to other instances when shrinking worker (#57703))
 	m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
 		return true
 	})
