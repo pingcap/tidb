@@ -145,6 +145,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		rows, _, err = util.ExecRows(sctx, query, args...)
 		return err
 	}); err != nil {
+		dur := time.Since(start)
+		tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 		return errors.Trace(err)
 	}
 
