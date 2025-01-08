@@ -26,8 +26,8 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 	if err != nil {
 		return err
 	}
-	ext := stream.MigrationExtension(st)
-	migs, err := ext.Load(ctx, stream.MLNotFoundIsErr())
+	ext := stream.MigerationExtension(st)
+	migs, err := ext.Load(ctx)
 	if err != nil {
 		return err
 	}
@@ -40,12 +40,12 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 		console.Println(statusOK(fmt.Sprintf("Total %d Migrations.", len(migs.Layers)+1)))
 		console.Printf(">   BASE   <\n")
 		tbl := console.CreateTable()
-		ext.AddMigrationToTable(ctx, migs.Base, tbl)
+		stream.AddMigrationToTable(migs.Base, tbl)
 		tbl.Print()
 		for _, t := range migs.Layers {
 			console.Printf("> %08d <\n", t.SeqNum)
 			tbl := console.CreateTable()
-			ext.AddMigrationToTable(ctx, &t.Content, tbl)
+			stream.AddMigrationToTable(&t.Content, tbl)
 			tbl.Print()
 		}
 	}
