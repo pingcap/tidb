@@ -29,7 +29,6 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util",

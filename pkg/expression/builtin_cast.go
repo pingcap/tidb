@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -2518,7 +2517,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
+		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}

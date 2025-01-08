@@ -431,7 +431,8 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints")
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Conflicting HASH_JOIN_BUILD and HASH_JOIN_PROBE hints detected. " +
+			"Both sides cannot be specified to use the same table. Please review the hints")
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -450,8 +451,10 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		} else {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
 			if forceLeftToBuild || forceRightToBuild {
-				// Do not support specifying the build and probe side for semi join.
-				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
+						"Please remove these hints",
+					p.JoinType))
 				forceLeftToBuild = false
 				forceRightToBuild = false
 			}
@@ -459,8 +462,10 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
-			// Do not support specifying the build and probe side for semi join.
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
+					"Please remove these hints",
+				p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}

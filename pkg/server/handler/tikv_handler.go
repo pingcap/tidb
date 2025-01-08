@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -192,7 +192,7 @@ func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTabl
 		return nil, errors.Trace(err)
 	}
 	tableName, partitionName := ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

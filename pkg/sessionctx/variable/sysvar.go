@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -1082,12 +1081,12 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			choice := strings.ToUpper(normalizedValue)
-			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+			if choice != ast.AllColumns.String() && choice != ast.PredicateColumns.String() {
 				return "", errors.Errorf(
 					"invalid value for %s, it should be either '%s' or '%s'",
 					TiDBAnalyzeColumnOptions,
-					model.AllColumns.String(),
-					model.PredicateColumns.String(),
+					ast.AllColumns.String(),
+					ast.PredicateColumns.String(),
 				)
 			}
 			return normalizedValue, nil

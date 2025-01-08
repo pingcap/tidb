@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -118,11 +117,11 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 }
 
 // CloneCIStrs uses ast.CIStr.Clone to clone a slice of ast.CIStr.
-func CloneCIStrs(strs []pmodel.CIStr) []pmodel.CIStr {
+func CloneCIStrs(strs []ast.CIStr) []ast.CIStr {
 	if strs == nil {
 		return nil
 	}
-	cloned := make([]pmodel.CIStr, 0, len(strs))
+	cloned := make([]ast.CIStr, 0, len(strs))
 	cloned = append(cloned, strs...)
 	return cloned
 }
@@ -362,7 +361,7 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
 		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}

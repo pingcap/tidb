@@ -273,6 +273,8 @@ type immutable struct {
 	globalPriv  []globalPrivRecord
 	dynamicPriv []dynamicPrivRecord
 	roleGraph   map[string]roleGraphEdgesTable
+
+	globalVars variable.GlobalVarAccessor
 }
 
 type extended struct {
@@ -916,6 +918,16 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.Resu
 
 func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value UserRecord
+	defaultAuthPlugin := ""
+	if p.globalVars != nil {
+		val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
+		if err == nil {
+			defaultAuthPlugin = val
+		}
+	}
+	if defaultAuthPlugin == "" {
+		defaultAuthPlugin = mysql.AuthNativePassword
+	}
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "authentication_string":
@@ -928,7 +940,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 			if row.GetString(i) != "" {
 				value.AuthPlugin = row.GetString(i)
 			} else {
-				value.AuthPlugin = mysql.AuthNativePassword
+				value.AuthPlugin = defaultAuthPlugin
 			}
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
@@ -1877,6 +1889,11 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 	return ret
 }
 
+// SetGlobalVarsAccessor is only used for test.
+func (p *MySQLPrivilege) SetGlobalVarsAccessor(globalVars variable.GlobalVarAccessor) {
+	p.globalVars = globalVars
+}
+
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
 	sctx sqlexec.RestrictedSQLExecutor
@@ -1884,13 +1901,14 @@ type Handle struct {
 	// Only load the active user's data to save memory
 	// username => struct{}
 	activeUsers sync.Map
+
+	globalVars variable.GlobalVarAccessor
 }
 
 // NewHandle returns a Handle.
-func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
+func NewHandle(sctx sqlexec.RestrictedSQLExecutor, globalVars variable.GlobalVarAccessor) *Handle {
 	var priv MySQLPrivilege
-	ret := &Handle{}
-	ret.sctx = sctx
+	ret := &Handle{sctx: sctx, globalVars: globalVars}
 	ret.priv.Store(&priv)
 	return ret
 }
@@ -1907,6 +1925,7 @@ func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
 		return nil
 	}
 	var data immutable
+	data.globalVars = h.globalVars
 	userList, err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {
 		return errors.Trace(err)
@@ -1943,6 +1962,7 @@ func (h *Handle) UpdateAll() error {
 	})
 
 	var priv immutable
+	priv.globalVars = h.globalVars
 	userList, err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err
@@ -1965,6 +1985,7 @@ func (h *Handle) Update(userList []string) error {
 	}
 
 	var priv immutable
+	priv.globalVars = h.globalVars
 	userList, err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err

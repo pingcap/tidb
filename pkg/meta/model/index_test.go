@@ -18,14 +18,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
 func newColumnForTest(id int64, offset int) *ColumnInfo {
 	return &ColumnInfo{
 		ID:     id,
-		Name:   model.NewCIStr(fmt.Sprintf("c_%d", id)),
+		Name:   ast.NewCIStr(fmt.Sprintf("c_%d", id)),
 		Offset: offset,
 	}
 }
@@ -37,7 +37,7 @@ func newIndexForTest(id int64, cols ...*ColumnInfo) *IndexInfo {
 	}
 	return &IndexInfo{
 		ID:      id,
-		Name:    model.NewCIStr(fmt.Sprintf("i_%d", id)),
+		Name:    ast.NewCIStr(fmt.Sprintf("i_%d", id)),
 		Columns: idxCols,
 	}
 }
@@ -54,18 +54,18 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 
 	tbl := &TableInfo{
 		ID:      1,
-		Name:    model.NewCIStr("t"),
+		Name:    ast.NewCIStr("t"),
 		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
 		Indices: []*IndexInfo{i0, i1},
 	}
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_0")))
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_0"), model.NewCIStr("c_1"), model.NewCIStr("c_2")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_1")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_2")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_1"), model.NewCIStr("c_2")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_0"), model.NewCIStr("c_2")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_0")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_0"), ast.NewCIStr("c_1"), ast.NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_1")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_1"), ast.NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_0"), ast.NewCIStr("c_2")))
 
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4")))
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4"), model.NewCIStr("c_2")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_2")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4"), ast.NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
 }

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -557,8 +556,8 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	return true, warning
 }
 
-func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col model.CIStr) (colOffset int, err error) {
-	return func(db, tbl, col model.CIStr) (colOffset int, err error) {
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+	return func(db, tbl, col ast.CIStr) (colOffset int, err error) {
 		t, err := is.TableByName(ctx, db, tbl)
 		if err != nil {
 			return 0, errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
