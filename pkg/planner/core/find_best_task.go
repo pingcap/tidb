@@ -761,7 +761,7 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
-	if ds.Table.Type().IsClusterTable() {
+	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return false
 	}
