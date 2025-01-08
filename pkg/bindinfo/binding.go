@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -495,17 +496,30 @@ func hasParam(stmt ast.Node) bool {
 
 // CheckBindingStmt checks whether the statement is valid.
 func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
-	defer func(originalVal bool) {
-		sctx.GetSessionVars().UsePlanBaselines = originalVal
-	}(sctx.GetSessionVars().UsePlanBaselines)
-	sctx.GetSessionVars().UsePlanBaselines = false // avoid unnecessary recursive calls
+	origVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
 
 	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
 	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
 	// the statement won't be able to "break out" from EXPLAIN.
 	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			rs.Close()
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
+	}
 	if err != nil {
 		return err
 	}
-	return rs.Close()
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return err
+	}
+	return nil
 }
