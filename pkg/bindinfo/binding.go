@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -509,7 +510,9 @@ func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
 			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
 			origin := sctx.GetSessionVars().InRestrictedSQL
 			sctx.GetSessionVars().InRestrictedSQL = true
-			rs.Close()
+			if rerr := rs.Close(); rerr != nil {
+				bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
+			}
 			sctx.GetSessionVars().InRestrictedSQL = origin
 		}()
 	}
