@@ -59,8 +59,6 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
-
-	GetAllTableInfoIter(ctx context.Context) (TableInfoIterator, error)
 }
 
 // NewReader creates a meta Reader in snapshot.
@@ -69,9 +67,4 @@ func NewReader(snapshot kv.Snapshot) Reader {
 	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Mutator{txn: t}
-}
-
-type TableInfoIterator interface {
-	NextBatchTableInfo(ctx context.Context) ([]*model.TableInfo, error)
-	Close()
 }
