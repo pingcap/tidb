@@ -735,7 +735,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	rhsLimitedScan := !rhs.path.IsTablePath() || (rhs.path.IsTablePath() && rhs.path.IsFullTableRange(tableInfo))
 	// First set of rules apply to situations where an index doesn't have statistics
 	if (lhsLimitedScan || rhsLimitedScan) && // Not a full table scan
-		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+		(lhsHasStatistics || rhsHasStatistics || !statsTbl.HistColl.Pseudo) && // An index or the table has statistics
 		idxMissingStats && // At least one index doesn't have statistics
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
 		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
@@ -746,22 +746,22 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// This is to limit a new index being chosen until it's statistics are collected if we cannot determine
 			// that it is "potentially" more selective.
 			if lhsLimitedScan && lhsHasStatistics && lhsTotalEqual >= rhsTotalEqual {
-				return 1, idxMissingStats
+				return 1, false
 			}
 			if rhsLimitedScan && rhsHasStatistics && rhsTotalEqual >= lhsTotalEqual {
-				return -1, idxMissingStats
+				return -1, false
 			}
 			if preferRange {
 				// keep an index without statistics if the other side isn't a "selective" single scan
 				if !lhsHasStatistics && lhsTotalEqual > rhsTotalEqual &&
 					(lhsTotalEqual > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) &&
-					!(rhsLimitedScan && rhs.path.IsSingleScan) {
-					return 1, idxMissingStats
+					(lhs.path.IsSingleScan || !(rhsLimitedScan && rhs.path.IsSingleScan)) {
+					return 1, true
 				}
 				if !rhsHasStatistics && rhsTotalEqual > lhsTotalEqual &&
 					(rhsTotalEqual > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) &&
-					!(lhsLimitedScan && lhs.path.IsSingleScan) {
-					return -1, idxMissingStats
+					(rhs.path.IsSingleScan || !(lhsLimitedScan && lhs.path.IsSingleScan)) {
+					return -1, true
 				}
 			}
 		}
@@ -775,10 +775,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1, idxMissingStats
+				return -1, false
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1, idxMissingStats
+				return 1, false
 			}
 		}
 	}
@@ -801,10 +801,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1, idxMissingStats
+		return 1, false
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1, idxMissingStats
+		return -1, false
 	}
 	return 0, idxMissingStats
 }
