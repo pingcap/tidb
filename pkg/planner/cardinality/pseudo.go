@@ -247,7 +247,7 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 		fixcontrol.Fix47400,
 		false,
 	)
-	} !allowZeroEst {
+	if !allowZeroEst {
 		// Don't allow the final result to go below 1 row
 		totalCount = mathutil.Max(totalCount, 1)
 	}
