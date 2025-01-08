@@ -121,9 +121,9 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 	partitions := tableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for _, partition := range partitions.Definitions {
-			newID, exist := tableReplace.PartitionMap[partition.ID]
+			_, exist := tableReplace.PartitionMap[partition.ID]
 			if !exist {
-				newID, exist = tm.globalIdMap[partition.ID]
+				newID, exist := tm.globalIdMap[partition.ID]
 				if !exist {
 					newID = tm.generateTempID()
 					tm.globalIdMap[partition.ID] = newID
