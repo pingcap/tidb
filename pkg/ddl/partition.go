@@ -3240,8 +3240,8 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			// Currently only support Explicit Global indexes.
-			if !inAllPartitionColumns && !newGlobal {
+			// Currently only support Explicit Global indexes for unique index.
+			if !inAllPartitionColumns && !newGlobal && index.Unique {
 				job.State = model.JobStateCancelled
 				return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 			}
@@ -3541,7 +3541,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
 			if indexInfo.State == model.StateDeleteOnly {
-				// Drop the old unique (possible global) index, see onDropIndex
+				// Drop the old indexes, see onDropIndex
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
 				RemoveDependentHiddenColumns(tblInfo, indexInfo)
