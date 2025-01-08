@@ -34,18 +34,6 @@ type hashJoinRuntimeStats struct {
 	maxFetchAndProbe       int64
 }
 
-func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
-	for {
-		value := atomic.LoadInt64(&e.maxFetchAndProbe)
-		if t <= value {
-			return
-		}
-		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
-			return
-		}
-	}
-}
-
 // Tp implements the RuntimeStats interface.
 func (*hashJoinRuntimeStats) Tp() int {
 	return execdetails.TpHashJoinRuntimeStats
@@ -195,7 +183,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
 		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable + e.maxPartitionData)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {

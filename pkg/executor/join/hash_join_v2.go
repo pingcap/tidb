@@ -809,11 +809,11 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 	var start time.Time
-	if e.inRestore {
-		if e.HashJoinCtxV2.stats != nil {
-			start = time.Now()
-		}
+	if e.HashJoinCtxV2.stats != nil {
+		start = time.Now()
+	}
 
+	if e.inRestore {
 		// Wait for the restore build
 		err := <-e.buildFinished
 		if err != nil {
@@ -828,7 +828,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 			if e.inRestore {
 				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID], start)
 			} else {
-				e.ProbeWorkers[workerID].runJoinWorker()
+				e.ProbeWorkers[workerID].runJoinWorker(start)
 			}
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
@@ -961,10 +961,9 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 	return true, waitTime, joinResult
 }
 
-func (w *ProbeWorkerV2) runJoinWorker() {
+func (w *ProbeWorkerV2) runJoinWorker(start time.Time) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
-		start := time.Now()
 		defer func() {
 			w.updateProbeStatistic(start, probeTime)
 		}()
