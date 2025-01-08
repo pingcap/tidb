@@ -227,7 +227,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 	}
-	remained = make([]expression.Expression, len(used)-remainedCnt)
+	remained = make([]expression.Expression, 0, len(used)-remainedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
