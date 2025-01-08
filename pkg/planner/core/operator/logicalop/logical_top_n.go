@@ -84,9 +84,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	var cols []*expression.Column
 
 	snapParentUsedCols := make([]*expression.Column, 0)
-	for i := range parentUsedCols {
-		snapParentUsedCols = append(snapParentUsedCols, parentUsedCols[i])
-	}
+	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
 
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
