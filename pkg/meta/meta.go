@@ -999,20 +999,18 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 
 // IterAllTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterAllTables(fn func(info *model.TableInfo) error) error {
-	dbKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
-	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
-	}
+	startDBKey := DBkey(math.MinInt64)
+	endDBKey := DBkey(math.MaxInt64)
 
-	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+	err := m.txn.IterateHashWithBoundedKey(startDBKey, endDBKey, func(field []byte, value []byte) error {
 		// only handle table meta
-		tableKey := string(r.Field)
+		tableKey := string(field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			return nil
 		}
 
 		tbInfo := &model.TableInfo{}
-		err := json.Unmarshal(r.Value, tbInfo)
+		err := json.Unmarshal(value, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
