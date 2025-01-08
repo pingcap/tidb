@@ -330,7 +330,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 

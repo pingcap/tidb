@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -47,7 +47,7 @@ type SplitIndexRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []pmodel.CIStr
+	partitionNames []ast.CIStr
 	indexInfo      *model.IndexInfo
 	lower          []types.Datum
 	upper          []types.Datum
@@ -271,7 +271,7 @@ type SplitTableRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []pmodel.CIStr
+	partitionNames []ast.CIStr
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int

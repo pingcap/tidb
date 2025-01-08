@@ -533,21 +533,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, newData[id])
-			if err != nil {
-				continue
-			}
-			newLen := size - 1
-			size, err = codec.EstimateValueSize(tc, oldData[id])
-			if err != nil {
-				continue
-			}
-			oldLen := size - 1
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1)
 	}
 	return nil
 }
@@ -908,15 +894,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, r[id])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1)
 	}
 	return recordID, nil
 }
@@ -1169,33 +1147,8 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	memBuffer.Release(sh)
 
 	if s, ok := ctx.GetStatisticsSupport(); ok {
-		// a reusable buffer to save malloc
-		// Note: The buffer should not be referenced or modified outside this function.
-		// It can only act as a temporary buffer for the current function call.
-		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		pruned, notPruned := 0, 0
-		columnSizeOpt := opt.GetColumnSizeOpt()
-		var size int
-		for id, col := range t.Cols() {
-			columnOffset := id
-			if columnSizeOpt != nil {
-				if !columnSizeOpt.NotPruned.Test(uint(id)) {
-					size = int(columnSizeOpt.AvgSizes[pruned])
-					pruned++
-					colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-					continue
-				}
-				columnOffset = columnSizeOpt.PublicColsLayout[notPruned]
-				notPruned++
-			}
-			size, err = codec.EstimateValueSize(tc, r[columnOffset])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-		}
 		s.UpdatePhysicalTableDelta(
-			t.physicalTableID, -1, 1, colSizeBuffer,
+			t.physicalTableID, -1, 1,
 		)
 	}
 	return err

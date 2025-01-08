@@ -23,7 +23,6 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/types",
-        "//pkg/types/parser_driver",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/hack",

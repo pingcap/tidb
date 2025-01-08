@@ -35,7 +35,7 @@ func (w *worker) etcdCreate(ctx context.Context, key, val string) error {
 	defer cancel()
 	res, err := w.etcdClient.Txn(ctx).
 		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
-		Then(clientv3.OpPut(snapIDKey, val)).
+		Then(clientv3.OpPut(key, val)).
 		Commit()
 	if err != nil {
 		return err
@@ -128,6 +128,53 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	return nil
 }
 
+func (w *worker) takeSnapshot(ctx context.Context, sess sessionctx.Context, sendCommand bool) {
+	// coordination logic
+	if !w.owner.IsOwner() {
+		if sendCommand {
+			command, err := w.etcdGet(ctx, snapCommandKey, "")
+			if err != nil {
+				logutil.BgLogger().Info("workload repository cannot get current snapid to send", zap.NamedError("err", err))
+				return
+			}
+
+			if err = w.etcdCAS(ctx, snapCommandKey, command, snapCommandTake); err != nil {
+				logutil.BgLogger().Info("workload repository cannot send snapshot command", zap.NamedError("err", err))
+				return
+			}
+		}
+		return
+	}
+
+	for range snapshotRetries {
+		snapID, err := w.getSnapID(ctx)
+		if err != nil {
+			logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))
+			continue
+		}
+		// Use UPSERT to ensure this SQL doesn't fail on duplicate snapID.
+		//
+		// NOTE: In a highly unlikely corner case, there could be two owners.
+		// This might occur if upsertHistSnapshot succeeds but updateSnapID fails
+		// due to another owner winning the etcd CAS loop.
+		// While undesirable, this scenario is acceptable since both owners would
+		// likely share similar datetime values and same cluster version.
+
+		if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
+			logutil.BgLogger().Info("workload repository could not insert into hist_snapshots", zap.NamedError("err", err))
+			continue
+		}
+		err = w.updateSnapID(ctx, snapID, snapID+1)
+		if err != nil {
+			logutil.BgLogger().Info("workload repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
+			continue
+		}
+
+		logutil.BgLogger().Info("workload repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
+		break
+	}
+}
+
 func (w *worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
 		w.Lock()
@@ -142,44 +189,25 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 		// other wise wch won't be collected after the exit of this function
 		ctx, cancel := context.WithCancel(_ctx)
 		defer cancel()
-		wch := w.etcdClient.Watch(ctx, snapIDKey)
+		snapIDCh := w.etcdClient.Watch(ctx, snapIDKey)
+		snapCmdCh := w.etcdClient.Watch(ctx, snapCommandKey)
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-w.snapshotTicker.C:
-				// coordination logic
-				if !w.owner.IsOwner() {
+			case resp := <-snapCmdCh:
+				if len(resp.Events) < 1 {
 					continue
 				}
 
-				for range 5 {
-					snapID, err := w.getSnapID(ctx)
-					if err != nil {
-						logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))
-						continue
-					}
-					// use upsert such that this SQL does not fail on duplicated snapID
-					//
-					// NOTE: in an almost impossible corner case, there may be two owners.
-					// maybe upsertHistSnapshot succeed and updateSnapID fail, because
-					// another owner won the etcd CAS loop.
-					// it is unwanted but acceptable. because two owners should share
-					// similar datetime, same cluster versions.
-					if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
-						logutil.BgLogger().Info("workload repository could not insert into hist_snapshots", zap.NamedError("err", err))
-						continue
-					}
-					err = w.updateSnapID(ctx, snapID, snapID+1)
-					if err != nil {
-						logutil.BgLogger().Info("workload repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
-						continue
-					}
-					logutil.BgLogger().Info("workload repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
-					break
+				// same as snapID events
+				// we only catch the last event if possible
+				snapCommandStr := string(resp.Events[len(resp.Events)-1].Kv.Value)
+				if snapCommandStr == snapCommandTake {
+					w.takeSnapshot(ctx, sess, false)
 				}
-			case resp := <-wch:
+			case resp := <-snapIDCh:
 				if len(resp.Events) < 1 {
 					// since there is no event, we don't know the latest snapid either
 					// really should not happen except creation
@@ -218,6 +246,10 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				if err := updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
 					logutil.BgLogger().Info("workload repository snapshot failed: could not update hist_snapshots", zap.NamedError("err", err))
 				}
+			case <-w.snapshotChan:
+				w.takeSnapshot(ctx, sess, true)
+			case <-w.snapshotTicker.C:
+				w.takeSnapshot(ctx, sess, false)
 			}
 		}
 	}

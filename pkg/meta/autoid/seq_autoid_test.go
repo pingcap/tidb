@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -44,7 +44,7 @@ func TestSequenceAutoid(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
 		seq = &model.SequenceInfo{
 			Start:      1,
@@ -57,7 +57,7 @@ func TestSequenceAutoid(t *testing.T) {
 		}
 		seqTable := &model.TableInfo{
 			ID:       1,
-			Name:     pmodel.NewCIStr("seq"),
+			Name:     ast.NewCIStr("seq"),
 			Sequence: seq,
 		}
 		sequenceBase = seq.Start - 1
@@ -169,7 +169,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: pmodel.NewCIStr("a")})
+		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: ast.NewCIStr("a")})
 		require.NoError(t, err1)
 		seq = &model.SequenceInfo{
 			Start:      100,
@@ -182,7 +182,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 		}
 		seqTable := &model.TableInfo{
 			ID:       2,
-			Name:     pmodel.NewCIStr("seq"),
+			Name:     ast.NewCIStr("seq"),
 			Sequence: seq,
 		}
 		if seq.Increment >= 0 {

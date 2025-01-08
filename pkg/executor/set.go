@@ -244,7 +244,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Clients are often noisy in setting session variables such as
-	// autocommit, timezone, query cache
+	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }

@@ -156,6 +156,8 @@ type StmtRecord struct {
 
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
+
+	stmtsummary.StmtNetworkTrafficSummary
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -420,6 +422,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
+
+	// Newroks
+	r.StmtNetworkTrafficSummary.Add(&info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -623,14 +628,10 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},

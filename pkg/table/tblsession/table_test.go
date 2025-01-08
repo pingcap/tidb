@@ -103,14 +103,13 @@ func TestSessionMutateContextFields(t *testing.T) {
 	require.NotNil(t, statisticsSupport)
 	require.Equal(t, 0, len(txnCtx.TableDeltaMap))
 	statisticsSupport.UpdatePhysicalTableDelta(
-		12, 1, 2, variable.DeltaColsMap(map[int64]int64{3: 4, 5: 6}),
+		12, 1, 2,
 	)
 	require.Equal(t, 1, len(txnCtx.TableDeltaMap))
 	deltaMap := txnCtx.TableDeltaMap[12]
 	require.Equal(t, int64(12), deltaMap.TableID)
 	require.Equal(t, int64(1), deltaMap.Delta)
 	require.Equal(t, int64(2), deltaMap.Count)
-	require.Equal(t, map[int64]int64{3: 4, 5: 6}, deltaMap.ColSize)
 	// cached table support
 	sctx.GetSessionVars().TxnCtx = nil
 	cachedTableSupport, ok := ctx.GetCachedTableSupport()

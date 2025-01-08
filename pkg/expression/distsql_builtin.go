@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1163,7 +1162,7 @@ func newDistSQLFunctionBySig(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *t
 		return nil, err
 	}
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: ast.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}, nil

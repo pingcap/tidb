@@ -23,7 +23,6 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/metrics",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/server",

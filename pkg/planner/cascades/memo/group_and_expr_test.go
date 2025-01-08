@@ -234,7 +234,7 @@ func TestGroupParentGERefs(t *testing.T) {
 	// left child group
 	leftGroup := j.Inputs[0]
 	require.Equal(t, leftGroup.hash2ParentGroupExpr.Size(), 1)
-	ge, ok := leftGroup.hash2ParentGroupExpr.Get(j)
+	ge, ok := leftGroup.hash2ParentGroupExpr.Get(j.addr())
 	require.True(t, ok)
 	require.NotNil(t, ge)
 	require.Equal(t, leftGroup.hash2GroupExpr.Size(), 1)
@@ -250,7 +250,7 @@ func TestGroupParentGERefs(t *testing.T) {
 	// right child group
 	rightGroup := j.Inputs[1]
 	require.Equal(t, rightGroup.hash2ParentGroupExpr.Size(), 1)
-	ge, ok = rightGroup.hash2ParentGroupExpr.Get(j)
+	ge, ok = rightGroup.hash2ParentGroupExpr.Get(j.addr())
 	require.True(t, ok)
 	require.NotNil(t, ge)
 	require.Equal(t, rightGroup.hash2GroupExpr.Size(), 1)

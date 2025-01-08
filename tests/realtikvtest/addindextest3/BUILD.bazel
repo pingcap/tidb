@@ -22,7 +22,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",

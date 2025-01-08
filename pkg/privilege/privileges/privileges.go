@@ -349,24 +349,6 @@ func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, h
 	return "", errors.New("Failed to get plugin for user")
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(ctx context.Context, user, host string) (string, error) {
-	if SkipWithGrant {
-		return mysql.AuthNativePassword, nil
-	}
-
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		return "", errors.New("Failed to get user record")
-	}
-	if !p.isValidHash(record) {
-		return "", errors.New("Failed to get plugin for user")
-	}
-	return record.AuthPlugin, nil
-}
-
 // MatchIdentity implements the Manager interface.
 func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {

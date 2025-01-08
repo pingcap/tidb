@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1560,12 +1559,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colA has the default value
-										Name:          pmodel.NewCIStr("colA"),
+										Name:          ast.NewCIStr("colA"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1609,7 +1608,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1660,7 +1659,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1712,12 +1711,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colC doesn't have the default value
-										Name:      pmodel.NewCIStr("colC"),
+										Name:      ast.NewCIStr("colC"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1768,12 +1767,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
-										Name:          pmodel.NewCIStr("colC"),
+										Name:          ast.NewCIStr("colC"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1858,7 +1857,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1917,10 +1916,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -1976,10 +1975,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2024,10 +2023,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2072,10 +2071,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2137,14 +2136,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
-										Name: pmodel.NewCIStr("colC"),
+										Name: ast.NewCIStr("colC"),
 									},
 								},
 							},
@@ -2260,11 +2259,11 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 					Core: &model.TableInfo{
 						Columns: []*model.ColumnInfo{
 							{
-								Name:      pmodel.NewCIStr("colA"),
+								Name:      ast.NewCIStr("colA"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 							{
-								Name:      pmodel.NewCIStr("colB"),
+								Name:      ast.NewCIStr("colB"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},

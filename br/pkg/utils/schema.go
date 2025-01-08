@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -32,7 +32,7 @@ func EncloseDBAndTable(database, table string) string {
 }
 
 // IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
-func IsTemplateSysDB(dbname pmodel.CIStr) bool {
+func IsTemplateSysDB(dbname ast.CIStr) bool {
 	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
 }
 
@@ -43,12 +43,12 @@ func IsSysDB(dbLowerName string) bool {
 }
 
 // TemporaryDBName makes a 'private' database name.
-func TemporaryDBName(db string) pmodel.CIStr {
-	return pmodel.NewCIStr(temporaryDBNamePrefix + db)
+func TemporaryDBName(db string) ast.CIStr {
+	return ast.NewCIStr(temporaryDBNamePrefix + db)
 }
 
 // GetSysDBName get the original name of system DB
-func GetSysDBName(tempDB pmodel.CIStr) (string, bool) {
+func GetSysDBName(tempDB ast.CIStr) (string, bool) {
 	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
 		return tempDB.O, false
 	}
@@ -56,7 +56,7 @@ func GetSysDBName(tempDB pmodel.CIStr) (string, bool) {
 }
 
 // GetSysDBCIStrName get the CIStr name of system DB
-func GetSysDBCIStrName(tempDB pmodel.CIStr) (pmodel.CIStr, bool) {
+func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
 	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}

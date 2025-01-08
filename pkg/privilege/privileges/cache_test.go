@@ -15,6 +15,7 @@
 package privileges_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -66,6 +68,15 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, false, user[6].PasswordExpired)
 	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.Local), user[6].PasswordLastChanged)
 	require.Equal(t, int64(-1), user[6].PasswordLifeTime)
+
+	// test switching default auth plugin
+	for _, plugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
+		p = privileges.MySQLPrivilege{}
+		p.SetGlobalVarsAccessor(se.GetSessionVars().GlobalVarsAccessor)
+		require.NoError(t, se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultAuthPlugin, plugin))
+		require.NoError(t, p.LoadUserTable(se.GetRestrictedSQLExecutor()))
+		require.Equal(t, plugin, p.User()[0].AuthPlugin)
+	}
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {

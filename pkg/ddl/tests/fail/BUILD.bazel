@@ -19,7 +19,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",

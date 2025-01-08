@@ -33,7 +33,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -456,13 +455,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
-}
-
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.

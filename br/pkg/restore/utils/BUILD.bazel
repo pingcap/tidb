@@ -43,7 +43,7 @@ go_test(
         "//br/pkg/rtree",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/stmtctx",
         "//pkg/tablecodec",
         "//pkg/types",
