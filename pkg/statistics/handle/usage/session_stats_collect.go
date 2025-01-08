@@ -151,6 +151,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				return nil
 			}
 
+			beforeLen := len(batchUpdates)
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV.
 			startTs, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
@@ -159,7 +160,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 			statsVersion = startTs
 
-			intest.Assert(len(batchUpdates) >= len(batchTableIDs), "batchUpdates can only be appended")
+			intest.Assert(len(batchUpdates) >= beforeLen, "batchUpdates can only be appended")
 			// Update deltaMap after the batch is successfully dumped.
 			for _, update := range batchUpdates {
 				UpdateTableDeltaMap(deltaMap, update.TableID, -update.Delta.Delta, -update.Delta.Count)
