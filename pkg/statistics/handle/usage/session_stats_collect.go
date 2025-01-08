@@ -271,11 +271,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			// 4. If table is not locked and partition is not locked, we update the global-stats.
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
-				updates = append(updates, &storage.DeltaUpdate{
-					TableID:  tableID,
-					Delta:    update.Delta,
-					IsLocked: isTableLocked,
-				})
+				updates = append(updates, storage.NewDeltaUpdate(tableID, update.Delta, isTableLocked))
 			}
 		} else {
 			isTableLocked := false
