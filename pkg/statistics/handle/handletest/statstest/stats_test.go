@@ -449,7 +449,7 @@ func TestDumpStatsDeltaInBatch(t *testing.T) {
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 
-	// Dump stats delta once.
+	// Dump stats delta in one batch.
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 
