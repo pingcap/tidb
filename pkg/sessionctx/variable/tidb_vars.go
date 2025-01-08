@@ -1388,7 +1388,7 @@ const (
 	DefTiDBEnableLocalTxn                             = false
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
-	DefPDEnableFollowerHandleRegion                   = false
+	DefPDEnableFollowerHandleRegion                   = true
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true

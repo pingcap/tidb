@@ -235,9 +235,11 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -978,6 +980,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
+	// network traffic
+	ssStats.StmtNetworkTrafficSummary.Add(&sei.TiKVExecDetails)
+
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
@@ -1108,5 +1113,46 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+}
+
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
+type StmtNetworkTrafficSummary struct {
+	UnpackedBytesSentKVTotal          int64 `json:"unpacked_bytes_send_kv_total"`
+	UnpackedBytesReceivedKVTotal      int64 `json:"unpacked_bytes_received_kv_total"`
+	UnpackedBytesSentKVCrossZone      int64 `json:"unpacked_bytes_send_kv_cross_zone"`
+	UnpackedBytesReceivedKVCrossZone  int64 `json:"unpacked_bytes_received_kv_cross_zone"`
+	UnpackedBytesSentMPPTotal         int64 `json:"unpacked_bytes_send_mpp_total"`
+	UnpackedBytesReceivedMPPTotal     int64 `json:"unpacked_bytes_received_mpp_total"`
+	UnpackedBytesSentMPPCrossZone     int64 `json:"unpacked_bytes_send_mpp_cross_zone"`
+	UnpackedBytesReceivedMPPCrossZone int64 `json:"unpacked_bytes_received_mpp_cross_zone"`
+}
+
+// Merge merges the value of 2 network traffic summary records.
+func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
+	if other == nil {
+		return
+	}
+	s.UnpackedBytesSentKVTotal += other.UnpackedBytesSentKVTotal
+	s.UnpackedBytesReceivedKVTotal += other.UnpackedBytesReceivedKVTotal
+	s.UnpackedBytesSentKVCrossZone += other.UnpackedBytesSentKVCrossZone
+	s.UnpackedBytesReceivedKVCrossZone += other.UnpackedBytesReceivedKVCrossZone
+	s.UnpackedBytesSentMPPTotal += other.UnpackedBytesSentMPPTotal
+	s.UnpackedBytesReceivedMPPTotal += other.UnpackedBytesReceivedMPPTotal
+	s.UnpackedBytesSentMPPCrossZone += other.UnpackedBytesSentMPPCrossZone
+	s.UnpackedBytesReceivedMPPCrossZone += other.UnpackedBytesReceivedMPPCrossZone
+}
+
+// Add add a new sample value to the ru summary record.
+func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
+	if info != nil {
+		s.UnpackedBytesSentKVTotal += info.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedKVTotal += info.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentKVCrossZone += info.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentMPPTotal += info.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedMPPTotal += info.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentMPPCrossZone += info.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedMPPCrossZone += info.UnpackedBytesReceivedMPPCrossZone
 	}
 }
