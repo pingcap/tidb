@@ -30,6 +30,7 @@ type Reader interface {
 	ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error)
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
+	IterAllTables(fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
 	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
 
@@ -71,5 +72,6 @@ func NewReader(snapshot kv.Snapshot) Reader {
 }
 
 type TableInfoIterator interface {
-	NextTableInfo(ctx context.Context) (*model.TableInfo, error)
+	NextBatchTableInfo(ctx context.Context) ([]*model.TableInfo, error)
+	Close()
 }

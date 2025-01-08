@@ -997,6 +997,32 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
+// IterAllTables iterates all the table at once, in order to avoid oom.
+func (m *Mutator) IterAllTables(fn func(info *model.TableInfo) error) error {
+	dbKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
+}
+
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
@@ -1817,15 +1843,39 @@ func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
 // GetSchemaCacheSize gets the schema cache size.
 
 type AllTableInfoIterator struct {
-	txn *structure.TxStructure
+	iter  *structure.HashIterator
+	cache []*model.TableInfo
 }
 
-func (a *AllTableInfoIterator) NextTableInfo(ctx context.Context) ([]*model.TableInfo, error) {
-	tableInfos := c
-	a.txn.HGetIter()
+func (a *AllTableInfoIterator) NextBatchTableInfo(ctx context.Context) ([]*model.TableInfo, error) {
+	a.cache = a.cache[:0]
+	for a.iter.Valid() {
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(a.iter.Value(), tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		a.cache = append(a.cache, tbInfo)
+		err = a.iter.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return a.cache, nil
+}
+
+func (a *AllTableInfoIterator) Close() {
+	a.iter.Close()
 }
 
 func (m *Mutator) GetAllTableInfoIter(ctx context.Context) (TableInfoIterator, error) {
-	tii := &AllTableInfoIterator{txn: m.txn}
-	return tii, nil
+	iter, err := structure.NewHashIter(m.txn, []byte(fmt.Sprintf("%s:", mDBPrefix)))
+	if err != nil {
+		return nil, err
+	}
+	err = iter.Next()
+	if err != nil {
+		return nil, err
+	}
+	return &AllTableInfoIterator{iter: iter, cache: make([]*model.TableInfo, 0, 4096)}, nil
 }
