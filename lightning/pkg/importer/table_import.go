@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -445,6 +446,13 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
+	if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+		idxEngineCfg.Remote = backend.RemoteEngineConfig{
+			EngineID:              common.IndexEngineID,
+			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+			RecoverFromCheckpoint: recoverFromEngineCp(indexEngineCp),
+		}
+	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
 		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
@@ -634,6 +642,12 @@ func (tr *TableImporter) preprocessEngine(
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
+		if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+			engineCfg.Remote = backend.RemoteEngineConfig{
+				EngineID:              engineID,
+				RecoverFromCheckpoint: recoverFromEngineCp(cp),
+			}
+		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
@@ -672,6 +686,13 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	}
+	if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+		dataEngineCfg.Remote = backend.RemoteEngineConfig{
+			EngineID:              common.IndexEngineID,
+			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			RecoverFromCheckpoint: recoverFromEngineCp(cp),
+		}
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -880,10 +901,10 @@ ChunkLoop:
 		return nil
 	}
 
-	// in local mode, this check-point make no sense, because we don't do flush now,
+	// in physical mode, this check-point make no sense, because we don't do flush now,
 	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
-	if !isLocalBackend(rc.cfg) {
+	if !isPhysicalBackend(rc.cfg) {
 		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusAllWritten); saveCpErr != nil {
 			return nil, errors.Trace(firstErr(err, saveCpErr))
 		}
@@ -906,7 +927,7 @@ ChunkLoop:
 	closedDataEngine, err := dataEngine.Close(ctx)
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable && isLocalBackend(rc.cfg) {
+	if err == nil && rc.cfg.Checkpoint.Enable && isPhysicalBackend(rc.cfg) {
 		if err = indexEngine.Flush(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1037,8 +1058,14 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		var dupeController *local.DupeController
+		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+			localBackend := rc.backend.(*local.Backend)
+			dupeController = localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		} else {
+			remoteBakcned := rc.backend.(*remote.Backend)
+			dupeController = remoteBakcned.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		}
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
@@ -1834,4 +1861,45 @@ func (tr *TableImporter) preDeduplicate(
 		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
 	)
 	return err
+}
+
+func estimateEngineDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.TidbTableInfo, isIndexEngine bool, logger log.Logger) int64 {
+	if tblMeta == nil || tblInfo == nil {
+		// if we can't get table meta or table info, we can't estimate data size.
+		return 0
+	}
+	if isIndexEngine {
+		if len(tblInfo.Core.Indices) == 0 || (tblInfo.Core.IsCommonHandle && len(tblInfo.Core.Indices) == 1) {
+			return 0
+		}
+	}
+
+	totalSize := int64(0)
+	for _, dataFile := range tblMeta.DataFiles {
+		totalSize += dataFile.FileMeta.RealSize
+	}
+	if tblMeta.IndexRatio > 1 {
+		totalSize = int64(float64(totalSize) * tblMeta.IndexRatio)
+	}
+	logger.Info("estimate data size",
+		zap.Int64("estimatedDataSize", totalSize),
+		zap.String("db", tblInfo.DB),
+		zap.String("table", tblInfo.Name),
+		zap.Bool("isIndexEngine", isIndexEngine),
+	)
+	return totalSize
+}
+
+func recoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
+	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
+		cp.Status >= checkpoints.CheckpointStatusImported {
+		return false
+	}
+
+	for _, chunk := range cp.Chunks {
+		if chunk.FinishedSize() > 0 {
+			return true
+		}
+	}
+	return false
 }

@@ -58,6 +58,9 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendRemote is a constant for choosing the "Remote" backend in the configuration.
+	// In this mode, we write kv pairs to the remote worker.
+	BackendRemote = "remote"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -159,7 +162,7 @@ func (d *DBStore) adjust(
 	s *Security,
 	tlsObj *common.TLS,
 ) error {
-	if i.Backend == BackendLocal {
+	if i.Backend == BackendLocal || i.Backend == BackendRemote {
 		if d.BuildStatsConcurrency == 0 {
 			d.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
@@ -222,7 +225,7 @@ func (d *DBStore) adjust(
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
 
-	mustHaveInternalConnections := i.Backend == BackendLocal
+	mustHaveInternalConnections := (i.Backend == BackendLocal || i.Backend == BackendRemote)
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if mustHaveInternalConnections && (d.Port <= 0 || len(d.PdAddr) == 0) {
 		var settings tidbcfg.Config
@@ -350,7 +353,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
-	case BackendLocal:
+	case BackendLocal, BackendRemote:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency
 		}
@@ -361,9 +364,9 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
-		// RegionConcurrency > NumCPU is meaningless.
+		// RegionConcurrency > NumCPU is meaningless for local backend.
 		cpuCount := runtime.NumCPU()
-		if l.RegionConcurrency > cpuCount {
+		if l.RegionConcurrency > cpuCount && i.Backend == BackendLocal {
 			l.RegionConcurrency = cpuCount
 		}
 	}
@@ -1121,6 +1124,10 @@ type TikvImporter struct {
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
+
+	// TODO
+	ChunkCacheDir   string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
+	ChunkCacheInMem bool   `toml:"chunk-cache-in-mem" json:"chunk-cache-in-mem"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1144,7 +1151,7 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
-	case BackendLocal:
+	case BackendLocal, BackendRemote:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.region-split-batch-size` got %d, should be larger than 0",
