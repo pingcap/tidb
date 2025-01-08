@@ -85,7 +85,6 @@ func (p PhysicalLimit) Init(ctx base.PlanContext, stats *property.StatsInfo, off
 // Init initializes PhysicalTableDual.
 func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	stats.RowCount = 0
 	p.SetStats(stats)
 	return &p
 }
