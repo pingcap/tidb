@@ -446,7 +446,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
-	if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+	if isRemoteBackend(rc.cfg) {
 		idxEngineCfg.Remote = backend.RemoteEngineConfig{
 			EngineID:              common.IndexEngineID,
 			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
@@ -642,7 +642,7 @@ func (tr *TableImporter) preprocessEngine(
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
-		if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+		if isRemoteBackend(rc.cfg) {
 			engineCfg.Remote = backend.RemoteEngineConfig{
 				EngineID:              engineID,
 				RecoverFromCheckpoint: recoverFromEngineCp(cp),
@@ -687,7 +687,7 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
-	if rc.cfg.TikvImporter.Backend == config.BackendRemote {
+	if isRemoteBackend(rc.cfg) {
 		dataEngineCfg.Remote = backend.RemoteEngineConfig{
 			EngineID:              common.IndexEngineID,
 			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
@@ -1055,7 +1055,7 @@ func (tr *TableImporter) postProcess(
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
-		// if we came here, it must be a local backend.
+		// if we came here, it must be a physical backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
 		var dupeController *local.DupeController
