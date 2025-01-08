@@ -128,7 +128,7 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	return helper.Data[offset : offset+length], nil
 }
 
-func (w *WithMigrations) AddExtraFullBackup(extPath string) {
+func (w *WithMigrations) AddIngestedSSTs(extPath string) {
 	w.fullBackups = append(w.fullBackups, extPath)
 }
 

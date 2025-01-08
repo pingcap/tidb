@@ -27,36 +27,61 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type writerCall struct {
+type persistCall struct {
 	cx context.Context
 	cb func(error)
 }
 
-type writerRoutine struct {
-	hnd chan<- writerCall
+// persisterHandle is a handle to the background writer persisting the metadata.
+type persisterHandle struct {
+	hnd chan<- persistCall
 }
 
-func (w writerRoutine) close() {
+// close releases the handle.
+func (w persisterHandle) close() {
 	close(w.hnd)
 }
 
-func (w writerRoutine) write(ctx context.Context) error {
-	ch := make(chan error)
-	w.hnd <- writerCall{
+// write starts a request to persist the current metadata to the external storage.
+//
+// all modification before the `write` call will be persisted in the external storage
+// after this returns.
+func (w persisterHandle) write(ctx context.Context) error {
+	// A buffer here is necessrary.
+	// Or once the writerCall finished too fastly, it calls the callback before the `select`
+	// block entered, we may lose the response.
+	ch := make(chan error, 1)
+	w.hnd <- persistCall{
 		cx: ctx,
 		cb: func(err error) {
 			select {
 			case ch <- err:
 			default:
+				log.Warn("Blocked when sending to a oneshot channel, dropping the message.",
+					logutil.AShortError("dropped-result", err), zap.StackSkip("caller", 1))
 			}
 		},
 	}
-	return <-ch
+
+	select {
+	case err, ok := <-ch:
+		if !ok {
+			// Though the channel is never closed, we can still gracefully exit
+			// by canceling the context.
+			log.Panic("[unreachable] A channel excepted to be never closed was closed.")
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
-func (c *pitrCollector) goWriter() {
-	hnd := make(chan writerCall, 2048)
-	exhaust := func(f func(writerCall)) {
+// goPersister spawns the background centeralized persister.
+//
+// this would be the sole goroutine that writes to `c.metaPath()`.
+func (c *pitrCollector) goPersister() {
+	hnd := make(chan persistCall, 2048)
+	exhaust := func(f func(persistCall)) {
 	collect:
 		for {
 			select {
@@ -74,8 +99,9 @@ func (c *pitrCollector) goWriter() {
 
 	go func() {
 		for newCall := range hnd {
-			cs := []writerCall{newCall}
-			exhaust(func(newCall writerCall) {
+			cs := []persistCall{newCall}
+			// Consuming all pending writes.
+			exhaust(func(newCall persistCall) {
 				cs = append(cs, newCall)
 			})
 
@@ -87,7 +113,7 @@ func (c *pitrCollector) goWriter() {
 		}
 	}()
 
-	c.writerRoutine = writerRoutine{
+	c.writerRoutine = persisterHandle{
 		hnd: hnd,
 	}
 }
@@ -101,26 +127,31 @@ type pitrCollector struct {
 	restoreUUID    uuid.UUID
 
 	// Mutable state.
-	extraBackupMeta     extraBackupMeta
+	extraBackupMeta     ingestedSSTsMeta
 	extraBackupMetaLock sync.Mutex
 	putMigOnce          sync.Once
 
-	writerRoutine writerRoutine
+	writerRoutine persisterHandle
 
 	// Delegates.
 	tso            func(ctx context.Context) (uint64, error)
 	restoreSuccess func() bool
 }
 
-type extraBackupMeta struct {
-	msg      pb.ExtraFullBackup
+// ingestedSSTsMeta is state of already imported SSTs.
+//
+// This and only this will be fully persisted to the
+// ingested ssts meta in the external storage.
+type ingestedSSTsMeta struct {
+	msg      pb.IngestedSSTs
 	rewrites map[int64]int64
 }
 
-func (c *extraBackupMeta) genMsg() *pb.ExtraFullBackup {
+// genMsg generates the protocol buffer message to persist.
+func (c *ingestedSSTsMeta) genMsg() *pb.IngestedSSTs {
 	msg := util.ProtoV1Clone(&c.msg)
 	for old, new := range c.rewrites {
-		msg.RewrittenTables = append(msg.RewrittenTables, &pb.RewrittenTableID{UpstreamOfUpstream: old, Upstream: new})
+		msg.RewrittenTables = append(msg.RewrittenTables, &pb.RewrittenTableID{AncestorUpstream: old, Upstream: new})
 	}
 	return msg
 }
@@ -221,7 +252,7 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 	return waitDone, nil
 }
 
-func (c *pitrCollector) doWithExtraBackupMetaLock(f func()) {
+func (c *pitrCollector) doWithMetaLock(f func()) {
 	c.extraBackupMetaLock.Lock()
 	f()
 	c.extraBackupMetaLock.Unlock()
@@ -270,7 +301,7 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	log.Info("Copy SST to log backup storage success.", zap.String("file", f.Name), zap.Stringer("takes", time.Since(copyStart)))
 
 	f.Name = out
-	c.doWithExtraBackupMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
+	c.doWithMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
 
 	metrics.RestoreUploadSSTForPiTRSeconds.Observe(time.Since(begin).Seconds())
 	return nil
@@ -282,7 +313,7 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 		return nil
 	}
 	var err error
-	c.doWithExtraBackupMetaLock(func() {
+	c.doWithMetaLock(func() {
 		if oldVal, ok := c.extraBackupMeta.rewrites[oldID]; ok && oldVal != newID {
 			err = errors.Annotatef(
 				berrors.ErrInvalidArgument,
@@ -303,7 +334,7 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error) {
 	var bs []byte
 	begin := time.Now()
-	c.doWithExtraBackupMetaLock(func() {
+	c.doWithMetaLock(func() {
 		msg := c.extraBackupMeta.genMsg()
 		// Here, after generating a snapshot of the current message then we can continue.
 		// This requires only a single active writer at anytime.
@@ -343,14 +374,14 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	est := stream.MigrationExtension(c.taskStorage)
 
 	m := stream.NewMigration()
-	m.ExtraFullBackupPaths = append(m.ExtraFullBackupPaths, c.metaPath())
+	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
 
 	_, err := est.AppendMigration(ctx, m)
 	if err != nil {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 
-	c.doWithExtraBackupMetaLock(func() {
+	c.doWithMetaLock(func() {
 		c.resetCommitting()
 	})
 	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
@@ -376,7 +407,7 @@ func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
 }
 
 func (c *pitrCollector) resetCommitting() {
-	c.extraBackupMeta = extraBackupMeta{
+	c.extraBackupMeta = ingestedSSTsMeta{
 		rewrites: map[int64]int64{},
 	}
 	c.extraBackupMeta.msg.FilesPrefixHint = c.sstPath("")
@@ -433,7 +464,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 	coll.restoreStorage = restoreStrg
 	coll.restoreSuccess = summary.Succeed
-	coll.goWriter()
+	coll.goPersister()
 	coll.resetCommitting()
 	return coll, nil
 }

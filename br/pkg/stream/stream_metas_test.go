@@ -436,7 +436,7 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
-func pef(t *testing.T, fb *backuppb.ExtraFullBackup, sn int, s storage.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStorage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -448,10 +448,10 @@ func pef(t *testing.T, fb *backuppb.ExtraFullBackup, sn int, s storage.ExternalS
 	return path
 }
 
-type efOP func(*backuppb.ExtraFullBackup)
+type efOP func(*backuppb.IngestedSSTs)
 
-func extFullBkup(ops ...efOP) *backuppb.ExtraFullBackup {
-	ef := &backuppb.ExtraFullBackup{}
+func extFullBkup(ops ...efOP) *backuppb.IngestedSSTs {
+	ef := &backuppb.IngestedSSTs{}
 	for _, op := range ops {
 		op(ef)
 	}
@@ -459,26 +459,26 @@ func extFullBkup(ops ...efOP) *backuppb.ExtraFullBackup {
 }
 
 func finished() efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.Finished = true
 	}
 }
 
 func makeID() efOP {
 	id := uuid.New()
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.BackupUuid = id[:]
 	}
 }
 
 func prefix(pfx string) efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.FilesPrefixHint = pfx
 	}
 }
 
 func asIfTS(ts uint64) efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.AsIfTs = ts
 	}
 }
@@ -496,7 +496,7 @@ type migOP func(*backuppb.Migration)
 
 func mExtFullBackup(path ...string) migOP {
 	return func(m *backuppb.Migration) {
-		m.ExtraFullBackupPaths = append(m.ExtraFullBackupPaths, path...)
+		m.IngestedSstPaths = append(m.IngestedSstPaths, path...)
 	}
 }
 
@@ -2880,7 +2880,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 	}
 
 	type Case struct {
-		InputGroups []*backuppb.ExtraFullBackup
+		InputGroups []*backuppb.IngestedSSTs
 		TruncatedTo uint64
 
 		RequireRem []int
@@ -2888,7 +2888,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 
 	cases := []Case{
 		{
-			InputGroups: []*backuppb.ExtraFullBackup{
+			InputGroups: []*backuppb.IngestedSSTs{
 				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
 				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
 			},
@@ -2896,7 +2896,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{1},
 		},
 		{
-			InputGroups: []*backuppb.ExtraFullBackup{
+			InputGroups: []*backuppb.IngestedSSTs{
 				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
 				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
 			},
@@ -2904,7 +2904,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{},
 		},
 		{
-			InputGroups: []*backuppb.ExtraFullBackup{
+			InputGroups: []*backuppb.IngestedSSTs{
 				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
 				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
 			},
@@ -2912,9 +2912,9 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{0, 1},
 		},
 		{
-			InputGroups: func() []*backuppb.ExtraFullBackup {
+			InputGroups: func() []*backuppb.IngestedSSTs {
 				id := makeID()
-				return []*backuppb.ExtraFullBackup{
+				return []*backuppb.IngestedSSTs{
 					extFullBkup(prefix(somewhere()), id),
 					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
 					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
@@ -2924,9 +2924,9 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{2},
 		},
 		{
-			InputGroups: func() []*backuppb.ExtraFullBackup {
+			InputGroups: func() []*backuppb.IngestedSSTs {
 				id := makeID()
-				return []*backuppb.ExtraFullBackup{
+				return []*backuppb.IngestedSSTs{
 					extFullBkup(prefix(somewhere()), id),
 					extFullBkup(prefix(somewhere()), asIfTS(12), id, finished()),
 					extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
@@ -2936,9 +2936,9 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{0, 1},
 		},
 		{
-			InputGroups: func() []*backuppb.ExtraFullBackup {
+			InputGroups: func() []*backuppb.IngestedSSTs {
 				id := makeID()
-				return []*backuppb.ExtraFullBackup{
+				return []*backuppb.IngestedSSTs{
 					extFullBkup(prefix(somewhere()), asIfTS(999), id),
 					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
 					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
@@ -2948,7 +2948,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			RequireRem:  []int{2},
 		},
 		{
-			InputGroups: []*backuppb.ExtraFullBackup{
+			InputGroups: []*backuppb.IngestedSSTs{
 				extFullBkup(prefix(somewhere()), asIfTS(10), makeID()),
 				extFullBkup(prefix(somewhere()), asIfTS(12), makeID()),
 				extFullBkup(prefix(somewhere()), asIfTS(14), makeID()),
@@ -2961,12 +2961,12 @@ func TestGroupedExtFullBackup(t *testing.T) {
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
 			m := mig()
-			paths := []PathedExtraFullBackup{}
+			paths := []PathedIngestedSSTs{}
 			for i, input := range c.InputGroups {
 				p := pef(t, input, i, s)
-				paths = append(paths, PathedExtraFullBackup{
-					path:            p,
-					ExtraFullBackup: input,
+				paths = append(paths, PathedIngestedSSTs{
+					path:         p,
+					IngestedSSTs: input,
 				})
 				mExtFullBackup(p)(m)
 				require.FileExists(t, path.Join(s.Base(), input.FilesPrefixHint))
@@ -2976,14 +2976,14 @@ func TestGroupedExtFullBackup(t *testing.T) {
 			res := est.migrateTo(ctx, m)
 			require.NoError(t, multierr.Combine(res.Warnings...))
 			chosen := []string{}
-			nonChosen := []PathedExtraFullBackup{}
+			nonChosen := []PathedIngestedSSTs{}
 			forgottenIdx := 0
 			for _, i := range c.RequireRem {
 				chosen = append(chosen, paths[i].path)
 				nonChosen = append(nonChosen, paths[forgottenIdx:i]...)
 				forgottenIdx = i + 1
 			}
-			require.ElementsMatch(t, chosen, res.NewBase.ExtraFullBackupPaths)
+			require.ElementsMatch(t, chosen, res.NewBase.IngestedSstPaths)
 			for _, p := range nonChosen {
 				require.NoFileExists(t, path.Join(s.Base(), p.FilesPrefixHint, "monolith"))
 			}

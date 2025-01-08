@@ -379,18 +379,18 @@ func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[
 	})
 }
 
-func (rc *LogFileManager) GetExtraFullBackupSSTs(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.FlatMap(rc.withMigrations.ExtraFullBackups(ctx, rc.storage), func(c *backup.ExtraFullBackup) iter.TryNextor[SSTs] {
+func (rc *LogFileManager) GetIngestedSSTsSSTs(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.FlatMap(rc.withMigrations.IngestedSSTss(ctx, rc.storage), func(c *backup.IngestedSSTs) iter.TryNextor[SSTs] {
 		remap := map[int64]int64{}
 		for _, r := range c.RewrittenTables {
-			remap[r.UpstreamOfUpstream] = r.Upstream
+			remap[r.AncestorUpstream] = r.Upstream
 		}
 		return iter.TryMap(iter.FromSlice(c.Files), func(f *backup.File) (SSTs, error) {
 			sst := &AddedSSTs{File: f}
 			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
 				sst.Rewritten = backuppb.RewrittenTableID{
-					UpstreamOfUpstream: sst.TableID(),
-					Upstream:           id,
+					AncestorUpstream: sst.TableID(),
+					Upstream:         id,
 				}
 			}
 			return sst, nil
@@ -400,7 +400,7 @@ func (rc *LogFileManager) GetExtraFullBackupSSTs(ctx context.Context) iter.TryNe
 
 func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
 	count := int64(0)
-	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetExtraFullBackupSSTs(ctx))
+	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetIngestedSSTsSSTs(ctx))
 	for err, ssts := range iter.AsSeq(ctx, ssts) {
 		if err != nil {
 			return 0, errors.Trace(err)

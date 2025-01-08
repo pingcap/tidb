@@ -426,15 +426,15 @@ func (m *marshalMigrationContext) addMigration(mig *pb.Migration) {
 			m.emit("value", d)
 		})
 	}
-	for i, p := range mig.ExtraFullBackupPaths {
+	for i, p := range mig.IngestedSstPaths {
 		m.keyspaced([]string{"extra_full_backup", strconv.Itoa(i)}, func() {
-			m.addExtraFullBackups(p)
+			m.addIngestedSSTss(p)
 		})
 	}
 }
 
-func (m *marshalMigrationContext) addExtraFullBackups(path string) {
-	fullbk, err := readExtraFullBackup(m.Context, path, m.est.s)
+func (m *marshalMigrationContext) addIngestedSSTss(path string) {
+	fullbk, err := readIngestedSSTs(m.Context, path, m.est.s)
 	if err != nil {
 		m.emit("err_during_reading", err.Error())
 		m.emit("meta_path", path)
@@ -608,7 +608,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.TruncatedTo = max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
-	out.ExtraFullBackupPaths = append(out.ExtraFullBackupPaths, m1.GetExtraFullBackupPaths()...)
+	out.IngestedSstPaths = append(out.IngestedSstPaths, m1.GetIngestedSstPaths()...)
 	return out
 }
 
@@ -1223,8 +1223,8 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 }
 
 func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
-	groups := LoadExtraFullBackups(ctx, m.s, mig.ExtraFullBackupPaths)
-	processGroup := func(outErr error, e ExtraFullBackups) (copyToNewMig bool, err error) {
+	groups := LoadIngestedSSTss(ctx, m.s, mig.IngestedSstPaths)
+	processGroup := func(outErr error, e IngestedSSTss) (copyToNewMig bool, err error) {
 		if outErr != nil {
 			return true, outErr
 		}
@@ -1249,20 +1249,20 @@ func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migratio
 		}
 		if copyToNewMig {
 			for _, exb := range item {
-				result.NewBase.ExtraFullBackupPaths = append(result.NewBase.ExtraFullBackupPaths, exb.path)
+				result.NewBase.IngestedSstPaths = append(result.NewBase.IngestedSstPaths, exb.path)
 			}
 		}
 	}
 }
 
-type PathedExtraFullBackup struct {
-	*pb.ExtraFullBackup
+type PathedIngestedSSTs struct {
+	*pb.IngestedSSTs
 	path string
 }
 
-type ExtraFullBackups []PathedExtraFullBackup
+type IngestedSSTss []PathedIngestedSSTs
 
-func (ebs ExtraFullBackups) GroupFinished() bool {
+func (ebs IngestedSSTss) GroupFinished() bool {
 	for _, b := range ebs {
 		if b.Finished {
 			return true
@@ -1271,7 +1271,7 @@ func (ebs ExtraFullBackups) GroupFinished() bool {
 	return false
 }
 
-func (ebs ExtraFullBackups) GroupTS() uint64 {
+func (ebs IngestedSSTss) GroupTS() uint64 {
 	for _, b := range ebs {
 		if b.Finished {
 			return b.AsIfTs
@@ -1280,34 +1280,34 @@ func (ebs ExtraFullBackups) GroupTS() uint64 {
 	return math.MaxUint64
 }
 
-func LoadExtraFullBackups(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[ExtraFullBackups] {
+func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[IngestedSSTss] {
 
 	fullBackupDirIter := iter.FromSlice(paths)
-	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedExtraFullBackup, error) {
+	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.
-		bkup, err := readExtraFullBackup(ctx, name, s)
+		bkup, err := readIngestedSSTs(ctx, name, s)
 		if err != nil {
-			return PathedExtraFullBackup{}, errors.Annotatef(err, "failed to read backup at %s", name)
+			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
 		}
-		return PathedExtraFullBackup{ExtraFullBackup: bkup, path: name}, nil
+		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
 	})
 	extBackups, err := groupExtraBackups(ctx, backups)
 	if err != nil {
-		return iter.Fail[ExtraFullBackups](err)
+		return iter.Fail[IngestedSSTss](err)
 	}
 	return iter.FromSlice(extBackups)
 }
 
-func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedExtraFullBackup]) ([]ExtraFullBackups, error) {
+func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]) ([]IngestedSSTss, error) {
 	var (
-		collected = map[uuid.UUID]ExtraFullBackups{}
+		collected = map[uuid.UUID]IngestedSSTss{}
 		finished  = map[uuid.UUID]struct{}{}
 	)
 
 	for {
 		res := i.TryNext(ctx)
 		if res.FinishedOrError() {
-			res := make([]ExtraFullBackups, 0, len(collected))
+			res := make([]IngestedSSTss, 0, len(collected))
 			for v := range maps.Values(collected) {
 				res = append(res, v)
 			}
@@ -1337,13 +1337,13 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedExtraFullBack
 	}
 }
 
-func readExtraFullBackup(ctx context.Context, name string, s storage.ExternalStorage) (*pb.ExtraFullBackup, error) {
+func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorage) (*pb.IngestedSSTs, error) {
 	reader, err := s.ReadFile(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	var backup pb.ExtraFullBackup
+	var backup pb.IngestedSSTs
 	if err := backup.Unmarshal(reader); err != nil {
 		return nil, err
 	}
@@ -1615,7 +1615,7 @@ func hashMigration(m *pb.Migration) uint64 {
 	for _, metaEdit := range m.EditMeta {
 		crc64Res ^= hashMetaEdit(metaEdit)
 	}
-	for _, extBkup := range m.ExtraFullBackupPaths {
+	for _, extBkup := range m.IngestedSstPaths {
 		crc64Res ^= crc64.Checksum([]byte(extBkup), crc64.MakeTable(crc64.ISO))
 	}
 	return crc64Res ^ m.TruncatedTo
@@ -1653,7 +1653,7 @@ func nameOf(mig *pb.Migration, sn int) string {
 func isEmptyMigration(mig *pb.Migration) bool {
 	return len(mig.Compactions) == 0 &&
 		len(mig.EditMeta) == 0 &&
-		len(mig.ExtraFullBackupPaths) == 0 &&
+		len(mig.IngestedSstPaths) == 0 &&
 		len(mig.DestructPrefix) == 0 &&
 		mig.TruncatedTo == 0
 }

@@ -47,16 +47,16 @@ func (p pitrCollectorT) Done() {
 	require.NoError(p.t, p.coll.close())
 }
 
-func (p pitrCollectorT) ExtFullBkups() []backuppb.ExtraFullBackup {
+func (p pitrCollectorT) ExtFullBkups() []backuppb.IngestedSSTs {
 	est := stream.MigrationExtension(p.coll.taskStorage)
 	migs, err := est.Load(p.cx)
 	require.NoError(p.t, err)
-	res := []backuppb.ExtraFullBackup{}
+	res := []backuppb.IngestedSSTs{}
 	for _, m := range migs.ListAll() {
-		for _, pth := range m.ExtraFullBackupPaths {
+		for _, pth := range m.IngestedSstPaths {
 			content, err := p.coll.taskStorage.ReadFile(p.cx, pth)
 			require.NoError(p.t, err)
-			var sst backuppb.ExtraFullBackup
+			var sst backuppb.IngestedSSTs
 			require.NoError(p.t, sst.Unmarshal(content))
 			res = append(res, sst)
 		}
@@ -82,7 +82,7 @@ func (p *pitrCollectorT) Reopen() {
 	p.coll = newColl
 }
 
-func (p pitrCollectorT) RequireCopied(extBk backuppb.ExtraFullBackup, files ...string) {
+func (p pitrCollectorT) RequireCopied(extBk backuppb.IngestedSSTs, files ...string) {
 	extFiles := make([]string, 0)
 	for _, f := range extBk.Files {
 		extFiles = append(extFiles, f.Name)
@@ -96,11 +96,11 @@ func (p pitrCollectorT) RequireCopied(extBk backuppb.ExtraFullBackup, files ...s
 	require.ElementsMatch(p.t, extFiles, locatedFiles)
 }
 
-func (p pitrCollectorT) RequireRewrite(extBk backuppb.ExtraFullBackup, rules ...utils.TableIDRemap) {
+func (p pitrCollectorT) RequireRewrite(extBk backuppb.IngestedSSTs, rules ...utils.TableIDRemap) {
 	rulesInExtBk := []utils.TableIDRemap{}
 	for _, f := range extBk.RewrittenTables {
 		rulesInExtBk = append(rulesInExtBk, utils.TableIDRemap{
-			Origin:    f.UpstreamOfUpstream,
+			Origin:    f.AncestorUpstream,
 			Rewritten: f.Upstream,
 		})
 	}

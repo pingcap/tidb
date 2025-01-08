@@ -353,10 +353,10 @@ func TestMigrations(t *testing.T) {
 	}
 }
 
-type efOP func(*backuppb.ExtraFullBackup)
+type efOP func(*backuppb.IngestedSSTs)
 
-func extFullBkup(ops ...efOP) *backuppb.ExtraFullBackup {
-	ef := &backuppb.ExtraFullBackup{}
+func extFullBkup(ops ...efOP) *backuppb.IngestedSSTs {
+	ef := &backuppb.IngestedSSTs{}
 	for _, op := range ops {
 		op(ef)
 	}
@@ -364,31 +364,31 @@ func extFullBkup(ops ...efOP) *backuppb.ExtraFullBackup {
 }
 
 func finished() efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.Finished = true
 	}
 }
 
 func makeID() efOP {
 	id := uuid.New()
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.BackupUuid = id[:]
 	}
 }
 
 func prefix(pfx string) efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.FilesPrefixHint = pfx
 	}
 }
 
 func asIfTS(ts uint64) efOP {
-	return func(ef *backuppb.ExtraFullBackup) {
+	return func(ef *backuppb.IngestedSSTs) {
 		ef.AsIfTs = ts
 	}
 }
 
-func pef(t *testing.T, fb *backuppb.ExtraFullBackup, sn int, s storage.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStorage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -409,7 +409,7 @@ func tmp(t *testing.T) *storage.LocalStorage {
 	return s
 }
 
-func assertFullBackupPfxs(t *testing.T, it iter.TryNextor[*backuppb.ExtraFullBackup], items ...string) {
+func assertFullBackupPfxs(t *testing.T, it iter.TryNextor[*backuppb.IngestedSSTs], items ...string) {
 	i := 0
 	for res := it.TryNext(context.Background()); !res.Finished; res = it.TryNext(context.Background()) {
 		require.NoError(t, res.Err)
@@ -425,10 +425,10 @@ func TestNotRestoreIncomplete(t *testing.T) {
 	strg := tmp(t)
 	ebk := extFullBkup(prefix("001"), asIfTS(90), makeID())
 	wm := new(logclient.WithMigrations)
-	wm.AddExtraFullBackup(pef(t, ebk, 0, strg))
+	wm.AddIngestedSSTs(pef(t, ebk, 0, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.ExtraFullBackups(ctx, strg))
+	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg))
 }
 
 func TestRestoreSegmented(t *testing.T) {
@@ -438,11 +438,11 @@ func TestRestoreSegmented(t *testing.T) {
 	ebk1 := extFullBkup(prefix("001"), id)
 	ebk2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 	wm := new(logclient.WithMigrations)
-	wm.AddExtraFullBackup(pef(t, ebk1, 0, strg))
-	wm.AddExtraFullBackup(pef(t, ebk2, 1, strg))
+	wm.AddIngestedSSTs(pef(t, ebk1, 0, strg))
+	wm.AddIngestedSSTs(pef(t, ebk2, 1, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.ExtraFullBackups(ctx, strg), "001", "002")
+	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "001", "002")
 }
 
 func TestFilteredOut(t *testing.T) {
@@ -452,11 +452,11 @@ func TestFilteredOut(t *testing.T) {
 	ebk1 := extFullBkup(prefix("001"), id)
 	ebk2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 	wm := new(logclient.WithMigrations)
-	wm.AddExtraFullBackup(pef(t, ebk1, 0, strg))
-	wm.AddExtraFullBackup(pef(t, ebk2, 1, strg))
+	wm.AddIngestedSSTs(pef(t, ebk1, 0, strg))
+	wm.AddIngestedSSTs(pef(t, ebk2, 1, strg))
 	wm.SetRestoredTS(89)
 
-	assertFullBackupPfxs(t, wm.ExtraFullBackups(ctx, strg))
+	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg))
 }
 
 func TestMultiRestores(t *testing.T) {
@@ -471,13 +471,13 @@ func TestMultiRestores(t *testing.T) {
 	ebka2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 
 	wm := new(logclient.WithMigrations)
-	wm.AddExtraFullBackup(pef(t, ebka1, 0, strg))
-	wm.AddExtraFullBackup(pef(t, ebkb1, 2, strg))
-	wm.AddExtraFullBackup(pef(t, ebkb2, 3, strg))
-	wm.AddExtraFullBackup(pef(t, ebka2, 4, strg))
+	wm.AddIngestedSSTs(pef(t, ebka1, 0, strg))
+	wm.AddIngestedSSTs(pef(t, ebkb1, 2, strg))
+	wm.AddIngestedSSTs(pef(t, ebkb2, 3, strg))
+	wm.AddIngestedSSTs(pef(t, ebka2, 4, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.ExtraFullBackups(ctx, strg), "101", "102", "001", "002")
+	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "101", "102", "001", "002")
 }
 
 func TestMultiFilteredOutOne(t *testing.T) {
@@ -492,11 +492,11 @@ func TestMultiFilteredOutOne(t *testing.T) {
 	ebka2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 
 	wm := new(logclient.WithMigrations)
-	wm.AddExtraFullBackup(pef(t, ebka1, 0, strg))
-	wm.AddExtraFullBackup(pef(t, ebkb1, 2, strg))
-	wm.AddExtraFullBackup(pef(t, ebkb2, 3, strg))
-	wm.AddExtraFullBackup(pef(t, ebka2, 4, strg))
+	wm.AddIngestedSSTs(pef(t, ebka1, 0, strg))
+	wm.AddIngestedSSTs(pef(t, ebkb1, 2, strg))
+	wm.AddIngestedSSTs(pef(t, ebkb2, 3, strg))
+	wm.AddIngestedSSTs(pef(t, ebka2, 4, strg))
 	wm.SetRestoredTS(89)
 
-	assertFullBackupPfxs(t, wm.ExtraFullBackups(ctx, strg), "101", "102")
+	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "101", "102")
 }

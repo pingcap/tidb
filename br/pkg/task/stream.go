@@ -1541,7 +1541,7 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	addedSSTsIter := client.LogFileManager.GetExtraFullBackupSSTs(ctx)
+	addedSSTsIter := client.LogFileManager.GetIngestedSSTsSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 

@@ -158,7 +158,7 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
 
-		fullBackups = append(fullBackups, mig.ExtraFullBackupPaths...)
+		fullBackups = append(fullBackups, mig.IngestedSstPaths...)
 	}
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
@@ -247,13 +247,13 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 	})
 }
 
-func (wm *WithMigrations) ExtraFullBackups(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.ExtraFullBackup] {
-	filteredOut := iter.FilterOut(stream.LoadExtraFullBackups(ctx, s, wm.fullBackups), func(ebk stream.ExtraFullBackups) bool {
+func (wm *WithMigrations) IngestedSSTss(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
+	filteredOut := iter.FilterOut(stream.LoadIngestedSSTss(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTss) bool {
 		return !ebk.GroupFinished() || ebk.GroupTS() > wm.restoredTS
 	})
-	return iter.FlatMap(filteredOut, func(ebk stream.ExtraFullBackups) iter.TryNextor[*backuppb.ExtraFullBackup] {
-		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedExtraFullBackup) *backuppb.ExtraFullBackup {
-			return p.ExtraFullBackup
+	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTss) iter.TryNextor[*backuppb.IngestedSSTs] {
+		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedIngestedSSTs) *backuppb.IngestedSSTs {
+			return p.IngestedSSTs
 		})
 	})
 }
