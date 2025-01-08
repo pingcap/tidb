@@ -26,7 +26,7 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower rank tasks can be scheduled if resource is enough.
+	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.

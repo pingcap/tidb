@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -207,8 +206,8 @@ func TestBatchCreateTableArgs(t *testing.T) {
 func TestDropTableArgs(t *testing.T) {
 	inArgs := &DropTableArgs{
 		Identifiers: []ast.Ident{
-			{Schema: model.NewCIStr("db"), Name: model.NewCIStr("tbl")},
-			{Schema: model.NewCIStr("db2"), Name: model.NewCIStr("tbl2")},
+			{Schema: ast.NewCIStr("db"), Name: ast.NewCIStr("tbl")},
+			{Schema: ast.NewCIStr("db2"), Name: ast.NewCIStr("tbl2")},
 		},
 		FKCheck: true,
 	}
@@ -289,9 +288,9 @@ func TestTruncateTableArgs(t *testing.T) {
 func TestTablePartitionArgs(t *testing.T) {
 	inArgs := &TablePartitionArgs{
 		PartNames: []string{"a", "b"},
-		PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
-			{ID: 1, Name: model.NewCIStr("a"), LessThan: []string{"1"}},
-			{ID: 2, Name: model.NewCIStr("b"), LessThan: []string{"2"}},
+		PartInfo: &PartitionInfo{Type: ast.PartitionTypeRange, Definitions: []PartitionDefinition{
+			{ID: 1, Name: ast.NewCIStr("a"), LessThan: []string{"1"}},
+			{ID: 2, Name: ast.NewCIStr("b"), LessThan: []string{"2"}},
 		}},
 	}
 	for _, tp := range []ActionType{
@@ -341,9 +340,9 @@ func TestTablePartitionArgs(t *testing.T) {
 		FillRollbackArgsForAddPartition(j,
 			&TablePartitionArgs{
 				PartNames: partNames,
-				PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
-					{ID: 1, Name: model.NewCIStr("aaaa"), LessThan: []string{"1"}},
-					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
+				PartInfo: &PartitionInfo{Type: ast.PartitionTypeRange, Definitions: []PartitionDefinition{
+					{ID: 1, Name: ast.NewCIStr("aaaa"), LessThan: []string{"1"}},
+					{ID: 2, Name: ast.NewCIStr("bbb"), LessThan: []string{"2"}},
 				}},
 			})
 		require.Len(t, j.args, 1)
@@ -449,8 +448,8 @@ func TestAlterTablePartitionArgs(t *testing.T) {
 func TestRenameTableArgs(t *testing.T) {
 	inArgs := &RenameTableArgs{
 		OldSchemaID:   9527,
-		OldSchemaName: model.NewCIStr("old_schema_name"),
-		NewTableName:  model.NewCIStr("new_table_name"),
+		OldSchemaName: ast.NewCIStr("old_schema_name"),
+		NewTableName:  ast.NewCIStr("new_table_name"),
 	}
 
 	jobvers := []JobVersion{JobVersion1, JobVersion2}
@@ -468,11 +467,11 @@ func TestRenameTableArgs(t *testing.T) {
 func TestGetRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
-			{OldSchemaID: 1, OldSchemaName: model.CIStr{O: "db1", L: "db1"},
-				NewTableName: model.CIStr{O: "tb3", L: "tb3"}, OldTableName: model.CIStr{O: "tb1", L: "tb1"},
+			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: "db1", L: "db1"},
+				NewTableName: ast.CIStr{O: "tb3", L: "tb3"}, OldTableName: ast.CIStr{O: "tb1", L: "tb1"},
 				NewSchemaID: 3, TableID: 100},
-			{OldSchemaID: 2, OldSchemaName: model.CIStr{O: "db2", L: "db2"},
-				NewTableName: model.CIStr{O: "tb2", L: "tb2"}, OldTableName: model.CIStr{O: "tb4", L: "tb4"},
+			{OldSchemaID: 2, OldSchemaName: ast.CIStr{O: "db2", L: "db2"},
+				NewTableName: ast.CIStr{O: "tb2", L: "tb2"}, OldTableName: ast.CIStr{O: "tb4", L: "tb4"},
 				NewSchemaID: 3, TableID: 101},
 		},
 	}
@@ -489,7 +488,7 @@ func TestGetRenameTablesArgs(t *testing.T) {
 
 func TestResourceGroupArgs(t *testing.T) {
 	inArgs := &ResourceGroupArgs{
-		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
+		RGInfo: &ResourceGroupInfo{ID: 100, Name: ast.NewCIStr("rg_name")},
 	}
 	for _, tp := range []ActionType{ActionCreateResourceGroup, ActionAlterResourceGroup, ActionDropResourceGroup} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -509,8 +508,8 @@ func TestResourceGroupArgs(t *testing.T) {
 func TestGetAlterSequenceArgs(t *testing.T) {
 	inArgs := &AlterSequenceArgs{
 		Ident: ast.Ident{
-			Schema: model.NewCIStr("test_db"),
-			Name:   model.NewCIStr("test_t"),
+			Schema: ast.NewCIStr("test_db"),
+			Name:   ast.NewCIStr("test_t"),
 		},
 		SeqOptions: []*ast.SequenceOption{
 			{
@@ -563,7 +562,7 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 	inArgs := &AlterIndexVisibilityArgs{
-		IndexName: model.NewCIStr("index-name"),
+		IndexName: ast.NewCIStr("index-name"),
 		Invisible: true,
 	}
 
@@ -580,7 +579,7 @@ func TestGetAddForeignKeyArgs(t *testing.T) {
 	inArgs := &AddForeignKeyArgs{
 		FkInfo: &FKInfo{
 			ID:   7527,
-			Name: model.NewCIStr("fk-name"),
+			Name: ast.NewCIStr("fk-name"),
 		},
 		FkCheck: true,
 	}
@@ -623,7 +622,7 @@ func TestGetShardRowIDArgs(t *testing.T) {
 
 func TestGetDropForeignKeyArgs(t *testing.T) {
 	inArgs := &DropForeignKeyArgs{
-		FkName: model.NewCIStr("fk-name"),
+		FkName: ast.NewCIStr("fk-name"),
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -640,7 +639,7 @@ func TestGetAlterTTLInfoArgs(t *testing.T) {
 	ttlCronJobSchedule := "ttl-schedule"
 	inArgs := &AlterTTLInfoArgs{
 		TTLInfo: &TTLInfo{
-			ColumnName:       model.NewCIStr("column_name"),
+			ColumnName:       ast.NewCIStr("column_name"),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: 10010,
 		},
@@ -659,8 +658,8 @@ func TestGetAlterTTLInfoArgs(t *testing.T) {
 func TestAddCheckConstraintArgs(t *testing.T) {
 	Constraint :=
 		&ConstraintInfo{
-			Name:       model.NewCIStr("t3_c1"),
-			Table:      model.NewCIStr("t3"),
+			Name:       ast.NewCIStr("t3_c1"),
+			Table:      ast.NewCIStr("t3"),
 			ExprString: "id<10",
 			State:      StateDeleteOnly,
 		}
@@ -681,7 +680,7 @@ func TestAddCheckConstraintArgs(t *testing.T) {
 
 func TestCheckConstraintArgs(t *testing.T) {
 	inArgs := &CheckConstraintArgs{
-		ConstraintName: model.NewCIStr("c1"),
+		ConstraintName: ast.NewCIStr("c1"),
 		Enforced:       true,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -698,7 +697,7 @@ func TestGetAlterTablePlacementArgs(t *testing.T) {
 	inArgs := &AlterTablePlacementArgs{
 		PlacementPolicyRef: &PolicyRefInfo{
 			ID:   7527,
-			Name: model.NewCIStr("placement-policy"),
+			Name: ast.NewCIStr("placement-policy"),
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -754,8 +753,8 @@ func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
 }
 func TestLockTableArgs(t *testing.T) {
 	inArgs := &LockTablesArgs{
-		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},
-		UnlockTables:  []TableLockTpInfo{{2, 2, model.TableLockNone}},
+		LockTables:    []TableLockTpInfo{{1, 1, ast.TableLockNone}},
+		UnlockTables:  []TableLockTpInfo{{2, 2, ast.TableLockNone}},
 		IndexOfLock:   13,
 		IndexOfUnlock: 24,
 	}
@@ -775,7 +774,7 @@ func TestLockTableArgs(t *testing.T) {
 }
 
 func TestRepairTableArgs(t *testing.T) {
-	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: model.NewCIStr("t")}}
+	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: ast.NewCIStr("t")}}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRepairTable)))
@@ -792,7 +791,7 @@ func TestRecoverArgs(t *testing.T) {
 		DropJobID: 2,
 		TableInfo: &TableInfo{
 			ID:   100,
-			Name: model.NewCIStr("table"),
+			Name: ast.NewCIStr("table"),
 		},
 		OldSchemaName: "old",
 		OldTableName:  "table",
@@ -820,8 +819,8 @@ func TestRecoverArgs(t *testing.T) {
 
 func TestPlacementPolicyArgs(t *testing.T) {
 	inArgs := &PlacementPolicyArgs{
-		Policy:         &PolicyInfo{ID: 1, Name: model.NewCIStr("policy"), State: StateDeleteOnly},
-		PolicyName:     model.NewCIStr("policy_name"),
+		Policy:         &PolicyInfo{ID: 1, Name: ast.NewCIStr("policy"), State: StateDeleteOnly},
+		PolicyName:     ast.NewCIStr("policy_name"),
 		PolicyID:       123,
 		ReplaceOnExist: false,
 	}
@@ -850,7 +849,7 @@ func TestGetSetDefaultValueArgs(t *testing.T) {
 	inArgs := &SetDefaultValueArgs{
 		Col: &ColumnInfo{
 			ID:   7527,
-			Name: model.NewCIStr("col_name"),
+			Name: ast.NewCIStr("col_name"),
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -891,7 +890,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 func TestDropColumnArgs(t *testing.T) {
 	inArgs := &TableColumnArgs{
 		Col: &ColumnInfo{
-			Name: model.NewCIStr("col_name"),
+			Name: ast.NewCIStr("col_name"),
 		},
 		IgnoreExistenceErr: true,
 		IndexIDs:           []int64{1, 2, 3},
@@ -912,7 +911,7 @@ func TestAddColumnArgs(t *testing.T) {
 	inArgs := &TableColumnArgs{
 		Col: &ColumnInfo{
 			ID:   7527,
-			Name: model.NewCIStr("col_name"),
+			Name: ast.NewCIStr("col_name"),
 		},
 		Pos: &ast.ColumnPosition{
 			Tp: ast.ColumnPositionFirst,
@@ -922,7 +921,7 @@ func TestAddColumnArgs(t *testing.T) {
 	}
 	dropArgs := &TableColumnArgs{
 		Col: &ColumnInfo{
-			Name: model.NewCIStr("drop_column"),
+			Name: ast.NewCIStr("drop_column"),
 		},
 		Pos: &ast.ColumnPosition{},
 	}
@@ -969,7 +968,7 @@ func TestAddIndexArgs(t *testing.T) {
 		IndexArgs: []*IndexArg{{
 			Global:                  false,
 			Unique:                  true,
-			IndexName:               model.NewCIStr("idx1"),
+			IndexName:               ast.NewCIStr("idx1"),
 			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
 			IndexOption:             &ast.IndexOption{},
 			HiddenCols:              []*ColumnInfo{{}, {}},
@@ -1074,7 +1073,7 @@ func TestDropIndexArguements(t *testing.T) {
 	inArgs := &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{
 			{
-				IndexName: model.NewCIStr("i2"),
+				IndexName: ast.NewCIStr("i2"),
 				IfExist:   true,
 				IsVector:  true,
 				IndexID:   1,
@@ -1089,8 +1088,8 @@ func TestDropIndexArguements(t *testing.T) {
 func TestGetRenameIndexArgs(t *testing.T) {
 	inArgs := &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{
-			{IndexName: model.NewCIStr("old")},
-			{IndexName: model.NewCIStr("new")},
+			{IndexName: ast.NewCIStr("old")},
+			{IndexName: ast.NewCIStr("new")},
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1105,12 +1104,12 @@ func TestGetRenameIndexArgs(t *testing.T) {
 
 func TestModifyColumnsArgs(t *testing.T) {
 	inArgs := &ModifyColumnArgs{
-		Column:           &ColumnInfo{ID: 111, Name: model.NewCIStr("col1")},
-		OldColumnName:    model.NewCIStr("aa"),
+		Column:           &ColumnInfo{ID: 111, Name: ast.NewCIStr("col1")},
+		OldColumnName:    ast.NewCIStr("aa"),
 		Position:         &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
 		ModifyColumnType: 1,
 		NewShardBits:     123,
-		ChangingColumn:   &ColumnInfo{ID: 222, Name: model.NewCIStr("col2")},
+		ChangingColumn:   &ColumnInfo{ID: 222, Name: ast.NewCIStr("col2")},
 		RedundantIdxs:    []int64{1, 2},
 		IndexIDs:         []int64{3, 4},
 		PartitionIDs:     []int64{5, 6},

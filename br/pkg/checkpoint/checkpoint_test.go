@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -128,8 +128,8 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
 			{
 				IndexID:    1,
-				SchemaName: pmodel.NewCIStr("2"),
-				TableName:  pmodel.NewCIStr("3"),
+				SchemaName: ast.NewCIStr("2"),
+				TableName:  ast.NewCIStr("3"),
 				IndexName:  "4",
 				AddSQL:     "5",
 				AddArgs:    []any{"6", "7", "8"},
@@ -140,8 +140,8 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 	repairSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, repairSQLs.SQLs[0].IndexID, int64(1))
-	require.Equal(t, repairSQLs.SQLs[0].SchemaName, pmodel.NewCIStr("2"))
-	require.Equal(t, repairSQLs.SQLs[0].TableName, pmodel.NewCIStr("3"))
+	require.Equal(t, repairSQLs.SQLs[0].SchemaName, ast.NewCIStr("2"))
+	require.Equal(t, repairSQLs.SQLs[0].TableName, ast.NewCIStr("3"))
 	require.Equal(t, repairSQLs.SQLs[0].IndexName, "4")
 	require.Equal(t, repairSQLs.SQLs[0].AddSQL, "5")
 	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []any{"6", "7", "8"})
@@ -360,7 +360,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.False(t, exists)
-	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(ast.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
 	require.False(t, exists)
 }
 
@@ -545,7 +545,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 
 	exists := checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, s.Mock.Domain)
 	require.False(t, exists)
-	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.LogRestoreCheckpointDatabaseName))
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(ast.NewCIStr(checkpoint.LogRestoreCheckpointDatabaseName))
 	require.False(t, exists)
 }
 
@@ -640,6 +640,6 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 
 	exists = checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.False(t, exists)
-	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.CustomSSTRestoreCheckpointDatabaseName))
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(ast.NewCIStr(checkpoint.CustomSSTRestoreCheckpointDatabaseName))
 	require.False(t, exists)
 }

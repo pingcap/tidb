@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -254,8 +254,6 @@ const (
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
 	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
@@ -898,23 +896,23 @@ type MultiSchemaInfo struct {
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
-	AddColumns    []model.CIStr `json:"-"`
-	DropColumns   []model.CIStr `json:"-"`
-	ModifyColumns []model.CIStr `json:"-"`
-	AddIndexes    []model.CIStr `json:"-"`
-	DropIndexes   []model.CIStr `json:"-"`
-	AlterIndexes  []model.CIStr `json:"-"`
+	AddColumns    []ast.CIStr `json:"-"`
+	DropColumns   []ast.CIStr `json:"-"`
+	ModifyColumns []ast.CIStr `json:"-"`
+	AddIndexes    []ast.CIStr `json:"-"`
+	DropIndexes   []ast.CIStr `json:"-"`
+	AlterIndexes  []ast.CIStr `json:"-"`
 
 	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
-	RelativeColumns []model.CIStr `json:"-"`
-	PositionColumns []model.CIStr `json:"-"`
+	RelativeColumns []ast.CIStr `json:"-"`
+	PositionColumns []ast.CIStr `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
 type AddForeignKeyInfo struct {
-	Name model.CIStr
-	Cols []model.CIStr
+	Name ast.CIStr
+	Cols []ast.CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -1193,6 +1191,21 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
 }
 
 func init() {

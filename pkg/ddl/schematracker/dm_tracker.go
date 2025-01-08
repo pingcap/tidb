@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -94,7 +93,7 @@ func (d *SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDat
 // CreateTestDB creates the `test` database, which is the default behavior of TiDB.
 func (d *SchemaTracker) CreateTestDB(ctx sessionctx.Context) {
 	_ = d.CreateSchema(ctx, &ast.CreateDatabaseStmt{
-		Name: pmodel.NewCIStr("test"),
+		Name: ast.NewCIStr("test"),
 	})
 }
 
@@ -232,7 +231,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
-	dbName pmodel.CIStr,
+	dbName ast.CIStr,
 	info *model.TableInfo,
 	_ []model.InvolvingSchemaInfo,
 	cs ...ddl.CreateTableOption,
@@ -365,11 +364,11 @@ func (d *SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) 
 // CreateIndex implements the DDL interface.
 func (d *SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	return d.createIndex(ctx, ident, stmt.KeyType, pmodel.NewCIStr(stmt.IndexName),
+	return d.createIndex(ctx, ident, stmt.KeyType, ast.NewCIStr(stmt.IndexName),
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
-func (d *SchemaTracker) putTableIfNoError(err error, dbName pmodel.CIStr, tbInfo *model.TableInfo) {
+func (d *SchemaTracker) putTableIfNoError(err error, dbName ast.CIStr, tbInfo *model.TableInfo) {
 	if err != nil {
 		return
 	}
@@ -381,7 +380,7 @@ func (d *SchemaTracker) createIndex(
 	ctx sessionctx.Context,
 	ti ast.Ident,
 	keyType ast.IndexKeyType,
-	indexName pmodel.CIStr,
+	indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	ifNotExists bool,
@@ -398,11 +397,11 @@ func (d *SchemaTracker) createIndex(
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := pmodel.NewCIStr("expression_index")
+		colName := ast.NewCIStr("expression_index")
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = ddl.GetName4AnonymousIndex(t, colName, pmodel.NewCIStr(""))
+		indexName = ddl.GetName4AnonymousIndex(t, colName, ast.NewCIStr(""))
 	}
 
 	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil {
@@ -445,7 +444,7 @@ func (d *SchemaTracker) createIndex(
 // DropIndex implements the DDL interface.
 func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := d.dropIndex(ctx, ti, pmodel.NewCIStr(stmt.IndexName), stmt.IfExists)
+	err := d.dropIndex(ctx, ti, ast.NewCIStr(stmt.IndexName), stmt.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -453,7 +452,7 @@ func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStm
 }
 
 // dropIndex is shared by DropIndex and AlterTable.
-func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExists bool) (err error) {
+func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName ast.CIStr, ifExists bool) (err error) {
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
@@ -691,7 +690,7 @@ func (d *SchemaTracker) handleModifyColumn(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	ident ast.Ident,
-	originalColName pmodel.CIStr,
+	originalColName ast.CIStr,
 	spec *ast.AlterTableSpec,
 ) (err error) {
 	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
@@ -835,7 +834,7 @@ func (d *SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Iden
 func (d *SchemaTracker) createPrimaryKey(
 	ctx sessionctx.Context,
 	ti ast.Ident,
-	indexName pmodel.CIStr,
+	indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 ) (err error) {
@@ -846,7 +845,7 @@ func (d *SchemaTracker) createPrimaryKey(
 
 	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
-	indexName = pmodel.NewCIStr(mysql.PrimaryKeyName)
+	indexName = ast.NewCIStr(mysql.PrimaryKeyName)
 	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
 		// If the table's PKIsHandle is true, it also means that this table has a primary key.
 		tblInfo.PKIsHandle {
@@ -923,9 +922,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 		case ast.AlterTableDropColumn:
 			err = d.dropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.dropIndex(sctx, ident, pmodel.NewCIStr(spec.Name), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(sctx, ident, pmodel.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.renameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -934,13 +933,13 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, pmodel.NewCIStr(constr.Name),
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, pmodel.NewCIStr(constr.Name),
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
-				err = d.createPrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
 				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
@@ -1180,7 +1179,7 @@ func (*SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResou
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
-func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema pmodel.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
+func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema ast.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	for _, tableInfo := range info {
 		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err

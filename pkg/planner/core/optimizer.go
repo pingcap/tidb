@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -71,6 +70,14 @@ var AllowCartesianProduct = atomic.NewBool(true)
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const initialMaxCores uint64 = 10000
+
+var (
+	// the old ref of optRuleList for downgrading to old optimizing routine.
+	logicalRuleList = optRuleList
+	// the new normalizeRuleList is special for prev-phase of memo, which is for always-good rules.
+	normalizeRuleList = optRuleList
+	// note this two list will differ when some trade-off rules is moved out of norm phase for cascades.
+)
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
@@ -210,7 +217,7 @@ func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast
 func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(ctx, pmodel.NewCIStr(v.db), pmodel.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, ast.NewCIStr(v.db), ast.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -248,12 +255,48 @@ func checkStableResultMode(sctx base.PlanContext) bool {
 // doOptimize optimizes a logical plan into a physical plan,
 // while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
-func doOptimize(
-	ctx context.Context,
-	sctx base.PlanContext,
-	flag uint64,
-	logic base.LogicalPlan,
-) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (
+	base.LogicalPlan, base.PhysicalPlan, float64, error) {
+	if sctx.GetSessionVars().GetSessionVars().EnableCascadesPlanner {
+		return CascadesOptimize(ctx, sctx, flag, logic)
+	}
+	return VolcanoOptimize(ctx, sctx, flag, logic)
+}
+
+// CascadesOptimize includes: normalization, cascadesOptimize, and physicalOptimize.
+func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	flag = adjustOptimizationFlags(flag, logic)
+	logic, err := normalizeOptimize(ctx, flag, logic)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
+		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
+	}
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
+	}
+	// todo: add cascadesOptimize(logic)
+
+	physical, cost, err := physicalOptimize(logic, &planCounter)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	finalPlan := postOptimize(ctx, sctx, physical)
+
+	if sessVars.StmtCtx.EnableOptimizerCETrace {
+		refineCETrace(sctx)
+	}
+	if sessVars.StmtCtx.EnableOptimizeTrace {
+		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
+	}
+	return logic, finalPlan, cost, nil
+}
+
+// VolcanoOptimize includes: logicalOptimize, physicalOptimize
+func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
@@ -947,6 +990,42 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPla
 	return logicalOptimize(ctx, flag, logic)
 }
 
+func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
+	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(logic.SCtx())
+		defer debugtrace.LeaveContextCommon(logic.SCtx())
+	}
+	opt := optimizetrace.DefaultLogicalOptimizeOption()
+	vars := logic.SCtx().GetSessionVars()
+	if vars.StmtCtx.EnableOptimizeTrace {
+		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
+		opt = opt.WithEnableOptimizeTracer(tracer)
+		defer func() {
+			vars.StmtCtx.OptimizeTracer.Logical = tracer
+		}()
+	}
+	var err error
+	// todo: the normalization rule driven way will be changed as stack-driven.
+	for i, rule := range normalizeRuleList {
+		// The order of flags is same as the order of optRule in the list.
+		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
+		// apply i-th optimizing rule.
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+			continue
+		}
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		logic, _, err = rule.Optimize(ctx, logic, opt)
+		if err != nil {
+			return nil, err
+		}
+	}
+	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
+	return logic, err
+}
+
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
@@ -966,7 +1045,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule
-	for i, rule := range optRuleList {
+	for i, rule := range logicalRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.

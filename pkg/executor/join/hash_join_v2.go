@@ -58,14 +58,6 @@ var (
 	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
-// IsHashJoinV2Supported return true if hash join v2 is supported in current env
-func IsHashJoinV2Supported() bool {
-	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
-	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
-	// change this
-	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
-}
-
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable
@@ -933,7 +925,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
 	if w.HashJoinCtx.spillHelper.areAllPartitionsSpilled() {
 		if intest.InTest && w.HashJoinCtx.spillHelper.hashJoinExec.inRestore {
-			w.HashJoinCtx.spillHelper.skipProbeInRestoreForTest = true
+			w.HashJoinCtx.spillHelper.skipProbeInRestoreForTest.Store(true)
 		}
 		return true, 0, joinResult
 	}

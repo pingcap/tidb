@@ -277,7 +277,7 @@ func TestTopoFetcherBackoff(t *testing.T) {
 		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
 			break
 		}
-		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Int("retryNum", retryNum))
 	}
 	dura := time.Since(start)
 	// fetchTopoMaxBackoff is milliseconds.

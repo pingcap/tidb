@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -173,9 +174,26 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use addindexlit;")
 	tk2.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk2.MustExec("create table t2 (a int, b int);")
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
+	var counter atomic.Int32
+	var enableTrigger atomic.Bool
+	var targetJobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+		// fail for one index when finish backfill, and check row count right
+		if counter.Add(1) == 1 {
+			targetJobID.Store(job.ID)
+			enableTrigger.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, errP *error) {
+		if enableTrigger.Load() && job.ID == targetJobID.Load() {
+			*errP = errors.New("mock error")
+			enableTrigger.Store(false)
+		}
+	})
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -191,10 +209,10 @@ func TestAddIndexDistCancel(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
 	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
-	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
-	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	require.Equal(t, "3", rows[0][7].(string) /* row_count */)
+	require.Equal(t, "3", rows[1][7].(string) /* row_count */)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable")
 
 	// test cancel is timely
 	enter := make(chan struct{})
@@ -372,4 +390,49 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1);")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
 	tk.MustExec("alter table t add index idx(b);")
+}
+
+func TestAddIndexScheduleAway(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	var jobID atomic.Int64
+	// Acquire the job ID.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID.Store(job.ID)
+		}
+	})
+	// Do not balance subtasks automatically.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockNoEnoughSlots", "return")
+	afterCancel := make(chan struct{})
+	// Capture the cancel operation from checkBalanceLoop.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelSubtaskExec", func() {
+		close(afterCancel)
+	})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+		once.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			updateExecID := fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in 
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+			<-afterCancel
+			updateExecID = fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in 
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+		})
+	})
+	tk.MustExec("alter table t add index idx(b);")
+	require.NotEqual(t, int64(0), jobID.Load())
 }

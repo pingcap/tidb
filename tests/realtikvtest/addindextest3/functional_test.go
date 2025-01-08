@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,7 +47,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
@@ -71,7 +71,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t all columns;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 19, size)
@@ -170,6 +170,14 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 			splitKeyHex = nil
 		}
 	}
+	var idxID int64
+	nextIdxID := func() int64 {
+		idxID++
+		return idxID
+	}
+	resetIdxID := func() {
+		idxID = 0
+	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := 0; i < 10; i++ {
@@ -180,21 +188,29 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	require.Len(t, retRows, 1)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = 4;")
+	checkSplitKeys(nextIdxID(), 3, true)
+	tk.MustExec("drop index idx on t;")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkSplitKeys(1, 3, true)
+	checkSplitKeys(nextIdxID(), 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) /*T![pre_split] pre_split_regions = (by (10000), (20000), (30000)) */;")
+	checkSplitKeys(nextIdxID(), 3, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
-	checkSplitKeys(2, 2, true)
+	checkSplitKeys(nextIdxID(), 2, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
 
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkSplitKeys(3, 0, false)
-	checkSplitKeys(tablecodec.TempIndexPrefix|3, 3, true)
+	nextID := nextIdxID()
+	checkSplitKeys(nextID, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|nextID, 3, true)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 
 	// Test partition tables.
+	resetIdxID()
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
 	for i := 0; i < 10; i++ {
@@ -202,17 +218,27 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 		tk.MustExec(insertSQL)
 	}
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkSplitKeys(1, 3*4, true)
+	checkSplitKeys(nextIdxID(), 3*4, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
-	checkSplitKeys(2, 2*4, true)
+	checkSplitKeys(nextIdxID(), 2*4, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkSplitKeys(3, 0, false)
+	checkSplitKeys(nextIdxID(), 0, false)
 	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	resetIdxID()
+	tk.MustExec("drop table t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("create table t (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("alter table t add unique index p_a (a) global pre_split_regions = (by (5), (15));")
+	checkSplitKeys(tablecodec.TempIndexPrefix|nextIdxID(), 2, true)
 }
 
 func TestAddIndexPresplitFunctional(t *testing.T) {

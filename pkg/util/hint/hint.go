@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -291,7 +290,7 @@ func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo)
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	hypoIndexChecker func(db, tbl, col pmodel.CIStr) (colOffset int, err error),
+	hypoIndexChecker func(db, tbl, col ast.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
@@ -344,12 +343,12 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			tbl := hint.Tables[0].TableName
 			idx := hint.Tables[1].TableName
-			var colNames []pmodel.CIStr
+			var colNames []ast.CIStr
 			var cols []*model.IndexColumn
 			invalid := false
 			for i := 2; i < len(hint.Tables); i++ {
 				colNames = append(colNames, hint.Tables[i].TableName)
-				offset, err := hypoIndexChecker(pmodel.NewCIStr(db), tbl, hint.Tables[i].TableName)
+				offset, err := hypoIndexChecker(ast.NewCIStr(db), tbl, hint.Tables[i].TableName)
 				if err != nil {
 					invalid = true
 					warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
@@ -368,7 +367,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 				Name:    idx,
 				Columns: cols,
 				State:   model.StatePublic,
-				Tp:      pmodel.IndexTypeHypo,
+				Tp:      ast.IndexTypeHypo,
 			}
 			stmtHints.addHypoIndex(db, tbl.L, idx.L, idxInfo)
 		case "set_var":
@@ -552,18 +551,18 @@ type PlanHints struct {
 
 // HintedTable indicates which table this hint should take effect on.
 type HintedTable struct {
-	DBName       pmodel.CIStr   // the database name
-	TblName      pmodel.CIStr   // the table name
-	Partitions   []pmodel.CIStr // partition information
-	SelectOffset int            // the select block offset of this hint
-	Matched      bool           // whether this hint is applied successfully
+	DBName       ast.CIStr   // the database name
+	TblName      ast.CIStr   // the table name
+	Partitions   []ast.CIStr // partition information
+	SelectOffset int         // the select block offset of this hint
+	Matched      bool        // whether this hint is applied successfully
 }
 
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
-	DBName     pmodel.CIStr   // the database name
-	TblName    pmodel.CIStr   // the table name
-	Partitions []pmodel.CIStr // partition information
+	DBName     ast.CIStr      // the database name
+	TblName    ast.CIStr      // the table name
+	Partitions []ast.CIStr    // partition information
 	IndexHint  *ast.IndexHint // the original parser index hint structure
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
@@ -573,7 +572,7 @@ type HintedIndex struct {
 }
 
 // Match checks whether the hint is matched with the given dbName and tblName.
-func (hint *HintedIndex) Match(dbName, tblName pmodel.CIStr) bool {
+func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 	return hint.TblName.L == tblName.L &&
 		(hint.DBName.L == dbName.L ||
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
@@ -810,7 +809,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = pmodel.NewCIStr(currentDB)
+				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
 			switch hint.HintName.L {
@@ -836,7 +835,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 			})
 		case HintReadFromStorage:
-			switch hint.HintData.(pmodel.CIStr).L {
+			switch hint.HintData.(ast.CIStr).L {
 			case HintTiFlash:
 				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			case HintTiKV:
@@ -845,7 +844,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = pmodel.NewCIStr(currentDB)
+				dbName = ast.NewCIStr(currentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
 				DBName:     dbName,
@@ -946,7 +945,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	hintTableInfos := make([]HintedTable, 0, len(hintTables))
-	defaultDBName := pmodel.NewCIStr(currentDB)
+	defaultDBName := ast.NewCIStr(currentDB)
 	isInapplicable := false
 	for _, hintTable := range hintTables {
 		tableInfo := HintedTable{

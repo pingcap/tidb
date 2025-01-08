@@ -70,18 +70,13 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// skip if the table is empty or the stats is not valid
 		return
 	}
 
-	copStats := e.runtimeStatsColl.GetCopStats(planID)
-	if copStats == nil {
+	kvReq, accessRows := e.runtimeStatsColl.GetCopCountAndRows(planID)
+	if kvReq == 0 && accessRows == 0 {
 		return
 	}
-	copStats.Lock()
-	defer copStats.Unlock()
-	kvReq := copStats.GetTasks()
-	accessRows := copStats.GetActRows()
 
 	sample := indexusage.NewSample(0, uint64(kvReq), uint64(accessRows), uint64(tableRowCount))
 	e.reporter.Update(tableID, indexID, sample)

@@ -2090,7 +2090,7 @@ b	b1	2	22
 c	c1	3	33
 drop database cluster_idx_unique_double_read;
 set @@tidb_enable_clustered_index = DEFAULT;
-use planner__core__integration
+use planner__core__integration;
 drop table if exists t, t2;
 set @@tidb_enable_clustered_index = 'ON';
 create table t(a int, b int, c int, primary key(a, b));
@@ -3504,33 +3504,31 @@ TableReader	1.99	root		data:Selection
 explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(0, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where null or a=1 or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(0, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or false or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(0, eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or b=1 or "false";
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(eq(planner__core__integration.t1.b, 1), 0))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;
 id	estRows	task	access object	operator info
-TableReader	129.00	root		data:Selection
-└─Selection	129.00	cop[tikv]		or(1, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
-  └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
+TableReader	129.00	root		data:TableFullScan
+└─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;
 id	estRows	task	access object	operator info
-TableReader	129.00	root		data:Selection
-└─Selection	129.00	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(eq(planner__core__integration.t1.b, 1), 1))
-  └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
+TableReader	129.00	root		data:TableFullScan
+└─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 drop table if exists t1;
 create database natural_join_update;
 use natural_join_update;

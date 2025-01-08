@@ -921,7 +921,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -930,6 +930,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
+			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
@@ -937,6 +938,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
+		return 0
+	}
+
+	// If there are no modifications to the table, return 0 - since all of this logic is
+	// redundant if we get to the end and return the min - which includes zero,
+	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
+	// may miss the lowest/highest values - and we are out of range without any modifications.
+	if modifyCount == 0 {
 		return 0
 	}
 
@@ -980,16 +989,28 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if l >= r {
 		return 0
 	}
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
+
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
+	histInvalid := false
 	if histWidth <= 0 {
-		return 0
+		if !allowUseModifyCount {
+			return 0
+		}
+		histInvalid = true
 	}
 	if math.IsInf(histWidth, 1) {
-		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
-		return 0
+		if !allowUseModifyCount {
+			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+			return 0
+		}
+		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1012,32 +1033,35 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
-	// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-	if actualL < histL && actualR > boundL {
-		// make sure boundL <= actualL < actualR <= histL
-		if actualL < boundL {
-			actualL = boundL
+	// Only attempt to calculate the ranges if the histogram is valid
+	if !histInvalid {
+		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
+		if actualL < histL && actualR > boundL {
+			// make sure boundL <= actualL < actualR <= histL
+			if actualL < boundL {
+				actualL = boundL
+			}
+			if actualR > histL {
+				actualR = histL
+			}
+			// Calculate the percentage of "the shaded area" on the left side.
+			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > histL {
-			actualR = histL
-		}
-		// Calculate the percentage of "the shaded area" on the left side.
-		leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-	}
 
-	actualL = l
-	actualR = r
-	// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-	if actualL < boundR && actualR > histR {
-		// make sure histR <= actualL < actualR <= boundR
-		if actualL < histR {
-			actualL = histR
+		actualL = l
+		actualR = r
+		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
+		if actualL < boundR && actualR > histR {
+			// make sure histR <= actualL < actualR <= boundR
+			if actualL < histR {
+				actualL = histR
+			}
+			if actualR > boundR {
+				actualR = boundR
+			}
+			// Calculate the percentage of "the shaded area" on the right side.
+			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > boundR {
-			actualR = boundR
-		}
-		// Calculate the percentage of "the shaded area" on the right side.
-		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
@@ -1049,8 +1073,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		upperBound = hg.NotNullCount() / float64(histNDV)
 	}
 
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
@@ -1058,13 +1080,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
+	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	if addedRows > 1 {
+		// Conservatively - use the larger of the left or right percent - since we are working with
+		// changes to the table since last Analyze - any out of range estimate is unreliable.
+		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
+		// and we will set rowCount to min of upperbound and added rows
+		totalPercent = min(0.5, max(leftPercent, rightPercent))
+		rowCount += totalPercent * addedRows
+		if rowCount < upperBound {
+			rowCount = min(upperBound, addedRows)
+		}
 	}
 
 	// Use modifyCount as a final bound
