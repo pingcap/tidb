@@ -911,6 +911,14 @@ func (is *infoschemaV2) keepAlive() {
 	}
 }
 
+func (is *infoschemaV2) AllTableInfos(ctx context.Context) ([]*model.TableInfo, error) {
+	is.keepAlive()
+retry:
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewReader(snapshot)
+}
+
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {

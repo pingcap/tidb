@@ -1813,3 +1813,19 @@ func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
 	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
 	return n, errors.Trace(err)
 }
+
+// GetSchemaCacheSize gets the schema cache size.
+
+type AllTableInfoIterator struct {
+	txn *structure.TxStructure
+}
+
+func (a *AllTableInfoIterator) NextTableInfo(ctx context.Context) ([]*model.TableInfo, error) {
+	tableInfos := c
+	a.txn.HGetIter()
+}
+
+func (m *Mutator) GetAllTableInfoIter(ctx context.Context) (TableInfoIterator, error) {
+	tii := &AllTableInfoIterator{txn: m.txn}
+	return tii, nil
+}
