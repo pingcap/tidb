@@ -761,6 +761,9 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if ds.Table.Type().IsClusterTable() {
+		return false
+	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if path.Index == nil || path.Index.VectorInfo == nil {
 			return false
@@ -2597,10 +2600,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	var task base.Task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
-		if ds.Table.Type().IsClusterTable() {
-			// TableScan with cluster table can't keep order.
-			return base.InvalidTask, nil
-		}
 		if ds.TableInfo.GetPartitionInfo() != nil {
 			// TableScan on partition table on TiFlash can't keep order.
 			if ts.StoreType == kv.TiFlash {
