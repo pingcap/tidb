@@ -215,7 +215,7 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							InputMinTs: 0,
+							InputMinTs: 1,
 							InputMaxTs: 9,
 						},
 					},
@@ -329,25 +329,27 @@ func TestMigrations(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, cs := range cases {
-		builder := logclient.NewMigrationBuilder(10, 100, 200)
-		withMigrations := builder.Build(cs.migrations)
-		it := withMigrations.Metas(generateMetaNameIter())
-		checkMetaNameIter(t, cs.expectStoreIds, it)
-		it = withMigrations.Metas(generateMetaNameIter())
-		collect := iter.CollectAll(ctx, it)
-		require.NoError(t, collect.Err)
-		for j, meta := range collect.Item {
-			physicalIter := generatePhysicalIter(meta)
-			checkPhysicalIter(t, cs.expectPhyLengths[j], physicalIter)
-			physicalIter = generatePhysicalIter(meta)
-			collect := iter.CollectAll(ctx, physicalIter)
+	for i, cs := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			builder := logclient.NewMigrationBuilder(10, 100, 200)
+			withMigrations := builder.Build(cs.migrations)
+			it := withMigrations.Metas(generateMetaNameIter())
+			checkMetaNameIter(t, cs.expectStoreIds, it)
+			it = withMigrations.Metas(generateMetaNameIter())
+			collect := iter.CollectAll(ctx, it)
 			require.NoError(t, collect.Err)
-			for k, phy := range collect.Item {
-				logicalIter := generateLogicalIter(phy)
-				checkLogicalIter(t, cs.expectLogLengths[j][k], logicalIter)
+			for j, meta := range collect.Item {
+				physicalIter := generatePhysicalIter(meta)
+				checkPhysicalIter(t, cs.expectPhyLengths[j], physicalIter)
+				physicalIter = generatePhysicalIter(meta)
+				collect := iter.CollectAll(ctx, physicalIter)
+				require.NoError(t, collect.Err)
+				for k, phy := range collect.Item {
+					logicalIter := generateLogicalIter(phy)
+					checkLogicalIter(t, cs.expectLogLengths[j][k], logicalIter)
+				}
 			}
-		}
+		})
 	}
 }
 
