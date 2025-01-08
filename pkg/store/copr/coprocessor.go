@@ -1112,15 +1112,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp = it.liteWorker.liteSendReq(ctx, it)
 		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
 		it.liteWorker.tryCopLiteWorker.Store(0)
-		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 {
+		if resp == nil {
+			it.actionOnExceed.close()
+			return nil, nil
+		}
+		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 && resp.err == nil {
 			// if there are remain tasks to be processed, we need to run worker concurrently to avoid blocking.
 			// see more detail in https://github.com/pingcap/tidb/issues/58658 and TestDMLWithLiteCopWorker.
 			it.liteWorker.runWorkerConcurrently(it)
 			it.liteWorker = nil
-		}
-		if resp == nil {
-			it.actionOnExceed.close()
-			return nil, nil
 		}
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
 		memTrackerConsumeResp(it.memTracker, resp)
