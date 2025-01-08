@@ -61,6 +61,26 @@ create table t(a int, b int, primary key (a) global) partition by hash(a) partit
 --error 8200
 create table t(a int, b int, primary key (b) global) partition by hash(a) partitions 5;
 
+create table t(a int, b int, key(a), key(b)) partition by hash(a) partitions 4;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b LOCAL);
+show create table t;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b GLOBAL);
+show create table t;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a LOCAL);
+show create table t;
+drop table t;
+
+create table t(a int, b int, unique key(a), unique key(b) global) partition by hash(a) partitions 4;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b LOCAL);
+show create table t;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b GLOBAL);
+show create table t;
+--error 8264
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a LOCAL);
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (b LOCAL);
+show create table t;
+drop table t;
+
 create table t(a int, b int);
 --error 8200
 alter table t add primary key (a) global;
