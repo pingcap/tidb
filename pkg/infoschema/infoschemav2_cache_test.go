@@ -126,7 +126,7 @@ func (m *mockStatusHook) onMiss() {
 func (m *mockStatusHook) onEvict() {
 	m.Called()
 }
-func (m *mockStatusHook) onUpdateSize(size uint64) {
+func (m *mockStatusHook) onUpdate(size uint64, count uint64) {
 	m.Called()
 }
 func (m *mockStatusHook) onUpdateLimit(limit uint64) {
