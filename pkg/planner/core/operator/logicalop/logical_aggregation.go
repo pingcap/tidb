@@ -135,7 +135,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
 	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -597,7 +596,6 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	//nolint: prealloc
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
 	subDNFItem := expression.SplitDNFItems(cond)
