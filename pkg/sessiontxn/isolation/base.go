@@ -622,7 +622,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		prewriteEncounterLockPolicy = transaction.NoResolvePolicy
 	}
 	txn.SetOption(kv.PrewriteEncounterLockPolicy, prewriteEncounterLockPolicy)
-	
+
 	return nil
 }
 

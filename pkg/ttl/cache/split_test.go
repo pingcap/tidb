@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -246,9 +246,9 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	tk.MustExec(sql)
 	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
 	return ttlTbl
 }

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
@@ -47,7 +47,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
-	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sessionFactory := sessionFactory(t, dom)
@@ -133,7 +133,7 @@ func TestParallelSchedule(t *testing.T) {
 	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 16 tasks and 16 scan workers (in 4 task manager) should be able to be scheduled in a single "reschedule"
 	for i := 0; i < 16; i++ {
@@ -190,7 +190,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, 1)
 	tk.MustExec(sql)
@@ -234,7 +234,7 @@ func TestTaskMetrics(t *testing.T) {
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, 1)
 	tk.MustExec(sql)
@@ -298,7 +298,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 64 tasks and 128 scan workers (in 16 task manager) should only schedule 32 tasks
 	for i := 0; i < 128; i++ {
@@ -370,7 +370,7 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	taskCnt := 8
 	for id := 0; id < taskCnt; id++ {
@@ -550,7 +550,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	defer tk.MustExec("set global tidb_ttl_running_tasks = -1")
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// 4 tasks are inserted into the table
 	for i := 0; i < 4; i++ {
@@ -648,7 +648,7 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	for id := 0; id < 4; id++ {
 		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)

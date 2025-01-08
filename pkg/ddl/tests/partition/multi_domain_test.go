@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -620,9 +620,9 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// to the new type, and block writes otherwise. But then it would break the first tkO insert above...
 			tkO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
 			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11  011.50 "))
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Greater(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
 			// This also means that old copies of the columns will be left in the row, until the row is updated or deleted.
@@ -844,7 +844,7 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 	originalGlobalIndexIDs := make([]int64, 0, 1)
 	ctx := tkO.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	if tbl.Meta().Partition != nil {
@@ -941,7 +941,7 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 	tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
 	ctx = tkO.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableID := tbl.Meta().ID
 	if tableID != newTableID {
@@ -1083,10 +1083,10 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// even if it cannot read them from the global index, due to filtering.
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateNone, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1100,10 +1100,10 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteOnly, tblO.Partition.DDLState)
 			require.NotEqual(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1200,10 +1200,10 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkNO.MustQuery(`select * from t`).Sort().Check(rows)
 			rows = tkO.MustQuery(`select b from t order by b`).Rows()
 			tkNO.MustQuery(`select b from t order by b`).Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteOnly, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteReorganization, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1239,10 +1239,10 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteReorganization, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateNone, tblO.Partition.DDLState)
 		default:
@@ -1270,10 +1270,10 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			// even if it cannot read them from the global index, due to filtering.
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateNone, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1303,10 +1303,10 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			tkO.MustQuery(`select * from t where b = 13`).Check(testkit.Rows("13 13 OK"))
 			tkNO.MustQuery(`select * from t where b = 13`).Check(testkit.Rows("15 13 OK, non global unique index"))
 
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteOnly, tblO.Partition.DDLState)
 			require.NotEqual(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1393,10 +1393,10 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			// and can ignore the dropped partitions entries in the Global Indexes, i.e. overwrite them!
 			rows := tkO.MustQuery(`select * from t`).Sort().Rows()
 			tkNO.MustQuery(`select * from t`).Sort().Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteOnly, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteReorganization, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
@@ -1430,10 +1430,10 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
-			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateDeleteReorganization, tblNO.Partition.DDLState)
-			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateNone, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)

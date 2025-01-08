@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	. "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -4579,12 +4578,12 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "read_from_storage", hints[0].HintName.L)
-	require.Equal(t, "tiflash", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "tiflash", hints[0].HintData.(ast.CIStr).L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 	require.Equal(t, "read_from_storage", hints[1].HintName.L)
-	require.Equal(t, "tikv", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "tikv", hints[1].HintData.(ast.CIStr).L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 
@@ -4657,9 +4656,9 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "query_type", hints[0].HintName.L)
-	require.Equal(t, "olap", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "olap", hints[0].HintData.(ast.CIStr).L)
 	require.Equal(t, "query_type", hints[1].HintName.L)
-	require.Equal(t, "oltp", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "oltp", hints[1].HintData.(ast.CIStr).L)
 
 	// Test MEMORY_QUOTA
 	stmt, _, err = p.Parse("select /*+ MEMORY_QUOTA(1 MB), memory_quota(1 GB) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -5822,10 +5821,10 @@ func TestView(t *testing.T) {
 	require.NoError(t, err)
 	v, ok := sms[0].(*ast.CreateViewStmt)
 	require.True(t, ok)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "select * from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src := `CREATE OR REPLACE ALGORITHM = UNDEFINED DEFINER = root@localhost
                   SQL SECURITY DEFINER
@@ -5838,15 +5837,15 @@ func TestView(t *testing.T) {
 	v, ok = st.(*ast.CreateViewStmt)
 	require.True(t, ok)
 	require.True(t, v.OrReplace)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "root", v.Definer.Username)
 	require.Equal(t, "localhost", v.Definer.Hostname)
-	require.Equal(t, model.NewCIStr("a"), v.Cols[0])
-	require.Equal(t, model.NewCIStr("b"), v.Cols[1])
-	require.Equal(t, model.NewCIStr("c"), v.Cols[2])
+	require.Equal(t, ast.NewCIStr("a"), v.Cols[0])
+	require.Equal(t, ast.NewCIStr("b"), v.Cols[1])
+	require.Equal(t, ast.NewCIStr("c"), v.Cols[2])
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6459,8 +6458,8 @@ func TestTablePartitionNameList(t *testing.T) {
 		tableName, ok := source.Source.(*ast.TableName)
 		require.True(t, ok)
 		require.Len(t, tableName.PartitionNames, 2)
-		require.Equal(t, model.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
-		require.Equal(t, model.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
+		require.Equal(t, ast.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
+		require.Equal(t, ast.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
 	}
 }
 
@@ -7062,11 +7061,11 @@ func TestStatisticsOps(t *testing.T) {
 	require.True(t, v.IfNotExists)
 	require.Equal(t, "stats1", v.StatsName)
 	require.Equal(t, ast.StatsTypeCardinality, v.StatsType)
-	require.Equal(t, model.CIStr{O: "t", L: "t"}, v.Table.Name)
+	require.Equal(t, ast.CIStr{O: "t", L: "t"}, v.Table.Name)
 	require.Len(t, v.Columns, 3)
-	require.Equal(t, model.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
-	require.Equal(t, model.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
-	require.Equal(t, model.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
+	require.Equal(t, ast.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
+	require.Equal(t, ast.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
+	require.Equal(t, ast.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {

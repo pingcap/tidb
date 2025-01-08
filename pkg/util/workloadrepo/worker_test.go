@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -109,7 +109,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 func TestMultipleWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
-	_, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
 	require.False(t, ok)
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
@@ -153,7 +153,7 @@ func TestGlobalWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -174,7 +174,7 @@ func TestAdminWorkloadRepo(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)

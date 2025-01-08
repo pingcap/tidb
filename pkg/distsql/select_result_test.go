@@ -17,6 +17,7 @@ package distsql
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -30,11 +31,15 @@ import (
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
-	sr := selectResult{ctx: ctx.GetDistSQLCtx(), storeType: kv.TiKV}
+	sr := selectResult{ctx: ctx.GetDistSQLCtx(), storeType: kv.TiKV, stats: &selectResultRuntimeStats{}}
 	require.Nil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 
 	sr.rootPlanID = 1234
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a"}}, 0)
+	backOffSleep := make(map[string]time.Duration, 1)
+	backOffSleep["RegionMiss"] = time.Duration(100)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "a", BackoffSleep: backOffSleep}}, 0)
+	// RuntimeStatsColl is nil, so the update doesn't take efffect
+	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(0))
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	// refresh the ctx after assigning `RuntimeStatsColl`.
@@ -48,13 +53,17 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 
 	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"}}, 0)
+	backOffSleep["RegionMiss"] = time.Duration(200)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0)
 	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
+	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(200))
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
 
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"}}, 0)
+	backOffSleep["RegionMiss"] = time.Duration(300)
+	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
+	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
 }

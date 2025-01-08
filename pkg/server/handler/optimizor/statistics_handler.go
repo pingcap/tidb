@@ -23,7 +23,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -67,7 +67,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr(params[handler.DBName]), model.NewCIStr(params[handler.TableName]))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(params[handler.DBName]), ast.NewCIStr(params[handler.TableName]))
 	if err != nil {
 		handler.WriteError(w, err)
 	} else {
@@ -121,7 +121,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
 		is := sh.do.InfoSchema()
-		tbl, err = is.TableByName(context.Background(), model.NewCIStr(params[handler.DBName]), model.NewCIStr(params[handler.TableName]))
+		tbl, err = is.TableByName(context.Background(), ast.NewCIStr(params[handler.DBName]), ast.NewCIStr(params[handler.TableName]))
 		if err != nil {
 			handler.WriteError(w, err)
 			return
@@ -142,7 +142,7 @@ func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName s
 	if err != nil {
 		return nil, err
 	}
-	return is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
+	return is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 }
 
 // StatsPriorityQueueHandler is the handler for dumping the stats priority queue snapshot.

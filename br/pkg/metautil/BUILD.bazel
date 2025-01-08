@@ -52,7 +52,7 @@ go_test(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/util",
         "//pkg/tablecodec",

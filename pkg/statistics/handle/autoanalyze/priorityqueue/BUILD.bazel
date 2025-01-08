@@ -63,7 +63,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",

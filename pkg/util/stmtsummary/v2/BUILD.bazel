@@ -50,8 +50,8 @@ go_test(
     shard_count = 13,
     deps = [
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/parser/auth",
-        "//pkg/parser/model",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
