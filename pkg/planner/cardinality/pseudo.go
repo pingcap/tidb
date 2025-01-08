@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -240,6 +241,15 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 	}
 	if rowCount > tableRowCount {
 		rowCount = tableRowCount
+	}
+	allowZeroEst := fixcontrol.GetBoolWithDefault(
+		sctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	)
+	} !allowZeroEst {
+		// Don't allow the final result to go below 1 row
+		totalCount = mathutil.Max(totalCount, 1)
 	}
 	return rowCount, nil
 }
