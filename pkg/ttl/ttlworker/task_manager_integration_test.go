@@ -371,14 +371,8 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	se := sessionFactory()
 	now := se.Now()
 
-<<<<<<< HEAD
-	isc := cache.NewInfoSchemaCache(time.Minute)
-	require.NoError(t, isc.Update(se))
-	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-1", store)
-=======
 	m := ttlworker.NewTaskManager(context.Background(), pool, cache.NewInfoSchemaCache(time.Minute), "scan-manager-1", store)
 
->>>>>>> d92dce025a4 (ttl: reduce some warnings logs when locking TTL tasks (#58306))
 	startBlockNotifyCh := make(chan struct{})
 	blockCancelCh := make(chan struct{})
 	workers := make([]ttlworker.Worker, 0, taskCnt)

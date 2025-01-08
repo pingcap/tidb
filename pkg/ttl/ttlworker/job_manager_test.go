@@ -33,12 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
->>>>>>> d92dce025a4 (ttl: reduce some warnings logs when locking TTL tasks (#58306))
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -680,29 +674,3 @@ func TestLocalJobs(t *testing.T) {
 	assert.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
 }
-<<<<<<< HEAD
-=======
-
-func TestSplitCnt(t *testing.T) {
-	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	defer func() {
-		pdClient.Close()
-		err = mockClient.Close()
-		require.NoError(t, err)
-	}()
-
-	require.Equal(t, 64, getScanSplitCnt(nil))
-	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
-
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
-	for i := uint64(1); i <= 128; i++ {
-		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
-		if i <= 64 {
-			require.Equal(t, 64, getScanSplitCnt(s))
-		} else {
-			require.Equal(t, int(i), getScanSplitCnt(s))
-		}
-	}
-}
->>>>>>> d92dce025a4 (ttl: reduce some warnings logs when locking TTL tasks (#58306))
