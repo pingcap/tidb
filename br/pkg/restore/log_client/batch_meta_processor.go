@@ -192,10 +192,8 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 			} else if !meta.IsDBkey(rawKey.Key) {
 				// also see RewriteMetaKvEntry
 				continue
-			}
-
-			// collect table history indexed by table id, same id may have different table names in history
-			if meta.IsTableKey(rawKey.Field) {
+			} else if meta.IsTableKey(rawKey.Field) {
+				// collect table history indexed by table id, same id may have different table names in history
 				var tableInfo model.TableInfo
 				if err := json.Unmarshal(value, &tableInfo); err != nil {
 					return nil, errors.Trace(err)

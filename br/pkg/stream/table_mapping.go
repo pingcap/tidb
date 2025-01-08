@@ -118,10 +118,9 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 	}
 
 	// update table ID and partition ID.
-	tableInfo.ID = tableReplace.TableID
 	partitions := tableInfo.GetPartitionInfo()
 	if partitions != nil {
-		for i, partition := range partitions.Definitions {
+		for _, partition := range partitions.Definitions {
 			newID, exist := tableReplace.PartitionMap[partition.ID]
 			if !exist {
 				newID, exist = tm.globalIdMap[partition.ID]
@@ -131,7 +130,6 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 				}
 				tableReplace.PartitionMap[partition.ID] = newID
 			}
-			partitions.Definitions[i].ID = newID
 		}
 	}
 	return nil

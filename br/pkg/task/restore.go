@@ -874,7 +874,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.logTableHistoryManager != nil {
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
-		err := adjustTablesToRestoreAndCreateTableTracker(cfg.logTableHistoryManager, cfg.RestoreConfig, client, fileMap, tableMap)
+		err := AdjustTablesToRestoreAndCreateTableTracker(cfg.logTableHistoryManager, cfg.RestoreConfig,
+			client.GetDatabaseMap(), fileMap, tableMap)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1396,15 +1397,13 @@ func filterRestoreFiles(
 	return
 }
 
-func adjustTablesToRestoreAndCreateTableTracker(
+func AdjustTablesToRestoreAndCreateTableTracker(
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
 	cfg *RestoreConfig,
-	client *snapclient.SnapClient,
+	snapshotDBMap map[int64]*metautil.Database,
 	fileMap map[string]*backuppb.File,
 	tableMap map[int64]*metautil.Table,
 ) (err error) {
-	snapshotDBMap := client.GetDatabaseMap()
-
 	// build tracker for pitr restore to use later
 	piTRTableTracker := utils.NewPiTRTableTracker()
 
@@ -1420,6 +1419,11 @@ func adjustTablesToRestoreAndCreateTableTracker(
 	tableHistory := logBackupTableHistory.GetTableHistory()
 
 	for tableID, dbIDAndTableName := range tableHistory {
+		if _, exists := tableMap[tableID]; exists {
+			// going to restore anyway, skip
+			continue
+		}
+
 		start := dbIDAndTableName[0]
 		end := dbIDAndTableName[1]
 
@@ -1448,15 +1452,15 @@ func adjustTablesToRestoreAndCreateTableTracker(
 		// we need to restore original table
 		if utils.MatchTable(cfg.TableFilter, dbName, end.TableName) {
 			// put this db/table id into pitr tracker as it matches with user's filter
-			// have to update filter here since table might be empty or not in snapshot so nothing will be returned .
+			// have to update tracker here since table might be empty or not in snapshot so nothing will be returned .
 			// but we still need to capture this table id to restore during log restore.
 			piTRTableTracker.AddTable(end.DbID, tableID)
 
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
 			if !exists {
-				// original db created during log backup, snapshot doesn't have information about this db so doesn't
-				// need to restore at snapshot
+				// original db created during log backup, or full backup has a filter that filters out this db,
+				// either way snapshot doesn't have information about this db so doesn't need to restore at snapshot
 				continue
 			}
 

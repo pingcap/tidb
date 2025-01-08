@@ -186,18 +186,75 @@ test_basic_filter() {
     echo "basic filter test cases passed"
 }
 
+test_with_full_backup_filter() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "start with full backup filter testing"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+    run_sql "create schema ${DB}_other;"
+
+    echo "write initial data and do snapshot backup"
+    create_tables_with_values "full_backup" 3
+
+    run_br backup full -f "${DB}_other.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    echo "write more data and wait for log backup to catch up"
+    run_sql "create table ${DB}_other.test_table(c int); insert into ${DB}_other.test_table values (42);"
+    create_tables_with_values "log_backup" 3
+
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+
+    # restart services to clean up the cluster
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "case 1 sanity check, zero filter"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
+
+    verify_tables "log_backup" 3 false
+    verify_tables "full_backup" 3 false
+    verify_other_db_tables true
+
+    echo "case 2 with log backup table same filter"
+    run_sql "drop schema ${DB}_other;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_other.*"
+
+    verify_tables "log_backup" 3 false
+    verify_tables "full_backup" 3 false
+    verify_other_db_tables true
+
+    echo "case 3 with log backup filter include nothing"
+    run_sql "drop schema ${DB}_other;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_nothing.*"
+
+    verify_tables "log_backup" 3 false
+    verify_tables "full_backup" 3 false
+    verify_other_db_tables false
+
+    # cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+
+    echo "with full backup filter test cases passed"
+}
+
 test_table_rename() {
     restart_services || { echo "Failed to restart services"; exit 1; }
 
     echo "start table rename with filter testing"
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
 
+    # create multiple schemas for cross-db rename testing
     run_sql "create schema $DB;"
+    run_sql "create schema ${DB}_other1;"
+    run_sql "create schema ${DB}_other2;"
 
     echo "write initial data and do snapshot backup"
     create_tables_with_values "full_backup" 3
     create_tables_with_values "renamed_in" 3
     create_tables_with_values "log_renamed_out" 3
+    # add table for multiple rename test
+    run_sql "create table ${DB}_other1.multi_rename(c int); insert into ${DB}_other1.multi_rename values (42);"
 
     run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
@@ -205,6 +262,10 @@ test_table_rename() {
     create_tables_with_values "log_backup" 3
     rename_tables "renamed_in" "log_backup_renamed_in" 3
     rename_tables "log_renamed_out" "renamed_out" 3
+    
+    # multiple renames across different databases
+    run_sql "rename table ${DB}_other1.multi_rename to ${DB}_other2.multi_rename;"
+    run_sql "rename table ${DB}_other2.multi_rename to $DB.log_multi_rename;"
 
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
@@ -222,6 +283,22 @@ test_table_rename() {
     # also renamed out of filter range, should not be visible for both
     verify_tables "renamed_out" 3 false
     verify_tables "log_renamed_out" 3 false
+
+    # verify multi-renamed table
+    run_sql "select count(*) = 1 from $DB.log_multi_rename where c = 42" || {
+        echo "Table multi_rename doesn't have expected value after multiple renames"
+        exit 1
+    }
+
+    # Verify table doesn't exist in intermediate databases
+    if run_sql "select * from ${DB}_other1.multi_rename" 2>/dev/null; then
+        echo "Table exists in ${DB}_other1 but should not"
+        exit 1
+    fi
+    if run_sql "select * from ${DB}_other2.multi_rename" 2>/dev/null; then
+        echo "Table exists in ${DB}_other2 but should not"
+        exit 1
+    fi
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
@@ -377,11 +454,11 @@ test_system_tables() {
     run_sql "create schema $DB;"
 
     echo "write initial data and do snapshot backup"
-    # Create and populate a user table for reference
+    # create and populate a user table for reference
     run_sql "create table $DB.user_table(id int primary key);"
     run_sql "insert into $DB.user_table values (1);"
     
-    # Make some changes to system tables
+    # make some changes to system tables
     run_sql "create user 'test_user'@'%' identified by 'password';"
     run_sql "grant select on $DB.* to 'test_user'@'%';"
 
@@ -394,36 +471,34 @@ test_system_tables() {
 
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
-    # restart services to clean up the cluster
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    echo "restore point-in-time backup including system tables"
-    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
-
-    # Verify system table changes were restored
-    # Check if user exists with correct privileges
-    run_sql "select count(*) = 1 from mysql.user where User = 'test_user' and Host = '%'" || {
-        echo "test_user not found in mysql.user table"
+    echo "PiTR should error out when system tables are included with explicit filter"
+    restore_fail=0
+    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo "Expected restore to fail when including system tables with filter"
         exit 1
-    }
+    fi
 
-    # Verify the privileges were restored correctly
-    run_sql "select count(*) = 1 from mysql.tables_priv where User = 'test_user' and Host = '%' and Table_priv = 'Insert'" || {
-        echo "Incorrect privileges for test_user"
+    # Also verify that specific system table filters fail
+    restore_fail=0
+    run_br --pd "$PD_ADDR" restore point -f "mysql.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo "Expected restore to fail when explicitly filtering system tables"
         exit 1
-    }
+    fi
 
-    # cleanup
-    run_sql "drop user 'test_user'@'%';"
     rm -rf "$TEST_DIR/$TASK_NAME"
-
     echo "system tables test passed"
 }
 
 # run all test cases
 test_basic_filter
+test_with_full_backup_filter
 test_table_rename
 test_with_checkpoint
 test_exchange_partition
+test_system_tables
 
 echo "br pitr table filter all tests passed"
