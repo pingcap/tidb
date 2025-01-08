@@ -217,8 +217,6 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
 	var usedEqEdges []joinGroupEqEdge
-	var otherConds []expression.Expression
-
 	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
@@ -226,6 +224,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 			usedEqEdges = append(usedEqEdges, edge)
 		}
 	}
+	otherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
 	for _, edge := range totalNonEqEdges {
 		// If the result is false, means that the current group hasn't covered the columns involved in the expression.
 		if edge.nodeIDMask&(leftMask|rightMask) != edge.nodeIDMask {
