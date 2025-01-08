@@ -586,22 +586,10 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
-// checkBindingStmt checks whether the binding statement is valid.
-func checkBindingStmt(sctx sessionctx.Context, bindingStmt ast.StmtNode) error {
-	defer func(originalVal bool) {
-		sctx.GetSessionVars().UsePlanBaselines = originalVal
-	}(sctx.GetSessionVars().UsePlanBaselines)
-	sctx.GetSessionVars().UsePlanBaselines = false // avoid unnecessary recursive calls
-	nodeW := resolve.NewNodeW(bindingStmt)
-	_, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
-	return err
-}
-
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
-	bindinfo.CheckBindingStmt = checkBindingStmt
 	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
 		return domain.GetDomain(sctx).BindHandle()
 	}

@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"unsafe"
@@ -293,7 +294,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	}
 	if !isCrossDB && !hasParam(stmt) {
 		// TODO: how to check cross-db binding and bindings with parameters?
-		if err = CheckBindingStmt(sctx, stmt); err != nil {
+		if err = checkBindingValidation(sctx, binding.BindSQL); err != nil {
 			return err
 		}
 	}
@@ -492,6 +493,19 @@ func hasParam(stmt ast.Node) bool {
 	return p.hasParam
 }
 
-// CheckBindingStmt is a function to check the binding statement.
-// It is used to avoid cyclic import.
-var CheckBindingStmt func(sctx sessionctx.Context, stmt ast.StmtNode) error
+// CheckBindingStmt checks whether the statement is valid.
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
+	defer func(originalVal bool) {
+		sctx.GetSessionVars().UsePlanBaselines = originalVal
+	}(sctx.GetSessionVars().UsePlanBaselines)
+	sctx.GetSessionVars().UsePlanBaselines = false // avoid unnecessary recursive calls
+
+	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+	// the statement won't be able to "break out" from EXPLAIN.
+	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+	if err != nil {
+		return err
+	}
+	return rs.Close()
+}
