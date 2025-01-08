@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -49,18 +48,18 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos1 := []*model.TableInfo{}
 	infos1 = append(infos1, &model.TableInfo{
 		ID:   124,
-		Name: pmodel.NewCIStr("table_id_resued1"),
+		Name: ast.NewCIStr("table_id_resued1"),
 	})
 	infos1 = append(infos1, &model.TableInfo{
 		ID:   125,
-		Name: pmodel.NewCIStr("table_id_resued2"),
+		Name: ast.NewCIStr("table_id_resued2"),
 	})
 
 	sctx := tk.Session()
 
 	// keep/reused table id verification
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -85,11 +84,11 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos2 := []*model.TableInfo{}
 	infos2 = append(infos2, &model.TableInfo{
 		ID:   124,
-		Name: pmodel.NewCIStr("table_id_new"),
+		Name: ast.NewCIStr("table_id_new"),
 	})
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos2)
+	err = executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos2)
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -105,7 +104,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos3 := []*model.TableInfo{}
 
 	originQueryString := sctx.Value(sessionctx.QueryString)
-	err = executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos3, ddl.WithIDAllocated(true))
+	err = executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos3, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
 }
@@ -125,15 +124,15 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
 		ID:   1234,
-		Name: pmodel.NewCIStr("tables_1"),
+		Name: ast.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   1235,
-		Name: pmodel.NewCIStr("tables_2"),
+		Name: ast.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   1236,
-		Name: pmodel.NewCIStr("tables_3"),
+		Name: ast.NewCIStr("tables_3"),
 	})
 
 	sctx := tk.Session()
@@ -141,7 +140,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos, ddl.WithIDAllocated(true))
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -194,20 +193,20 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_1"),
+		Name: ast.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_2"),
+		Name: ast.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_3"),
+		Name: ast.NewCIStr("tables_3"),
 	})
 
 	sctx := tk.Session()
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos)
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
@@ -227,7 +226,7 @@ func TestBRIECreateDatabase(t *testing.T) {
 	originQueryString := sctx.Value(sessionctx.QueryString)
 	schema1 := &model.DBInfo{
 		ID:      1230,
-		Name:    pmodel.NewCIStr("db_1"),
+		Name:    ast.NewCIStr("db_1"),
 		Charset: "utf8mb4",
 		Collate: "utf8mb4_bin",
 		State:   model.StatePublic,
@@ -237,7 +236,7 @@ func TestBRIECreateDatabase(t *testing.T) {
 
 	schema2 := &model.DBInfo{
 		ID:      1240,
-		Name:    pmodel.NewCIStr("db_2"),
+		Name:    ast.NewCIStr("db_2"),
 		Charset: "utf8mb4",
 		Collate: "utf8mb4_bin",
 		State:   model.StatePublic,
@@ -270,14 +269,14 @@ func TestBRIECreateTable(t *testing.T) {
 
 	sctx := tk.Session()
 	originQueryString := sctx.Value(sessionctx.QueryString)
-	dbName := pmodel.NewCIStr("test")
+	dbName := ast.NewCIStr("test")
 	tableInfo := mockTableInfo(t, sctx, "create table test.table_1 (a int primary key, b json, c varchar(20))")
 	tableInfo.ID = 1230
 	err := executor.BRIECreateTable(sctx, dbName, tableInfo, "/* from test */")
 	require.NoError(t, err)
 
 	tableInfo.ID = 1240
-	tableInfo.Name = pmodel.NewCIStr("table_2")
+	tableInfo.Name = ast.NewCIStr("table_2")
 	err = executor.BRIECreateTable(sctx, dbName, tableInfo, "")
 	require.NoError(t, err)
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))

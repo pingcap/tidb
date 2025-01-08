@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -343,7 +343,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	testFunc := func(dbName string, expectInfo any) {
 		tableInfo := model.TableInfo{}
 
-		info := infoschema.GetShardingInfo(pmodel.NewCIStr(dbName), &tableInfo)
+		info := infoschema.GetShardingInfo(ast.NewCIStr(dbName), &tableInfo)
 		require.Equal(t, expectInfo, info)
 	}
 
@@ -614,11 +614,11 @@ func TestReloadDropDatabase(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	t2, err := is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	_, err = is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	_, err = is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
 	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
@@ -636,11 +636,11 @@ func TestSystemSchemaID(t *testing.T) {
 func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	db, ok := is.SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := is.SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), ast.NewCIStr(dbName))
 	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
@@ -673,7 +673,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test_hidden"), pmodel.NewCIStr("hidden"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_hidden"), ast.NewCIStr("hidden"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	colInfo := tbInfo.Columns

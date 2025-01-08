@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -386,9 +385,9 @@ const (
 type FuncCallExpr struct {
 	funcNode
 	Tp     FuncCallExprType
-	Schema model.CIStr
+	Schema CIStr
 	// FnName is the function name.
-	FnName model.CIStr
+	FnName CIStr
 	// Args is the function args.
 	Args []ExprNode
 }

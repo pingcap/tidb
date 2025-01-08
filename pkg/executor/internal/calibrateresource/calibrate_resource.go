@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -196,10 +195,10 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		if startTimeExpr == nil {
 			toTimeExpr := endTimeExpr
 			if endTime.IsZero() {
-				toTimeExpr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+				toTimeExpr = &ast.FuncCallExpr{FnName: ast.NewCIStr("CURRENT_TIMESTAMP")}
 			}
 			startTimeExpr = &ast.FuncCallExpr{
-				FnName: model.NewCIStr("DATE_SUB"),
+				FnName: ast.NewCIStr("DATE_SUB"),
 				Args: []ast.ExprNode{
 					toTimeExpr,
 					op.Ts,
@@ -213,7 +212,7 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		// If endTime is set, duration will be ignored.
 		if endTime.IsZero() {
 			endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
-				FnName: model.NewCIStr("DATE_ADD"),
+				FnName: ast.NewCIStr("DATE_ADD"),
 				Args: []ast.ExprNode{startTimeExpr,
 					op.Ts,
 					&ast.TimeUnitExpr{Unit: op.Unit}},

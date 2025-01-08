@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -138,7 +137,7 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 
 func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
 	ds := logicalop.DataSource{}.Init(ctx, 0)
-	tan := model.NewCIStr(name)
+	tan := ast.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.SetSchema(expression.NewSchema())
 	ds.Schema().Append(&expression.Column{

@@ -113,7 +113,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

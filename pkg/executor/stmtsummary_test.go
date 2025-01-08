@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -37,7 +37,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
-	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummary))
+	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummary))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
@@ -82,7 +82,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
-	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryEvicted))
+	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummaryEvicted))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
@@ -162,7 +162,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	err = infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
-	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryHistory))
+	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummaryHistory))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 

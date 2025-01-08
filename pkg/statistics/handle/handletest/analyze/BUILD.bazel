@@ -12,7 +12,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/testkit",

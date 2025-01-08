@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -185,7 +185,7 @@ func (tc *testCase) runAction(action testAction) {
 func (tc *testCase) createSchema(args []any) {
 	dbInfo := &model.DBInfo{
 		ID:    int64(args[0].(int)),
-		Name:  pmodel.NewCIStr(args[1].(string)),
+		Name:  ast.NewCIStr(args[1].(string)),
 		State: model.StatePublic,
 	}
 	dbInfo.Deprecated.Tables = []*model.TableInfo{}
@@ -197,7 +197,7 @@ func (tc *testCase) createSchema(args []any) {
 func (tc *testCase) createTable(args []any) {
 	colInfo := &model.ColumnInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("a"),
+		Name:      ast.NewCIStr("a"),
 		Offset:    0,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		State:     model.StatePublic,
@@ -206,7 +206,7 @@ func (tc *testCase) createTable(args []any) {
 	tblInfo := &model.TableInfo{
 		DBID:    int64(args[0].(int)),
 		ID:      int64(args[2].(int)),
-		Name:    pmodel.NewCIStr(args[3].(string)),
+		Name:    ast.NewCIStr(args[3].(string)),
 		Columns: []*model.ColumnInfo{colInfo},
 		State:   model.StatePublic,
 	}
@@ -217,7 +217,7 @@ func (tc *testCase) createTable(args []any) {
 			tc.statusHook.On("onEvict").Return().Once()
 		}
 	}
-	tc.is.Data.add(tableItem{pmodel.NewCIStr(args[1].(string)), tblInfo.DBID, tblInfo.Name, tblInfo.ID, int64(args[4].(int)), false}, internal.MockTable(tc.t, tc.r.Store(), tblInfo))
+	tc.is.Data.add(tableItem{ast.NewCIStr(args[1].(string)), tblInfo.DBID, tblInfo.Name, tblInfo.ID, int64(args[4].(int)), false}, internal.MockTable(tc.t, tc.r.Store(), tblInfo))
 	internal.AddTable(tc.t, tc.r.Store(), tblInfo.DBID, tblInfo)
 }
 
@@ -260,5 +260,5 @@ func (tc *testCase) tableByName(args []any) {
 		}
 	}
 
-	tc.is.TableByName(tc.ctx, pmodel.NewCIStr(args[0].(string)), pmodel.NewCIStr(args[1].(string)))
+	tc.is.TableByName(tc.ctx, ast.NewCIStr(args[0].(string)), ast.NewCIStr(args[1].(string)))
 }
