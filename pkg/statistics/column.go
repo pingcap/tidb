@@ -39,7 +39,6 @@ type Column struct {
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
-	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
@@ -52,7 +51,6 @@ func (c *Column) Copy() *Column {
 	}
 	nc := &Column{
 		PhysicalID: c.PhysicalID,
-		Flag:       c.Flag,
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}

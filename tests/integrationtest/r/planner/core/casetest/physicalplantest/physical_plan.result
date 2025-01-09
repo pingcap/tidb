@@ -1771,8 +1771,8 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1787,8 +1787,8 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1803,8 +1803,8 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1819,8 +1819,8 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1835,8 +1835,8 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1851,8 +1851,8 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1867,8 +1867,8 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
@@ -1883,8 +1883,8 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
-Warning	1815	We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
+Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'brief' select /*+ hash_join_probe(t2, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	estRows	task	access object	operator info
 HashJoin	12500.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]

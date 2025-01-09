@@ -1667,7 +1667,7 @@
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+          "[planner:1815]The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti semi join with hash join version 1. Please remove these hints"
         ]
       },
       {
@@ -1683,7 +1683,7 @@
         ],
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint",
+          "[planner:1815]The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti semi join with hash join version 1. Please remove these hints",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
         ]
       }
