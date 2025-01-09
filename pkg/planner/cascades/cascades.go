@@ -23,15 +23,26 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+<<<<<<< HEAD
 // Optimizer is a basic cascades search framework portal, driven by Context.
 type Optimizer struct {
+=======
+// Cascades is a basic cascades search framework portal, drove by Context.
+type Cascades struct {
+>>>>>>> 31795e4661 (.)
 	logic corebase.LogicalPlan
 	ctx   cascadesctx.Context
 }
 
+<<<<<<< HEAD
 // NewOptimizer return a new cascades obj for logical alternative searching.
 func NewOptimizer(lp corebase.LogicalPlan) (*Optimizer, error) {
 	cas := &Optimizer{
+=======
+// NewCascades return a new cascades obj for logical alternative searching.
+func NewCascades(lp corebase.LogicalPlan) (*Cascades, error) {
+	cas := &Cascades{
+>>>>>>> 31795e4661 (.)
 		logic: lp,
 		ctx:   NewContext(lp.SCtx()),
 	}
