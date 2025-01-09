@@ -164,7 +164,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		snapshot := row.GetUint64(4)
-		var latestHistUpdateVersion uint64 = 0
+		var latestHistUpdateVersion uint64
 		if !row.IsNull(5) {
 			latestHistUpdateVersion = row.GetUint64(5)
 		}
