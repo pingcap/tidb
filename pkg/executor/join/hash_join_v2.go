@@ -15,14 +15,12 @@
 package join
 
 import (
-	"bytes"
 	"context"
 	"hash"
 	"math"
 	"math/bits"
 	"math/rand"
 	"runtime/trace"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -359,14 +356,13 @@ type ProbeWorkerV2 struct {
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
-	atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxProbeForCurrentRound, probeTime)
+	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbeForCurrentRound, int64(t))
 }
 
-func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
+func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start time.Time) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
-		start := time.Now()
 		defer func() {
 			w.updateProbeStatistic(start, probeTime)
 		}()
@@ -441,7 +437,7 @@ func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
 
 func (b *BuildWorkerV2) updatePartitionData(cost int64) {
 	atomic.AddInt64(&b.HashJoinCtx.stats.partitionData, cost)
-	setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
+	setMaxValue(&b.HashJoinCtx.stats.maxPartitionDataForCurrentRound, cost)
 }
 
 func (b *BuildWorkerV2) processOneRestoredChunk(cost *int64) error {
@@ -527,8 +523,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	cost := int64(0)
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
-			atomic.AddInt64(&b.HashJoinCtx.stats.partitionData, cost)
-			setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
+			b.updatePartitionData(cost)
 		}
 	}()
 
@@ -585,7 +580,7 @@ func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
 			atomic.AddInt64(&b.HashJoinCtx.stats.buildHashTable, cost)
-			setMaxValue(&b.HashJoinCtx.stats.maxBuildHashTable, cost)
+			setMaxValue(&b.HashJoinCtx.stats.maxBuildHashTableForCurrentRound, cost)
 		}
 	}()
 	for task := range taskCh {
@@ -749,6 +744,10 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.stats = &hashJoinRuntimeStatsV2{}
 		e.stats.concurrent = int(e.Concurrency)
 	}
+
+	if e.stats != nil {
+		e.stats.reset()
+	}
 	return nil
 }
 
@@ -809,6 +808,11 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 }
 
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
+	var start time.Time
+	if e.HashJoinCtxV2.stats != nil {
+		start = time.Now()
+	}
+
 	if e.inRestore {
 		// Wait for the restore build
 		err := <-e.buildFinished
@@ -822,22 +826,26 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
 			if e.inRestore {
-				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID])
+				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID], start)
 			} else {
-				e.ProbeWorkers[workerID].runJoinWorker()
+				e.ProbeWorkers[workerID].runJoinWorker(start)
 			}
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
+	start := time.Now()
 	e.startProbeFetcher(ctx)
 
 	// Join workers directly read data from disk when we are in restore status
 	// and read data from fetcher otherwise.
 	e.startProbeJoinWorkers(ctx)
 
-	e.waiterWg.RunWithRecover(e.waitJoinWorkers, nil)
+	e.waiterWg.RunWithRecover(
+		func() {
+			e.waitJoinWorkers(start)
+		}, nil)
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -852,11 +860,12 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	}
 }
 
-func (e *HashJoinV2Exec) waitJoinWorkers() {
+func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 	e.workerWg.Wait()
 	if e.stats != nil {
+		e.HashJoinCtxV2.stats.fetchAndProbe += int64(time.Since(start))
 		for _, prober := range e.ProbeWorkers {
-			e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
+			e.stats.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
 		}
 	}
 
@@ -952,15 +961,11 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 	return true, waitTime, joinResult
 }
 
-func (w *ProbeWorkerV2) runJoinWorker() {
+func (w *ProbeWorkerV2) runJoinWorker(start time.Time) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
-		start := time.Now()
 		defer func() {
-			t := time.Since(start)
-			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
-			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+			w.updateProbeStatistic(start, probeTime)
 		}()
 	}
 
@@ -1037,6 +1042,9 @@ func (e *HashJoinV2Exec) reset() {
 	e.releaseDisk()
 	e.resetHashTableContextForRestore()
 	e.spillHelper.setCanSpillFlag(true)
+	if e.HashJoinCtxV2.stats != nil {
+		e.HashJoinCtxV2.stats.resetCurrentRound()
+	}
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
@@ -1228,7 +1236,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
-			e.stats.fetchAndBuildHashTable = time.Since(start)
+			e.stats.fetchAndBuildHashTable += int64(time.Since(start))
 		}()
 	}
 
@@ -1342,10 +1350,6 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 		close(waitForController)
 	}()
 
-	if e.stats != nil {
-		e.stats.fetchAndBuildStartTime = time.Now()
-	}
-
 	for i := 0; i < chunkNum; i++ {
 		if e.finished.Load() {
 			return
@@ -1447,103 +1451,6 @@ type buildTask struct {
 	partitionIdx int
 	segStartIdx  int
 	segEndIdx    int
-}
-
-type hashJoinRuntimeStatsV2 struct {
-	hashJoinRuntimeStats
-	partitionData     int64
-	maxPartitionData  int64
-	buildHashTable    int64
-	maxBuildHashTable int64
-}
-
-func setMaxValue(addr *int64, currentValue int64) {
-	for {
-		value := atomic.LoadInt64(addr)
-		if currentValue <= value {
-			return
-		}
-		if atomic.CompareAndSwapInt64(addr, value, currentValue) {
-			return
-		}
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (*hashJoinRuntimeStatsV2) Tp() int {
-	return execdetails.TpHashJoinRuntimeStats
-}
-
-func (e *hashJoinRuntimeStatsV2) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0, 128))
-	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
-		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
-		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
-		buf.WriteString("}")
-	}
-	if e.probe > 0 {
-		buf.WriteString(", probe:{concurrency:")
-		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
-		buf.WriteString(", max:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
-		buf.WriteString(", probe:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
-		buf.WriteString(", fetch and wait:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
-		if e.hashStat.probeCollision > 0 {
-			buf.WriteString(", probe_collision:")
-			buf.WriteString(strconv.FormatInt(e.hashStat.probeCollision, 10))
-		}
-		buf.WriteString("}")
-	}
-	return buf.String()
-}
-
-func (e *hashJoinRuntimeStatsV2) Clone() execdetails.RuntimeStats {
-	stats := hashJoinRuntimeStats{
-		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
-		hashStat:               e.hashStat,
-		fetchAndProbe:          e.fetchAndProbe,
-		probe:                  e.probe,
-		concurrent:             e.concurrent,
-		maxFetchAndProbe:       e.maxFetchAndProbe,
-	}
-	return &hashJoinRuntimeStatsV2{
-		hashJoinRuntimeStats: stats,
-		partitionData:        e.partitionData,
-		maxPartitionData:     e.maxPartitionData,
-		buildHashTable:       e.buildHashTable,
-		maxBuildHashTable:    e.maxBuildHashTable,
-	}
-}
-
-func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
-	tmp, ok := rs.(*hashJoinRuntimeStatsV2)
-	if !ok {
-		return
-	}
-	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
-	e.buildHashTable += tmp.buildHashTable
-	if e.maxBuildHashTable < tmp.maxBuildHashTable {
-		e.maxBuildHashTable = tmp.maxBuildHashTable
-	}
-	e.partitionData += tmp.partitionData
-	if e.maxPartitionData < tmp.maxPartitionData {
-		e.maxPartitionData = tmp.maxPartitionData
-	}
-	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
-	e.hashStat.probeCollision += tmp.hashStat.probeCollision
-	e.fetchAndProbe += tmp.fetchAndProbe
-	e.probe += tmp.probe
-	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
-		e.maxFetchAndProbe = tmp.maxFetchAndProbe
-	}
 }
 
 func generatePartitionIndex(hashValue uint64, partitionMaskOffset int) uint64 {
