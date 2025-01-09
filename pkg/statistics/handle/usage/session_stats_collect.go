@@ -179,6 +179,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			return errors.Trace(err)
 		}
 
+		startRecordHistoricalStatsMeta := time.Now()
 		// Record historical stats meta for all tables one by one.
 		// FIXME: Although this feature is currently disabled, it would be beneficial to implement it in batches for efficiency.
 		for _, update := range batchUpdates {
@@ -188,6 +189,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				})
 				s.statsHandle.RecordHistoricalStatsMeta(update.TableID, statsVersion, "flush stats", false)
 			}
+		}
+		if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+				zap.Int("tableCount", len(batchUpdates)),
+				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
 		}
 	}
 
@@ -211,6 +217,15 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	if len(updates) == 0 {
 		return 0, nil
 	}
+	const queryTooSlowThreshold = 5 * time.Second
+	start := time.Now()
+	defer func() {
+		if time.Since(start) > queryTooSlowThreshold {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Dumping stats delta to KV query is too slow",
+				zap.Int("tableCount", len(updates)),
+				zap.Duration("duration", time.Since(start)))
+		}
+	}()
 	statsVersion, err = utilstats.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
