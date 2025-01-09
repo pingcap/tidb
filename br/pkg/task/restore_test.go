@@ -594,6 +594,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 
 	// Test case 2: Table not in filter
 	tableFilter, err := filter.Parse([]string{"other_db.other_table"})
+	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
 	logBackupTableHistory = stream.NewTableHistoryManager()
 	logBackupTableHistory.AddTableHistory(11, "test_table_11", 1)
@@ -608,6 +609,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	// Test case 3: New table created during log backup
 	logBackupTableHistory = stream.NewTableHistoryManager()
 	testFilter, err = filter.Parse([]string{"test_db*.*"})
+	require.NoError(t, err)
 	cfg.TableFilter = testFilter
 	logBackupTableHistory.AddTableHistory(11, "test_table_11", 1)
 	logBackupTableHistory.AddTableHistory(12, "test_table_12", 1)
@@ -627,6 +629,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	logBackupTableHistory.AddTableHistory(12, "test_table_12", 1)
 	logBackupTableHistory.AddTableHistory(21, "test_table_21", 2)
 	tableFilter, err = filter.Parse([]string{"test_db_2.*"})
+	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
 	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
 	require.NoError(t, err)
@@ -637,6 +640,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 
 	// Test case 5: Table renamed out of filter during log backup
 	tableFilter, err = filter.Parse([]string{"test_db_1.*"})
+	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
 	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
 	require.NoError(t, err)
