@@ -288,11 +288,19 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
+<<<<<<< HEAD:ddl/placement/bundle.go
 	extraCnt := map[PeerRoleType]int{}
 	newRules := b.Rules[:0]
 
 	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
 	var locationLabels []string
+=======
+	// refer to tidb#58633
+	// Does not explicitly set exclude rule with label.key==EngineLabelKey, because the
+	// PD may wrongly add peer to the unexpected stores if that key is specified.
+	tempRules := b.Rules[:0]
+	id := 0
+>>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637)):pkg/ddl/placement/bundle.go
 	for _, rule := range b.Rules {
 		if len(rule.LocationLabels) > 0 {
 			locationLabels = rule.LocationLabels
@@ -304,6 +312,7 @@ func (b *Bundle) Tidy() error {
 		if rule.Count <= 0 {
 			continue
 		}
+<<<<<<< HEAD:ddl/placement/bundle.go
 		// merge all empty constraints
 		if len(rule.Constraints) == 0 {
 			extraCnt[rule.Role] += rule.Count
@@ -326,6 +335,20 @@ func (b *Bundle) Tidy() error {
 		// it is seen as an empty constraint, so merge it
 		if len(rule.Constraints) == 1 {
 			extraCnt[rule.Role] += rule.Count
+=======
+		rule.ID = strconv.Itoa(id)
+		tempRules = append(tempRules, rule)
+		id++
+	}
+
+	groups := make(map[string]*constraintsGroup)
+	finalRules := tempRules[:0]
+	for _, rule := range tempRules {
+		key := ConstraintsFingerPrint(&rule.LabelConstraints)
+		existing, ok := groups[key]
+		if !ok {
+			groups[key] = &constraintsGroup{rules: []*pd.Rule{rule}}
+>>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637)):pkg/ddl/placement/bundle.go
 			continue
 		}
 		rule.ID = strconv.Itoa(i)
