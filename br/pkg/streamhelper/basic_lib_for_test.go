@@ -183,6 +183,11 @@ func (f *fakeStore) GetID() uint64 {
 	return f.id
 }
 
+func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	f.flush()
+	return &logbackup.FlushNowResponse{Results: []*logbackup.FlushResult{{TaskName: "Universe", Success: true}}}, nil
+}
+
 func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
 	f.clientMu.Lock()
 	defer f.clientMu.Unlock()
