@@ -19,18 +19,18 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/task"
-	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
+	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// Cascades is a basic cascades search framework portal, drove by CascadesContext.
+// Cascades is a basic cascades search framework portal, drove by Context.
 type Cascades struct {
-	logic base2.LogicalPlan
-	ctx   cascadesctx.CascadesContext
+	logic corebase.LogicalPlan
+	ctx   cascadesctx.Context
 }
 
 // NewCascades return a new cascades obj for logical alternative searching.
-func NewCascades(lp base2.LogicalPlan) (*Cascades, error) {
+func NewCascades(lp corebase.LogicalPlan) (*Cascades, error) {
 	cas := &Cascades{
 		logic: lp,
 		ctx:   NewContext(lp.SCtx()),
@@ -63,7 +63,7 @@ func (c *Cascades) GetMemo() *memo.Memo {
 // Context includes all the context stuff when go through memo optimizing.
 type Context struct {
 	// pctx variable awareness.
-	pctx base2.PlanContext
+	pctx corebase.PlanContext
 	// memo management.
 	mm *memo.Memo
 	// task pool management.
@@ -71,7 +71,7 @@ type Context struct {
 }
 
 // NewContext returns a new memo context responsible for manage all the stuff in cascades opt.
-func NewContext(pctx base2.PlanContext) *Context {
+func NewContext(pctx corebase.PlanContext) *Context {
 	return &Context{
 		pctx: pctx,
 		// memo init with capacity.
