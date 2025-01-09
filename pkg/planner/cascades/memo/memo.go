@@ -338,6 +338,8 @@ type IteratorLP struct {
 	stackInfo []*list.Element
 	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
 	traceID int
+	// hasher is for compute the subtree's IDs' hash64
+	hasher base2.Hasher
 }
 
 // NewIterator new a logical plan iterator from current memo based on its root group.
@@ -364,6 +366,7 @@ func (it *IteratorLP) Next() (logic base.LogicalPlan) {
 	for {
 		// when non-first time loop here, we should reset traceID back to -1.
 		it.traceID = -1
+		it.hasher.Reset()
 		if len(it.stackInfo) != 0 {
 			// when state stack is not empty, we need to pick the next group expression from the top of stack .
 			continueGroup := len(it.stackInfo) - 1
@@ -398,6 +401,13 @@ func (it *IteratorLP) dfs(target *Group) base.LogicalPlan {
 		children = append(children, lp)
 	}
 	lp.SetChildren(children...)
+	// iterator only hashes the subtree's ids from bottom up.
+	it.hasher.Reset()
+	for _, children := range lp.Children() {
+		it.hasher.HashUint64(children.GetPlanIDsHash())
+	}
+	it.hasher.HashInt(lp.ID())
+	lp.SetPlanIDsHash(it.hasher.Sum64())
 	return lp
 }
 
