@@ -8573,4 +8573,9 @@ func TestIssue58829(t *testing.T) {
 
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	require.True(t, tk.HasPlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin"))
+
+	tk.MustExec(`create binding for delete from t1 where t1.id in (select cast(id as char) from t2 where k=1)
+using delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`)
+	require.True(t, tk.HasPlan(`delete from t1 where t1.id in (select cast(id as char) from t2 where k=1)`, "IndexHashJoin"))
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
