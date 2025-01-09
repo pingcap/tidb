@@ -205,9 +205,9 @@ func getStmtTimestamp(ctx EvalContext) (now time.Time, err error) {
 		}()
 	}
 
-	failpoint.Inject("injectNow", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectNow")); _err_ == nil {
 		v := time.Unix(int64(val.(int)), 0)
-		failpoint.Return(v, nil)
-	})
+		return v, nil
+	}
 	return ctx.CurrentTime()
 }

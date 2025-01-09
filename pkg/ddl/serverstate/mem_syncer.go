@@ -51,12 +51,12 @@ func (s *memSyncer) Init(context.Context) error {
 
 // UpdateGlobalState implements Syncer.UpdateGlobalState interface.
 func (s *memSyncer) UpdateGlobalState(_ context.Context, stateInfo *StateInfo) error {
-	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpgradingState")); _err_ == nil {
 		if val.(bool) {
 			clusterState.Store(stateInfo)
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	s.globalVerCh <- clientv3.WatchResponse{}
 	clusterState.Store(stateInfo)
 	return nil

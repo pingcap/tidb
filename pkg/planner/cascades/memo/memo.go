@@ -338,7 +338,7 @@ type IteratorLP struct {
 	stackInfo []*list.Element
 	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
 	traceID int
-	// hasher is for compute the subtree's IDs' hash64
+	// hasher is for compute the subtree's IDs' hash64 rooted from current logical operator.
 	hasher base2.Hasher
 }
 

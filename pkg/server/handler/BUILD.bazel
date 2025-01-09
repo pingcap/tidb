@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "handler",
     srcs = [
+        "binding__failpoint_binding__.go",
         "tikv_handler.go",
         "upgrade_handler.go",
         "util.go",

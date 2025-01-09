@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "autoid.go",
         "autoid_service.go",
+        "binding__failpoint_binding__.go",
         "errors.go",
         "memid.go",
     ],

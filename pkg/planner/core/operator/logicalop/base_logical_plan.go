@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"strconv"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}

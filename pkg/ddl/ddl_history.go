@@ -160,13 +160,13 @@ func ScanHistoryDDLJobs(m *meta.Mutator, startJobID int64, limit int) ([]*model.
 		if limit == 0 {
 			limit = DefNumGetDDLHistoryJobs
 
-			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("history-ddl-jobs-limit")); _err_ == nil {
 				injectLimit, ok := val.(int)
 				if ok {
 					logutil.DDLLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
 					limit = injectLimit
 				}
-			})
+			}
 		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {

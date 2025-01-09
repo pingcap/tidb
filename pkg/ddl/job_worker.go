@@ -229,12 +229,12 @@ func injectFailPointForGetJob(job *model.Job) {
 	if job == nil {
 		return
 	}
-	failpoint.Inject("mockModifyJobSchemaId", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockModifyJobSchemaId")); _err_ == nil {
 		job.SchemaID = int64(val.(int))
-	})
-	failpoint.Inject("MockModifyJobTableId", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("MockModifyJobTableId")); _err_ == nil {
 		job.TableID = int64(val.(int))
-	})
+	}
 }
 
 // handleUpdateJobError handles the too large DDL job.
@@ -262,11 +262,11 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 
 // updateDDLJob updates the DDL job information.
 func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
-	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockErrEntrySizeTooLarge")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			return kv.ErrEntryTooLarge
 		}
-	})
+	}
 
 	if !updateRawArgs {
 		jobCtx.logger.Info("meet something wrong before update DDL job, shouldn't update raw args",
@@ -393,7 +393,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	}
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
-	failpoint.InjectCall("afterFinishDDLJob", job)
+	failpoint.Call(_curpkg_("afterFinishDDLJob"), job)
 	err = AddHistoryDDLJob(w.workCtx, w.sess, metaMut, job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -497,11 +497,11 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockRunJobTime")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
-	})
+	}
 	txn, err := w.sess.Txn()
 	if err != nil {
 		w.sess.Rollback()
@@ -533,7 +533,7 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 	sysTblMgr systable.Manager,
 ) (int64, error) {
-	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	failpoint.Call(_curpkg_("beforeTransitOneJobStep"), jobW)
 	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
@@ -561,7 +561,7 @@ func (w *worker) transitOneJobStep(
 			job.State = model.JobStateSynced
 		}
 		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-ddlhistory", func(v failpoint.Value) {
+		if v, _err_ := failpoint.Eval(_curpkg_("create-index-stuck-before-ddlhistory")); _err_ == nil {
 			if sigFile, ok := v.(string); ok && job.Type == model.ActionAddIndex {
 				for {
 					time.Sleep(1 * time.Second)
@@ -569,15 +569,15 @@ func (w *worker) transitOneJobStep(
 						if os.IsNotExist(err) {
 							continue
 						}
-						failpoint.Return(0, errors.Trace(err))
+						return 0, errors.Trace(err)
 					}
 					break
 				}
 			}
-		})
+		}
 		return 0, w.handleJobDone(jobCtx, job)
 	}
-	failpoint.InjectCall("beforeRunOneJobStep", job)
+	failpoint.Call(_curpkg_("beforeRunOneJobStep"), job)
 
 	start := time.Now()
 	defer func() {
@@ -587,7 +587,7 @@ func (w *worker) transitOneJobStep(
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
 
-	failpoint.InjectCall("afterRunOneJobStep", job)
+	failpoint.Call(_curpkg_("afterRunOneJobStep"), job)
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -620,7 +620,7 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
-	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
+	failpoint.Call(_curpkg_("afterUpdateJobToTable"), job, &err)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -797,7 +797,7 @@ func (w *worker) runOneJobStep(
 		}, false)
 
 	// Mock for run ddl job panic.
-	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockPanicInRunDDLJob"))
 
 	if job.Type != model.ActionMultiSchemaChange {
 		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))

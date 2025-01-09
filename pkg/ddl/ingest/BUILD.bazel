@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "backend.go",
         "backend_mgr.go",
+        "binding__failpoint_binding__.go",
         "checkpoint.go",
         "config.go",
         "disk_root.go",

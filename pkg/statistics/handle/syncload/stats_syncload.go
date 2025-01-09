@@ -86,14 +86,14 @@ type statsWrapper struct {
 func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := s.removeHistLoadedColumns(neededHistItems)
 
-	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertSyncLoadItems")); _err_ == nil {
 		if sc.OptimizeTracer != nil {
 			count := val.(int)
 			if len(remainedItems) != count {
 				panic("remained items count wrong")
 			}
 		}
-	})
+	}
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -364,7 +364,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			return nil
 		}
 	}
-	failpoint.Inject("handleOneItemTaskPanic", nil)
+	failpoint.Eval(_curpkg_("handleOneItemTaskPanic"))
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
@@ -394,12 +394,12 @@ var errGetHistMeta = errors.New("fail to get hist meta")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
-	failpoint.Inject("mockReadStatsForOnePanic", nil)
-	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
+	failpoint.Eval(_curpkg_("mockReadStatsForOnePanic"))
+	if val, _err_ := failpoint.Eval(_curpkg_("mockReadStatsForOneFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
+			return nil, errors.New("gofail ReadStatsForOne error")
 		}
-	})
+	}
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	var hg *statistics.Histogram
 	var err error

@@ -4,6 +4,7 @@ go_library(
     name = "cophandler",
     srcs = [
         "analyze.go",
+        "binding__failpoint_binding__.go",
         "closure_exec.go",
         "cop_handler.go",
         "mpp.go",

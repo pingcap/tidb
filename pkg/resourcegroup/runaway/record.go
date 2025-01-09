@@ -223,9 +223,9 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return
 	}
-	failpoint.Inject("FastRunawayGC", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
 		expiredDuration = time.Second * 1
-	})
+	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)

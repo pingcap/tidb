@@ -98,11 +98,11 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
-		failpoint.Inject("OneTiFlashStoreDown", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("OneTiFlashStoreDown")); _err_ == nil {
 			if store.Store.StateName == "Down" {
 				err = errors.New("mock TiFlasah down")
 			}
-		})
+		}
 		if err != nil {
 			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))

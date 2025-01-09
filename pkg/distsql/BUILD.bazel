@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "distsql",
     srcs = [
+        "binding__failpoint_binding__.go",
         "distsql.go",
         "request_builder.go",
         "select_result.go",

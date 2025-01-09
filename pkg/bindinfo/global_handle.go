@@ -248,12 +248,12 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 				binding.SQLDigest,
 				binding.PlanDigest,
 			)
-			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("CreateGlobalBindingNthFail")); _err_ == nil {
 				n := val.(int)
 				if n == i {
 					err = errors.NewNoStackError("An injected error")
 				}
-			})
+			}
 			if err != nil {
 				return err
 			}

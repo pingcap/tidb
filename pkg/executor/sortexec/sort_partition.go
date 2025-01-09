@@ -141,11 +141,11 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		return
 	}
 
-	failpoint.Inject("errorDuringSortRowContainer", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorDuringSortRowContainer")); _err_ == nil {
 		if val.(bool) {
 			panic("sort meet error")
 		}
-	})
+	}
 
 	sort.Slice(s.savedRows, s.keyColumnsLess)
 	s.isSorted = true
@@ -297,11 +297,11 @@ func (s *sortPartition) keyColumnsLess(i, j int) bool {
 		s.timesOfRowCompare = 0
 	}
 
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 		if val.(bool) {
 			s.timesOfRowCompare += 1024
 		}
-	})
+	}
 
 	s.timesOfRowCompare++
 	return s.lessRow(s.savedRows[i], s.savedRows[j])

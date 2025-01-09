@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "log_client",
     srcs = [
+        "binding__failpoint_binding__.go",
         "client.go",
         "compacted_file_strategy.go",
         "import.go",

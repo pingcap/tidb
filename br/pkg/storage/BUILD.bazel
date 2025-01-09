@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "azblob.go",
         "batch.go",
+        "binding__failpoint_binding__.go",
         "compress.go",
         "flags.go",
         "gcs.go",

@@ -511,9 +511,9 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.Inject("waitBeforePostProcess", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforePostProcess")); _err_ == nil {
 		time.Sleep(5 * time.Second)
-	})
+	}
 	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
 }
 

@@ -125,7 +125,7 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-backup-start")); _err_ == nil {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
 		if sigFile, ok := v.(string); ok {
@@ -138,9 +138,9 @@ func doSendBackup(
 			}
 		}
 		time.Sleep(3 * time.Second)
-	})
+	}
 	bCli, err := client.Backup(ctx, &req)
-	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-retryable-error")); _err_ == nil {
 		switch val.(string) {
 		case "Unavailable":
 			{
@@ -153,13 +153,13 @@ func doSendBackup(
 				err = status.Error(codes.Internal, "Internal error")
 			}
 		}
-	})
-	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-not-retryable-error")); _err_ == nil {
 		if val.(bool) {
 			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
 			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
 		}
-	})
+	}
 	if err != nil {
 		return err
 	}
@@ -230,28 +230,28 @@ func startBackup(
 					}
 					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
-						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
+						if val, _err_ := failpoint.Eval(_curpkg_("backup-timeout-error")); _err_ == nil {
 							msg := val.(string)
 							logutil.CL(ectx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						})
-						failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
+						}
+						if val, _err_ := failpoint.Eval(_curpkg_("backup-storage-error")); _err_ == nil {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						})
-						failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
+						}
+						if val, _err_ := failpoint.Eval(_curpkg_("tikv-rw-error")); _err_ == nil {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						})
-						failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
+						}
+						if val, _err_ := failpoint.Eval(_curpkg_("tikv-region-error")); _err_ == nil {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
@@ -262,7 +262,7 @@ func startBackup(
 									},
 								},
 							}
-						})
+						}
 						select {
 						case <-ectx.Done():
 							return ectx.Err()
@@ -320,12 +320,12 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 			logutil.CL(ctx).Warn("failed to watch store changes at beginning, ignore it", zap.Error(err))
 		}
 		tickInterval := 30 * time.Second
-		failpoint.Inject("backup-store-change-tick", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("backup-store-change-tick")); _err_ == nil {
 			if val.(bool) {
 				tickInterval = 100 * time.Millisecond
 			}
 			logutil.CL(ctx).Info("failpoint backup-store-change-tick injected.", zap.Duration("interval", tickInterval))
-		})
+		}
 		tick := time.NewTicker(tickInterval)
 		for {
 			select {

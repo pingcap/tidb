@@ -64,7 +64,7 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("injectEtcdClient", &cli)
+	failpoint.Call(_curpkg_("injectEtcdClient"), &cli)
 	if cli == nil {
 		return errors.New("etcd client is nil, maybe the server is not started with PD")
 	}

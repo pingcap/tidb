@@ -167,7 +167,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, all
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
-	failpoint.Inject("finalizeCurrentSegPanic", nil)
+	failpoint.Eval(_curpkg_("finalizeCurrentSegPanic"))
 	seg.initTaggedBits()
 	seg.finalized = true
 	if needConsume {
@@ -381,7 +381,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start 
 			return
 		default:
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 		err := inDisk.FillChunk(i, w.restoredChkBuf)
 		if err != nil {
@@ -548,7 +548,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 func (b *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
 	start := time.Now()
 	err := b.builder.processOneChunk(chk, typeCtx, b.HashJoinCtx, int(b.WorkerID))
-	failpoint.Inject("splitPartitionPanic", nil)
+	failpoint.Eval(_curpkg_("splitPartitionPanic"))
 	*cost += int64(time.Since(start))
 	return err
 }
@@ -586,7 +586,7 @@ func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 	for task := range taskCh {
 		start := time.Now()
 		b.HashJoinCtx.hashTableContext.build(task)
-		failpoint.Inject("buildHashTablePanic", nil)
+		failpoint.Eval(_curpkg_("buildHashTablePanic"))
 		cost += int64(time.Since(start))
 		err := triggerIntest(5)
 		if err != nil {
@@ -947,7 +947,7 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 			return ok, waitTime, joinResult
 		}
 
-		failpoint.Inject("processOneProbeChunkPanic", nil)
+		failpoint.Eval(_curpkg_("processOneProbeChunkPanic"))
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
 			w.HashJoinCtx.joinResultCh <- joinResult
@@ -987,7 +987,7 @@ func (w *ProbeWorkerV2) runJoinWorker(start time.Time) {
 			return
 		case probeSideResult, ok = <-w.probeResultCh:
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if !ok {
 			break
 		}
@@ -1181,7 +1181,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
-	failpoint.Inject("createTasksPanic", nil)
+	failpoint.Eval(_curpkg_("createTasksPanic"))
 
 	if isBalanced {
 		for partIdx, subTable := range subTables {
@@ -1476,17 +1476,17 @@ func rehash(oldHashValue uint64, rehashBuf []byte, hash hash.Hash64) uint64 {
 }
 
 func triggerIntest(errProbability int) error {
-	failpoint.Inject("slowWorkers", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("slowWorkers")); _err_ == nil {
 		if val.(bool) {
 			num := rand.Intn(100000)
 			if num < 2 {
 				time.Sleep(time.Duration(num) * time.Millisecond)
 			}
 		}
-	})
+	}
 
 	var err error
-	failpoint.Inject("panicOrError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("panicOrError")); _err_ == nil {
 		if val.(bool) {
 			num := rand.Intn(100000)
 			if num < errProbability/2 {
@@ -1495,7 +1495,7 @@ func triggerIntest(errProbability int) error {
 				err = errors.New("Random failpoint error is triggered")
 			}
 		}
-	})
+	}
 
 	return err
 }

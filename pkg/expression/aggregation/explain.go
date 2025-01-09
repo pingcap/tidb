@@ -27,11 +27,11 @@ import (
 func ExplainAggFunc(ctx expression.EvalContext, agg *AggFuncDesc, normalized bool) string {
 	var buffer bytes.Buffer
 	showMode := false
-	failpoint.Inject("show-agg-mode", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("show-agg-mode")); _err_ == nil {
 		if v.(bool) {
 			showMode = true
 		}
-	})
+	}
 	if showMode {
 		fmt.Fprintf(&buffer, "%s(%s,", agg.Name, agg.Mode.ToString())
 	} else {

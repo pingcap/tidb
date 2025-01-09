@@ -174,7 +174,7 @@ func (s *BaseScheduler) scheduleTask() {
 		case <-ticker.C:
 		}
 
-		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
+		failpoint.Call(_curpkg_("beforeRefreshTask"), s.GetTask())
 		err := s.refreshTaskIfNeeded()
 		if err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
@@ -186,12 +186,12 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		failpoint.InjectCall("afterRefreshTask", s.GetTask())
+		failpoint.Call(_curpkg_("afterRefreshTask"), s.GetTask())
 		task := s.getTaskClone()
 		// TODO: refine failpoints below.
-		failpoint.Inject("exitScheduler", func() {
-			failpoint.Return()
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("exitScheduler")); _err_ == nil {
+			return
+		}
 
 		switch task.State {
 		case proto.TaskStateCancelling:
@@ -258,7 +258,7 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 		}
 
-		failpoint.InjectCall("mockOwnerChange")
+		failpoint.Call(_curpkg_("mockOwnerChange"))
 	}
 }
 
@@ -301,7 +301,7 @@ func (s *BaseScheduler) onPaused() error {
 	task := s.GetTask()
 	s.logger.Info("on paused state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	failpoint.InjectCall("mockDMLExecutionOnPausedState")
+	failpoint.Call(_curpkg_("mockDMLExecutionOnPausedState"))
 	return nil
 }
 
@@ -514,7 +514,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 		size += uint64(len(meta))
 	}
-	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
+	failpoint.Call(_curpkg_("cancelBeforeUpdateTask"), task.ID)
 
 	// as other fields and generated key and index KV takes space too, we limit
 	// the size of subtasks to 80% of the transaction limit.
@@ -566,9 +566,9 @@ var MockServerInfo atomic.Pointer[[]string]
 
 // GetLiveExecIDs returns all live executor node IDs.
 func GetLiveExecIDs(ctx context.Context) ([]string, error) {
-	failpoint.Inject("mockTaskExecutorNodes", func() {
-		failpoint.Return(*MockServerInfo.Load(), nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockTaskExecutorNodes")); _err_ == nil {
+		return *MockServerInfo.Load(), nil
+	}
 	serverInfos, err := generateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err

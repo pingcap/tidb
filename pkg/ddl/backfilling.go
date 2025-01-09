@@ -439,22 +439,22 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		d.setDDLLabelForTopSQL(job.ID, job.Query)
 
 		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
-		failpoint.Inject("mockBackfillRunErr", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillRunErr")); _err_ == nil {
 			if w.GetCtx().id == 0 {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				w.sendResult(result)
-				failpoint.Continue()
+				continue
 			}
-		})
+		}
 
-		failpoint.Inject("mockHighLoadForAddIndex", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForAddIndex")); _err_ == nil {
 			sqlPrefixes := []string{"alter"}
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
-		})
+		}
 
-		failpoint.Inject("mockBackfillSlow", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillSlow")); _err_ == nil {
 			time.Sleep(100 * time.Millisecond)
-		})
+		}
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
@@ -499,11 +499,11 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
-	failpoint.Inject("setLimitForLoadTableRanges", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("setLimitForLoadTableRanges")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			limit = v
 		}
-	})
+	}
 
 	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
@@ -519,7 +519,7 @@ func loadTableRanges(
 			return false, errors.Trace(err)
 		}
 		var mockErr bool
-		failpoint.InjectCall("beforeLoadRangeFromPD", &mockErr)
+		failpoint.Call(_curpkg_("beforeLoadRangeFromPD"), &mockErr)
 		if mockErr {
 			return false, kv.ErrTxnRetryable
 		}
@@ -542,7 +542,7 @@ func loadTableRanges(
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
 		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
 		zap.Int("range count", len(ranges)))
-	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
+	failpoint.Call(_curpkg_("afterLoadTableRanges"), len(ranges))
 	return ranges, nil
 }
 
@@ -959,12 +959,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 	}()
 
-	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockCaseWhenParseFailure")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+			return errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause.")
 		}
-	})
+	}
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
 	}
@@ -1030,7 +1030,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
-					failpoint.InjectCall("afterUpdateReorgMeta")
+					failpoint.Call(_curpkg_("afterUpdateReorgMeta"))
 				}
 			}
 		}
@@ -1103,13 +1103,13 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 	if isMergeWorker {
 		return nil
 	}
-	failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkBackfillWorkerNum")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 			if num != 0 {
 				if num != curWorkerSize {
-					failpoint.Return(errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize))
+					return errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize)
 				}
 				var wg sync.WaitGroup
 				wg.Add(1)
@@ -1117,7 +1117,7 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 				wg.Wait()
 			}
 		}
-	})
+	}
 	return nil
 }
 

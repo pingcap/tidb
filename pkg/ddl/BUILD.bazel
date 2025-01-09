@@ -22,6 +22,7 @@ go_library(
         "backfilling_read_index.go",
         "backfilling_scheduler.go",
         "bdr.go",
+        "binding__failpoint_binding__.go",
         "cluster.go",
         "column.go",
         "constant.go",

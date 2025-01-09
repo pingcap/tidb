@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "memo",
     srcs = [
+        "binding__failpoint_binding__.go",
         "group.go",
         "group_expr.go",
         "group_id_generator.go",

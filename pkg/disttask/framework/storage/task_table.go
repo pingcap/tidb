@@ -234,7 +234,9 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	}
 
 	taskID = int64(rs[0].GetUint64(0))
-	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
+	if _, _err_ := failpoint.Eval(_curpkg_("testSetLastTaskID")); _err_ == nil {
+		TestLastTaskID.Store(taskID)
+	}
 
 	return taskID, nil
 }
@@ -650,10 +652,10 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	if len(subtasks) == 0 {
 		return nil
 	}
-	failpoint.Inject("waitBeforeInsertSubtasks", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforeInsertSubtasks")); _err_ == nil {
 		<-TestChannel
 		<-TestChannel
-	})
+	}
 	var (
 		sb         strings.Builder
 		markerList = make([]string, 0, len(subtasks))

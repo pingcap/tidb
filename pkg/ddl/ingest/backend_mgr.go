@@ -143,9 +143,9 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
-	failpoint.Inject("beforeCreateLocalBackend", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("beforeCreateLocalBackend")); _err_ == nil {
 		ResignOwnerForTest.Store(true)
-	})
+	}
 	// lock backends because createLocalBackend will let lightning create the sort
 	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
 	// checking the existence of the entry in backends.

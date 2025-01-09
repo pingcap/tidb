@@ -621,9 +621,9 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	}
 
 	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
-	failpoint.Inject("asyncNotifyEventError", func() {
-		failpoint.Return(errors.New("mock publish event error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("asyncNotifyEventError")); _err_ == nil {
+		return errors.New("mock publish event error")
+	}
 	if subJobID == noSubJob && job.MultiSchemaInfo != nil {
 		subJobID = int64(job.MultiSchemaInfo.Seq)
 	}
@@ -909,7 +909,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			if err != nil {
 				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
-			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
+			failpoint.Call(_curpkg_("afterDetectAndUpdateJobVersionOnce"))
 			if model.GetJobVerInUse() == model.JobVersion2 {
 				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
 				return
@@ -1023,7 +1023,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
-	failpoint.InjectCall("afterDDLCloseCancel")
+	failpoint.Call(_curpkg_("afterDDLCloseCancel"))
 	d.wg.Wait()
 	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.
@@ -1394,11 +1394,11 @@ func processJobs(
 	ids []int64,
 	byWho model.AdminCommandOperator,
 ) (jobErrs []error, err error) {
-	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockFailedCommandOnConcurencyDDL")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
+			return nil, errors.New("mock failed admin command on ddl jobs")
 		}
-	})
+	}
 
 	if len(ids) == 0 {
 		return nil, nil
@@ -1449,12 +1449,12 @@ func processJobs(
 			}
 		}
 
-		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockCommitFailedOnDDLCommand")); _err_ == nil {
 			if val.(bool) {
 				ns.Rollback()
-				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
+				return jobErrs, errors.New("mock commit failed on admin command on ddl jobs")
 			}
-		})
+		}
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(ctx); err != nil {

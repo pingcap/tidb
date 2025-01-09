@@ -1043,9 +1043,9 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
-	failpoint.Inject("mockGetFirstAndLastKey", func() {
-		failpoint.Return(lowerBound, upperBound, nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockGetFirstAndLastKey")); _err_ == nil {
+		return lowerBound, upperBound, nil
+	}
 
 	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
@@ -1367,13 +1367,13 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("orphanWriterGoRoutine", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("orphanWriterGoRoutine")); _err_ == nil {
 		_ = common.KillMySelf()
 		// mimic we meet context cancel error when `addSST`
 		<-ctx.Done()
 		time.Sleep(5 * time.Second)
-		failpoint.Return(errors.Trace(ctx.Err()))
-	})
+		return errors.Trace(ctx.Err())
+	}
 
 	err = w.addSST(ctx, meta)
 	if err != nil {

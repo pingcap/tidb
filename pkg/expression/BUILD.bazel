@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "expression",
     srcs = [
+        "binding__failpoint_binding__.go",
         "builtin.go",
         "builtin_arithmetic.go",
         "builtin_arithmetic_vec.go",

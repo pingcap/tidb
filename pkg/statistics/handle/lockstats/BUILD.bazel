@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "lockstats",
     srcs = [
+        "binding__failpoint_binding__.go",
         "lock_stats.go",
         "query_lock.go",
         "unlock_stats.go",
