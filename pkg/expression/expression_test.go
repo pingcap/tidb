@@ -113,14 +113,16 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 
-	castStrAsJSON := BuildCastFunction(ctx, schema.Columns[0], types.NewFieldType(mysql.TypeJSON))
+	outputFT := types.NewFieldType(mysql.TypeJSON)
+	outputFT.AddFlag(mysql.ParseToJSONFlag)
+	castStrAsJSON := BuildCastFunction(ctx, schema.Columns[0], outputFT)
 	jsonConstant := &Constant{Value: types.NewDatum("123"), RetType: types.NewFieldType(mysql.TypeJSON)}
 
 	// initially has ParseToJSONFlag
 	flagInCast := castStrAsJSON.(*ScalarFunction).RetType.GetFlag()
 	require.True(t, mysql.HasParseToJSONFlag(flagInCast))
 
-	// cast's ParseToJSONFlag removed by `DisableParseJSONFlag4Expr`
+	// cast's ParseToJSONFlag removed
 	eq, err := newFunctionForTest(ctx, ast.EQ, jsonConstant, castStrAsJSON)
 	require.NoError(t, err)
 	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()

@@ -194,7 +194,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	// before doing implicit cast.
 	ec, err := deriveCollation(ctx, funcName, args, retType, argTps...)
 	if err != nil {
-		return
+		return baseBuiltinFunc{}, err
 	}
 
 	for i := range args {
@@ -215,7 +215,10 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
+			args[i], err = WrapWithCastAsJSONWithCheck(ctx, args[i], shouldParseToJSON(funcName, i))
+			if err != nil {
+				return baseBuiltinFunc{}, err
+			}
 		case types.ETVectorFloat32:
 			args[i] = WrapWithCastAsVectorFloat32(ctx, args[i])
 		default:
@@ -260,7 +263,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	}
 	ec, err := deriveCollation(ctx, funcName, args, retType, argEvalTps...)
 	if err != nil {
-		return
+		return baseBuiltinFunc{}, err
 	}
 
 	for i := range args {
@@ -273,7 +276,10 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 			args[i] = WrapWithCastAsString(ctx, args[i])
 			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
+			args[i], err = WrapWithCastAsJSONWithCheck(ctx, args[i], shouldParseToJSON(funcName, i))
+			if err != nil {
+				return baseBuiltinFunc{}, err
+			}
 		// https://github.com/pingcap/tidb/issues/44196
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
@@ -299,6 +305,29 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	// note this function must be called after wrap cast function to the args
 	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
+}
+
+// shouldParseToJSON checks whether the function should parse the argument to JSON.
+// When a string is cast to JSON, it may have two different meanings:
+// 1. Quote the string as a JSON string directly. For example, the `abc` will become `"abc"`.
+// 2. Parse the string into a valid JSON value.
+func shouldParseToJSON(funcName string, argIdx int) bool {
+	switch funcName {
+	case ast.LE, ast.LT, ast.GE, ast.GT, ast.EQ, ast.NE, ast.NullEQ:
+		return false
+	case ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONArrayAppend, ast.JSONArrayInsert:
+		return argIdx == 0
+	case ast.JSONObject:
+		return argIdx%2 == 0
+	case ast.JSONArray, ast.JSONQuote, ast.JSONUnquote:
+		return false
+	case ast.JSONMemberOf:
+		return argIdx != 0
+	case ast.In:
+		return argIdx == 0
+	default:
+		return true
+	}
 }
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.

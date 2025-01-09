@@ -59,7 +59,8 @@ func TestWrapCastForAggFuncs(t *testing.T) {
 		orgAggFuncs = append(orgAggFuncs, agg.Clone())
 	}
 
-	coreusage.WrapCastForAggFuncs(mock.NewContext(), aggFuncs)
+	err := coreusage.WrapCastForAggFuncs(mock.NewContext(), aggFuncs)
+	require.NoError(t, err)
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			require.Equal(t, aggFuncs[i].Args[0].GetType(ctx).GetType(), aggFuncs[i].RetTp.GetType())

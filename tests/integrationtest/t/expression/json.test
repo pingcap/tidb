@@ -538,3 +538,49 @@ SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
 prepare stmt from 'select json_object(?, ?)';
 set @a=1;
 execute stmt using @a, @a;
+
+# TestIssue58291
+drop table if exists t;
+create table t (j json);
+-- error 3140
+explain select * from t where json_contains(j->"$[*]", "[4,");
+
+# TestParseToJSONFlag
+SELECT j <= ']' FROM t;
+SELECT j < ']' FROM t;
+SELECT j >= ']' FROM t;
+SELECT j > ']' FROM t;
+SELECT j = ']' FROM t;
+SELECT j <> ']' FROM t;
+SELECT j <=> ']' FROM t;
+
+-- error 3140
+SELECT JSON_SET('[', '$.a', '{}');
+SELECT JSON_SET('{}', '$.a', '{a');
+-- error 3140
+SELECT JSON_INSERT('[', '$.a', '{}');
+SELECT JSON_INSERT('{}', '$.a', '{a');
+-- error 3140
+SELECT JSON_REPLACE('[', '$.a', '{}');
+SELECT JSON_REPLACE('{}', '$.a', '{a');
+-- error 3140
+SELECT JSON_ARRAY_APPEND('[', '$.a', '{}');
+SELECT JSON_ARRAY_APPEND('{}', '$.a', '{a');
+-- error 3140
+SELECT JSON_ARRAY_INSERT('[', '$.a', '{}');
+SELECT JSON_ARRAY_INSERT('{"a": []}', '$.a[5]', '{a');
+
+SELECT JSON_OBJECT('key', ']');
+SELECT JSON_OBJECT('key', ']', 'key2', '[');
+
+SELECT JSON_ARRAY(']', 'a');
+
+SELECT '{' member of ('["{"]');
+-- error 3140
+SELECT '{}' member of ('{');
+
+SELECT JSON_QUOTE('{');
+SELECT JSON_UNQUOTE('{');
+
+SELECT cast('{}' as JSON) in ('{}', '[', '}');
+SELECT '{' in (json_array(1,2,3), j) FROM t;

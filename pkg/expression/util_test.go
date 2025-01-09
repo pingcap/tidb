@@ -374,27 +374,6 @@ func isLogicOrFunction(e Expression) bool {
 	return false
 }
 
-func TestDisableParseJSONFlag4Expr(t *testing.T) {
-	var expr Expression
-	ctx := createContext(t)
-	expr = &Column{RetType: newIntFieldType()}
-	ft := expr.GetType(ctx)
-	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(ctx, expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
-
-	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
-	ft = expr.GetType(ctx)
-	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(ctx, expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
-	expr = &ScalarFunction{RetType: newIntFieldType()}
-	ft = expr.GetType(ctx)
-	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(ctx, expr)
-	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
-}
-
 func TestSQLDigestTextRetriever(t *testing.T) {
 	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
 

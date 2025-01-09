@@ -122,7 +122,8 @@ import (
    typeId ::= byte
 */
 
-var jsonZero = CreateBinaryJSON(uint64(0))
+// JSONZero is a JSON binary value of 0.
+var JSONZero = CreateBinaryJSON(uint64(0))
 
 const maxJSONDepth = 100
 
@@ -193,7 +194,7 @@ func (bj BinaryJSON) IsZero() bool {
 	//
 	// TODO: return a warning as MySQL 8 does
 
-	return CompareBinaryJSON(bj, jsonZero) == 0
+	return CompareBinaryJSON(bj, JSONZero) == 0
 }
 
 // GetInt64 gets the int64 value.

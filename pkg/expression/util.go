@@ -1234,22 +1234,6 @@ func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool
 	return in, true
 }
 
-// DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
-// We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
-// is 0 for JSON column yet(as well as JSON correlated column), so we can skip
-// it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
-// race may happen if another goroutine read from the infoschema at the same
-// time.
-func DisableParseJSONFlag4Expr(ctx EvalContext, expr Expression) {
-	if _, isColumn := expr.(*Column); isColumn {
-		return
-	}
-	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
-		return
-	}
-	expr.GetType(ctx).SetFlag(expr.GetType(ctx).GetFlag() & ^mysql.ParseToJSONFlag)
-}
-
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
 func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 	return &ast.PositionExpr{P: p}

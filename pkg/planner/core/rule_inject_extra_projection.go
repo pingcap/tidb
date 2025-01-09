@@ -118,7 +118,12 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
 	exprCtx := aggPlan.SCtx().GetExprCtx()
-	coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
+	err := coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
+	if err != nil {
+		// skip the optimize as we failed to wrap cast for agg functions.
+		return aggPlan
+	}
+
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)

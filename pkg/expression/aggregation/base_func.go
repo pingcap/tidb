@@ -437,14 +437,16 @@ var noNeedCastAggFuncs = map[string]struct{}{
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
-func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
+func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) error {
 	if len(a.Args) == 0 {
-		return
+		return nil
 	}
 	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
-		return
+		return nil
 	}
+	// TODO: align the cast function to `castFuncWithErr`
 	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
+	var castFuncWithErr func(ctx expression.BuildContext, expr expression.Expression) (expression.Expression, error)
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
@@ -461,7 +463,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 	case types.ETDuration:
 		castFunc = expression.WrapWithCastAsDuration
 	case types.ETJson:
-		castFunc = expression.WrapWithCastAsJSON
+		castFuncWithErr = func(ctx expression.BuildContext, expr expression.Expression) (expression.Expression, error) {
+			return expression.WrapWithCastAsJSONWithCheck(ctx, expr, true)
+		}
 	case types.ETVectorFloat32:
 		castFunc = expression.WrapWithCastAsVectorFloat32
 	default:
@@ -475,8 +479,18 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		if a.Args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
 			continue
 		}
-		a.Args[i] = castFunc(ctx, a.Args[i])
+		if castFunc != nil {
+			a.Args[i] = castFunc(ctx, a.Args[i])
+		} else {
+			var err error
+			a.Args[i], err = castFuncWithErr(ctx, a.Args[i])
+			if err != nil {
+				return err
+			}
+		}
 	}
+
+	return nil
 }
 
 // MemoryUsage return the memory usage of baseFuncDesc

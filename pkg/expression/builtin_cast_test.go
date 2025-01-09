@@ -1454,7 +1454,8 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 	ctx := createContext(t)
 
 	input := &Column{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP()}
-	expr := WrapWithCastAsJSON(ctx, input)
+	expr, err := WrapWithCastAsJSONWithCheck(ctx, input, true)
+	require.NoError(t, err)
 
 	output, ok := expr.(*Column)
 	require.True(t, ok)

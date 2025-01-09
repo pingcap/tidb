@@ -281,7 +281,6 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	bf.tp.AddFlag(mysql.BinaryFlag)
-	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
@@ -335,9 +334,6 @@ func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-	}
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig, nil
@@ -381,9 +377,6 @@ func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-	}
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig, nil
@@ -426,9 +419,6 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
-	}
-	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
@@ -597,9 +587,6 @@ func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	for i := 1; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-	}
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig, nil
@@ -668,9 +655,6 @@ func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
-	}
-	for i := range args {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
@@ -845,7 +829,6 @@ func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	sig := &builtinJSONMemberOfSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMemberOfSig)
 	return sig, nil
@@ -1141,9 +1124,6 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-	}
 	sig := &builtinJSONArrayAppendSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayAppendSig)
 	return sig, nil
@@ -1240,9 +1220,6 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expr
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
-	}
-	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONArrayInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayInsertSig)
@@ -1473,7 +1450,6 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	bf.tp.AddFlag(mysql.BinaryFlag)
 	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen()*6 + 2)
 	sig := &builtinJSONQuoteSig{bf}
@@ -1933,6 +1909,21 @@ func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
+	if args[0].ConstLevel() == ConstStrict {
+		_, schemaIsNull, err := args[0].EvalJSON(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+		if schemaIsNull {
+			// If the schema is NULL, then the result is always NULL, so we don't need to evaluate / validate the second argument.
+			// It's a trick to workaround the JSON validation logic in `(*castAsJSONFunctionClass).getFunction`
+			args[1] = &Constant{
+				Value:   types.NewDatum(types.JSONZero),
+				RetType: types.NewFieldType(mysql.TypeJSON),
+			}
+		}
+	}
+
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
 	if err != nil {
 		return nil, err
