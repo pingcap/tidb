@@ -117,6 +117,20 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	}
 	slices.Sort(tableIDs)
 
+	// Check if recording historical stats meta is enabled.
+	// TODO: Once RecordHistoricalStatsMeta supports batch processing, this check can be removed and handled within the API.
+	skipRecordHistoricalStatsMeta := false
+	err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		if !sctx.GetSessionVars().EnableHistoricalStats {
+			skipRecordHistoricalStatsMeta = true
+			return nil
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Dump stats delta in batches.
 	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
 		end := i + dumpDeltaBatchSize
@@ -178,22 +192,23 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		startRecordHistoricalStatsMeta := time.Now()
-		// Record historical stats meta for all tables one by one.
-		// FIXME: Although this feature is currently disabled, it would be beneficial to implement it in batches for efficiency.
-		for _, update := range batchUpdates {
-			if !update.IsLocked {
-				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
-					panic("panic when record historical stats meta")
-				})
-				s.statsHandle.RecordHistoricalStatsMeta(update.TableID, statsVersion, "flush stats", false)
+		if !skipRecordHistoricalStatsMeta {
+			startRecordHistoricalStatsMeta := time.Now()
+			// Record historical stats meta for all tables one by one.
+			// FIXME: Although this feature is currently disabled, it would be beneficial to implement it in batches for efficiency.
+			for _, update := range batchUpdates {
+				if !update.IsLocked {
+					failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+						panic("panic when record historical stats meta")
+					})
+					s.statsHandle.RecordHistoricalStatsMeta(update.TableID, statsVersion, "flush stats", false)
+				}
 			}
-		}
-		if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
-			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
-				zap.Int("tableCount", len(batchUpdates)),
-				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
+			if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
+			}
 		}
 	}
 
@@ -217,10 +232,9 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	if len(updates) == 0 {
 		return 0, nil
 	}
-	const queryTooSlowThreshold = 5 * time.Second
 	start := time.Now()
 	defer func() {
-		if time.Since(start) > queryTooSlowThreshold {
+		if time.Since(start) > tooSlowThreshold {
 			statslogutil.SingletonStatsSamplerLogger().Warn("Dumping stats delta to KV query is too slow",
 				zap.Int("tableCount", len(updates)),
 				zap.Duration("duration", time.Since(start)))
