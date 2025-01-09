@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"unsafe"
@@ -24,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -264,7 +268,7 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
@@ -286,9 +290,15 @@ func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
-	hintsSet, _, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
+	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
 	if err != nil {
 		return err
+	}
+	if !isCrossDB && !hasParam(stmt) {
+		// TODO: how to check cross-db binding and bindings with parameters?
+		if err = checkBindingValidation(sctx, binding.BindSQL); err != nil {
+			return err
+		}
 	}
 	hintsStr, err := hintsSet.Restore()
 	if err != nil {
@@ -459,4 +469,60 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(nil, sql[:len(sql)-1])
 	}
+}
+
+type paramChecker struct {
+	hasParam bool
+}
+
+func (e *paramChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParam = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*paramChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// hasParam checks whether the statement contains any parameters.
+// For example, `create binding using select * from t where a=?` contains a parameter '?'.
+func hasParam(stmt ast.Node) bool {
+	p := new(paramChecker)
+	stmt.Accept(p)
+	return p.hasParam
+}
+
+// CheckBindingStmt checks whether the statement is valid.
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
+	origVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
+
+	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+	// the statement won't be able to "break out" from EXPLAIN.
+	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			if rerr := rs.Close(); rerr != nil {
+				bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
+			}
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
+	}
+	if err != nil {
+		return err
+	}
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return err
+	}
+	return nil
 }

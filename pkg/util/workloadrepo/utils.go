@@ -16,47 +16,65 @@ package workloadrepo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/util/slice"
 )
 
-func generatePartitionDef(sb *strings.Builder, col string) {
+func generatePartitionDef(sb *strings.Builder, col string, now time.Time) {
 	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
 	// tbInfo is nil, retval must be false
-	_ = generatePartitionRanges(sb, nil)
+	_, _ = generatePartitionRanges(sb, nil, now)
 	fmt.Fprintf(sb, ")")
 }
 
-func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool {
-	now := time.Now()
-	newPtNum := 2
-	// add new partitions per day
-	// if all partitions to be added existed, do nothing
-	allExisted := true
-	for i := range newPtNum {
-		// TODO: should we make this UTC? timezone issues
-		newPtTime := now.AddDate(0, 0, i+1)
-		newPtName := "p" + newPtTime.Format("20060102")
-		if tbInfo != nil {
-			ptInfos := tbInfo.GetPartitionInfo().Definitions
-			if slice.AnyOf(ptInfos, func(i int) bool {
-				return ptInfos[i].Name.L == newPtName
-			}) {
-				continue
+func generatePartitionName(t time.Time) string {
+	return "p" + t.Format("20060102")
+}
+
+func parsePartitionName(part string) (time.Time, error) {
+	return time.ParseInLocation("p20060102", part, time.Local)
+}
+
+func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now time.Time) (bool, error) {
+	// Set lastPart to the latest partition found in table or the date for
+	// yesterday's partition if none is found. Note: The partition named for
+	// today's date holds yesterday's data.
+	lastPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	if tbInfo != nil {
+		pi := tbInfo.GetPartitionInfo()
+		if pi != nil && pi.Definitions != nil && len(pi.Definitions) > 0 {
+			ptInfos := pi.Definitions
+			partDate, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
+			if err != nil {
+				return true, err
+			}
+
+			if partDate.After(lastPart) {
+				lastPart = partDate
 			}
 		}
-		if !allExisted && i > 0 {
-			fmt.Fprintf(sb, ",")
-		}
-		fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPtName, newPtTime.Format("2006-01-02"))
-		allExisted = false
 	}
-	return allExisted
+
+	// Add partitions for today and tomorrow.
+	allExisted := true
+	for i := range 2 {
+		newPartDate := time.Date(now.Year(), now.Month(), now.Day()+i+1, 0, 0, 0, 0, time.Local)
+		if newPartDate.After(lastPart) {
+			if !allExisted {
+				fmt.Fprintf(sb, ", ")
+			}
+			newPartName := generatePartitionName(newPartDate)
+			fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPartName, newPartDate.Format("2006-01-02"))
+			allExisted = false
+		}
+	}
+
+	return allExisted, nil
 }
 
 func (w *worker) setRetentionDays(_ context.Context, d string) error {
@@ -72,5 +90,9 @@ func (w *worker) setRetentionDays(_ context.Context, d string) error {
 
 func validateDest(orig string) (string, error) {
 	// validate S3 URL, etc...
-	return strings.ToLower(orig), nil
+	orig = strings.ToLower(orig)
+	if orig != "" && orig != "table" {
+		return "", errors.New("invalid repository destination")
+	}
+	return orig, nil
 }
