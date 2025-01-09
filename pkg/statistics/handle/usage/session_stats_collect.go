@@ -232,14 +232,6 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	if len(updates) == 0 {
 		return 0, nil
 	}
-	start := time.Now()
-	defer func() {
-		if time.Since(start) > tooSlowThreshold {
-			statslogutil.SingletonStatsSamplerLogger().Warn("Dumping stats delta to KV query is too slow",
-				zap.Int("tableCount", len(updates)),
-				zap.Duration("duration", time.Since(start)))
-		}
-	}()
 	statsVersion, err = utilstats.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
