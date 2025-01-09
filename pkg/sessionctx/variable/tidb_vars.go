@@ -248,9 +248,6 @@ const (
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 
-	// TiDBTxnScope indicates whether using global transactions or local transactions.
-	TiDBTxnScope = "txn_scope"
-
 	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
 	TiDBTxnReadTS = "tx_read_ts"
 
