@@ -47,11 +47,31 @@ type RewriteRules struct {
 	NewKeyspace []byte
 	// used to record checkpoint data
 	NewTableID int64
+
+	shiftStartTs uint64
+	startTs      uint64
+	restoredTs   uint64
 }
 
 // Append append its argument to this rewrite rules.
 func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
+}
+
+func (r *RewriteRules) GenTsRule(cfName string) {
+	if r.startTs == 0 || r.restoredTs == 0 {
+		return
+	}
+	for _, rule := range r.Data {
+		if strings.Contains(cfName, DefaultCFName) {
+			rule.IgnoreBeforeTimestamp = r.shiftStartTs
+		} else if strings.Contains(cfName, WriteCFName) {
+			rule.IgnoreBeforeTimestamp = r.startTs
+		} else {
+			log.Panic("unsupport cf type", zap.String("cf", cfName))
+		}
+		rule.IgnoreAfterTimestamp = r.restoredTs
+	}
 }
 
 // EmptyRewriteRule make a map of new, empty rewrite rules.
@@ -147,8 +167,9 @@ func GetRewriteRulesMap(
 // GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
 func GetRewriteRuleOfTable(
 	oldTableID, newTableID int64,
+	shiftStartTs uint64,
 	startTs uint64,
-	restoreTs uint64,
+	restoredTs uint64,
 	indexIDs map[int64]int64,
 	getDetailRule bool,
 ) *RewriteRules {
@@ -156,29 +177,23 @@ func GetRewriteRuleOfTable(
 
 	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix:          tablecodec.GenTableRecordPrefix(oldTableID),
-			NewKeyPrefix:          tablecodec.GenTableRecordPrefix(newTableID),
-			IgnoreBeforeTimestamp: startTs,
-			IgnoreAfterTimestamp:  restoreTs,
+			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
 		})
 		for oldIndexID, newIndexID := range indexIDs {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix:          tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
-				NewKeyPrefix:          tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
-				IgnoreBeforeTimestamp: startTs,
-				IgnoreAfterTimestamp:  restoreTs,
+				OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+				NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
 			})
 		}
 	} else {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix:          tablecodec.EncodeTablePrefix(oldTableID),
-			NewKeyPrefix:          tablecodec.EncodeTablePrefix(newTableID),
-			IgnoreBeforeTimestamp: startTs,
-			IgnoreAfterTimestamp:  restoreTs,
+			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+			NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
 		})
 	}
 
-	return &RewriteRules{Data: dataRules, NewTableID: newTableID}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, shiftStartTs: shiftStartTs, startTs: startTs, restoredTs: restoredTs}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.

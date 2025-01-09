@@ -563,6 +563,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	regionInfo *split.RegionInfo,
 	cipher *backuppb.CipherInfo,
 ) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, error) {
+	rewriteRules.GenTsRule(file.Cf)
 	// Get the rewrite rule for the file.
 	fileRule := restoreutils.FindMatchedRewriteRule(file, rewriteRules)
 	if fileRule == nil {

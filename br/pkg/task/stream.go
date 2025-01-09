@@ -1471,7 +1471,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore meta files")
 	}
 
-	rewriteRules := initRewriteRules(schemasReplace, cfg.StartTS, cfg.RestoreTS)
+	rewriteRules := initRewriteRules(schemasReplace, client.ShiftTS(), cfg.StartTS, cfg.RestoreTS)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1823,7 +1823,7 @@ func parseFullBackupTablesStorage(
 	}, nil
 }
 
-func initRewriteRules(schemasReplace *stream.SchemasReplace, startTs, restoredTs uint64) map[int64]*restoreutils.RewriteRules {
+func initRewriteRules(schemasReplace *stream.SchemasReplace, shiftStartTs, startTs, restoredTs uint64) map[int64]*restoreutils.RewriteRules {
 	rules := make(map[int64]*restoreutils.RewriteRules)
 	filter := schemasReplace.TableFilter
 
@@ -1842,7 +1842,7 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace, startTs, restoredTs
 					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
 				rules[oldTableID] = restoreutils.GetRewriteRuleOfTable(
-					oldTableID, tableReplace.TableID, startTs, restoredTs, tableReplace.IndexMap, false)
+					oldTableID, tableReplace.TableID, shiftStartTs, startTs, restoredTs, tableReplace.IndexMap, false)
 			}
 
 			for oldID, newID := range tableReplace.PartitionMap {
@@ -1850,7 +1850,7 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace, startTs, restoredTs
 					log.Info("add rewrite rule",
 						zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
-					rules[oldID] = restoreutils.GetRewriteRuleOfTable(oldID, newID, startTs, restoredTs, tableReplace.IndexMap, false)
+					rules[oldID] = restoreutils.GetRewriteRuleOfTable(oldID, newID, shiftStartTs, startTs, restoredTs, tableReplace.IndexMap, false)
 				}
 			}
 		}
