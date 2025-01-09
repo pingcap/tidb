@@ -1540,4 +1540,32 @@ func TestAccessPrivilege(t *testing.T) {
 	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
+
+	// Test the same query digests, but run as a different user in a new statement
+	// summary interval. The old user should not be able to access the rows generated
+	// for the new user.
+	ssMap.beginTimeForCurInterval = time.Now().Unix()
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.User = "new_user"
+
+	for i := range loops {
+		stmtExecInfo2.Digest = fmt.Sprintf("digest%d", i)
+		ssMap.AddStatement(stmtExecInfo2)
+	}
+
+	oldUser := user
+	newUser := &auth.UserIdentity{Username: "new_user"}
+
+	reader.user = newUser
+	reader.hasProcessPriv = false
+	datums = reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, loops)
+	reader.user = oldUser
+	reader.hasProcessPriv = false
+	datums = reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, 0)
+	reader.user = oldUser
+	reader.hasProcessPriv = true
+	datums = reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, loops)
 }
