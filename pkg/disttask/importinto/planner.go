@@ -278,14 +278,14 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	}
 
 	importSpecs := make([]planner.PipelineSpec, 0, len(chunkMap))
-	for id := range chunkMap {
+	for id, chunks := range chunkMap {
 		if id == common.IndexEngineID {
 			continue
 		}
 		importSpec := &ImportSpec{
 			ID:     id,
 			Plan:   p.Plan,
-			Chunks: chunkMap[id],
+			Chunks: chunks,
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}
