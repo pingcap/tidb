@@ -1393,11 +1393,11 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(UnityK.Load())), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, err := strconv.ParseInt(val, 10, 64)
+			v, err := strconv.Atoi(val)
 			if err == nil {
 				return err
 			}
-			UnityK.Store(v)
+			UnityK.Store(int64(v))
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableInstancePlanCache, Value: Off, Type: TypeBool,
