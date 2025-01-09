@@ -728,7 +728,7 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 func ParsePlanHints(hints []*ast.TableOptimizerHint,
 	currentLevel int, currentDB string,
 	hintProcessor *QBHintHandler, straightJoinOrder bool,
-	handlingExistsSubquery, notHandlingSubquery bool,
+	handlingInSubquery, handlingExistsSubquery, notHandlingSubquery bool,
 	warnHandler hintWarnHandler) (p *PlanHints, subQueryHintFlags uint64, err error) {
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []HintedTable
@@ -872,8 +872,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
-			if !handlingExistsSubquery {
-				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause.")
+			if !handlingExistsSubquery && !handlingInSubquery {
+				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
 				continue
 			}
 			subQueryHintFlags |= HintFlagSemiJoinRewrite
