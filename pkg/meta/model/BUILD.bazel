@@ -4,7 +4,6 @@ go_library(
     name = "model",
     srcs = [
         "bdr.go",
-        "binding__failpoint_binding__.go",
         "column.go",
         "db.go",
         "flags.go",

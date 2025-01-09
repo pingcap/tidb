@@ -4,7 +4,6 @@ go_library(
     name = "checkpoint",
     srcs = [
         "backup.go",
-        "binding__failpoint_binding__.go",
         "checkpoint.go",
         "external_storage.go",
         "log_restore.go",

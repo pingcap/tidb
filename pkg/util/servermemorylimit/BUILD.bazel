@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "servermemorylimit",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "servermemorylimit.go",
-    ],
+    srcs = ["servermemorylimit.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/servermemorylimit",
     visibility = ["//visibility:public"],
     deps = [

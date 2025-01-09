@@ -4,7 +4,6 @@ go_library(
     name = "operator",
     srcs = [
         "base64ify.go",
-        "binding__failpoint_binding__.go",
         "config.go",
         "list_migration.go",
         "migrate_to.go",

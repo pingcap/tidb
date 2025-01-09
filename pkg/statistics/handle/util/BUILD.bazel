@@ -4,7 +4,6 @@ go_library(
     name = "util",
     srcs = [
         "auto_analyze_proc_id_generator.go",
-        "binding__failpoint_binding__.go",
         "lease_getter.go",
         "pool.go",
         "table_info.go",

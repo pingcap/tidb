@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cache",
     srcs = [
-        "binding__failpoint_binding__.go",
         "stats_table_row_cache.go",
         "statscache.go",
         "statscacheinner.go",

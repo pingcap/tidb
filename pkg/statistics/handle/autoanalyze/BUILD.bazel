@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "autoanalyze",
-    srcs = [
-        "autoanalyze.go",
-        "binding__failpoint_binding__.go",
-    ],
+    srcs = ["autoanalyze.go"],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
     deps = [

@@ -4,7 +4,6 @@ go_library(
     name = "scheduler",
     srcs = [
         "balancer.go",
-        "binding__failpoint_binding__.go",
         "collector.go",
         "interface.go",
         "nodes.go",

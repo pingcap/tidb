@@ -15,7 +15,6 @@ go_library(
         "aggregation.go",
         "avg.go",
         "base_func.go",
-        "binding__failpoint_binding__.go",
         "bit_and.go",
         "bit_or.go",
         "bit_xor.go",

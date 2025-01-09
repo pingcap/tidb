@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "sqlkiller",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "sqlkiller.go",
-    ],
+    srcs = ["sqlkiller.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/sqlkiller",
     visibility = ["//visibility:public"],
     deps = [

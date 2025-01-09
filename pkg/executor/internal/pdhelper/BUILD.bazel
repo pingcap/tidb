@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pdhelper",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "pd.go",
-    ],
+    srcs = ["pd.go"],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/pdhelper",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [

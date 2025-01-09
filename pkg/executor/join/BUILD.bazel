@@ -6,7 +6,6 @@ go_library(
         "anti_semi_join_probe.go",
         "base_join_probe.go",
         "base_semi_join.go",
-        "binding__failpoint_binding__.go",
         "concurrent_map.go",
         "hash_join_base.go",
         "hash_join_spill.go",

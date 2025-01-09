@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "calibrateresource",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "calibrate_resource.go",
-    ],
+    srcs = ["calibrate_resource.go"],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/calibrateresource",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [

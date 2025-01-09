@@ -7,7 +7,6 @@ go_library(
         "advancer_cliext.go",
         "advancer_daemon.go",
         "advancer_env.go",
-        "binding__failpoint_binding__.go",
         "client.go",
         "collector.go",
         "flush_subscriber.go",

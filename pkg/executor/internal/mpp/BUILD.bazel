@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mpp",
     srcs = [
-        "binding__failpoint_binding__.go",
         "executor_with_retry.go",
         "local_mpp_coordinator.go",
         "recovery_handler.go",

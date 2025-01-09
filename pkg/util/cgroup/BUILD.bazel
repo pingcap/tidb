@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cgroup",
     srcs = [
-        "binding__failpoint_binding__.go",
         "cgroup.go",
         "cgroup_cpu.go",
         "cgroup_cpu_linux.go",
