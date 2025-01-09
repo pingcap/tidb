@@ -785,6 +785,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+		// TableScan with cluster table can't keep order.
+		return false
+	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if path.Index == nil || path.Index.VectorInfo == nil {
 			return false

@@ -143,6 +143,12 @@ func (index *IndexInfo) IsPublic() bool {
 	return index.State == StatePublic
 }
 
+// IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
+// For a TiFlash local index, no actual index data need to be written to KV layer.
+func (index *IndexInfo) IsTiFlashLocalIndex() bool {
+	return index.VectorInfo != nil
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
 	for _, index := range indices {
