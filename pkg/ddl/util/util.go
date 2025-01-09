@@ -377,10 +377,10 @@ const (
 func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// Mock store does not support `show config` now, so we  use failpoint here
 	// to control whether we are in raft-kv2
-	if v, _err_ := failpoint.Eval(_curpkg_("IsRaftKv2")); _err_ == nil {
+	failpoint.Inject("IsRaftKv2", func(v failpoint.Value) (bool, error) {
 		v2, _ := v.(bool)
 		return v2, nil
-	}
+	})
 
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, getRaftKvVersionSQL)
 	if err != nil {

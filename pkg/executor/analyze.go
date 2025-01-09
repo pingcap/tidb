@@ -133,12 +133,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockKillPendingAnalyzeJob")); _err_ == nil {
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	}
+	})
 TASKLOOP:
 	for _, task := range tasks {
 		select {
@@ -163,12 +163,12 @@ TASKLOOP:
 		return err
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockKillFinishedAnalyzeJob")); _err_ == nil {
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	}
+	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
@@ -180,9 +180,9 @@ TASKLOOP:
 	if intest.InTest {
 		for {
 			stop := true
-			if _, _err_ := failpoint.Eval(_curpkg_("mockStuckAnalyze")); _err_ == nil {
+			failpoint.Inject("mockStuckAnalyze", func() {
 				stop = false
-			}
+			})
 			if stop {
 				break
 			}
@@ -419,7 +419,7 @@ func (e *AnalyzeExec) handleResultsError(
 		zap.Int("buildStatsConcurrency", buildStatsConcurrency),
 		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
 	)
-	failpoint.Eval(_curpkg_("handleResultsErrorSingleThreadPanic"))
+	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
 	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
@@ -513,7 +513,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		failpoint.Eval(_curpkg_("handleAnalyzeWorkerPanic"))
+		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:

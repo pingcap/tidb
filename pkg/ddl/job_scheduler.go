@@ -195,7 +195,7 @@ func (s *jobScheduler) close() {
 	if s.generalDDLWorkerPool != nil {
 		s.generalDDLWorkerPool.close()
 	}
-	failpoint.Call(_curpkg_("afterSchedulerClose"))
+	failpoint.InjectCall("afterSchedulerClose")
 }
 
 func hasSysDB(job *model.Job) bool {
@@ -302,7 +302,7 @@ func (s *jobScheduler) schedule() error {
 		if err := s.schCtx.Err(); err != nil {
 			return err
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("ownerResignAfterDispatchLoopCheck")); _err_ == nil {
+		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
 			if ingest.ResignOwnerForTest.Load() {
 				err2 := s.ownerManager.ResignOwner(context.Background())
 				if err2 != nil {
@@ -310,7 +310,7 @@ func (s *jobScheduler) schedule() error {
 				}
 				ingest.ResignOwnerForTest.Store(false)
 			}
-		}
+		})
 		select {
 		case <-s.ddlJobNotifyCh:
 		case <-ticker.C:
@@ -327,7 +327,7 @@ func (s *jobScheduler) schedule() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		failpoint.Call(_curpkg_("beforeLoadAndDeliverJobs"))
+		failpoint.InjectCall("beforeLoadAndDeliverJobs")
 		if err := s.loadAndDeliverJobs(se); err != nil {
 			logutil.SampleLogger().Warn("load and deliver jobs failed", zap.Error(err))
 		}
@@ -467,7 +467,7 @@ func (s *jobScheduler) mustReloadSchemas() {
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
 func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.JobW) {
-	failpoint.Call(_curpkg_("beforeDeliveryJob"), jobW.Job)
+	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
 	injectFailPointForGetJob(jobW.Job)
 	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
@@ -484,7 +484,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 			if r != nil {
 				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			failpoint.Call(_curpkg_("afterDeliveryJob"), jobW)
+			failpoint.InjectCall("afterDeliveryJob", jobW)
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
 			// choosing another runnable job that involves the same schema object.
@@ -505,10 +505,10 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 			// or the job is finished by another owner.
 			// TODO for JobStateRollbackDone we have to query 1 additional time when the
 			// job is already moved to history.
-			failpoint.Call(_curpkg_("beforeRefreshJob"), jobW.Job)
+			failpoint.InjectCall("beforeRefreshJob", jobW.Job)
 			for {
 				jobW, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
-				failpoint.Call(_curpkg_("mockGetJobByIDFail"), &err)
+				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {
 					break
 				}
@@ -555,7 +555,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
 func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *model.JobW) error {
-	failpoint.Call(_curpkg_("beforeTransitOneJobStepAndWaitSync"))
+	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
@@ -591,16 +591,16 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDownBeforeUpdateGlobalVersion")); _err_ == nil {
+	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce == 0 {
 				mockDDLErrOnce = schemaVer
-				return errors.New("mock down before update global version")
+				failpoint.Return(errors.New("mock down before update global version"))
 			}
 		}
-	}
+	})
 
-	failpoint.Call(_curpkg_("beforeWaitSchemaSynced"), job, schemaVer)
+	failpoint.InjectCall("beforeWaitSchemaSynced", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -610,7 +610,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	s.cleanMDLInfo(job, ownerID)
 	jobCtx.removeUnSynced(job.ID)
 
-	failpoint.Call(_curpkg_("afterWaitSchemaSynced"), job)
+	failpoint.InjectCall("afterWaitSchemaSynced", job)
 	return nil
 }
 

@@ -221,14 +221,14 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 		return
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("resignAfterFlush")); _err_ == nil {
+	failpoint.Inject("resignAfterFlush", func() {
 		// used in a manual test
 		ResignOwnerForTest.Store(true)
 		// wait until ResignOwnerForTest is processed
 		for ResignOwnerForTest.Load() {
 			time.Sleep(100 * time.Millisecond)
 		}
-	}
+	})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -445,10 +445,10 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 }
 
 func (s *CheckpointManager) updateCheckpointLoop() {
-	if _, _err_ := failpoint.Eval(_curpkg_("checkpointLoopExit")); _err_ == nil {
+	failpoint.Inject("checkpointLoopExit", func() {
 		// used in a manual test
-		return
-	}
+		failpoint.Return()
+	})
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -477,10 +477,10 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 }
 
 func (s *CheckpointManager) updateCheckpoint() error {
-	if _, _err_ := failpoint.Eval(_curpkg_("checkpointLoopExit")); _err_ == nil {
+	failpoint.Inject("checkpointLoopExit", func() {
 		// used in a manual test
-		return errors.New("failpoint triggered so can't update checkpoint")
-	}
+		failpoint.Return(errors.New("failpoint triggered so can't update checkpoint"))
+	})
 	finishCh := make(chan struct{})
 	select {
 	case s.updaterCh <- finishCh:

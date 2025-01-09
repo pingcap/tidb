@@ -53,7 +53,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 		return err
 	}
 	startTS := txn.StartTS()
-	failpoint.Call(_curpkg_("wrapInBeginRollbackStartTS"), startTS)
+	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
 	return f(startTS)
 }
 

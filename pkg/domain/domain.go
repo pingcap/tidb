@@ -367,13 +367,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	}
 
 	// add failpoint to simulate long-running schema loading scenario
-	if val, _err_ := failpoint.Eval(_curpkg_("mock-load-schema-long-time")); _err_ == nil {
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
 		if val.(bool) {
 			// not ideal to use sleep, but not sure if there is a better way
 			logutil.BgLogger().Error("sleep before doing a full load")
 			time.Sleep(15 * time.Second)
 		}
-	}
+	})
 
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
@@ -521,9 +521,9 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 }
 
 func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("failed-fetch-schemas-with-tables")); _err_ == nil {
-		return errors.New("failpoint: failed to fetch schemas with tables")
-	}
+	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
+		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
+	})
 
 	for _, di := range schemas {
 		// if the ctx has been canceled, stop fetching schemas.
@@ -611,22 +611,22 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		diffs = append(diffs, diff)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockTryLoadDiffError")); _err_ == nil {
+	failpoint.Inject("MockTryLoadDiffError", func(val failpoint.Value) {
 		switch val.(string) {
 		case "exchangepartition":
 			if diffs[0].Type == model.ActionExchangeTablePartition {
-				return nil, nil, nil, errors.New("mock error")
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
 			}
 		case "renametable":
 			if diffs[0].Type == model.ActionRenameTable {
-				return nil, nil, nil, errors.New("mock error")
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
 			}
 		case "dropdatabase":
 			if diffs[0].Type == model.ActionDropSchema {
-				return nil, nil, nil, errors.New("mock error")
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
 			}
 		}
-	}
+	})
 
 	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
@@ -766,11 +766,11 @@ func getFlashbackStartTSFromErrorMsg(err error) uint64 {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	if val, _err_ := failpoint.Eval(_curpkg_("ErrorMockReloadFailed")); _err_ == nil {
+	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("mock reload failed")
+			failpoint.Return(errors.New("mock reload failed"))
 		}
-	}
+	})
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -1137,9 +1137,9 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			if _, _err_ := failpoint.Eval(_curpkg_("disableOnTickReload")); _err_ == nil {
-				continue
-			}
+			failpoint.Inject("disableOnTickReload", func() {
+				failpoint.Continue()
+			})
 			err := do.Reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
@@ -1410,7 +1410,7 @@ func (do *Domain) Init(
 		time.Second,
 	)
 	// TODO(lance6716): find a more representative place for subscriber
-	failpoint.Call(_curpkg_("afterDDLNotifierCreated"), do.ddlNotifier)
+	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -1425,12 +1425,12 @@ func (do *Domain) Init(
 		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockReplaceDDL")); _err_ == nil {
+	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
 			do.ddlExecutor = eBak
 		}
-	}
+	})
 	if ddlInjector != nil {
 		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
@@ -1734,11 +1734,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	if val, _err_ := failpoint.Eval(_curpkg_("MockDisableDistTask")); _err_ == nil {
+	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	var serverID string
@@ -1984,7 +1984,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 
-			if val, _err_ := failpoint.Eval(_curpkg_("skipLoadSysVarCacheLoop")); _err_ == nil {
+			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
 				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
 				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
 				// own storage.
@@ -1992,9 +1992,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// That's the problem, each testSuit use different storage to update some same local variables.
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
-					continue
+					failpoint.Continue()
 				}
-			}
+			})
 
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")

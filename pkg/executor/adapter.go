@@ -298,12 +298,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		r.Span.LogKV("sql", a.Text())
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInShortPointGetPlan")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		// stale read should not reach here
 		staleread.AssertStmtStaleness(a.Ctx, false)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
-	}
+	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
@@ -404,7 +404,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInRebuildPlan")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
 		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
@@ -415,7 +415,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		if ret.IsStaleness {
 			sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
 		}
-	}
+	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	replicaReadScope := sessiontxn.GetTxnManager(a.Ctx).GetReadReplicaScope()
@@ -493,7 +493,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
-	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleTSO")); _err_ == nil {
+	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
 			ts, err := txnManager.GetStmtReadTS()
@@ -505,7 +505,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 		}
-	}
+	})
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -745,12 +745,12 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
-		if val, _err_ := failpoint.Eval(_curpkg_("handleForeignKeyCascadeError")); _err_ == nil {
+		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
 			// Next can recover panic and convert it to error. So we inject error directly here.
 			if val.(bool) && err == nil {
 				err = errors.New("handleForeignKeyCascadeError")
 			}
-		}
+		})
 		closeErr := exec.Close(e)
 		if err == nil {
 			err = closeErr
@@ -959,7 +959,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 			return rs, nil
 		}
 
-		failpoint.Eval(_curpkg_("pessimisticSelectForUpdateRetry"))
+		failpoint.Inject("pessimisticSelectForUpdateRetry", nil)
 	}
 }
 
@@ -1068,7 +1068,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 	for {
 		if !isFirstAttempt {
-			failpoint.Eval(_curpkg_("pessimisticDMLRetry"))
+			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
 		startTime := time.Now()
@@ -1140,13 +1140,13 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if lockErr == nil {
 		return nil, nil
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("assertPessimisticLockErr")); _err_ == nil {
+	failpoint.Inject("assertPessimisticLockErr", func() {
 		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errWriteConflict")
 		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
 			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
 		}
-	}
+	})
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
@@ -1195,9 +1195,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterPessimisticLockErrorRetry")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
-	}
+	})
 
 	if err = a.openExecutor(ctx, e); err != nil {
 		return nil, err
@@ -1231,10 +1231,10 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		return nil, errors.Trace(b.err)
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterBuildExecutor")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
 		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
-	}
+	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
@@ -1510,9 +1510,9 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 			ruDetail := ruDetailRaw.(*util.RUDetails)
 			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockRUConsumption")); _err_ == nil {
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
 			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
-		}
+		})
 		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
 			TxnScope:      sessVars.CheckAndGetTxnScope(),
@@ -1705,13 +1705,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("assertSyncStatsFailed")); _err_ == nil {
+	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
 				panic("isSyncStatsFailed should be true")
 			}
 		}
-	}
+	})
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}

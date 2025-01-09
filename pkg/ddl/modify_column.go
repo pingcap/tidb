@@ -90,14 +90,14 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("uninitializedOffsetAndState")); _err_ == nil {
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			if args.Column.State != model.StatePublic {
-				return ver, errors.New("the column state is wrong")
+				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
-	}
+	})
 
 	err = checkAndApplyAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, args.Column, args.NewShardBits)
 	if err != nil {
@@ -476,12 +476,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
-		if val, _err_ := failpoint.Eval(_curpkg_("mockInsertValueAfterCheckNull")); _err_ == nil {
+		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
 				sctx, err := w.sessPool.Get()
 				if err != nil {
-					return ver, err
+					failpoint.Return(ver, err)
 				}
 				defer w.sessPool.Put(sctx)
 
@@ -490,10 +490,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
-					return ver, err
+					failpoint.Return(ver, err)
 				}
 			}
-		}
+		})
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -504,7 +504,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
-		failpoint.Call(_curpkg_("modifyColumnTypeWithData"), job, args)
+		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -533,7 +533,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
-		failpoint.Call(_curpkg_("afterModifyColumnStateDeleteOnly"), job.ID)
+		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
@@ -633,7 +633,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 	// With a failpoint-enabled version of TiDB, you can trigger this failpoint by the following command:
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData"
-	failpoint.Eval(_curpkg_("mockDelayInModifyColumnTypeWithData"))
+	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
 	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {

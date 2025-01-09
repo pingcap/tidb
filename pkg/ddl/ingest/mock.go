@@ -207,7 +207,7 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 
-	failpoint.Call(_curpkg_("onMockWriterWriteRow"))
+	failpoint.InjectCall("onMockWriterWriteRow")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.onWrite != nil {

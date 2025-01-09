@@ -117,7 +117,7 @@ func (t *topNWorker) run() {
 
 func (t *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
 	injectTopNRandomFail(triggerFactor)
-	if val, _err_ := failpoint.Eval(_curpkg_("SlowSomeWorkers")); _err_ == nil {
+	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			if t.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
@@ -126,5 +126,5 @@ func (t *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
 				}
 			}
 		}
-	}
+	})
 }

@@ -73,7 +73,7 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("setExtStorage")); _err_ == nil {
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
 		b, err := storage.ParseBackend(path, nil)
 		if err != nil {
@@ -84,7 +84,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			panic(err)
 		}
 		conf.ExtStorage = s
-	}
+	})
 
 	tctx, cancelFn := tcontext.Background().WithContext(ctx).WithCancel()
 	d := &Dumper{
@@ -112,7 +112,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("SetIOTotalBytes")); _err_ == nil {
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
 		d.conf.IOTotalBytes = gatomic.NewUint64(0)
 		d.conf.Net = uuid.New().String()
 		go func() {
@@ -121,7 +121,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 				d.tctx.L().Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
 			}
 		}()
-	}
+	})
 
 	err = runSteps(d,
 		initLogger,
@@ -258,9 +258,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	chanSize := defaultTaskChannelCapacity
-	if _, _err_ := failpoint.Eval(_curpkg_("SmallDumpChanSize")); _err_ == nil {
+	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
-	}
+	})
 	taskIn, taskOut := infiniteChan[Task]()
 	// todo: refine metrics
 	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
@@ -281,7 +281,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 	// Inject consistency failpoint test after we release the table lock
-	failpoint.Eval(_curpkg_("ConsistencyCheck"))
+	failpoint.Inject("ConsistencyCheck", nil)
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
@@ -301,7 +301,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	tableDataStartTime := time.Now()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("PrintTiDBMemQuotaQuery")); _err_ == nil {
+	failpoint.Inject("PrintTiDBMemQuotaQuery", func(_ failpoint.Value) {
 		row := d.dbHandle.QueryRowContext(tctx, "select @@tidb_mem_quota_query;")
 		var s string
 		err = row.Scan(&s)
@@ -310,7 +310,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		} else {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
-	}
+	})
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
@@ -322,10 +322,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 	d.metrics.progressReady.Store(true)
 	close(taskIn)
-	if _, _err_ := failpoint.Eval(_curpkg_("EnableLogProgress")); _err_ == nil {
+	failpoint.Inject("EnableLogProgress", func() {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("progress ready, sleep 1s")
-	}
+	})
 	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
@@ -358,10 +358,10 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 				// tctx.L().Debug("finished dumping table data",
 				//	zap.String("database", td.Meta.DatabaseName()),
 				//	zap.String("table", td.Meta.TableName()))
-				if _, _err_ := failpoint.Eval(_curpkg_("EnableLogProgress")); _err_ == nil {
+				failpoint.Inject("EnableLogProgress", func() {
 					time.Sleep(1 * time.Second)
 					tctx.L().Debug("EnableLogProgress, sleep 1s")
-				}
+				})
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {

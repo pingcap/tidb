@@ -124,11 +124,11 @@ func (reader *rowContainerReader) startWorker() {
 
 		for chkIdx := range reader.rc.NumChunks() {
 			chk, err := reader.rc.GetChunk(chkIdx)
-			if val, _err_ := failpoint.Eval(_curpkg_("get-chunk-error")); _err_ == nil {
+			failpoint.Inject("get-chunk-error", func(val failpoint.Value) {
 				if val.(bool) {
 					err = errors.New("fail to get chunk for test")
 				}
-			}
+			})
 			if err != nil {
 				reader.err = err
 				return

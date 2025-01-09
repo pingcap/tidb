@@ -145,7 +145,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		failpoint.Call(_curpkg_("ttl-finish"), &err)
+		failpoint.InjectCall("ttl-finish", &err)
 		return err
 	}, session.TxnModePessimistic)
 

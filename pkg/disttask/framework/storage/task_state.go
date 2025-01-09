@@ -179,7 +179,7 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 		if task.State != param.PrevState {
 			return ErrTaskChanged
 		}
-		failpoint.Call(_curpkg_("beforeMoveToModifying"))
+		failpoint.InjectCall("beforeMoveToModifying")
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
@@ -203,7 +203,7 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) error {
 	prevState := task.ModifyParam.PrevState
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		failpoint.Call(_curpkg_("beforeModifiedTask"))
+		failpoint.InjectCall("beforeModifiedTask")
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set state = %?,

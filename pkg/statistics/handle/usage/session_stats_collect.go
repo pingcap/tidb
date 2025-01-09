@@ -128,9 +128,9 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 	defer func() {
 		// Only record the historical stats meta when the table is not locked because all stats meta are stored in the locked table.
 		if err == nil && statsVersion != 0 && !isLocked {
-			if _, _err_ := failpoint.Eval(_curpkg_("panic-when-record-historical-stats-meta")); _err_ == nil {
+			failpoint.Inject("panic-when-record-historical-stats-meta", func() {
 				panic("panic when record historical stats meta")
-			}
+			})
 			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
 		}
 	}()

@@ -35,10 +35,10 @@ func ReadMemStats() (memStats *runtime.MemStats) {
 	} else {
 		memStats = ForceReadMemStats()
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("ReadMemStats")); _err_ == nil {
+	failpoint.Inject("ReadMemStats", func(val failpoint.Value) {
 		injectedSize := val.(int)
 		memStats = &runtime.MemStats{HeapInuse: memStats.HeapInuse + uint64(injectedSize)}
-	}
+	})
 	return
 }
 

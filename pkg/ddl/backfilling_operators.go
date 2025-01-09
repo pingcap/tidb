@@ -242,9 +242,9 @@ func NewWriteIndexToExternalStoragePipeline(
 	}
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
-	if _, _err_ := failpoint.Eval(_curpkg_("mockWriterMemSize")); _err_ == nil {
+	failpoint.Inject("mockWriterMemSize", func() {
 		memSizePerIndex = 1 * size.GB
-	}
+	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil,
@@ -537,9 +537,9 @@ type tableScanWorker struct {
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
-	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForTableScan")); _err_ == nil {
+	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
-	}
+	})
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -564,10 +564,10 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		if _, _err_ := failpoint.Eval(_curpkg_("mockScanRecordError")); _err_ == nil {
-			return errors.New("mock scan record error")
-		}
-		failpoint.Call(_curpkg_("scanRecordExec"))
+		failpoint.Inject("mockScanRecordError", func() {
+			failpoint.Return(errors.New("mock scan record error"))
+		})
+		failpoint.InjectCall("scanRecordExec")
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
@@ -842,9 +842,9 @@ type indexIngestBaseWorker struct {
 }
 
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResult, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForIndexIngest")); _err_ == nil {
+	failpoint.Inject("injectPanicForIndexIngest", func() {
 		panic("mock panic")
-	}
+	})
 
 	result := IndexWriteResult{
 		ID: rs.ID,
@@ -907,10 +907,10 @@ func (w *indexIngestBaseWorker) Close() {
 
 // WriteChunk will write index records to lightning engine.
 func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteLocalError")); _err_ == nil {
-		return 0, nil, errors.New("mock write local error")
-	}
-	failpoint.Call(_curpkg_("writeLocalExec"), rs.Done)
+	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
+		failpoint.Return(0, nil, errors.New("mock write local error"))
+	})
+	failpoint.InjectCall("writeLocalExec", rs.Done)
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
@@ -990,9 +990,9 @@ func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
 		return nil
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockFlushError")); _err_ == nil {
-		return errors.New("mock flush error")
-	}
+	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock flush error"))
+	})
 	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
 	if s.cpMgr != nil {
 		// Try to advance watermark even if there is an error.
