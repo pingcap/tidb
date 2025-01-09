@@ -21,8 +21,8 @@ import (
 )
 
 // The following sysVars are noops.
-// Some applications will depend on certain variables to be present or settable,
-// for example query_cache_time. These are included for MySQL compatibility,
+// Some applications will depend on certain variables to be present or settable.
+// These are included for MySQL compatibility,
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
@@ -45,7 +45,6 @@ var noopSysVars = []*SysVar{
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
-	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: Off, Type: TypeBool},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    "sql_buffer_result",
@@ -90,7 +89,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "preload_buffer_size", Value: "32768"},
 	{Scope: ScopeGlobal, Name: CheckProxyUsers, Value: Off, Type: TypeBool},
-	{Scope: ScopeNone, Name: "have_query_cache", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "innodb_flush_log_at_timeout", Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_max_undo_log_size", Value: ""},
 	{
@@ -101,7 +99,6 @@ var noopSysVars = []*SysVar{
 	},
 	{Scope: ScopeNone, Name: "have_rtree_keys", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "innodb_old_blocks_pct", Value: "37"},
-	{Scope: ScopeGlobal, Name: "innodb_file_format", Value: "Barracuda", Type: TypeEnum, PossibleValues: []string{"Antelope", "Barracuda"}},
 	{Scope: ScopeGlobal, Name: "innodb_default_row_format", Value: "dynamic", Type: TypeEnum, PossibleValues: []string{"redundant", "compact", "dynamic"}},
 	{Scope: ScopeGlobal, Name: "innodb_compression_failure_threshold_pct", Value: "5"},
 	{Scope: ScopeNone, Name: "performance_schema_events_waits_history_long_size", Value: "10000"},
@@ -145,7 +142,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: DelayKeyWrite, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, "ALL"}},
 	{Scope: ScopeNone, Name: "metadata_locks_cache_size", Value: "1024"},
 	{Scope: ScopeNone, Name: "innodb_force_recovery", Value: "0"},
-	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
@@ -156,15 +152,12 @@ var noopSysVars = []*SysVar{
 		Value:                   "262144",
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: ScopeNone, Name: "innodb_mirrored_log_groups", Value: "1"},
 	{Scope: ScopeGlobal, Name: "max_binlog_size", Value: "1073741824"},
 	{Scope: ScopeGlobal, Name: "concurrent_insert", Value: "AUTO"},
 	{Scope: ScopeGlobal, Name: InnodbAdaptiveHashIndex, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: InnodbFtEnableStopword, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "general_log_file", Value: "/usr/local/mysql/data/localhost.log"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbSupportXA, Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_compression_level", Value: "6"},
-	{Scope: ScopeNone, Name: "innodb_file_format_check", Value: "1"},
 	{Scope: ScopeNone, Name: "myisam_mmap_size", Value: "18446744073709551615"},
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
 	{
@@ -179,7 +172,6 @@ var noopSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
 	{Scope: ScopeNone, Name: "character_sets_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
-	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, "DEMAND"}},
 	{Scope: ScopeNone, Name: "innodb_rollback_on_timeout", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_alloc_block_size", Value: "8192"},
 	{Scope: ScopeNone, Name: "have_compress", Value: "YES"},
@@ -211,7 +203,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_spin_wait_delay", Value: "6"},
 	{Scope: ScopeGlobal, Name: "thread_cache_size", Value: "9"},
 	{Scope: ScopeGlobal, Name: LogSlowAdminStatements, Value: Off, Type: TypeBool},
-	{Scope: ScopeNone, Name: "innodb_checksums", Type: TypeBool, Value: On},
 	{Scope: ScopeNone, Name: "ft_stopword_file", Value: "(built-in)"},
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct_lwm", Value: "0"},
 	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: Off, Type: TypeBool},
@@ -269,7 +260,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_api_enable_binlog", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "innodb_ft_user_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "server_id_bits", Value: "32"},
-	{Scope: ScopeGlobal, Name: "innodb_log_checksum_algorithm", Value: ""},
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_load_at_startup", Value: "1"},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
@@ -278,7 +268,6 @@ var noopSysVars = []*SysVar{
 		IsHintUpdatableVerified: true,
 	},
 	{Scope: ScopeGlobal, Name: "innodb_flush_neighbors", Value: "1"},
-	{Scope: ScopeNone, Name: "innodb_use_sys_malloc", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_socket_classes", Value: "10"},
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
@@ -341,7 +330,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "sha256_password_proxy_users", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLQuoteShowCreate, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlogging_impossible_mode", Value: "IGNORE_ERROR"},
-	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheSize, Value: "1048576"},
 	{Scope: ScopeGlobal, Name: "innodb_stats_transient_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal, Name: InnodbStatsOnMetadata, Value: "0"},
 	{Scope: ScopeNone, Name: "server_uuid", Value: "00000000-0000-0000-0000-000000000000"},
@@ -421,7 +409,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_read_only", Value: "0"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},
@@ -478,7 +465,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: KeepFilesOnCreate, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_data_file_path", Value: "ibdata1:12M:autoextend"},
 	{Scope: ScopeNone, Name: "performance_schema_setup_actors_size", Value: "100"},
-	{Scope: ScopeNone, Name: "innodb_additional_mem_pool_size", Value: "8388608"},
 	{Scope: ScopeNone, Name: "log_error", Value: "/usr/local/mysql/data/localhost.err"},
 	{Scope: ScopeGlobal, Name: "binlog_stmt_cache_size", Value: "32768"},
 	{Scope: ScopeNone, Name: "relay_log_info_file", Value: "relay-log.info"},
@@ -505,7 +491,6 @@ var noopSysVars = []*SysVar{
 		Value:                   "65536",
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
 	{Scope: ScopeNone, Name: "have_symlink", Value: "YES"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "storage_engine", Value: "InnoDB"},
@@ -527,7 +512,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_trace_features", Value: "greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on"},
 	{Scope: ScopeGlobal, Name: "innodb_flush_log_at_trx_commit", Value: "1"},
 	{Scope: ScopeGlobal, Name: "rewriter_enabled", Value: ""},
-	{Scope: ScopeGlobal, Name: "query_cache_min_res_unit", Value: "4096"},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    "updatable_views_with_limit",
@@ -544,7 +528,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "binlog_checksum", Value: "CRC32"},
 	{Scope: ScopeNone, Name: "report_port", Value: "3306"},
 	{Scope: ScopeGlobal | ScopeSession, Name: ShowOldTemporals, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: "query_cache_limit", Value: "1048576"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "4294967296"},
 	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_enable", Value: ""},
@@ -568,14 +551,12 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "myisam_recover_options", Value: Off},
 	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384", Type: TypeUnsigned, MinValue: 1024, MaxValue: 1048576},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_row_image", Value: "FULL"},
-	{Scope: ScopeNone, Name: "innodb_locks_unsafe_for_binlog", Value: "0"},
 	{Scope: ScopeSession, Name: "rbr_exec_mode", Value: ""},
 	{Scope: ScopeGlobal, Name: "myisam_max_sort_file_size", Value: "9223372036853727232"},
 	{Scope: ScopeNone, Name: "back_log", Value: "80"},
 	{Scope: ScopeSession, Name: "pseudo_thread_id", Value: ""},
 	{Scope: ScopeNone, Name: "have_dynamic_loading", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "rewriter_verbose", Value: ""},
-	{Scope: ScopeGlobal, Name: "innodb_undo_logs", Value: "128"},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_instances", Value: "3504"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_limit", Value: "100"},
 	{Scope: ScopeGlobal, Name: Flush, Value: Off, Type: TypeBool},

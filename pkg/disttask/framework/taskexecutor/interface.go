@@ -76,12 +76,12 @@ type TaskExecutor interface {
 	// based on task meta, do it in GetStepExecutor, as execute.StepExecutor is
 	// where subtasks are actually executed.
 	Init(context.Context) error
-	// Run runs the task with given resource, it will try to run each step one by
-	// one, if it cannot find any subtask to run for a while(10s now), it will exit,
-	// so manager can free and reuse the resource.
+	// Run runs the task, it will try to run each step one by one, if it cannot
+	// find any subtask to run for a while(10s now), it will exit, so manager
+	// can free and reuse the resource.
 	// we assume that all steps will have same resource usage now, will change it
 	// when we support different resource usage for different steps.
-	Run(resource *proto.StepResource)
+	Run()
 	// GetTaskBase returns the task, returned value is for read only, don't change it.
 	GetTaskBase() *proto.TaskBase
 	// CancelRunningSubtask cancels the running subtask and change its state to `cancelled`,
@@ -115,30 +115,34 @@ type Extension interface {
 	IsRetryableError(err error) bool
 }
 
-// EmptyStepExecutor is an empty Executor.
-// it can be used for the task that does not need to split into subtasks.
-type EmptyStepExecutor struct {
+// BaseStepExecutor is the base step executor implementation.
+type BaseStepExecutor struct {
 	execute.StepExecFrameworkInfo
 }
 
-var _ execute.StepExecutor = &EmptyStepExecutor{}
+var _ execute.StepExecutor = &BaseStepExecutor{}
 
 // Init implements the StepExecutor interface.
-func (*EmptyStepExecutor) Init(context.Context) error {
+func (*BaseStepExecutor) Init(context.Context) error {
 	return nil
 }
 
 // RunSubtask implements the StepExecutor interface.
-func (*EmptyStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
+func (*BaseStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
 	return nil
 }
 
 // RealtimeSummary implements the StepExecutor interface.
-func (*EmptyStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (*BaseStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
 // Cleanup implements the StepExecutor interface.
-func (*EmptyStepExecutor) Cleanup(context.Context) error {
+func (*BaseStepExecutor) Cleanup(context.Context) error {
+	return nil
+}
+
+// TaskMetaModified implements the StepExecutor interface.
+func (*BaseStepExecutor) TaskMetaModified(*proto.Task) error {
 	return nil
 }

@@ -133,8 +133,8 @@ func getAutoScalerType(typ string) int {
 
 // InitGlobalTopoFetcher init globalTopoFetcher if is in disaggregated-tiflash mode. It's not thread-safe.
 func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPool bool) (err error) {
-	logutil.BgLogger().Info("init globalTopoFetcher", zap.Any("type", typ), zap.Any("addr", addr),
-		zap.Any("clusterID", clusterID), zap.Any("isFixedPool", isFixedPool))
+	logutil.BgLogger().Info("init globalTopoFetcher", zap.String("type", typ), zap.String("addr", addr),
+		zap.String("clusterID", clusterID), zap.Bool("isFixedPool", isFixedPool))
 	if clusterID == "" || addr == "" {
 		return errors.Errorf("ClusterID(%s) or AutoScaler(%s) addr is empty", clusterID, addr)
 	}
@@ -189,7 +189,7 @@ func (f *MockTopoFetcher) FetchAndGetTopo() ([]string, error) {
 	}
 
 	curTopo := f.getTopo()
-	logutil.BgLogger().Debug("FetchAndGetTopo", zap.Any("topo", curTopo))
+	logutil.BgLogger().Debug("FetchAndGetTopo", zap.Strings("topo", curTopo))
 	return curTopo, nil
 }
 
@@ -216,7 +216,7 @@ func (f *MockTopoFetcher) assureTopo(nodeNum int) error {
 		RawQuery: para.Encode(),
 	}
 	url := u.String()
-	logutil.BgLogger().Info("assureTopo", zap.Any("url", url))
+	logutil.BgLogger().Info("assureTopo", zap.String("url", url))
 
 	newTopo, err := mockHTTPGetAndParseResp(url)
 	if err != nil {
@@ -237,7 +237,7 @@ func (f *MockTopoFetcher) fetchTopo() error {
 		Path:   "/fetch_topo",
 	}
 	url := u.String()
-	logutil.BgLogger().Info("fetchTopo", zap.Any("url", url))
+	logutil.BgLogger().Info("fetchTopo", zap.String("url", url))
 
 	newTopo, err := mockHTTPGetAndParseResp(url)
 	if err != nil {
@@ -265,9 +265,9 @@ func httpGetAndParseResp(url string) ([]byte, error) {
 	}
 	bStr := string(b)
 	if resp.StatusCode != http.StatusOK {
-		logutil.BgLogger().Error("http get mock AutoScaler failed", zap.Any("url", url),
-			zap.Any("status code", http.StatusText(resp.StatusCode)),
-			zap.Any("http body", bStr))
+		logutil.BgLogger().Error("http get mock AutoScaler failed", zap.String("url", url),
+			zap.String("status code", http.StatusText(resp.StatusCode)),
+			zap.String("http body", bStr))
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
 	}
 	return b, nil
@@ -286,7 +286,7 @@ func mockHTTPGetAndParseResp(url string) ([]string, error) {
 	if len(bStr) == 0 || len(newTopo) == 0 {
 		return nil, errors.New("topo list is empty")
 	}
-	logutil.BgLogger().Debug("httpGetAndParseResp succeed", zap.Any("new topo", newTopo))
+	logutil.BgLogger().Debug("httpGetAndParseResp succeed", zap.Strings("new topo", newTopo))
 	return newTopo, nil
 }
 
@@ -335,7 +335,7 @@ func (f *AWSTopoFetcher) RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int)
 
 func (f *AWSTopoFetcher) fetchAndGetTopo(recovery RecoveryType, oriCNCnt int) (curTopo []string, err error) {
 	defer func() {
-		logutil.BgLogger().Info("AWSTopoFetcher FetchAndGetTopo done", zap.Any("curTopo", curTopo))
+		logutil.BgLogger().Info("AWSTopoFetcher FetchAndGetTopo done", zap.Strings("curTopo", curTopo))
 	}()
 
 	if recovery != RecoveryTypeNull && recovery != RecoveryTypeMemLimit {
@@ -387,9 +387,9 @@ func (f *AWSTopoFetcher) tryUpdateTopo(newTopo *resumeAndGetTopologyResult) (upd
 	cachedTopo, cachedTS := f.getTopo()
 	newTS, err := strconv.ParseInt(newTopo.Timestamp, 10, 64)
 	defer func() {
-		logutil.BgLogger().Info("try update topo", zap.Any("updated", updated), zap.Any("err", err),
-			zap.Any("cached TS", cachedTS), zap.Any("cached Topo", cachedTopo),
-			zap.Any("fetch TS", newTopo.Timestamp), zap.Any("converted TS", newTS), zap.Any("fetch topo", newTopo.Topology))
+		logutil.BgLogger().Info("try update topo", zap.Bool("updated", updated), zap.Any("err", err),
+			zap.Int64("cached TS", cachedTS), zap.Strings("cached Topo", cachedTopo),
+			zap.String("fetch TS", newTopo.Timestamp), zap.Int64("converted TS", newTS), zap.Strings("fetch topo", newTopo.Topology))
 	}()
 	if err != nil {
 		return updated, errTopoFetcher.GenWithStackByArgs(parseTopoTSFailedErrMsg)
@@ -418,7 +418,7 @@ func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
 		Path:   awsFixedPoolHTTPPath,
 	}
 	url := u.String()
-	logutil.BgLogger().Info("fetchFixedPoolTopo", zap.Any("url", url))
+	logutil.BgLogger().Info("fetchFixedPoolTopo", zap.String("url", url))
 
 	newTopo, err := awsHTTPGetAndParseResp(url)
 	if err != nil {
@@ -452,7 +452,7 @@ func (f *AWSTopoFetcher) fetchTopo(recovery RecoveryType, oriCNCnt int) error {
 		RawQuery: para.Encode(),
 	}
 	url := u.String()
-	logutil.BgLogger().Info("fetchTopo", zap.Any("url", url))
+	logutil.BgLogger().Info("fetchTopo", zap.String("url", url))
 
 	newTopo, err := awsHTTPGetAndParseResp(url)
 	if err != nil {

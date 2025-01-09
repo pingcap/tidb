@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -120,7 +120,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
 	require.Nil(t, tbl1Info.ForeignKeys)
@@ -128,7 +128,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
-	tbl2, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
@@ -142,7 +142,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err = is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db1"), pmodel.NewCIStr("t1"))
+	tbl1, err = is.TableByName(context.Background(), ast.NewCIStr("ctwl_db1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Nil(t, tbl1.Meta().ForeignKeys)
 
@@ -278,7 +278,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -307,7 +307,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_foreign_key_temp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -391,7 +391,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("foreign_key_tmp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -1238,7 +1238,7 @@ func TestGetReverseKey(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("db_get"), pmodel.NewCIStr("test_get"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("db_get"), ast.NewCIStr("test_get"))
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)

@@ -175,7 +175,7 @@ func request(ctx context.Context, exec exec.BaseExecutor, reader io.Reader, meth
 		}
 	}
 	if err == nil {
-		logutil.Logger(ctx).Info("traffic request to tiproxy succeeds", zap.Any("addrs", addrs), zap.String("path", path))
+		logutil.Logger(ctx).Info("traffic request to tiproxy succeeds", zap.Strings("addrs", addrs), zap.String("path", path))
 	}
 	return resps, err
 }

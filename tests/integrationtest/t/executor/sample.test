@@ -1,4 +1,4 @@
-set @@global.tidb_scatter_region='table'
+set @@global.tidb_scatter_region='table';
 
 # TestTableSampleSchema
 drop table if exists t;
