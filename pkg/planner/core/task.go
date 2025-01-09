@@ -1093,10 +1093,10 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 // For https://github.com/pingcap/tidb/issues/51723,
 // This function only supports `CLUSTER_SLOW_QUERY`,
 // it will change plan from
-// TopN -> TableReader -> TopN[cop] -> TableFullScan[cop] to
+// TopN -> TableReader -> TableFullScan[cop] to
 // TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
-func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
-	if copTsk.indexPlan != nil || copTsk.tablePlan == nil || copTsk.getStoreType() != kv.TiDB {
+func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
+	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
 		return nil, false
 	}
 
@@ -1105,6 +1105,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 		selSelectivity float64
 		tblScan        *PhysicalTableScan
 		err            error
+		ok             bool
 	)
 
 	copTsk.tablePlan, err = copTsk.tablePlan.Clone(p.SCtx())
@@ -1116,7 +1117,10 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
 		finalTblScanPlan = finalTblScanPlan.Children()[0]
 	}
-	tblScan = finalTblScanPlan.(*PhysicalTableScan)
+
+	if tblScan, ok = finalTblScanPlan.(*PhysicalTableScan); !ok {
+		return nil, false
+	}
 
 	// Check the table is `CLUSTER_SLOW_QUERY` or not.
 	if tblScan.Table.Name.O != infoschema.ClusterTableSlowLog {
@@ -1162,8 +1166,8 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-	if copTask, ok := t.(*CopTask); ok && needPushDown && len(copTask.rootTaskConds) == 0 {
-		newTask, changed := p.pushPartialTopNDownToTiDBCop(copTask)
+	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
 		if changed {
 			return newTask
 		}
