@@ -234,7 +234,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, opCtx.OperatorErr())
-
 }
 
 func TestBackfillOperatorPipelineException(t *testing.T) {
