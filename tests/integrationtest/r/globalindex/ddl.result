@@ -5,39 +5,11 @@ Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3;
 drop table t;
 create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
-Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
+drop table t;
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table t3;
 create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
-create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
-alter table t partition by hash(b) partitions 3;
-Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
-alter table t partition by hash(b) partitions 3 update indexes (a global);
-alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-alter table t add unique index idxOK (b) global;
-create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-create unique index idxOK2 on t (b) global;
-alter table t remove partitioning;
-alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-alter table t add unique index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create unique index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-drop table t;
-create table t (a int, b int, unique index idx(a) global);
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create table t (a int, b int, index idx(a) global);
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
-Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
-create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
-drop table t;
 create table t (a int key global, b int) partition by hash(b) partitions 3;
 Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 create table t (a int unique, b int) partition by hash(b) partitions 3;
@@ -65,14 +37,34 @@ create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
 alter table t partition by hash(b) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL);
+alter table t add index idxOK (b) global;
+alter table t add unique index idxOK2 (a) global;
+alter table t add unique index idxOK3 (b) global;
+create index idxOK4 on t (b) global;
+create unique index idxOK5 on t (a) global;
+create unique index idxOK6 on t (b) global;
+alter table t remove partitioning;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  UNIQUE KEY `a` (`a`),
+  KEY `idxOK` (`b`),
+  UNIQUE KEY `idxOK2` (`a`),
+  UNIQUE KEY `idxOK3` (`b`),
+  KEY `idxOK4` (`b`),
+  UNIQUE KEY `idxOK5` (`a`),
+  UNIQUE KEY `idxOK6` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-alter table t add unique index idxOK (a) global;
-alter table t add unique index idxOK2 (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
+alter table t add unique index idxErr (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-create unique index idxOK3 on t (a) global;
-create unique index idxOK4 on t (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
+create unique index idxErr on t (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 drop table t;
 create table t(a int, b int, primary key (a) nonclustered global);
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
@@ -82,6 +74,72 @@ create table t(a int, b int, primary key (a) global) partition by hash(a) partit
 Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 create table t(a int, b int, primary key (b) global) partition by hash(a) partitions 5;
 Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
+create table t(a int, b int, key(a), key(b)) partition by hash(a) partitions 4;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b LOCAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  KEY `b` (`b`),
+  KEY `a` (`a`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b GLOBAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  KEY `b` (`b`) /*T![global_index] GLOBAL */,
+  KEY `a` (`a`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a LOCAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  KEY `b` (`b`) /*T![global_index] GLOBAL */,
+  KEY `a` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+drop table t;
+create table t(a int, b int, unique key(a), unique key(b) global) partition by hash(a) partitions 4;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b LOCAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  UNIQUE KEY `a` (`a`) /*T![global_index] GLOBAL */,
+  UNIQUE KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL, b GLOBAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  UNIQUE KEY `a` (`a`) /*T![global_index] GLOBAL */,
+  UNIQUE KEY `b` (`b`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a LOCAL);
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (b LOCAL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  UNIQUE KEY `a` (`a`) /*T![global_index] GLOBAL */,
+  UNIQUE KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3
+drop table t;
 create table t(a int, b int);
 alter table t add primary key (a) global;
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table

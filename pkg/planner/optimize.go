@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -241,32 +239,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
-	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
-	var bindings bindinfo.Bindings
-	if match {
-		bindings = []bindinfo.Binding{binding}
-	}
+	binding, match, _ := bindinfo.MatchSQLBinding(sctx, stmtNode)
 
 	useBinding := enableUseBinding && isStmtNode && match
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
-			if val.(bool) && bindings != nil {
-				bindings = bindings.Copy()
-				for i := range bindings {
-					bindings[i].CreateTime = types.ZeroTime
-					bindings[i].UpdateTime = types.ZeroTime
-				}
-			}
-		})
-		debugtrace.RecordAnyValuesWithNames(pctx,
-			"Used binding", useBinding,
-			"Enable binding", enableUseBinding,
-			"IsStmtNode", isStmtNode,
-			"Matched", match,
-			"Scope", scope,
-			"Matched bindings", bindings,
-		)
-	}
 	if isStmtNode {
 		// add the extra Limit after matching the bind record
 		stmtNode = core.TryAddExtraLimit(sctx, stmtNode)
@@ -289,18 +264,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	var (
 		names                      types.NameSlice
 		bestPlan, bestPlanFromBind base.Plan
-		chosenBinding              bindinfo.Binding
+		chosenBinding              *bindinfo.Binding
 		err                        error
 	)
 	if useBinding {
-		minCost := math.MaxFloat64
 		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
-		// bindings must be not nil when coming here, try to find the best binding.
-		for _, binding := range bindings {
-			if !binding.IsBindingEnabled() {
-				continue
-			}
+		if binding != nil && binding.IsBindingEnabled() {
 			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
@@ -317,14 +287,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
-			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
+			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
-				continue
 			}
-			if cost < minCost {
-				bindStmtHints, warns, minCost, names, bestPlanFromBind, chosenBinding = curStmtHints, curWarns, cost, curNames, plan, binding
-			}
+			bindStmtHints, warns, names, bestPlanFromBind, chosenBinding = curStmtHints, curWarns, curNames, plan, binding
 		}
 		if bestPlanFromBind == nil {
 			sessVars.StmtCtx.AppendWarning(errors.NewNoStackError("no plan generated from bindings"))
@@ -374,7 +341,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
 		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !binding.Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
@@ -517,12 +484,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	core.RecheckCTE(logic)
 
-	// Handle the logical plan statement, use cascades planner if enabled.
-	if sessVars.GetEnableCascadesPlanner() {
-		finalPlan, cost, err := old.DefaultOptimizer.FindBestPlan(sctx, logic)
-		return finalPlan, names, cost, err
-	}
-
 	beginOpt := time.Now()
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	// TODO: capture plan replayer here if it matches sql and plan digest
@@ -595,8 +556,8 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	return true, warning
 }
 
-func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col model.CIStr) (colOffset int, err error) {
-	return func(db, tbl, col model.CIStr) (colOffset int, err error) {
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+	return func(db, tbl, col ast.CIStr) (colOffset int, err error) {
 		t, err := is.TableByName(ctx, db, tbl)
 		if err != nil {
 			return 0, errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)

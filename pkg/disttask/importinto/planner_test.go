@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 func TestLogicalPlan(t *testing.T) {
@@ -58,7 +60,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "db",
 			TableInfo: &model.TableInfo{
-				Name: pmodel.NewCIStr("tb"),
+				Name: ast.NewCIStr("tb"),
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
@@ -327,7 +329,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	t.Cleanup(func() {
 		importer.NewClientWithContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	importer.NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 

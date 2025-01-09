@@ -245,7 +245,7 @@ type LogicalPlan interface {
 	// DeriveStats derives statistic info for current plan node given child stats.
 	// We need selfSchema, childSchema here because it makes this method can be used in
 	// cascades planner, where LogicalPlan might not record its children or schema.
-	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error)
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
 
 	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
 	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain

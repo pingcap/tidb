@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -1082,12 +1081,12 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			choice := strings.ToUpper(normalizedValue)
-			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+			if choice != ast.AllColumns.String() && choice != ast.PredicateColumns.String() {
 				return "", errors.Errorf(
 					"invalid value for %s, it should be either '%s' or '%s'",
 					TiDBAnalyzeColumnOptions,
-					model.AllColumns.String(),
-					model.PredicateColumns.String(),
+					ast.AllColumns.String(),
+					ast.PredicateColumns.String(),
 				)
 			}
 			return normalizedValue, nil
@@ -3638,8 +3637,6 @@ const (
 	SuperReadOnly = "super_read_only"
 	// SQLNotes is the name for 'sql_notes' system variable.
 	SQLNotes = "sql_notes"
-	// QueryCacheType is the name for 'query_cache_type' system variable.
-	QueryCacheType = "query_cache_type"
 	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
 	SlaveCompressedProtocol = "slave_compressed_protocol"
 	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
@@ -3650,8 +3647,6 @@ const (
 	LogSlowAdminStatements = "log_slow_admin_statements"
 	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
 	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
-	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
-	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
 	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
 	SQLAutoIsNull = "sql_auto_is_null"
 	// RelayLogPurge is the name for 'relay_log_purge' system variable.
@@ -3710,8 +3705,6 @@ const (
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
 	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
-	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
-	InnodbSupportXA = "innodb_support_xa"
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
 	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
 	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
@@ -3740,8 +3733,6 @@ const (
 	InnodbStatusOutput = "innodb_status_output"
 	// NetBufferLength is the name for 'net_buffer_length' system variable.
 	NetBufferLength = "net_buffer_length"
-	// QueryCacheSize is the name of 'query_cache_size' system variable.
-	QueryCacheSize = "query_cache_size"
 	// TxReadOnly is the name of 'tx_read_only' system variable.
 	TxReadOnly = "tx_read_only"
 	// TransactionReadOnly is the name of 'transaction_read_only' system variable.

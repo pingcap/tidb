@@ -34,10 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -102,10 +104,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   pmodel.MediumPriorityValue,
+			Priority:   ast.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  ast.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -762,7 +764,7 @@ func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    pmodel.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -1228,7 +1230,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}, nil
 }
 
@@ -1788,4 +1790,26 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// This function is only used by infoschema v2 currently.
+func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
+	key := codec.EncodeUint(ek, uint64(structure.StringData))
+	mvccResp, err := h.GetMvccByEncodedKeyWithTS(key, math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
+		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
+	}
+
+	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
+	var n int64
+	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
+	return n, errors.Trace(err)
 }

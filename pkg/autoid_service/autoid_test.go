@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -68,10 +68,10 @@ func TestConcurrent(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key auto_increment);")
 	is := dom.InfoSchema()
-	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
@@ -164,10 +164,10 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int key auto_increment);")
 	is := dom.InfoSchema()
-	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
