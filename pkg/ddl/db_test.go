@@ -1308,5 +1308,6 @@ func TestGetAllTableInfos(t *testing.T) {
 	require.Equal(t, len(tblInfos1), len(tblInfos2))
 	for i := range tblInfos1 {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
+		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
 }

@@ -1002,7 +1002,7 @@ func (m *Mutator) IterAllTables(fn func(info *model.TableInfo) error) error {
 	startDBKey := DBkey(math.MinInt64)
 	endDBKey := DBkey(math.MaxInt64)
 
-	err := m.txn.IterateHashWithBoundedKey(startDBKey, endDBKey, func(field []byte, value []byte) error {
+	err := m.txn.IterateHashWithBoundedKey(startDBKey, endDBKey, func(key []byte, field []byte, value []byte) error {
 		// only handle table meta
 		tableKey := string(field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
@@ -1014,6 +1014,11 @@ func (m *Mutator) IterAllTables(fn func(info *model.TableInfo) error) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		dbID, err := ParseDBKey(key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.DBID = dbID
 
 		err = fn(tbInfo)
 		return errors.Trace(err)
