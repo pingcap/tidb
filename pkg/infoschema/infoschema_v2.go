@@ -38,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -77,15 +79,17 @@ type versionAndTimestamp struct {
 }
 
 // btreeSet updates the btree.
-// It is concurrent safe for one writer and multiple reader,
-// but not safe for multiple writing concurrently.
+// Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
-	var t *btree.BTreeG[T] = ptr.Load()
-	t2 := t.Clone()
-	t2.ReplaceOrInsert(item)
-	succ := ptr.CompareAndSwap(t, t2)
-	if !succ {
-		panic("concurrently multiple writes are not allowed")
+	succ := false
+	for !succ {
+		var t *btree.BTreeG[T] = ptr.Load()
+		t2 := t.Clone()
+		t2.ReplaceOrInsert(item)
+		succ = ptr.CompareAndSwap(t, t2)
+		if !succ {
+			logutil.BgLogger().Info("infoschema v2 btree concurrently multiple writes detected, this should be rare")
+		}
 	}
 }
 
@@ -317,8 +321,16 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 		byNameNew.Delete(item)
 		byIDNew.Delete(item)
 	}
-	isd.byName.CompareAndSwap(byNameOld, byNameNew)
-	isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	succ1 := isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	var succ2 bool
+	if succ1 {
+		succ2 = isd.byName.CompareAndSwap(byNameOld, byNameNew)
+	}
+	if !succ1 || !succ2 {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict, leave it to the next time.",
+			zap.Bool("byID success", succ1),
+			zap.Bool("byName success", succ2))
+	}
 	return len(deletes), total
 }
 

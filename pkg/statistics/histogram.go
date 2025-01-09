@@ -263,9 +263,6 @@ const (
 	Version2 = 2
 )
 
-// AnalyzeFlag is set when the statistics comes from analyze.
-const AnalyzeFlag = 1
-
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {

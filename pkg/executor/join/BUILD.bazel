@@ -10,6 +10,7 @@ go_library(
         "hash_join_base.go",
         "hash_join_spill.go",
         "hash_join_spill_helper.go",
+        "hash_join_stats.go",
         "hash_join_test_util.go",
         "hash_join_v1.go",
         "hash_join_v2.go",
