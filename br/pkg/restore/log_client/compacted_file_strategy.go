@@ -66,6 +66,8 @@ func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
 	splitHelper, exist := cs.TableSplitter[identity.EffectiveID]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
+		log.Info("Initialized splitter for table.",
+			zap.Int64("table-id", ssts.TableID()), zap.Int64("effective-id", identity.EffectiveID), zap.Stringer("rewrite-boundary", identity.RewriteBoundary))
 		cs.TableSplitter[identity.EffectiveID] = splitHelper
 	}
 

@@ -331,6 +331,10 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 }
 
 func (r *RewriteRules) String() string {
+	if r == nil {
+		return "[]"
+	}
+
 	var out strings.Builder
 	out.WriteRune('[')
 	if len(r.OldKeyspace) != 0 {
