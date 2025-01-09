@@ -866,6 +866,25 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	/*
+		if tbl.Meta().Partition != nil {
+			// Include test for EXCHANGE PARTITION, i.e. duplicate _tidb_rowid's
+			for _, p := range tbl.Meta().Partition.Definitions {
+				partName := p.Name.O
+				tkO.MustExec(`create table tx like t`)
+				domOwner.Reload()
+				tkO.MustExec(`alter table tx remove partitioning`)
+				domOwner.Reload()
+				tkO.MustExec(fmt.Sprintf("insert into tx select * from t partition (`%s`)", partName))
+				domOwner.Reload()
+				tkO.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx", partName))
+				domOwner.Reload()
+				tkO.MustExec(`drop table tx`)
+				domOwner.Reload()
+			}
+			domNonOwner.Reload()
+		}
+	*/
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
@@ -990,9 +1009,11 @@ LocalLoop:
 	}
 PartitionLoop:
 	for _, partID := range originalPartitions {
-		for _, def := range tbl.Meta().Partition.Definitions {
-			if def.ID == partID {
-				continue PartitionLoop
+		if tbl.Meta().Partition != nil {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == partID {
+					continue PartitionLoop
+				}
 			}
 		}
 		// old partitions removed
@@ -1577,4 +1598,171 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 		}
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+}
+
+func TestRemovePartitioningCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t remove partitioning`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
+	//insert a row
+	//insert a row, on duplicate key update - no match
+	//insert a row, on duplicate key update - match original table - io
+	//insert a row, on duplicate key update - match inserted in this state - ic
+	//insert a row, on duplicate key update - match inserted in previous state - ip
+	//insert a row, on duplicate key update - match inserted in next state - in
+	//update a row from just inserted - ic
+	//update a row from inserted in original table - io
+	//update a row from inserted in previous state ip
+	//update a row from inserted in next state - in
+	//update a row from just updated - uc
+	//update a row from updated in original table - uo
+	//update a row from updated in previous state - up
+	//update a row from updated in next state - un
+	//delete a row from just inserted - ic
+	//delete a row from inserted in original table - io
+	//delete a row from inserted in previous state - ip
+	//delete a row from inserted in next state - in
+	//delete a row from just updated - uc
+	//delete a row from updated in original table - uo
+	//delete a row from updated in previous state - up
+	//delete a row from updated in next state - un
+
+	currId := 1
+	const (
+		Insert     = 0
+		Update     = 1
+		Delete     = 2
+		InsertODKU = 3
+		Original   = 0
+		Previous   = 1
+		Current    = 2
+	)
+	// dimensions: execute state, from state, type, IDs
+	states := 7
+	fromStates := 3
+	IDs := make([][][][]int, states)
+	for s := 0; s < states; s++ {
+		IDs[s] = make([][][]int, fromStates)
+		for f := 0; f < fromStates; f++ {
+			IDs[s][f] = make([][]int, 4)
+		}
+	}
+	// Skip first state, since it is none, i.e. before the DDL started...
+	for s := states - 1; s > 0; s-- {
+		for _, from := range []int{Original, Previous, Current} {
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
+			IDs[s][from][Update] = append(IDs[s][from][Update], currId)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
+			currId++
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
+			currId++
+			IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
+			currId++
+			IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
+			currId++
+		}
+		// Next, use 'Previous' as current and 'Current' as Next.
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currId)
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
+		currId++
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currId)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
+		currId++
+		IDs[s][Previous][Update] = append(IDs[s][Previous][Update], currId)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
+		currId++
+		IDs[s][Previous][InsertODKU] = append(IDs[s][Previous][InsertODKU], currId)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
+		currId++
+
+		// Normal inserts to keep
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
+		currId++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
+		currId++
+	}
+	require.Equal(t, 109, currId)
+
+	// Run like this:
+	// prepare in previous state + run in Current
+	//   use tkNO for previous state
+	//   use tkO for Current state
+	//   for x in range IDs[s][Previous][Insert]
+	//   for x in range IDs[s][Current][Insert]
+	//   for x in range IDs[s][Previous][Update]
+	//   for x in range IDs[s][Current][Update]
+	//   for x in range IDs[s][Previous][Delete]
+	//   for x in range IDs[s][Current][Delete]
+	//   for x in range IDs[s][Previous][InsertODKU]
+	//   for x in range IDs[s][Current][InsertODKU]
+	initFn := func(tkO *testkit.TestKit) {
+		logutil.BgLogger().Info("initFn start")
+		for s := range IDs {
+			// `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+			for _, id := range IDs[s][Original][Insert] {
+				tkO.MustExec(`insert into t values (?,?,?,?)`, id, id, id, "Original")
+			}
+		}
+		logutil.BgLogger().Info("initFn Done")
+	}
+
+	state := 1
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		logutil.BgLogger().Info("loopFn start", zap.Int("state", state))
+		for _, op := range []int{Insert, Update, Delete, InsertODKU} {
+			for _, from := range []int{Previous, Current} {
+				tk := tkO
+				if from == Previous {
+					tk = tkNO
+				}
+				for _, id := range IDs[state][from][op] {
+					switch op {
+					case Insert:
+						tk.MustExec(`insert into t values (?,?,?,?)`, id, id, id, fmt.Sprintf("Insert s:%d f:%d", state, from))
+					case Update:
+						if state == 5 && from == 1 && id == 33 ||
+							state == 6 && from == 1 && (id == 5 || id == 15) {
+							continue
+						}
+						tk.MustExec(fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currId, state, from, id))
+					case Delete:
+						if id == 31 || id == 32 || id == 13 || id == 14 {
+							continue
+						}
+						tk.MustExec(fmt.Sprintf(`delete from t where a = %d`, id))
+					case InsertODKU:
+						if state == 5 && from == 1 && id == 34 ||
+							state == 6 && from == 1 && id == 16 {
+							continue
+						}
+						tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s: %d f:%d')`, id, id, id, state, from, id+currId, state, from))
+					default:
+						require.Fail(t, "unknown op", "op: %d", op)
+					}
+				}
+			}
+		}
+		logutil.BgLogger().Info("loopFn done", zap.Int("state", state))
+		state++
+	}
+	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	//alterSQL = `alter table t partition by key (a) partitions 3`
+	//runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	//createSQL = `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) PARTITION BY HASH (a) PARTITIONS 3`
+	//alterSQL = `alter table t partition by key (a) partitions 3`
+	//runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
