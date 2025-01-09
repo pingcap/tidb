@@ -68,7 +68,6 @@ func RunForceFlush(ctx context.Context, cfg *ForceFlushConfig) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	log.Info("About to start force flushing.", zap.Stringer("stores-pattern", cfg.StoresPattern))
 	for _, s := range tikvs {
-		s := s
 		if !cfg.StoresPattern.MatchString(s.Address) || engine.IsTiFlash(s) {
 			log.Info("Skipping TiFlash or not matched TiKV.",
 				zap.Uint64("store", s.GetId()), zap.String("addr", s.Address), zap.Bool("tiflash?", engine.IsTiFlash(s)))
