@@ -75,7 +75,12 @@ func NewConstraint(label string) (Constraint, error) {
 		return r, fmt.Errorf("%w: %s", ErrInvalidConstraintFormat, label)
 	}
 
+<<<<<<< HEAD:ddl/placement/constraint.go
 	if op == In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
+=======
+	// Does not allow adding rule of tiflash.
+	if op == pd.In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
+>>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637)):pkg/ddl/placement/constraint.go
 		return r, fmt.Errorf("%w: %s", ErrUnsupportedConstraint, label)
 	}
 
