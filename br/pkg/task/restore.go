@@ -1042,9 +1042,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// nothing to restore, maybe only ddl changes in incremental restore
 	if len(dbs) == 0 && len(tables) == 0 {
 		log.Info("nothing to restore, all databases and tables are filtered out")
-		// even nothing to restore, we show a success message since there is no failure.
-		markRestoreSuccess(&schedulersRemovable)
-		return nil
+		// go through rest of the process, need to clean up some resources
 	}
 
 	if err = client.CreateDatabases(ctx, dbs); err != nil {
