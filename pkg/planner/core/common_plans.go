@@ -903,9 +903,9 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
-	case format == types.ExplainFormatUnityPlanOne:
+	case format == types.ExplainFormatUnitySQL:
 		fieldNames = []string{"unity plan"}
-	case format == types.ExplainFormatUnityPlanAll:
+	case format == types.ExplainFormatUnityOffline:
 		fieldNames = []string{"unity plan gen"}
 	case format == types.ExplainFormatUnityJoin:
 		fieldNames = []string{"unity join"}
@@ -932,7 +932,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 
-	if e.Format == types.ExplainFormatUnityPlanOne {
+	if e.Format == types.ExplainFormatUnitySQL {
 		if e.Analyze == false {
 			return errors.New("explain format unity plan must be used with analyze")
 		}
@@ -1030,13 +1030,13 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
-	case types.ExplainFormatUnityPlanOne:
+	case types.ExplainFormatUnitySQL:
 		planJSON, err := e.unityPlanOne()
 		if err != nil {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{planJSON})
-	case types.ExplainFormatUnityPlanAll:
+	case types.ExplainFormatUnityOffline:
 		planJSON, err := e.unityPlanAll()
 		if err != nil {
 			return err

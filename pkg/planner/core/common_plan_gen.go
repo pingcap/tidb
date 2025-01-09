@@ -37,8 +37,8 @@ func (e *Explain) unityPlanAll() (string, error) {
 	plans := make([]*UnityPlan, 0, len(allPossibleHintSets))
 	for _, hs := range allPossibleHintSets {
 		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
-		prefix := "explain analyze format='unity_plan_all' SELECT "
-		sql := fmt.Sprintf("explain analyze format='unity_plan_one' select %s %s ", hs, currentSQL[len(prefix):])
+		prefix := "explain analyze format='unity_offline' SELECT "
+		sql := fmt.Sprintf("explain analyze format='unity_sql' select %s %s ", hs, currentSQL[len(prefix):])
 		sqlExec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
