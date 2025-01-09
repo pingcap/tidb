@@ -284,7 +284,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if err != nil {
 				buffer.WriteString("[?]")
 			} else {
-				buffer.WriteString(v.String())
+				buffer.WriteString(v.TruncatedString())
 			}
 		}
 		buffer.WriteString(", limit:")
