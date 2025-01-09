@@ -86,6 +86,22 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	return result, err
 }
 
+<<<<<<< HEAD
+=======
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to 20% of the total memory.
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
+		}
+		return int64(memTotal * 20 / 100), nil
+	}
+	return totalMemCost, nil
+}
+
+>>>>>>> 9d0fb303ede (statistics: stats cache set default quota as 20% (#58013))
 // Get implements statsCacheInner
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
