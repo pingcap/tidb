@@ -1228,6 +1228,16 @@ func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
 	it.wg.Add(1)
 	go worker.run(w.ctx)
 
+	if it.respChan == nil {
+		// If it.respChan is nil, we will read the response from task.respChan,
+		// but task.respChan maybe nil when rebuilding cop task, so we need to create respChan for the task.
+		for i := range it.tasks {
+			if it.tasks[i].respChan == nil {
+				it.tasks[i].respChan = make(chan *copResponse, 2)
+			}
+		}
+	}
+
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
 		wg:       &it.wg,
