@@ -37,9 +37,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+<<<<<<< HEAD
 	"github.com/tidwall/btree"
+=======
+	"go.uber.org/zap"
+>>>>>>> 43d92980188 (infoschema: avoid panic when updating infoschema v2 btree conflicts (#58815))
 	"golang.org/x/sync/singleflight"
 )
 
@@ -76,6 +81,24 @@ type versionAndTimestamp struct {
 	timestamp     uint64
 }
 
+<<<<<<< HEAD
+=======
+// btreeSet updates the btree.
+// Concurrent write is supported, but should be avoided as much as possible.
+func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
+	succ := false
+	for !succ {
+		var t *btree.BTreeG[T] = ptr.Load()
+		t2 := t.Clone()
+		t2.ReplaceOrInsert(item)
+		succ = ptr.CompareAndSwap(t, t2)
+		if !succ {
+			logutil.BgLogger().Info("infoschema v2 btree concurrently multiple writes detected, this should be rare")
+		}
+	}
+}
+
+>>>>>>> 43d92980188 (infoschema: avoid panic when updating infoschema v2 btree conflicts (#58815))
 // Data is the core data struct of infoschema V2.
 type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
@@ -253,8 +276,71 @@ func (isd *Data) remove(item tableItem) {
 
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
+<<<<<<< HEAD
 	isd.schemaMap.Set(item)
 	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
+=======
+	btreeSet(&isd.schemaMap, item)
+	btreeSet(&isd.schemaID2Name, schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
+}
+
+// GCOldVersion compacts btree nodes by removing items older than schema version.
+// exported for testing
+func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
+	maxv, ok := isd.byName.Load().Max()
+	if !ok {
+		return 0, 0
+	}
+
+	var total int64
+	var deletes []*tableItem
+	var prev *tableItem
+	// Example:
+	// gcOldVersion to v4
+	//	db3 tbl1 v5
+	//	db3 tbl1 v4
+	//	db3 tbl1 v3    <- delete, because v3 < v4
+	//	db2 tbl2 v1    <- keep, need to keep the latest version if all versions are less than v4
+	//	db2 tbl2 v0    <- delete, because v0 < v4
+	//	db1 tbl3 v4
+	//	...
+	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
+	isd.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
+		total++
+		if item.schemaVersion < schemaVersion {
+			if prev != nil && prev.dbName == item.dbName && prev.tableName == item.tableName {
+				// find one!
+				deletes = append(deletes, item)
+				// Don't do too much work in one batch!
+				if len(deletes) > 1024 {
+					return false
+				}
+			}
+		}
+		prev = item
+		return true
+	})
+
+	byNameOld := isd.byName.Load()
+	byNameNew := byNameOld.Clone()
+	byIDOld := isd.byID.Load()
+	byIDNew := byIDOld.Clone()
+	for _, item := range deletes {
+		byNameNew.Delete(item)
+		byIDNew.Delete(item)
+	}
+	succ1 := isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	var succ2 bool
+	if succ1 {
+		succ2 = isd.byName.CompareAndSwap(byNameOld, byNameNew)
+	}
+	if !succ1 || !succ2 {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict, leave it to the next time.",
+			zap.Bool("byID success", succ1),
+			zap.Bool("byName success", succ2))
+	}
+	return len(deletes), total
+>>>>>>> 43d92980188 (infoschema: avoid panic when updating infoschema v2 btree conflicts (#58815))
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
