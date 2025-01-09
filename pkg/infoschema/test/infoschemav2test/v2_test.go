@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -92,7 +92,7 @@ func checkPIDNotExist(t *testing.T, dom *domain.Domain, pid int64) {
 
 func getPIDForP3(t *testing.T, dom *domain.Domain) (int64, table.Table) {
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
 	pid := pi.GetPartitionIDByName("p3")
@@ -150,12 +150,12 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 	// Test FindTableByPartitionID after exchange partition.
 	tk.MustExec("create table nt (id int)")
 	is = dom.InfoSchema()
-	ntbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("nt"))
+	ntbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("nt"))
 	require.NoError(t, err)
 
 	tk.MustExec("alter table pt exchange partition p3 with table nt")
 	is = dom.InfoSchema()
-	ptbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
+	ptbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := ptbl.Meta().GetPartitionInfo()
 	pid = pi.GetPartitionIDByName("p3")
@@ -281,7 +281,7 @@ func TestUnrelatedDDLTriggerReload(t *testing.T) {
 	is := dom.InfoSchema()
 	ok, v2 := infoschema.IsV2(is)
 	require.True(t, ok)
-	v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
+	v2.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 
 	tk.MustExec("create table t2 (id int)")
 
@@ -312,7 +312,7 @@ func TestTrace(t *testing.T) {
 	require.True(t, ok)
 
 	// Evict the table cache and check the trace information can catch this calling.
-	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_trace"))
+	raw.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t_trace"))
 	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
 }
 
@@ -329,7 +329,7 @@ func TestCachedTable(t *testing.T) {
 	require.True(t, ok)
 
 	// Cover a case that after cached table evict and load, table.Table goes wrong.
-	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_cache"))
+	raw.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t_cache"))
 	tk.MustExec("insert into t_cache values (2)") // no panic here
 	tk.MustQuery("select * from t_cache").Check(testkit.Rows("1", "2"))
 }
@@ -343,8 +343,8 @@ func BenchmarkTableByName(t *testing.B) {
 		tk.MustExec(fmt.Sprintf("create table t%d (id int)", i))
 	}
 	is := dom.InfoSchema()
-	db := model.NewCIStr("test")
-	tbl := model.NewCIStr("t123")
+	db := ast.NewCIStr("test")
+	tbl := ast.NewCIStr("t123")
 	t.ResetTimer()
 	for i := 0; i < t.N; i++ {
 		_, err := is.TableByName(context.Background(), db, tbl)
@@ -482,7 +482,7 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 
 	is := tk.Session().GetInfoSchema()
 	// Cover special schema
-	tblInfos, err := is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("INFORMATION_SCHEMA"))
+	tblInfos, err := is.SchemaSimpleTableInfos(context.Background(), ast.NewCIStr("INFORMATION_SCHEMA"))
 	require.NoError(t, err)
 	res := make([]string, 0, len(tblInfos))
 	for _, tbl := range tblInfos {
@@ -493,7 +493,7 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 		Sort().Check(testkit.Rows(res...))
 
 	// Cover normal schema
-	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), ast.NewCIStr("simple"))
 	require.NoError(t, err)
 	require.Len(t, tblInfos, 1)
 	require.Equal(t, tblInfos[0].Name.L, "t1")
@@ -501,7 +501,7 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 	// Cover snapshot infoschema
 	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
 	is = tk.Session().GetInfoSchema()
-	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), ast.NewCIStr("simple"))
 	require.NoError(t, err)
 	require.Len(t, tblInfos, 2)
 	require.Equal(t, tblInfos[0].Name.L, "t2")

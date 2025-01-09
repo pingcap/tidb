@@ -341,38 +341,13 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// ColSize is a data struct to store the delta information for a table.
-type ColSize struct {
-	ColID int64
-	Size  int64
-}
-
-// DeltaCols is used to update the delta size for cols.
-type DeltaCols interface {
-	// UpdateColSizeMap is used to update delta map for cols.
-	UpdateColSizeMap(m map[int64]int64) map[int64]int64
-}
-
-// DeltaColsMap implements DeltaCols
-type DeltaColsMap map[int64]int64
-
-// UpdateColSizeMap implements DeltaCols
-func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
-	if m == nil && len(cols) > 0 {
-		m = make(map[int64]int64, len(cols))
-	}
-	for colID, size := range cols {
-		m[colID] += size
-	}
-	return m
-}
-
 // UpdateDeltaForTable updates the delta info for some table.
 // The `cols` argument is used to update the delta size for cols.
 // If `cols` is nil, it means that the delta size for cols is not changed.
 func (tc *TransactionContext) UpdateDeltaForTable(
-	physicalTableID int64, delta int64,
-	count int64, cols DeltaCols,
+	physicalTableID int64,
+	delta int64,
+	count int64,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -383,9 +358,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if cols != nil {
-		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
-	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -2916,7 +2888,6 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 type TableDelta struct {
 	Delta    int64
 	Count    int64
-	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
 }
@@ -2926,7 +2897,6 @@ func (td TableDelta) Clone() TableDelta {
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}

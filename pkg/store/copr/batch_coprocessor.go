@@ -555,7 +555,7 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 	}
 	wg.Wait()
 
-	logutil.BgLogger().Info("detecting available mpp stores", zap.Any("total", len(stores)), zap.Any("alive", len(aliveIdx)))
+	logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
 	return aliveIdx
 }
 
@@ -648,7 +648,7 @@ func buildBatchCopTasksConsistentHash(
 		}
 		storesBefFilter := len(storesStr)
 		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
-		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
+		logutil.BgLogger().Info("topo filter alive", zap.Strings("topo", storesStr))
 		if len(storesStr) == 0 {
 			errMsg := "Cannot find proper topo to dispatch MPPTask: "
 			if storesBefFilter == 0 {
@@ -707,16 +707,16 @@ func buildBatchCopTasksConsistentHash(
 		}
 	}
 	logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done",
-		zap.Any("len(tasks)", len(taskMap)),
-		zap.Any("len(tiflash_compute)", len(storesStr)),
-		zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
+		zap.Int("len(tasks)", len(taskMap)),
+		zap.Int("len(tiflash_compute)", len(storesStr)),
+		zap.String("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 
 	if log.GetLevel() <= zap.DebugLevel {
 		debugTaskMap := make(map[string]string, len(taskMap))
 		for s, b := range taskMap {
 			debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 		}
-		logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHash", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
+		logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHash", zap.Any("taskMap", debugTaskMap), zap.Strings("allStores", storesStr))
 	}
 
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
@@ -1375,10 +1375,10 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		return nil, errors.Trace(err)
 	}
 	defer cancel()
-	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
+	return nil, b.handleStreamedBatchCopResponse(bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
@@ -1575,15 +1575,15 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			}
 		}
 		logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD done",
-			zap.Any("len(tasks)", len(taskMap)),
-			zap.Any("len(tiflash_compute)", len(stores)),
-			zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
+			zap.Int("len(tasks)", len(taskMap)),
+			zap.Int("len(tiflash_compute)", len(stores)),
+			zap.String("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 		if log.GetLevel() <= zap.DebugLevel {
 			debugTaskMap := make(map[string]string, len(taskMap))
 			for s, b := range taskMap {
 				debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 			}
-			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
+			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Strings("allStores", storesStr))
 		}
 		break
 	}

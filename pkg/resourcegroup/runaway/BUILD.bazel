@@ -15,7 +15,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/metrics",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/ttl/cache",
