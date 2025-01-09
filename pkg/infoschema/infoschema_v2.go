@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"golang.org/x/sync/singleflight"
@@ -77,15 +78,17 @@ type versionAndTimestamp struct {
 }
 
 // btreeSet updates the btree.
-// It is concurrent safe for one writer and multiple reader,
-// but not safe for multiple writing concurrently.
+// Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
-	var t *btree.BTreeG[T] = ptr.Load()
-	t2 := t.Clone()
-	t2.ReplaceOrInsert(item)
-	succ := ptr.CompareAndSwap(t, t2)
-	if !succ {
-		panic("concurrently multiple writes are not allowed")
+	succ := false
+	for !succ {
+		var t *btree.BTreeG[T] = ptr.Load()
+		t2 := t.Clone()
+		t2.ReplaceOrInsert(item)
+		succ = ptr.CompareAndSwap(t, t2)
+		if !succ {
+			logutil.BgLogger().Info("infoschema v2 btree concurrently multiple writes detected, this should be rare")
+		}
 	}
 }
 
