@@ -802,17 +802,12 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 // UpdateWriteSpeedLimit updates the write limiter of the backend.
 func (local *Backend) UpdateWriteSpeedLimit(limit int) {
-	if local.writeLimiter != nil {
-		local.writeLimiter.UpdateLimit(limit)
-	}
+	local.writeLimiter.UpdateLimit(limit)
 }
 
 // GetWriteSpeedLimit returns the speed of the write limiter.
 func (local *Backend) GetWriteSpeedLimit() int {
-	if local.writeLimiter != nil {
-		return local.writeLimiter.Limit()
-	}
-	return 0
+	return local.writeLimiter.Limit()
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
