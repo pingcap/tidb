@@ -716,52 +716,59 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
+	// lhsPseudo == the lhs has pseudo (no) stats for the table or index for the lhs path.
+	// rhsPseudo == the rhs has pseudo (no) stats for the table or index for the rhs path.
+	// idxMissingStats == either the lhs or rhs has an index that does NOT have statistics
+	//
+	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1_), we return rhsPseudo.
+	// If there is no winner (0), we return idxMissingStats.
+	//
+	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
+	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
+	// they otherwise would have lost on cost.
 	idxMissingStats := false
-	lhsHasStatistics := false
+	lhsPseudo := statsTbl.HistColl.Pseudo
 	if statsTbl != nil && lhs.path.Index != nil {
-		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
-		if !lhsHasStatistics {
-			idxMissingStats = true
+		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+			idxMissingStats, lhsPseudo = true, true
 		}
 	}
-	rhsHasStatistics := false
+	rhsPseudo := statsTbl.HistColl.Pseudo
 	if statsTbl != nil && rhs.path.Index != nil {
-		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
-		if !rhsHasStatistics {
-			idxMissingStats = true
+		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+			idxMissingStats, rhsPseudo = true, true
 		}
 	}
-	lhsLimitedScan := !lhs.path.IsTablePath() || (lhs.path.IsTablePath() && lhs.path.IsFullTableRange(tableInfo))
-	rhsLimitedScan := !rhs.path.IsTablePath() || (rhs.path.IsTablePath() && rhs.path.IsFullTableRange(tableInfo))
+	// It's either "not a table scan" or it's a table scan that scans a subset of the PK
+	lhsLimitedScan := !lhs.path.IsTablePath() || (lhs.path.IsTablePath() && !lhs.path.IsFullTableRange(tableInfo))
+	rhsLimitedScan := !rhs.path.IsTablePath() || (rhs.path.IsTablePath() && !rhs.path.IsFullTableRange(tableInfo))
 	// First set of rules apply to situations where an index doesn't have statistics
 	if (lhsLimitedScan || rhsLimitedScan) && // Not a full table scan
-		(lhsHasStatistics || rhsHasStatistics || !statsTbl.HistColl.Pseudo) && // An index or the table has statistics
+		(!lhsPseudo || !rhsPseudo || !statsTbl.HistColl.Pseudo) && // An index or the table has statistics
 		idxMissingStats && // At least one index doesn't have statistics
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
-		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
-		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-		if lhsTotalEqual > 0 || rhsTotalEqual > 0 {
+		if lhs.path.EqOrInCondCount > 0 || rhs.path.EqOrInCondCount > 0 {
 			// If one index has statistics and the other does not, choose the index with statistics if it
 			// has the same or higher number of equal/IN predicates.
 			// This is to limit a new index being chosen until it's statistics are collected if we cannot determine
 			// that it is "potentially" more selective.
-			if lhsLimitedScan && lhsHasStatistics && lhsTotalEqual >= rhsTotalEqual {
-				return 1, false
+			if lhsLimitedScan && !lhsPseudo && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
+				return 1, lhsPseudo
 			}
-			if rhsLimitedScan && rhsHasStatistics && rhsTotalEqual >= lhsTotalEqual {
-				return -1, false
+			if rhsLimitedScan && !rhsPseudo && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
+				return -1, rhsPseudo
 			}
 			if preferRange {
-				// keep an index without statistics if the other side isn't a "selective" single scan
-				if !lhsHasStatistics && lhsTotalEqual > rhsTotalEqual &&
-					(lhsTotalEqual > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) &&
-					(lhs.path.IsSingleScan || !(rhsLimitedScan && rhs.path.IsSingleScan)) {
-					return 1, true
+				// keep an index without statistics if that index has more equal/IN predicates, AND:
+				// 1) there are at least 2 equal/INs, OR
+				// 2) it's a full index match for all index predicates
+				if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount &&
+					(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) {
+					return 1, lhsPseudo
 				}
-				if !rhsHasStatistics && rhsTotalEqual > lhsTotalEqual &&
-					(rhsTotalEqual > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) &&
-					(rhs.path.IsSingleScan || !(lhsLimitedScan && lhs.path.IsSingleScan)) {
-					return -1, true
+				if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount &&
+					(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) {
+					return -1, rhsPseudo
 				}
 			}
 		}
@@ -775,10 +782,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1, false
+				return -1, rhsPseudo
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1, false
+				return 1, lhsPseudo
 			}
 		}
 	}
@@ -801,10 +808,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1, false
+		return 1, lhsPseudo
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1, false
+		return -1, rhsPseudo
 	}
 	return 0, idxMissingStats
 }
