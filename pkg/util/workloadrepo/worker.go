@@ -124,11 +124,7 @@ type worker struct {
 	retentionDays    int32
 }
 
-var workerCtx = worker{
-	samplingInterval: defSamplingInterval,
-	snapshotInterval: defSnapshotInterval,
-	retentionDays:    defRententionDays,
-}
+var workerCtx = worker{}
 
 func takeSnapshot() error {
 	if workerCtx.snapshotChan == nil {
@@ -193,6 +189,9 @@ func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string,
 	w.sesspool = sesspool
 	w.newOwner = newOwner
 	w.workloadTables = workloadTables
+	w.samplingInterval = defSamplingInterval
+	w.snapshotInterval = defSnapshotInterval
+	w.retentionDays = defRententionDays
 
 	w.snapshotTicker = time.NewTicker(time.Second)
 	w.snapshotTicker.Stop()

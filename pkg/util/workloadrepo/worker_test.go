@@ -36,32 +36,11 @@ import (
 )
 
 func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *domain.Domain, id string, testWorker bool) *worker {
-	wrk := &worker{
-		samplingInterval: defSamplingInterval,
-		snapshotInterval: defSnapshotInterval,
-		retentionDays:    defRententionDays,
-	}
-
+	wrk := &worker{}
 	if !testWorker {
-		workerCtx.etcdClient = nil
-		workerCtx.sesspool = nil
-		workerCtx.cancel = nil
-		workerCtx.newOwner = nil
-		workerCtx.owner = nil
-		workerCtx.wg = nil
-		workerCtx.enabled = false
-		workerCtx.instanceID = ""
-		workerCtx.workloadTables = nil
-
-		workerCtx.samplingInterval = defSamplingInterval
-		workerCtx.samplingTicker = nil
-		workerCtx.snapshotInterval = defSnapshotInterval
-		workerCtx.snapshotTicker = nil
-		workerCtx.snapshotChan = nil
-		workerCtx.retentionDays = defRententionDays
-
 		wrk = &workerCtx
 	}
+
 	workloadTables2 := make([]repositoryTable, len(workloadTables))
 	copy(workloadTables2, workloadTables)
 
