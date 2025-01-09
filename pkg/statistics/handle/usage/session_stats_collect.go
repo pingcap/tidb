@@ -86,7 +86,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 
 const (
 	dumpDeltaBatchSize = 100_000
-	tooSlowThreshold   = time.Minute
+	tooSlowThreshold   = 20 * time.Second
 )
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
@@ -105,7 +105,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 	if time.Since(start) > tooSlowThreshold {
-		statslogutil.SingletonStatsSamplerLogger().Info("Sweeping session list is too slow",
+		statslogutil.SingletonStatsSamplerLogger().Warn("Sweeping session list is too slow",
 			zap.Int("tableCount", len(deltaMap)),
 			zap.Duration("duration", time.Since(start)))
 	}
@@ -142,7 +142,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
 			}
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Info("Collecting batch updates is too slow",
+				statslogutil.SingletonStatsSamplerLogger().Warn("Collecting batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
@@ -168,7 +168,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Info("Dumping batch updates is too slow",
+				statslogutil.SingletonStatsSamplerLogger().Warn("Dumping batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
