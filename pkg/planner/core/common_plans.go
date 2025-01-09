@@ -832,6 +832,7 @@ type Explain struct {
 	baseSchemaProducer
 
 	TargetPlan       base.Plan
+	LogicalPlan      base.LogicalPlan
 	Format           string
 	Analyze          bool
 	ExecStmt         ast.StmtNode
@@ -903,6 +904,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatUnity:
+		fieldNames = []string{"unity"}
 	case format == types.ExplainFormatUnitySQL:
 		fieldNames = []string{"unity plan"}
 	case format == types.ExplainFormatUnityOffline:
@@ -1044,6 +1047,8 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{planJSON})
 	case types.ExplainFormatUnityJoin:
 		panic("TODO")
+	case types.ExplainFormatUnity:
+		e.Rows = append(e.Rows, []string{prepareForUnity(e.SCtx(), e.LogicalPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1210,10 +1215,11 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
+		EstCost:      estCost,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,

@@ -40,6 +40,7 @@ var (
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
 
+	ExplainFormatUnity        = "unity"
 	ExplainFormatUnitySQL     = "unity_sql"
 	ExplainFormatUnityOffline = "unity_offline"
 	ExplainFormatUnityJoin    = "unity_join"
@@ -61,5 +62,6 @@ var (
 		ExplainFormatUnitySQL,
 		ExplainFormatUnityOffline,
 		ExplainFormatUnityJoin,
+		ExplainFormatUnity,
 	}
 )
