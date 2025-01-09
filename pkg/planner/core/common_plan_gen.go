@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -130,7 +129,7 @@ func (e *Explain) iterateLeadingHints(tableNames []*tableName) (hints []string) 
 
 func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
 	is := domain.GetDomain(e.SCtx()).InfoSchema()
-	tt, err := is.TableByName(context.Background(), model.NewCIStr(t.schema), model.NewCIStr(t.table))
+	tt, err := is.TableByName(context.Background(), ast.NewCIStr(t.schema), ast.NewCIStr(t.table))
 	if err != nil {
 		panic(err)
 	}
