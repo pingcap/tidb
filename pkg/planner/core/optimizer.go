@@ -271,6 +271,11 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
+
+	if sctx.GetSessionVars().StmtCtx.InExplainStmt {
+		sctx.GetSessionVars().StmtCtx.LogicalPlan = logic
+	}
+
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
