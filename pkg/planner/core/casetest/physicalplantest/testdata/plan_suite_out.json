@@ -3179,7 +3179,7 @@
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
@@ -3195,7 +3195,7 @@
           "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.c))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",

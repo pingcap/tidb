@@ -2336,11 +2336,16 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }
 
+<<<<<<< HEAD
 func TestIssue61669(t *testing.T) {
+=======
+func TestIssue58829(t *testing.T) {
+>>>>>>> 244062f826f (planner: allow semi_join_rewrite hint to work for in-subquery (#58830))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+<<<<<<< HEAD
 	tk.MustExec(`
 CREATE TABLE B (
   ROW_NO bigint NOT NULL AUTO_INCREMENT,
@@ -2400,4 +2405,11 @@ JOIN
             ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
     WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
 	require.True(t, len(r.Rows()) > 0) // no error
+=======
+	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+	tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+>>>>>>> 244062f826f (planner: allow semi_join_rewrite hint to work for in-subquery (#58830))
 }

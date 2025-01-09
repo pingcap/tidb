@@ -1242,7 +1242,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		planCtx.plan = join
 	} else {
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, false, noDecorrelate)
+		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
 		}
