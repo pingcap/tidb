@@ -716,11 +716,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
-	// lhsPseudo == the lhs has pseudo (no) stats for the table or index for the lhs path.
-	// rhsPseudo == the rhs has pseudo (no) stats for the table or index for the rhs path.
+	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
+	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	// idxMissingStats == either the lhs or rhs has an index that does NOT have statistics
 	//
-	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1_), we return rhsPseudo.
+	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
 	// If there is no winner (0), we return idxMissingStats.
 	//
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
@@ -760,15 +760,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			}
 			if preferRange {
 				// keep an index without statistics if that index has more equal/IN predicates, AND:
-				// 1) there are at least 2 equal/INs, OR
-				// 2) it's a full index match for all index predicates
-				if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount &&
-					(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) {
-					return 1, lhsPseudo
-				}
-				if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount &&
-					(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) {
-					return -1, rhsPseudo
+				// 1) there first must be at least a 5% change in estimated number of rows, AND
+				// 2) there are at least 2 equal/INs, OR - when combined with 1) above
+				// 3) it's a full index match for all index predicates
+				planCountDiff := lhs.path.CountAfterAccess / rhs.path.CountAfterAccess
+				if lhs.path.CountAfterAccess <= 1 || planCountDiff < 0.95 || planCountDiff > 1.05 {
+					if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount &&
+						(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) {
+						return 1, lhsPseudo
+					}
+					if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount &&
+						(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) {
+						return -1, rhsPseudo
+					}
 				}
 			}
 		}
