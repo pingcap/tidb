@@ -762,14 +762,16 @@ func (e *basicCopRuntimeStats) String() string {
 	if e.tiflashStats != nil {
 		buf.WriteString(", threads:")
 		buf.WriteString(strconv.Itoa(int(e.threads)))
-		buf.WriteString(", ")
-		if e.tiflashStats.waitSummary.CanBeIgnored() {
-			buf.WriteString(e.tiflashStats.scanContext.String())
-		} else {
-			buf.WriteString(e.tiflashStats.waitSummary.String())
+		if !e.tiflashStats.waitSummary.CanBeIgnored() {
 			buf.WriteString(", ")
-			buf.WriteString(e.tiflashStats.scanContext.String())
+			buf.WriteString(e.tiflashStats.waitSummary.String())
 		}
+		if !e.tiflashStats.networkSummary.Empty() {
+			buf.WriteString(", ")
+			buf.WriteString(e.tiflashStats.networkSummary.String())
+		}
+		buf.WriteString(", ")
+		buf.WriteString(e.tiflashStats.scanContext.String())
 	}
 	return buf.String()
 }
@@ -901,6 +903,10 @@ func (crs *CopRuntimeStats) String() string {
 					if !crs.stats.tiflashStats.waitSummary.CanBeIgnored() {
 						buf.WriteString(", ")
 						buf.WriteString(crs.stats.tiflashStats.waitSummary.String())
+					}
+					if !crs.stats.tiflashStats.networkSummary.Empty() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.networkSummary.String())
 					}
 					if !crs.stats.tiflashStats.scanContext.Empty() {
 						buf.WriteString(", ")
@@ -1460,20 +1466,32 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("tiflash_network: {")
 	empty := true
-	if networkTraffic.innerZoneSendBytes != 0 || networkTraffic.interZoneSendBytes != 0 {
+	if networkTraffic.innerZoneSendBytes != 0 {
 		buf.WriteString("inner_zone_send_bytes: ")
 		buf.WriteString(strconv.FormatInt(int64(networkTraffic.innerZoneSendBytes), 10))
-		buf.WriteString(", inter_zone_send_bytes: ")
+		empty = false
+	}
+	if networkTraffic.interZoneSendBytes != 0 {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("inter_zone_send_bytes: ")
 		buf.WriteString(strconv.FormatInt(int64(networkTraffic.interZoneSendBytes), 10))
 		empty = false
 	}
-	if networkTraffic.innerZoneReceiveBytes != 0 || networkTraffic.interZoneReceiveBytes != 0 {
+	if networkTraffic.innerZoneReceiveBytes != 0 {
 		if !empty {
 			buf.WriteString(", ")
 		}
 		buf.WriteString("inner_zone_receive_bytes: ")
 		buf.WriteString(strconv.FormatInt(int64(networkTraffic.innerZoneReceiveBytes), 10))
-		buf.WriteString(", inter_zone_receive_bytes: ")
+		empty = false
+	}
+	if networkTraffic.interZoneReceiveBytes != 0 {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("inter_zone_receive_bytes: ")
 		buf.WriteString(strconv.FormatInt(int64(networkTraffic.interZoneReceiveBytes), 10))
 	}
 	buf.WriteString("}")
