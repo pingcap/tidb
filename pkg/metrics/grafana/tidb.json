@@ -14724,13 +14724,13 @@
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 46
           },
           "hiddenSeries": false,
-          "id": 23763572016,
+          "id": 23763572018,
           "legend": {
             "alignAsTable": false,
             "avg": false,
@@ -14770,7 +14770,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Infoschema v2 Cache Table Count",
+          "title": "Infoschema V2 Cache Table Count",
           "tooltip": {
             "shared": true,
             "sort": 0,
