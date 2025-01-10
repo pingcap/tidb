@@ -1806,9 +1806,12 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 	stmtCtx := sessVars.StmtCtx
 	var tikvExecDetail util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	if tikvExecDetailRaw == nil {
+		tikvExecDetailRaw = &util.ExecDetails{}
+		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
 	}
+
+	tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	tiflashNetworkStats := stmtCtx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
 	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
