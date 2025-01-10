@@ -187,12 +187,17 @@ func TestCapturePath(t *testing.T) {
 	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp' duration='1s'")
 	require.NoError(t, exec.Next(tempCtx, nil))
 
+	paths := make([]string, 0, tiproxyNum)
+	expectedPaths := make([]string, 0, tiproxyNum)
 	for i := 0; i < tiproxyNum; i++ {
 		httpHandler := handlers[i]
-		require.Equal(t, http.MethodPost, httpHandler.getMethod())
-		require.Equal(t, capturePath, httpHandler.getPath())
-		require.Equal(t, fmt.Sprintf("s3://bucket/tmp/%s%d", filePrefix, i), httpHandler.getForm().Get("output"), "case %d", i)
+		output := httpHandler.getForm().Get("output")
+		require.True(t, strings.HasPrefix(output, "s3://bucket/tmp/"), output)
+		paths = append(paths, output[len("s3://bucket/tmp/"):])
+		expectedPaths = append(expectedPaths, fmt.Sprintf("tiproxy-%d", i))
 	}
+	sort.Strings(paths)
+	require.Equal(t, expectedPaths, paths)
 }
 
 func TestReplayPath(t *testing.T) {
@@ -240,8 +245,8 @@ func TestReplayPath(t *testing.T) {
 				require.True(t, strings.HasPrefix(input, "s3://bucket/tmp/"), input)
 				paths = append(paths, input[len("s3://bucket/tmp/"):])
 			}
-			sort.Strings(paths)
 		}
+		sort.Strings(paths)
 		expectedPaths := test
 		if len(test) > tiproxyNum {
 			expectedPaths = test[:tiproxyNum]

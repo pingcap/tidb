@@ -334,20 +334,19 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	backend, err := storage.ParseBackendFromURL(u, nil)
-	if err != nil {
-		return nil, errors.Wrapf(err, "parse backend from the input path failed")
-	}
-	store, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		return nil, errors.Wrapf(err, "create storage for input failed")
-	}
-	defer store.Close()
-
 	names := make([]string, 0, tiproxyNum)
 	if mockNames := ctx.Value(trafficPathKey); mockNames != nil {
 		names = mockNames.([]string)
 	} else {
+		backend, err := storage.ParseBackendFromURL(u, nil)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parse backend from the input path failed")
+		}
+		store, err := storage.NewWithDefaultOpt(ctx, backend)
+		if err != nil {
+			return nil, errors.Wrapf(err, "create storage for input failed")
+		}
+		defer store.Close()
 		err = store.WalkDir(ctx, &storage.WalkOption{
 			ObjPrefix: filePrefix,
 		}, func(name string, _ int64) error {
