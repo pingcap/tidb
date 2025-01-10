@@ -83,7 +83,7 @@ func statsMetaCountAndModifyCount(
 }
 
 // HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
-func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, error) {
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -93,21 +93,20 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 		tp = &possibleColInfo.FieldType
 	}
 	rows, _, err := util.ExecRows(sctx,
-		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
 		item.TableID,
 		item.ID,
 		isIndex,
 	)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	if len(rows) == 0 {
-		return nil, nil, 0, nil
+		return nil, 0, nil
 	}
 	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
 	hist.Correlation = rows[0].GetFloat64(5)
-	lastPos := rows[0].GetDatum(6, types.NewFieldType(mysql.TypeBlob))
-	return hist, &lastPos, rows[0].GetInt64(4), nil
+	return hist, rows[0].GetInt64(4), nil
 }
 
 // HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
@@ -658,7 +657,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		return nil
 	}
 
-	hg, _, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
+	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
@@ -737,7 +736,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hgMeta, _, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
+	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
