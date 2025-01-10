@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// Cascades is a basic cascades search framework portal, drove by Context.
+// Cascades is a basic cascades search framework portal, driven by Context.
 type Cascades struct {
 	logic corebase.LogicalPlan
 	ctx   cascadesctx.Context
