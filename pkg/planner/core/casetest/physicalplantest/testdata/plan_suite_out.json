@@ -1097,7 +1097,7 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints"
         ]
       },
       {
@@ -1115,7 +1115,7 @@
         ],
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
         ]
       },
@@ -1134,7 +1134,7 @@
         ],
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
         ]
       },
@@ -1152,7 +1152,7 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints"
         ]
       }
     ]
@@ -3179,7 +3179,7 @@
           "TableReader 10000.00 root  data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
@@ -3195,7 +3195,7 @@
           "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.c))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause."
       },
       {
         "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",

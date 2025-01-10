@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -190,7 +190,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int)")
 	testKit.MustExec("insert into t values (1,2),(3,4)")
 	testKit.MustExec("analyze table t")
-	tbl, err := dom.InfoSchema().TableByName(context.TODO(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.TODO(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)

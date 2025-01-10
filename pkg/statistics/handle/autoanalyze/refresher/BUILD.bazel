@@ -36,7 +36,7 @@ go_test(
     shard_count = 10,
     deps = [
         ":refresher",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
