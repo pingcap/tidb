@@ -433,7 +433,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	return s.RunWithStore(dom, nil)
 }
 
-// Run runs the server.
+// RunWithStore runs the server by store.
 func (s *Server) RunWithStore(dom *domain.Domain, kvStore kv.Storage) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
