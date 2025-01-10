@@ -429,7 +429,7 @@ func TestVectorIndexExplain(t *testing.T) {
 	`)
 	tk.MustExec("alter table t1 set tiflash replica 1;")
 	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
-	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
 		Available: true,
