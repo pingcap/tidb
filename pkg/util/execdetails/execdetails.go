@@ -847,6 +847,7 @@ func (*basicCopRuntimeStats) Tp() int {
 	return TpBasicCopRunTimeStats
 }
 
+// StmtCopRuntimeStats stores the cop runtime stats of the total statement
 type StmtCopRuntimeStats struct {
 	// TiflashNetworkStats stats all mpp tasks' network traffic info, nil if no any mpp tasks' network traffic
 	TiflashNetworkStats *TiFlashNetworkTrafficSummary
