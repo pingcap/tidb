@@ -761,15 +761,11 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
-<<<<<<< HEAD
-	if prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil {
-=======
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return false
 	}
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
->>>>>>> 5301602262c (planner: correct plan when scan tidb related cluster table with KeepOrder (#51922))
+	if prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if path.Index == nil || path.Index.VectorInfo == nil {
 			return false
 		}
