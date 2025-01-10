@@ -30,8 +30,9 @@ import (
 )
 
 var (
-	pkgDir string
-	outDir string
+	pkgDir  string
+	outDir  string
+	pgoFile string
 )
 
 const codeTemplate = `
@@ -74,6 +75,7 @@ func PluginManifest() *plugin.Manifest {
 func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
+	flag.StringVar(&pgoFile, "pgo-file", "default.pgo", "go profile-guided optimization(pgo) file path")
 	flag.Usage = usage
 }
 
@@ -96,6 +98,11 @@ func main() {
 	outDir, err := filepath.Abs(outDir)
 	if err != nil {
 		log.Printf("unable to resolve absolute representation of output path , %+v\n", err)
+		flag.Usage()
+	}
+	pgoFile, err := filepath.Abs(pgoFile)
+	if err != nil {
+		log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
 		flag.Usage()
 	}
 
@@ -142,7 +149,7 @@ func main() {
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-pgo=default.pgo",
+		"-pgo="+pgoFile,
 		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
