@@ -50,7 +50,7 @@ func TestTrafficForm(t *testing.T) {
 		{
 			sql:    "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=false",
 			method: http.MethodPost,
-			path:   "/api/traffic/capture",
+			path:   capturePath,
 			form: url.Values{
 				"output":         []string{"/tmp"},
 				"duration":       []string{"1s"},
@@ -62,7 +62,7 @@ func TestTrafficForm(t *testing.T) {
 		{
 			sql:    "traffic capture to '/tmp' duration='1s'",
 			method: http.MethodPost,
-			path:   "/api/traffic/capture",
+			path:   capturePath,
 			form: url.Values{
 				"output":   []string{"/tmp"},
 				"duration": []string{"1s"},
@@ -72,7 +72,7 @@ func TestTrafficForm(t *testing.T) {
 		{
 			sql:    "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
 			method: http.MethodPost,
-			path:   "/api/traffic/replay",
+			path:   replayPath,
 			form: url.Values{
 				"input":    []string{"/tmp"},
 				"username": []string{"root"},
@@ -85,7 +85,7 @@ func TestTrafficForm(t *testing.T) {
 		{
 			sql:    "traffic replay from '/tmp' user='root'",
 			method: http.MethodPost,
-			path:   "/api/traffic/replay",
+			path:   replayPath,
 			form: url.Values{
 				"input":    []string{"/tmp"},
 				"username": []string{"root"},
@@ -95,13 +95,13 @@ func TestTrafficForm(t *testing.T) {
 		{
 			sql:    "cancel traffic jobs",
 			method: http.MethodPost,
-			path:   "/api/traffic/cancel",
+			path:   cancelPath,
 			form:   url.Values{},
 		},
 		{
 			sql:    "show traffic jobs",
 			method: http.MethodGet,
-			path:   "/api/traffic/show",
+			path:   showPath,
 			form:   url.Values{},
 		},
 	}
@@ -125,21 +125,32 @@ func TestTrafficForm(t *testing.T) {
 			test.form.Add("start-time", actualForm.Get("start-time"))
 		}
 		require.Equal(t, test.form, actualForm, "case %d", i)
+		require.EqualValues(t, 0, suite.execBuilder.ctx.GetSessionVars().StmtCtx.WarningCount(), "case %d", i)
 	}
 }
 
 func TestTrafficError(t *testing.T) {
 	suite := newTrafficTestSuite(t, 10)
 	ctx := context.TODO()
-	exec := suite.build(ctx, "cancel traffic jobs")
+	exec := suite.build(ctx, "traffic capture to 'test://tmp  ?' duration='1s'")
 
 	// no tiproxy
 	m := make(map[string]*infosync.TiProxyServerInfo)
 	tempCtx := context.WithValue(ctx, tiproxyAddrKey, m)
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "no tiproxy server found")
 
-	// tiproxy no response
+	// invalid file path
 	m["127.0.0.1:0"] = &infosync.TiProxyServerInfo{IP: "127.0.0.1", StatusPort: "0"}
+	require.ErrorContains(t, exec.Next(tempCtx, nil), "parse output path failed")
+
+	// can't connect to s3
+	replayCtx, cancel := context.WithCancel(tempCtx)
+	cancel()
+	exec = suite.build(replayCtx, "traffic replay from 's3://bucket/tmp' user='root' password='123456'")
+	require.ErrorContains(t, exec.Next(replayCtx, nil), "context canceled")
+
+	// tiproxy no response
+	exec = suite.build(tempCtx, "traffic capture to '/tmp' duration='1s'")
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "dial tcp")
 
 	// tiproxy responds with error
@@ -148,6 +159,86 @@ func TestTrafficError(t *testing.T) {
 	defer server.Close()
 	tempCtx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "500 Internal Server Error")
+}
+
+func TestCapturePath(t *testing.T) {
+	tiproxyNum := 3
+	handlers := make([]*mockHTTPHandler, 0, tiproxyNum)
+	servers := make([]*http.Server, 0, tiproxyNum)
+	ports := make([]int, 0, tiproxyNum)
+	for i := 0; i < tiproxyNum; i++ {
+		httpHandler := &mockHTTPHandler{t: t, httpOK: true}
+		handlers = append(handlers, httpHandler)
+		server, port := runServer(t, httpHandler)
+		servers = append(servers, server)
+		ports = append(ports, port)
+	}
+	defer func() {
+		for _, server := range servers {
+			server.Close()
+		}
+	}()
+
+	ctx := context.TODO()
+	tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
+	suite := newTrafficTestSuite(t, 10)
+	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp' duration='1s'")
+	require.NoError(t, exec.Next(tempCtx, nil))
+
+	for i := 0; i < tiproxyNum; i++ {
+		httpHandler := handlers[i]
+		require.Equal(t, http.MethodPost, httpHandler.getMethod())
+		require.Equal(t, capturePath, httpHandler.getPath())
+		require.Equal(t, fmt.Sprintf("s3://bucket/tmp/%s%d", filePrefix, i), httpHandler.getForm().Get("output"), "case %d", i)
+	}
+}
+
+func TestReplayPath(t *testing.T) {
+	tiproxyNum := 2
+	handlers := make([]*mockHTTPHandler, 0, tiproxyNum)
+	servers := make([]*http.Server, 0, tiproxyNum)
+	ports := make([]int, 0, tiproxyNum)
+	for i := 0; i < tiproxyNum; i++ {
+		httpHandler := &mockHTTPHandler{t: t, httpOK: true}
+		handlers = append(handlers, httpHandler)
+		server, port := runServer(t, httpHandler)
+		servers = append(servers, server)
+		ports = append(ports, port)
+	}
+	defer func() {
+		for _, server := range servers {
+			server.Close()
+		}
+	}()
+
+	tests := [][]string{
+		{"tiproxy-0"},
+		{"tiproxy-0", "tiproxy-1"},
+		{"tiproxy-0", "tiproxy-1", "tiproxy-2"},
+	}
+
+	for i, test := range tests {
+		ctx := context.TODO()
+		tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
+		tempCtx = context.WithValue(tempCtx, trafficPathKey, test)
+		suite := newTrafficTestSuite(t, 10)
+		exec := suite.build(ctx, "traffic replay from 's3://bucket/tmp' user='root'")
+		for j := 0; j < tiproxyNum; j++ {
+			handlers[j].reset()
+		}
+		require.NoError(t, exec.Next(tempCtx, nil))
+
+		for j := 0; j < tiproxyNum; j++ {
+			httpHandler := handlers[j]
+			if j < len(test) {
+				require.Equal(t, http.MethodPost, httpHandler.getMethod())
+				require.Equal(t, replayPath, httpHandler.getPath())
+				require.Equal(t, fmt.Sprintf("s3://bucket/tmp/%s%d", filePrefix, j), httpHandler.getForm().Get("input"), "case %d-%d", i, j)
+			} else {
+				require.Nil(t, httpHandler.getForm(), "case %d-%d", i, j)
+			}
+		}
+	}
 }
 
 func TestTrafficShow(t *testing.T) {
@@ -291,6 +382,14 @@ func (handler *mockHTTPHandler) getPath() string {
 	handler.Lock()
 	defer handler.Unlock()
 	return handler.path
+}
+
+func (handler *mockHTTPHandler) reset() {
+	handler.Lock()
+	defer handler.Unlock()
+	handler.form = nil
+	handler.method = ""
+	handler.path = ""
 }
 
 func (handler *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
