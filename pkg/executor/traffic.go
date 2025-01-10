@@ -136,7 +136,7 @@ type TrafficCancelExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (*TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "get tiproxy addresses failed")
