@@ -305,7 +305,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
 	idx := table.GetIdx(histID)
-	lastAnalyzePos := row.GetDatum(9, types.NewFieldType(mysql.TypeBlob))
 
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
@@ -341,7 +340,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			if idx.IsAnalyzed() {
 				idx.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
@@ -374,7 +372,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			if statsVer != statistics.Version0 {
 				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
 	}
@@ -740,7 +737,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hgMeta, lastAnalyzePos, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
+	hgMeta, _, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
@@ -769,7 +766,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		Info: idxInfo, StatsVer: statsVer,
 		PhysicalID:        idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
-	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {

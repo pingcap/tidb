@@ -190,7 +190,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			table.StatsVer = int(statsVer)
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
-		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
 		if !ok {
 			// this table has been dropped. but stats meta still exists and wait for being deleted.
@@ -235,7 +234,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
-			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		} else {

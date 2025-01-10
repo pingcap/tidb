@@ -301,7 +301,6 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
@@ -414,8 +413,6 @@ func initStatsVer2(t *testing.T) {
 	require.True(t, !table0.GetCol(4).IsStatsInitialized())
 	require.True(t, table0.GetCol(5).IsStatsInitialized())
 	require.Equal(t, 2, table0.IdxNum())
-	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())
