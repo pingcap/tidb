@@ -1723,18 +1723,21 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 						if id == 31 || id == 32 || id == 13 || id == 14 {
 							skip = true
 						}
-						sql = fmt.Sprintf(`delete from t where a = %d`, id)
+						sql = fmt.Sprintf(`delete from t where a = %d /* s:%d f:%d */`, id, state, from)
 					case InsertODKU:
 						if state == 5 && from == 1 && id == 34 ||
 							state == 6 && from == 1 && id == 16 {
 							skip = true
 						}
-						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s: %d f:%d')`, id, id, id, state, from, id+currId, state, from)
+						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s:%d f:%d')`, id, id, id, state, from, id+currId, state, from)
 					default:
 						require.Fail(t, "unknown op", "op: %d", op)
 					}
 					if skip {
-						tk.MustContainErrMsg(sql, "assertion failed")
+						err := tk.ExecToErr(sql)
+						require.Error(t, err)
+						require.ErrorContains(t, err, "assertion failed")
+						logutil.BgLogger().Info("Got error", zap.String("sql", sql), zap.Error(err))
 						continue
 					}
 					tk.MustExec(sql)
