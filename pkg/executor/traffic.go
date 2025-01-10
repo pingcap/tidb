@@ -219,9 +219,8 @@ func request(ctx context.Context, addrs []string, readers []io.Reader, method, p
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("path", path), zap.String("addr", addr),
 				zap.String("resp", resp), zap.Error(err))
 			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed", addr)
-		} else {
-			resps[addr] = resp
 		}
+		resps[addr] = resp
 	}
 	logutil.Logger(ctx).Info("traffic request to tiproxy succeeds", zap.Strings("addrs", addrs), zap.String("path", path))
 	return resps, nil
