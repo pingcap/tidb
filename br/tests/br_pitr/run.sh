@@ -22,9 +22,16 @@ CUR=$(cd `dirname $0`; pwd)
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
+
 # start a new cluster
 echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
@@ -94,11 +101,11 @@ done
 
 # start a new cluster
 echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # PITR restore
 echo "run pitr"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
 # check something in downstream cluster
 echo "check br log"
