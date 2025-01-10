@@ -276,9 +276,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		log.Info("replace into existing table",
+		log.Info("replace existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
+
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
 		for _, col := range ti.Columns {
@@ -286,10 +287,24 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		}
 		colListStr := strings.Join(columnNames, ",")
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
-			utils.EncloseDBAndTable(db.Name.L, tableName),
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
 			colListStr, colListStr,
-			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
-		return execSQL(replaceIntoSQL)
+			utils.EncloseDBAndTable(db.Name.L, tableName),)
+		if err := execSQL(replaceIntoSQL); err != nil {
+			return err
+		}
+
+		renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
+		utils.EncloseDBAndTable(db.Name.L, tableName),
+		utils.EncloseDBAndTable(db.TemporaryName.L, tableName+"__replaced__"),)
+		if err := execSQL(renameSQL); err != nil {
+			return err
+		}
+		
+		renameSQL = fmt.Sprintf("RENAME TABLE %s TO %s;",
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
+			utils.EncloseDBAndTable(db.Name.L, tableName),)
+		return execSQL(renameSQL)
 	}
 
 	renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
