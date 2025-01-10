@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// Cascades is a basic cascades search framework portal, driven by Context.
-type Cascades struct {
+// Optimizer is a basic cascades search framework portal, driven by Context.
+type Optimizer struct {
 	logic corebase.LogicalPlan
 	ctx   cascadesctx.Context
 }
 
 // NewCascades return a new cascades obj for logical alternative searching.
-func NewCascades(lp corebase.LogicalPlan) (*Cascades, error) {
-	cas := &Cascades{
+func NewCascades(lp corebase.LogicalPlan) (*Optimizer, error) {
+	cas := &Optimizer{
 		logic: lp,
 		ctx:   NewContext(lp.SCtx()),
 	}
@@ -46,17 +46,17 @@ func NewCascades(lp corebase.LogicalPlan) (*Cascades, error) {
 }
 
 // Execute run the yams search flow inside, returns error if it happened.
-func (c *Cascades) Execute() error {
+func (c *Optimizer) Execute() error {
 	return c.ctx.GetScheduler().ExecuteTasks()
 }
 
 // Destroy clean and reset basic elements inside.
-func (c *Cascades) Destroy() {
+func (c *Optimizer) Destroy() {
 	c.ctx.Destroy()
 }
 
 // GetMemo returns the memo structure inside cascades.
-func (c *Cascades) GetMemo() *memo.Memo {
+func (c *Optimizer) GetMemo() *memo.Memo {
 	return c.ctx.GetMemo()
 }
 

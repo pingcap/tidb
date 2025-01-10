@@ -277,7 +277,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 
-	var cas *cascades.Cascades
+	var cas *cascades.Optimizer
 	if cas, err = cascades.NewCascades(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
@@ -289,6 +289,8 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		physical base.PhysicalPlan
 		cost     = math.MaxFloat64
 	)
+	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
+	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
 	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
 		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 		if planCounter == 0 {
