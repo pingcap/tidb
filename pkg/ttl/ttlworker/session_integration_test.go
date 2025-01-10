@@ -20,11 +20,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,7 +37,7 @@ import (
 
 type fault interface {
 	// shouldFault returns whether the session should fault this time.
-	shouldFault() bool
+	shouldFault(sql string) bool
 }
 
 var _ fault = &faultAfterCount{}
@@ -46,13 +48,34 @@ type faultAfterCount struct {
 	currentCount int
 }
 
-func (f *faultAfterCount) shouldFault() bool {
+func newFaultAfterCount(faultCount int) *faultAfterCount {
+	return &faultAfterCount{faultCount: faultCount}
+}
+
+func (f *faultAfterCount) shouldFault(sql string) bool {
 	if f.currentCount >= f.faultCount {
 		return true
 	}
 
 	f.currentCount++
 	return false
+}
+
+type faultWithFilter struct {
+	filter func(string) bool
+	f      fault
+}
+
+func (f *faultWithFilter) shouldFault(sql string) bool {
+	if f.filter == nil || f.filter(sql) {
+		return f.f.shouldFault(sql)
+	}
+
+	return false
+}
+
+func newFaultWithFilter(filter func(string) bool, f fault) *faultWithFilter {
+	return &faultWithFilter{filter: filter, f: f}
 }
 
 // sessionWithFault is a session which will fail to execute SQL after successfully executing several SQLs. It's designed
@@ -97,19 +120,12 @@ func (s *sessionWithFault) ExecuteInternal(ctx context.Context, sql string, args
 }
 
 func (s *sessionWithFault) shouldFault(sql string) bool {
-	if s.fault.Load() == nil {
+	fault := s.fault.Load()
+	if fault == nil {
 		return false
 	}
 
-	// as a fault implementation may have side-effect, we should always call it before checking the SQL.
-	shouldFault := (*s.fault.Load()).shouldFault()
-
-	// skip some local only sql, ref `getSession()` in `session.go`
-	if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
-		return false
-	}
-
-	return shouldFault
+	return (*fault).shouldFault(sql)
 }
 
 type faultSessionPool struct {
@@ -144,6 +160,11 @@ func (f *faultSessionPool) Put(se pools.Resource) {
 }
 
 func (f *faultSessionPool) setFault(ft fault) {
+	if ft == nil {
+		f.fault.Store(nil)
+		return
+	}
+
 	f.fault.Store(&ft)
 }
 
@@ -153,9 +174,77 @@ func TestGetSessionWithFault(t *testing.T) {
 	pool := newFaultSessionPool(dom.SysSessionPool())
 
 	for i := 0; i < 50; i++ {
-		pool.setFault(&faultAfterCount{faultCount: i})
+		pool.setFault(newFaultWithFilter(func(sql string) bool {
+			// skip some local only sql, ref `getSession()` in `session.go`
+			if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
+				return false
+			}
+			return true
+		}, newFaultAfterCount(i)))
+
 		se, err := ttlworker.GetSessionForTest(pool)
 		logutil.BgLogger().Info("get session", zap.Int("error after count", i), zap.Bool("session is nil", se == nil), zap.Bool("error is nil", err == nil))
 		require.True(t, se != nil || err != nil)
+	}
+}
+
+func TestNewScanSession(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := newFaultSessionPool(dom.SysSessionPool())
+	pool.setFault(newFaultWithFilter(func(s string) bool { return false }, newFaultAfterCount(0)))
+	se, err := ttlworker.GetSessionForTest(pool)
+	require.NoError(t, err)
+
+	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=123")
+	require.NoError(t, err)
+	require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+
+	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=ON")
+	require.NoError(t, err)
+	require.True(t, se.GetSessionVars().EnablePaging)
+
+	for _, errSQL := range []string{
+		"",
+		"set @@tidb_distsql_scan_concurrency=1",
+		"set @@tidb_enable_paging=OFF",
+	} {
+		t.Run("test err in SQL: "+errSQL, func(t *testing.T) {
+			var faultCnt atomic.Int64
+			pool.setFault(newFaultWithFilter(func(s string) bool {
+				if s == errSQL && s != "" {
+					faultCnt.Add(1)
+					return true
+				}
+				return false
+			}, newFaultAfterCount(0)))
+			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+			if errSQL == "" {
+				// success case
+				require.NoError(t, err)
+				require.NotNil(t, tblSe)
+				require.NotNil(t, restore)
+				require.Same(t, se, tblSe.Session)
+				require.Equal(t, int64(0), faultCnt.Load())
+
+				// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
+				require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
+				require.False(t, se.GetSessionVars().EnablePaging)
+
+				// restore should restore the session variables
+				restore()
+				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+				require.True(t, se.GetSessionVars().EnablePaging)
+			} else {
+				// error case
+				require.Equal(t, int64(1), faultCnt.Load())
+				require.EqualError(t, err, "fault in test")
+				require.Nil(t, tblSe)
+				require.Nil(t, restore)
+
+				// NewScanSession should not change session state if error occurs
+				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+				require.True(t, se.GetSessionVars().EnablePaging)
+			}
+		})
 	}
 }

@@ -30,7 +30,7 @@ import (
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	BaseLogicalPlan
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	ByItems []*util.ByItems `hash64-equals:"true"`
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
@@ -82,6 +82,10 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
+
+	snapParentUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
+	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
+
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
@@ -89,6 +93,15 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	if err != nil {
 		return nil, err
 	}
+	// If the length of parentUsedCols is 0, it means that the parent plan does not need this plan to output related
+	// results, such as: select count(*) from t
+	// So we set the schema of topN to 0. After inlineprojection, the schema of topN will be set to the shortest column
+	// in its child plan, and this column will not be used later.
+	if len(snapParentUsedCols) == 0 {
+		lt.SetSchema(nil)
+	}
+	lt.InlineProjection(snapParentUsedCols, opt)
+
 	return lt, nil
 }
 
@@ -96,7 +109,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	lt.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	lt.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if lt.Count == 1 {
 		lt.SetMaxOneRow(true)
 	}
@@ -115,7 +128,7 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if lt.StatsInfo() != nil {
 		return lt.StatsInfo(), nil
 	}

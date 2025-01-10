@@ -48,7 +48,6 @@ go_library(
         "//pkg/errno",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/parser/terror",

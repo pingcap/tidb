@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
@@ -32,13 +32,13 @@ func TestDefaultValue(t *testing.T) {
 	randPlainStr := "random_plain_string"
 
 	oldPlainCol := srcCol.Clone()
-	oldPlainCol.Name = model.NewCIStr("oldPlainCol")
+	oldPlainCol.Name = ast.NewCIStr("oldPlainCol")
 	oldPlainCol.FieldType = *types.NewFieldType(mysql.TypeLong)
 	oldPlainCol.DefaultValue = randPlainStr
 	oldPlainCol.OriginDefaultValue = randPlainStr
 
 	newPlainCol := srcCol.Clone()
-	newPlainCol.Name = model.NewCIStr("newPlainCol")
+	newPlainCol.Name = ast.NewCIStr("newPlainCol")
 	newPlainCol.FieldType = *types.NewFieldType(mysql.TypeLong)
 	err := newPlainCol.SetDefaultValue(1)
 	require.NoError(t, err)
@@ -50,13 +50,13 @@ func TestDefaultValue(t *testing.T) {
 	randBitStr := string([]byte{25, 185})
 
 	oldBitCol := srcCol.Clone()
-	oldBitCol.Name = model.NewCIStr("oldBitCol")
+	oldBitCol.Name = ast.NewCIStr("oldBitCol")
 	oldBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
 	oldBitCol.DefaultValue = randBitStr
 	oldBitCol.OriginDefaultValue = randBitStr
 
 	newBitCol := srcCol.Clone()
-	newBitCol.Name = model.NewCIStr("newBitCol")
+	newBitCol.Name = ast.NewCIStr("newBitCol")
 	newBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
 	err = newBitCol.SetDefaultValue(1)
 	// Only string type is allowed in BIT column.
@@ -68,7 +68,7 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, randBitStr, newBitCol.GetDefaultValue())
 
 	nullBitCol := srcCol.Clone()
-	nullBitCol.Name = model.NewCIStr("nullBitCol")
+	nullBitCol.Name = ast.NewCIStr("nullBitCol")
 	nullBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
 	err = nullBitCol.SetOriginDefaultValue(nil)
 	require.NoError(t, err)

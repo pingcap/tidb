@@ -64,7 +64,11 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		var (
+			val types.Datum
+			err error
+		)
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -358,7 +362,15 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {
-			domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+			if cloned, ok := p.CloneForPlanCache(sctx.GetPlanCtx()); ok {
+				// Clone this plan before putting it into the cache to avoid read-write DATA RACE. For example,
+				// before this session finishes the execution, the next session has started cloning this plan.
+				// Time:  | ------------------------------------------------------------------------------- |
+				// Sess1: | put plan into cache | ----------- execution (might modify the plan) ----------- |
+				// Sess2:                  | start | ------- hit this plan and clone it (DATA RACE) ------- |
+				cached.Plan = cloned
+				domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+			}
 		} else {
 			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
 		}
