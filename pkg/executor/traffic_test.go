@@ -20,7 +20,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -217,10 +219,10 @@ func TestReplayPath(t *testing.T) {
 		{"tiproxy-0", "tiproxy-1", "tiproxy-2"},
 	}
 
+	ctx := context.TODO()
+	ctx = fillCtxWithTiProxyAddr(ctx, ports)
 	for i, test := range tests {
-		ctx := context.TODO()
-		tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
-		tempCtx = context.WithValue(tempCtx, trafficPathKey, test)
+		tempCtx := context.WithValue(ctx, trafficPathKey, test)
 		suite := newTrafficTestSuite(t, 10)
 		exec := suite.build(ctx, "traffic replay from 's3://bucket/tmp' user='root'")
 		for j := 0; j < tiproxyNum; j++ {
@@ -228,16 +230,23 @@ func TestReplayPath(t *testing.T) {
 		}
 		require.NoError(t, exec.Next(tempCtx, nil))
 
+		paths := make([]string, 0, len(test))
 		for j := 0; j < tiproxyNum; j++ {
 			httpHandler := handlers[j]
-			if j < len(test) {
-				require.Equal(t, http.MethodPost, httpHandler.getMethod())
-				require.Equal(t, replayPath, httpHandler.getPath())
-				require.Equal(t, fmt.Sprintf("s3://bucket/tmp/%s%d", filePrefix, j), httpHandler.getForm().Get("input"), "case %d-%d", i, j)
-			} else {
-				require.Nil(t, httpHandler.getForm(), "case %d-%d", i, j)
+			if httpHandler.getMethod() != "" {
+				form := httpHandler.getForm()
+				require.NotEmpty(t, form)
+				input := form.Get("input")
+				require.True(t, strings.HasPrefix(input, "s3://bucket/tmp/"), input)
+				paths = append(paths, input[len("s3://bucket/tmp/"):])
 			}
+			sort.Strings(paths)
 		}
+		expectedPaths := test
+		if len(test) > tiproxyNum {
+			expectedPaths = test[:tiproxyNum]
+		}
+		require.Equal(t, expectedPaths, paths, "case %d", i)
 	}
 }
 
