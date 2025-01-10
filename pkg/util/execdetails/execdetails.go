@@ -915,19 +915,16 @@ func (*basicCopRuntimeStats) Tp() int {
 }
 
 type StmtCopRuntimeStats struct {
-	TiflashNetworkStats TiFlashNetworkTrafficSummary
+	TiflashNetworkStats *TiFlashNetworkTrafficSummary
 }
 
 // mergeExecSummary merges ExecutorExecutionSummary into stmt cop runtime stats directly.
 func (e *StmtCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
 	if tiflashNetworkSummary := summary.GetTiflashNetworkSummary(); tiflashNetworkSummary != nil {
-		tmp := TiFlashNetworkTrafficSummary{
-			innerZoneSendBytes:    *tiflashNetworkSummary.InnerZoneSendBytes,
-			interZoneSendBytes:    *tiflashNetworkSummary.InterZoneSendBytes,
-			innerZoneReceiveBytes: *tiflashNetworkSummary.InnerZoneReceiveBytes,
-			interZoneReceiveBytes: *tiflashNetworkSummary.InterZoneReceiveBytes,
+		if e.TiflashNetworkStats == nil {
+			e.TiflashNetworkStats = &TiFlashNetworkTrafficSummary{}
 		}
-		e.TiflashNetworkStats.Merge(tmp)
+		e.TiflashNetworkStats.mergeExecSummary(tiflashNetworkSummary)
 	}
 }
 
@@ -1484,6 +1481,13 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) Merge(other TiFlashNetworkTr
 	networkTraffic.interZoneSendBytes = other.interZoneSendBytes
 	networkTraffic.innerZoneReceiveBytes = other.innerZoneReceiveBytes
 	networkTraffic.interZoneReceiveBytes = other.interZoneReceiveBytes
+}
+
+func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *tipb.TiFlashNetWorkSummary) {
+	networkTraffic.innerZoneSendBytes += *summary.InnerZoneSendBytes
+	networkTraffic.interZoneSendBytes += *summary.InterZoneSendBytes
+	networkTraffic.innerZoneReceiveBytes += *summary.InnerZoneReceiveBytes
+	networkTraffic.interZoneReceiveBytes += *summary.InterZoneReceiveBytes
 }
 
 // BasicRuntimeStats is the basic runtime stats.
