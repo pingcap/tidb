@@ -821,11 +821,11 @@ insert into t values(123);
 select _tidb_rowid, id from t;
 _tidb_rowid	id
 124	123
-insert into t values(18446744073709551614);
+insert into t values(18446744073709551613);
 select _tidb_rowid, id from t;
 _tidb_rowid	id
 124	123
--1	18446744073709551614
+-2	18446744073709551613
 insert into t values();
 Error 1467 (HY000): Failed to read auto-increment value from storage engine
 drop table t;

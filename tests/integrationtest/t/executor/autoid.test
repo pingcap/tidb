@@ -516,7 +516,8 @@ create table t(id bigint unsigned auto_increment primary key);
 insert into t values(123);
 select _tidb_rowid, id from t;
 ## insert into t values(18446744073709551615); # cannot insert 18446744073709551615 because rowid also consumes 1 autoid
-insert into t values(18446744073709551614); # this is the maxinum value that can be insert
+## insert into t values(18446744073709551614); # cannot do the either
+insert into t values(18446744073709551613); # this is the maxinum value that can be insert
 select _tidb_rowid, id from t;
 -- error 1467
 insert into t values();
