@@ -28,6 +28,8 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
+# default.pgo is the tidb cpu profile of the sysbench oltp_read_only workload.
+# default.pgo file needs to be updated frequently to ensure that the PGO optimization is effective.
 BUILD_FLAG	:= -pgo=default.pgo -tags codes
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
