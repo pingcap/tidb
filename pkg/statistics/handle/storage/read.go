@@ -397,7 +397,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	totColSize := row.GetInt64(6)
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(8)
-	lastAnalyzePos := row.GetDatum(9, types.NewFieldType(mysql.TypeBlob))
 	col := table.GetCol(histID)
 
 	for _, colInfo := range tableInfo.Columns {
@@ -447,7 +446,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
 			break
 		}
@@ -482,7 +480,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
 		if col.TotColSize != totColSize {
