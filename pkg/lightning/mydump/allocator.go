@@ -43,6 +43,7 @@ func SetMaxMemoryUsage(size int) {
 	maxArenaCount = size / arenaDefaultSize
 }
 
+// GetArenaSize return the default arena size
 func GetArenaSize() int {
 	return arenaDefaultSize
 }
@@ -224,6 +225,7 @@ func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
 
 var once sync.Once
 
+// GetDefaultAllocator get a default allocator
 func GetDefaultAllocator() memory.Allocator {
 	once.Do(func() {
 		initArenas()
