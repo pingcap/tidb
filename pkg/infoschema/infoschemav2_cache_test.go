@@ -152,7 +152,7 @@ func (tc *testCase) run(t *testing.T) {
 
 	data := NewData()
 	data.tableCache.SetStatusHook(tc.statusHook)
-	tc.statusHook.On("onUpdateSize").Return()
+	tc.statusHook.On("onUpdate").Return()
 
 	tableSize := mockTableSize(tc.r, t)
 	tc.statusHook.On("onUpdateLimit").Return().Once()
