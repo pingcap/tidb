@@ -866,25 +866,6 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
-	/*
-		if tbl.Meta().Partition != nil {
-			// Include test for EXCHANGE PARTITION, i.e. duplicate _tidb_rowid's
-			for _, p := range tbl.Meta().Partition.Definitions {
-				partName := p.Name.O
-				tkO.MustExec(`create table tx like t`)
-				domOwner.Reload()
-				tkO.MustExec(`alter table tx remove partitioning`)
-				domOwner.Reload()
-				tkO.MustExec(fmt.Sprintf("insert into tx select * from t partition (`%s`)", partName))
-				domOwner.Reload()
-				tkO.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx", partName))
-				domOwner.Reload()
-				tkO.MustExec(`drop table tx`)
-				domOwner.Reload()
-			}
-			domNonOwner.Reload()
-		}
-	*/
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
@@ -1727,29 +1708,36 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 					tk = tkNO
 				}
 				for _, id := range IDs[state][from][op] {
+					skip := false
+					var sql string
 					switch op {
 					case Insert:
-						tk.MustExec(`insert into t values (?,?,?,?)`, id, id, id, fmt.Sprintf("Insert s:%d f:%d", state, from))
+						sql = fmt.Sprintf(`insert into t values (%d,%d,%d,'Insert s:%d f:%d')`, id, id, id, state, from)
 					case Update:
 						if state == 5 && from == 1 && id == 33 ||
 							state == 6 && from == 1 && (id == 5 || id == 15) {
-							continue
+							skip = true
 						}
-						tk.MustExec(fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currId, state, from, id))
+						sql = fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currId, state, from, id)
 					case Delete:
 						if id == 31 || id == 32 || id == 13 || id == 14 {
-							continue
+							skip = true
 						}
-						tk.MustExec(fmt.Sprintf(`delete from t where a = %d`, id))
+						sql = fmt.Sprintf(`delete from t where a = %d`, id)
 					case InsertODKU:
 						if state == 5 && from == 1 && id == 34 ||
 							state == 6 && from == 1 && id == 16 {
-							continue
+							skip = true
 						}
-						tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s: %d f:%d')`, id, id, id, state, from, id+currId, state, from))
+						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s: %d f:%d')`, id, id, id, state, from, id+currId, state, from)
 					default:
 						require.Fail(t, "unknown op", "op: %d", op)
 					}
+					if skip {
+						tk.MustContainErrMsg(sql, "assertion failed")
+						continue
+					}
+					tk.MustExec(sql)
 				}
 			}
 		}
@@ -1760,9 +1748,6 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
-	//alterSQL = `alter table t partition by key (a) partitions 3`
-	//runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
-	//createSQL = `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) PARTITION BY HASH (a) PARTITIONS 3`
-	//alterSQL = `alter table t partition by key (a) partitions 3`
-	//runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	// TODO: add more variants of CREATE TABLE + ALTER
+	// TODO: add EXCHANGED partitions, to also test duplicate _tidb_rowid's
 }
