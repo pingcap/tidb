@@ -1362,7 +1362,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		})
 		w.isWriteBatchSorted = true
 	}
-
+	logutil.LoggerFromContext(ctx).Info("flushKVs batch size", zap.Int64("size", w.batchSize.Load()), zap.Int("count", w.batchCount))
 	err = writer.writeKVs(w.writeBatch[:w.batchCount])
 	if err != nil {
 		return errors.Trace(err)
