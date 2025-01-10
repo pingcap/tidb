@@ -15,134 +15,10 @@
 package mydump
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"runtime"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
-	"time"
-	"unsafe"
-
-	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
-
-var (
-	maxArenaCount    = 0         // maximum arena count
-	arenaDefaultSize = 512 << 20 // size of each arena
-	leafSize         = 256 << 10 // The smallest block size is 256KB
-)
-
-// SetMaxMemoryUsage set the memory used by parquet reader.
-func SetMaxMemoryUsage(size int) {
-	maxArenaCount = size / arenaDefaultSize
-}
-
-func GetArenaSize() int {
-	return arenaDefaultSize
-}
-
-// arenaPool is used to cache and reuse arenas
-type arenaPool struct {
-	arenas    chan *internalAllocator
-	allocated int
-	lock      sync.Mutex
-}
-
-func (ap *arenaPool) get() *internalAllocator {
-	// First try to get cached arena
-	select {
-	case a := <-ap.arenas:
-		return a
-	default:
-	}
-
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	// Create a new one and return
-	if ap.allocated < maxArenaCount {
-		ap.allocated++
-		bd := &internalAllocator{}
-		bd.init(arenaDefaultSize)
-		ap.adjustGCPercent()
-		return bd
-	}
-
-	// We can't create new arena, return nil
-	return nil
-}
-
-func (ap *arenaPool) put(a *internalAllocator) {
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	// discard it if necessary
-	if ap.allocated > maxArenaCount {
-		a.bufInfo = nil
-		a.buffer = nil
-		ap.allocated--
-		ap.adjustGCPercent()
-		return
-	}
-
-	ap.arenas <- a
-}
-
-func (ap *arenaPool) free() {
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	ap.allocated = 0
-	for len(ap.arenas) > 0 {
-		a := <-ap.arenas
-		a.bufInfo = nil
-		a.buffer = nil
-	}
-	ap.adjustGCPercent()
-}
-
-func (ap *arenaPool) adjustGCPercent() {
-	gogc := os.Getenv("GOGC")
-	memTotal, err := memory.MemTotal()
-	if gogc == "" && err == nil {
-		if ap.allocated == 0 {
-			debug.SetGCPercent(100)
-			return
-		}
-		percent := int(memTotal)*90/(ap.allocated*arenaDefaultSize) - 100
-		percent = min(percent, 100) / 10 * 10
-		percent = max(percent, 5)
-
-		old := debug.SetGCPercent(percent)
-		runtime.GC()
-		log.L().Debug("set gc percentage",
-			zap.Int("old", old),
-			zap.Int("new", percent),
-			zap.Int("total memory", int(memTotal)),
-			zap.Int("allocated memory", ap.allocated*arenaDefaultSize),
-		)
-	}
-}
-
-var pool = &arenaPool{
-	allocated: 0,
-	arenas:    make(chan *internalAllocator, 256),
-}
-
-// FreeMemory free all the memory allocated for arenas.
-// TODO(joechenrh): check if there are anyone using the arenas.
-func FreeMemory() {
-	pool.free()
-}
-
-// Convert slice to an uintptr. This value is used as key in map.
-func unsafeGetblkAddr(slice []byte) uintptr {
-	return uintptr(unsafe.Pointer(&slice[0]))
-}
 
 func roundUp(n, sz int) int {
 	return (n + sz - 1) / sz * sz
@@ -257,21 +133,23 @@ func (binfo *bufferInfo) pop() int {
 }
 
 // buffer is represented as an offset.
-type internalAllocator struct {
+type buddyAllocator struct {
 	buffer   []byte
 	bufInfo  []bufferInfo
 	nLayers  int
 	maxLayer int
 
-	allocated map[uintptr]int
+	allocatedBuf map[uintptr]int
 
 	allocatedBytes atomic.Int64
 	unavailable    int
 	total          int
+
+	lock sync.Mutex
 }
 
 // Find the layer of the block at offset
-func (b *internalAllocator) layer(offset int) int {
+func (b *buddyAllocator) layer(offset int) int {
 	for k := 0; k < b.maxLayer; k++ {
 		if bitIsSet(b.bufInfo[k+1].split, blkIndex(k+1, offset)) {
 			return k
@@ -281,7 +159,10 @@ func (b *internalAllocator) layer(offset int) int {
 }
 
 // Allocate nbytes, but malloc won't return anything smaller than LeafSize
-func (b *internalAllocator) allocateInternal(nbytes int) []byte {
+func (b *buddyAllocator) allocate(nbytes int) []byte {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
 	// Find a free block >= nbytes, starting with lowest layer possible
 	fl := firstLayer(nbytes)
 	l := fl
@@ -312,16 +193,28 @@ func (b *internalAllocator) allocateInternal(nbytes int) []byte {
 
 	buf := b.buffer[offset : offset+nbytes]
 	b.allocatedBytes.Add(int64(blkSize(l)))
-	b.allocated[unsafeGetblkAddr(buf)] = offset
+	addr := unsafeGetblkAddr(buf)
+	if off, ok := b.allocatedBuf[addr]; ok {
+		fmt.Println("duplicated allocation", addr, offset, off)
+		panic("duplicated allocation")
+	}
+	b.allocatedBuf[addr] = offset
 
+	b.sanityCheck()
 	return buf
 }
 
 // free memory marked by p, which was earlier allocated using Malloc
-func (b *internalAllocator) freeInternal(bs []byte) {
-	bs = bs[:1]
+func (b *buddyAllocator) free(bs []byte) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	if len(bs) == 0 {
+		bs = bs[:1]
+	}
+
 	addr := unsafeGetblkAddr(bs)
-	offset, ok := b.allocated[addr]
+	offset, ok := b.allocatedBuf[addr]
 	if !ok {
 		return
 	}
@@ -329,7 +222,7 @@ func (b *internalAllocator) freeInternal(bs []byte) {
 	l := b.layer(offset)
 
 	b.allocatedBytes.Add(-int64(blkSize(l)))
-	delete(b.allocated, addr)
+	delete(b.allocatedBuf, addr)
 
 	// Start merge from layer l
 	for ; l < b.maxLayer; l++ {
@@ -367,14 +260,34 @@ func (b *internalAllocator) freeInternal(bs []byte) {
 	b.sanityCheck()
 }
 
-func (b *internalAllocator) freeAll() {
-	for _, offset := range b.allocated {
-		b.freeInternal(b.buffer[offset:])
+func (b *buddyAllocator) reset() {
+	for i := range b.bufInfo {
+		b.bufInfo[i].alloc = nil
+		b.bufInfo[i].split = nil
+		b.bufInfo[i].canAllocate = nil
+	}
+	b.bufInfo = nil
+	b.buffer = nil
+}
+
+func (b *buddyAllocator) freeAll() {
+	if len(b.allocatedBuf) != 0 {
+		fmt.Println("allocatedBuf", len(b.allocatedBuf))
 	}
 
-	if len(b.allocated) != 0 || b.allocatedBytes.Load() != 0 {
+	for _, offset := range b.allocatedBuf {
+		b.free(b.buffer[offset:])
+	}
+
+	if len(b.allocatedBuf) != 0 || b.allocatedBytes.Load() != 0 {
 		panic("freeAll error")
 	}
+
+	b.sanityCheck()
+}
+
+func (b *buddyAllocator) allocated() int64 {
+	return b.allocatedBytes.Load()
 }
 
 /*
@@ -384,7 +297,7 @@ func (b *internalAllocator) freeAll() {
  *                    |                               |        |
  * |--------|---------|xxxxxxxx|xxxxxxxx|xxxxxxxx|xxxxxxxx|--------|--------|
  */
-func (b *internalAllocator) markAllocated(start, end int) {
+func (b *buddyAllocator) markAllocated(start, end int) {
 	for k := 0; k < b.nLayers; k++ {
 		leftBi := blkIndex(k, start)
 		rightBi := blkIndexNext(k, end)
@@ -397,7 +310,7 @@ func (b *internalAllocator) markAllocated(start, end int) {
 }
 
 // Mark the range outside [start, end) as allocated
-func (b *internalAllocator) markUnavailable(start, end int) int {
+func (b *buddyAllocator) markUnavailable(start, end int) int {
 	heapSize := blkSize(b.maxLayer)
 	unavailableEnd := roundUp(heapSize-end, leafSize)
 	unavailableStart := roundUp(start, leafSize)
@@ -408,7 +321,7 @@ func (b *internalAllocator) markUnavailable(start, end int) int {
 
 // If a block is marked as allocated and its buddy is free, put the
 // buddy on the free list at layer l.
-func (b *internalAllocator) initFreePair(l, bi int) (free int) {
+func (b *buddyAllocator) initFreePair(l, bi int) (free int) {
 	buddy := bi + 1
 	if bi%2 == 1 {
 		buddy = bi - 1
@@ -435,7 +348,7 @@ func (b *internalAllocator) initFreePair(l, bi int) (free int) {
  *                    |       |                 |      |
  * |xxxxxxxx|xxxxxxxx|x-------|--------|--------|------xx|xxxxxxxx|xxxxxxxx|
  */
-func (b *internalAllocator) initFree(left, right int) int {
+func (b *buddyAllocator) initFree(left, right int) int {
 	free := 0
 
 	for l := 0; l < b.maxLayer; l++ {
@@ -455,7 +368,7 @@ func (b *internalAllocator) initFree(left, right int) int {
 }
 
 // Initialize the buddy allocator, assert totalSize is the power of 2.
-func (b *internalAllocator) init(totalSize int) {
+func (b *buddyAllocator) init(totalSize int) {
 	log2 := func(n int) int {
 		k := 0
 		for n > 1 {
@@ -504,10 +417,10 @@ func (b *internalAllocator) init(totalSize int) {
 		panic("Initialize allocator failed")
 	}
 
-	b.allocated = make(map[uintptr]int, totalSize/leafSize)
+	b.allocatedBuf = make(map[uintptr]int, totalSize/leafSize)
 }
 
-func (b *internalAllocator) sanityCheck() {
+func (b *buddyAllocator) sanityCheck() {
 	free := 0
 	for _, binfo := range b.bufInfo {
 		blkSize := blkSize(binfo.l)
@@ -519,7 +432,7 @@ func (b *internalAllocator) sanityCheck() {
 	}
 
 	alloc := 0
-	for _, offset := range b.allocated {
+	for _, offset := range b.allocatedBuf {
 		alloc += blkSize(b.layer(offset))
 	}
 	if alloc != int(b.allocatedBytes.Load()) {
@@ -528,110 +441,5 @@ func (b *internalAllocator) sanityCheck() {
 
 	if free+int(b.allocatedBytes.Load())+b.unavailable != b.total {
 		panic("Sanity check failed")
-	}
-}
-
-type buddyAllocator struct {
-	arenas    []*internalAllocator
-	allocated map[uintptr]int
-	lock      sync.Mutex
-
-	allocatedOutside    atomic.Int64
-	allocatedOutsideNum atomic.Int64
-
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-func (b *buddyAllocator) Init(_ int) {
-	b.allocated = make(map[uintptr]int, maxArenaCount)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		tick := time.NewTicker(2 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				var m runtime.MemStats
-				runtime.ReadMemStats(&m)
-
-				fmt.Printf("[buddyAllocator] Inside the allocator: %d MiB(%d blocks), outside the allocator: %d MiB(%d blocks)\n",
-					int(b.Allocated())/1024/1024, len(b.allocated),
-					int(b.allocatedOutsideNum.Load()), int(b.allocatedOutside.Load())/1024/1024,
-				)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	b.ctx = ctx
-	b.cancel = cancel
-}
-
-func (b *buddyAllocator) Allocate(size int) []byte {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	for i, arena := range b.arenas {
-		buf := arena.allocateInternal(size)
-		if buf != nil {
-			b.allocated[unsafeGetblkAddr(buf)] = i
-			return buf
-		}
-	}
-
-	if arena := pool.get(); arena != nil {
-		b.arenas = append(b.arenas, arena)
-		buf := arena.allocateInternal(size)
-		b.allocated[unsafeGetblkAddr(buf)] = len(b.arenas) - 1
-		return buf
-	}
-
-	b.allocatedOutside.Add(int64(size))
-	b.allocatedOutsideNum.Add(1)
-	return make([]byte, size)
-}
-
-func (b *buddyAllocator) Free(bs []byte) {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	if bs == nil || cap(bs) == 0 {
-		return
-	}
-	bs = bs[:1]
-	addr := unsafeGetblkAddr(bs)
-	arenaID, ok := b.allocated[addr]
-	if !ok {
-		return
-	}
-
-	b.arenas[arenaID].freeInternal(bs)
-	delete(b.allocated, addr)
-}
-
-func (b *buddyAllocator) Reallocate(size int, bs []byte) []byte {
-	b.Free(bs)
-	return b.Allocate(size)
-}
-
-func (b *buddyAllocator) Allocated() int64 {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	allocatedBytes := 0
-	for _, arena := range b.arenas {
-		allocatedBytes += int(arena.allocatedBytes.Load())
-	}
-	return int64(allocatedBytes)
-}
-
-// Close return the allocated memory to the pool
-func (b *buddyAllocator) Close() {
-	b.cancel()
-	for _, arena := range b.arenas {
-		arena.freeAll()
-		pool.put(arena)
 	}
 }
