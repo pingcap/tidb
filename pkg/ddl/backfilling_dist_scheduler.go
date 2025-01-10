@@ -337,7 +337,11 @@ func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
-		regionBatch = avgTasksPerInstance
+		// Assuming the region size is 96MiB and the index data size accounts for 1/10 of the row data.
+		// Row data take 960GiB for 10000 regions, and index data take 96GiB.
+		// This basically matches the default value of tidb_ddl_disk_quota.
+		// Estimates don't necessarily have to be accurate.
+		regionBatch = max(avgTasksPerInstance, 10000)
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
