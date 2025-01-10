@@ -45,6 +45,13 @@ func NewCreateIdxOpt(opts ...CreateIdxOption) *CreateIdxOpt {
 	return opt
 }
 
+// ApplyCreateIdxOpt indicates whether to ignore assertion.
+func (opt *CreateIdxOpt) ApplyCreateIdxOpts(opts ...CreateIdxOption) {
+	for _, o := range opts {
+		o.applyCreateIdxOpt(opt)
+	}
+}
+
 // IgnoreAssertion indicates whether to ignore assertion.
 func (opt *CreateIdxOpt) IgnoreAssertion() bool {
 	return opt.ignoreAssertion

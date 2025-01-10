@@ -568,6 +568,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()
+	if t.skipAssert {
+		createIdxOpt.ApplyCreateIdxOpts(table.WithIgnoreAssertion)
+	}
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
 			continue

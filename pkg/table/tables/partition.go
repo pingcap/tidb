@@ -134,14 +134,23 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {
 			// Untouched index
+			/*
+				if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
+					// Dropping partitions are no longer public, so we cannot assert on them,
+					// Adding partitions are public, so we should assert on them.
+					idx = idx.Clone()
+					idx.State = model.StatePublic
+					AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+					idx = idx.Clone()
+					idx.State = model.StateDeleteReorganization
+					DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+					continue
+				}
+
+			*/
 			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			if pi.DDLState != model.StateDeleteReorganization {
-				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
-				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
-				// set the correct assertion on the index.
-				idx = idx.Clone()
-				idx.State = pi.DDLState
-			}
+			idx = idx.Clone()
+			idx.State = pi.DDLState
 			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
 			continue
 		}
@@ -1936,6 +1945,22 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
+			//switch t.Meta().Partition.DDLState {
+			//case model.StateDeleteReorganization, model.StatePublic:
+			//	err = t.getPartition(newTo).RemoveRecord(ctx, txn, h, currData)
+			//	if err != nil {
+			//		return errors.Trace(err)
+			//	}
+			//	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+			//	if err != nil {
+			//		return errors.Trace(err)
+			//	}
+			//default:
+			//	err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+			//	if err != nil {
+			//		return errors.Trace(err)
+			//	}
+			//}
 			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
 			if err != nil {
 				return errors.Trace(err)

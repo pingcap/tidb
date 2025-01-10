@@ -205,8 +205,12 @@ func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
 }
 
 // GetCreateIdxOpt creates a CreateIdxOpt.
-func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
-	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+func (opt *UpdateRecordOpt) GetCreateIdxOpt(opts ...CreateIdxOption) *CreateIdxOpt {
+	createIdxOpt := &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+	for _, o := range opts {
+		o.applyCreateIdxOpt(createIdxOpt)
+	}
+	return createIdxOpt
 }
 
 // UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.

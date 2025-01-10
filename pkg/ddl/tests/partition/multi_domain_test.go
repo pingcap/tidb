@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1693,6 +1695,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 			// `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
 			for _, id := range IDs[s][Original][Insert] {
 				tkO.MustExec(`insert into t values (?,?,?,?)`, id, id, id, "Original")
+				logutil.BgLogger().Info("run sql", zap.Int("id", id))
 			}
 		}
 		logutil.BgLogger().Info("initFn Done")
@@ -1733,11 +1736,12 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 					default:
 						require.Fail(t, "unknown op", "op: %d", op)
 					}
+					logutil.BgLogger().Info("run sql", zap.String("sql", sql), zap.Bool("skip", skip))
 					if skip {
 						err := tk.ExecToErr(sql)
 						require.Error(t, err)
 						require.ErrorContains(t, err, "assertion failed")
-						logutil.BgLogger().Info("Got error", zap.String("sql", sql), zap.Error(err))
+						logutil.BgLogger().Info("Got error", zap.Error(err))
 						continue
 					}
 					tk.MustExec(sql)
@@ -1753,4 +1757,35 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 	// TODO: add more variants of CREATE TABLE + ALTER
 	// TODO: add EXCHANGED partitions, to also test duplicate _tidb_rowid's
+}
+
+func TestTest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a)) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		sql := fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp)
+		_, err := tk2.Exec(sql)
+		require.NoError(t, err)
+		logutil.BgLogger().Info("insert into test.t", zap.String("sql", sql))
+
+		sql = fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1)
+		_, err = tk2.Exec(sql)
+		require.NoError(t, err)
+		logutil.BgLogger().Info("update test.t", zap.String("sql", sql))
+	})
+	tk.MustExec("alter table t remove partitioning")
+	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
+	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	require.Equal(t, rsIndex.String(), rsTable.String())
 }

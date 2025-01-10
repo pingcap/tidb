@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -1160,7 +1161,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	if req.AssertionLevel != kvrpcpb.AssertionLevel_Off {
 		if item == nil || item.IsEmpty() {
 			if m.Assertion == kvrpcpb.Assertion_Exist {
-				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
+				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.String("key", hex.EncodeToString(m.Key)), zap.Stringer("mutation", m))
 				return nil, &kverrors.ErrAssertionFailed{
 					StartTS:          req.StartVersion,
 					Key:              m.Key,
@@ -1171,7 +1172,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 			}
 		} else {
 			if m.Assertion == kvrpcpb.Assertion_NotExist {
-				log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
+				log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.String("key", hex.EncodeToString(m.Key)), zap.Stringer("mutation", m))
 				userMeta := mvcc.DBUserMeta(item.UserMeta())
 				return nil, &kverrors.ErrAssertionFailed{
 					StartTS:          req.StartVersion,
