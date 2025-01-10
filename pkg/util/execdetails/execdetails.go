@@ -625,8 +625,9 @@ type basicCopRuntimeStats struct {
 
 // TiflashStats contains tiflash execution stats.
 type TiflashStats struct {
-	scanContext TiFlashScanContext
-	waitSummary TiFlashWaitSummary
+	scanContext    TiFlashScanContext
+	waitSummary    TiFlashWaitSummary
+	networkSummary TiFlashNetworkTrafficSummary
 }
 
 type canGetFloat64 interface {
@@ -783,8 +784,9 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	}
 	if e.tiflashStats != nil {
 		stats.tiflashStats = &TiflashStats{
-			scanContext: e.tiflashStats.scanContext.Clone(),
-			waitSummary: e.tiflashStats.waitSummary.Clone(),
+			scanContext:    e.tiflashStats.scanContext.Clone(),
+			waitSummary:    e.tiflashStats.waitSummary.Clone(),
+			networkSummary: e.tiflashStats.networkSummary.Clone(),
 		}
 	}
 	return stats
@@ -808,6 +810,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 		}
 		e.tiflashStats.scanContext.Merge(tmp.tiflashStats.scanContext)
 		e.tiflashStats.waitSummary.Merge(tmp.tiflashStats.waitSummary)
+		e.tiflashStats.networkSummary.Merge(tmp.tiflashStats.networkSummary)
 	}
 }
 
@@ -887,6 +890,21 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			}
 		} else {
 			e.tiflashStats.waitSummary.Merge(tmp)
+		}
+	}
+	if tiflashNetworkSummary := summary.GetTiflashNetworkSummary(); tiflashNetworkSummary != nil {
+		tmp := TiFlashNetworkTrafficSummary{
+			innerZoneSendBytes:    *tiflashNetworkSummary.InnerZoneSendBytes,
+			interZoneSendBytes:    *tiflashNetworkSummary.InterZoneSendBytes,
+			innerZoneReceiveBytes: *tiflashNetworkSummary.InnerZoneReceiveBytes,
+			interZoneReceiveBytes: *tiflashNetworkSummary.InterZoneReceiveBytes,
+		}
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{
+				networkSummary: tmp,
+			}
+		} else {
+			e.tiflashStats.networkSummary.Merge(tmp)
 		}
 	}
 }
@@ -1378,6 +1396,67 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 		waitSummary.pipelineBreakerWaitTime < uint64(time.Millisecond) &&
 		waitSummary.pipelineQueueWaitTime < uint64(time.Millisecond)
 	return res
+}
+
+// TiFlashNetworkTrafficSummary is used to express network traffic in tiflash
+type TiFlashNetworkTrafficSummary struct {
+	innerZoneSendBytes    uint64
+	interZoneSendBytes    uint64
+	innerZoneReceiveBytes uint64
+	interZoneReceiveBytes uint64
+}
+
+// Clone implements the deep copy of * TiFlashNetworkTrafficSummary
+func (networkTraffic *TiFlashNetworkTrafficSummary) Clone() TiFlashNetworkTrafficSummary {
+	newSummary := TiFlashNetworkTrafficSummary{
+		innerZoneSendBytes:    networkTraffic.innerZoneSendBytes,
+		interZoneSendBytes:    networkTraffic.interZoneSendBytes,
+		innerZoneReceiveBytes: networkTraffic.innerZoneReceiveBytes,
+		interZoneReceiveBytes: networkTraffic.interZoneReceiveBytes,
+	}
+	return newSummary
+}
+
+// Empty check whether TiFlashNetworkTrafficSummary is Empty, if no any network traffic, we regard it as empty
+func (networkTraffic *TiFlashNetworkTrafficSummary) Empty() bool {
+	res := networkTraffic.innerZoneSendBytes == 0 &&
+		networkTraffic.interZoneSendBytes == 0 &&
+		networkTraffic.innerZoneReceiveBytes == 0 &&
+		networkTraffic.interZoneReceiveBytes == 0
+	return res
+}
+
+// String dumps TiFlashNetworkTrafficSummary info as string
+func (networkTraffic *TiFlashNetworkTrafficSummary) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("tiflash_network: {")
+	empty := true
+	if networkTraffic.innerZoneSendBytes != 0 || networkTraffic.interZoneSendBytes != 0 {
+		buf.WriteString("inner_zone_send_bytes: ")
+		buf.WriteString(strconv.FormatInt(int64(networkTraffic.innerZoneSendBytes), 10))
+		buf.WriteString(", inter_zone_send_bytes: ")
+		buf.WriteString(strconv.FormatInt(int64(networkTraffic.interZoneSendBytes), 10))
+		empty = false
+	}
+	if networkTraffic.innerZoneReceiveBytes != 0 || networkTraffic.interZoneReceiveBytes != 0 {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("inner_zone_receive_bytes: ")
+		buf.WriteString(strconv.FormatInt(int64(networkTraffic.innerZoneReceiveBytes), 10))
+		buf.WriteString(", inter_zone_receive_bytes: ")
+		buf.WriteString(strconv.FormatInt(int64(networkTraffic.interZoneReceiveBytes), 10))
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// Merge make sum to merge the information in TiFlashWaitSummary
+func (networkTraffic *TiFlashNetworkTrafficSummary) Merge(other TiFlashNetworkTrafficSummary) {
+	networkTraffic.innerZoneSendBytes = other.innerZoneSendBytes
+	networkTraffic.interZoneSendBytes = other.interZoneSendBytes
+	networkTraffic.innerZoneReceiveBytes = other.innerZoneReceiveBytes
+	networkTraffic.interZoneReceiveBytes = other.interZoneReceiveBytes
 }
 
 // BasicRuntimeStats is the basic runtime stats.
