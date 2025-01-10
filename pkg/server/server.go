@@ -430,12 +430,17 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
+	return s.RunWithStore(dom, nil)
+}
+
+// Run runs the server.
+func (s *Server) RunWithStore(dom *domain.Domain, kvStore kv.Storage) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		err := s.startStatusHTTP()
+		err := s.startStatusHTTP(kvStore)
 		if err != nil {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 			return err

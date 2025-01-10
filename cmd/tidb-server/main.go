@@ -333,7 +333,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL(svr)
-	terror.MustNil(svr.Run(dom))
+	terror.MustNil(svr.RunWithStore(dom, storage))
 	<-exited
 	syncLog()
 }

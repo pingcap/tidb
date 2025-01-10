@@ -51,7 +51,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
-	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -68,12 +67,12 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) startStatusHTTP() error {
+func (s *Server) startStatusHTTP(kvStore kv.Storage) error {
 	err := s.initHTTPListener()
 	if err != nil {
 		return err
 	}
-	go s.startHTTPServer()
+	go s.startHTTPServer(kvStore)
 	return nil
 }
 
@@ -205,7 +204,7 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (s *Server) startHTTPServer() {
+func (s *Server) startHTTPServer(kvStore kv.Storage) {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
@@ -470,10 +469,10 @@ func (s *Server) startHTTPServer() {
 
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	s.startStatusServerAndRPCServer(serverMux)
+	s.startStatusServerAndRPCServer(serverMux, kvStore)
 }
 
-func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
+func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux, kvStore kv.Storage) {
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
@@ -484,20 +483,8 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == config.StoreTypeTiKV {
-		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
-			var fullPath string
-			if keyspaceName == "" {
-				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-			} else {
-				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
-			}
-			store, err := store.New(fullPath)
-			if err != nil {
-				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-				break
-			}
-			ebd, ok := store.(kv.EtcdBackend)
+			ebd, ok := kvStore.(kv.EtcdBackend)
 			if !ok {
 				break
 			}
@@ -507,7 +494,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 				break
 			}
 			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+			service := autoid.New(selfAddr, etcdAddr, kvStore, ebd.TLSConfig())
 			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
 			s.autoIDService = service
