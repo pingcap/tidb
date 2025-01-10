@@ -446,12 +446,15 @@ func TestVectorIndexExplain(t *testing.T) {
 	vb.WriteString("]")
 
 	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
-		`TopN 1.00 root  Column#5, offset:0, count:1`,
-		`└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
-		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
-		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
-		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+		`Projection 1.00 root  test.t1.vec`,
+		`└─TopN 1.00 root  Column#4, offset:0, count:1`,
+		`  └─Projection 1.00 root  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#4`,
+		`    └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
+		`      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`        └─Projection 1.00 mpp[tiflash]  test.t1.vec`,
+		`          └─TopN 1.00 mpp[tiflash]  Column#3, offset:0, count:1`,
+		`            └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#3`,
+		`              └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
 	))
 }
 
