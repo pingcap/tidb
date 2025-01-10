@@ -914,6 +914,23 @@ func (*basicCopRuntimeStats) Tp() int {
 	return TpBasicCopRunTimeStats
 }
 
+type StmtCopRuntimeStats struct {
+	TiflashNetworkStats TiFlashNetworkTrafficSummary
+}
+
+// mergeExecSummary merges ExecutorExecutionSummary into stmt cop runtime stats directly.
+func (e *StmtCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
+	if tiflashNetworkSummary := summary.GetTiflashNetworkSummary(); tiflashNetworkSummary != nil {
+		tmp := TiFlashNetworkTrafficSummary{
+			innerZoneSendBytes:    *tiflashNetworkSummary.InnerZoneSendBytes,
+			interZoneSendBytes:    *tiflashNetworkSummary.InterZoneSendBytes,
+			innerZoneReceiveBytes: *tiflashNetworkSummary.InnerZoneReceiveBytes,
+			interZoneReceiveBytes: *tiflashNetworkSummary.InterZoneReceiveBytes,
+		}
+		e.TiflashNetworkStats.Merge(tmp)
+	}
+}
+
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
 	// stats stores the runtime statistics of coprocessor tasks.
@@ -1406,6 +1423,16 @@ type TiFlashNetworkTrafficSummary struct {
 	interZoneReceiveBytes uint64
 }
 
+func (networkTraffic *TiFlashNetworkTrafficSummary) UpdateTiKVExecDetails(tikvDetails util.ExecDetails) {
+	tikvDetails.UnpackedBytesSentMPPCrossZone += int64(networkTraffic.interZoneSendBytes)
+	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.interZoneSendBytes)
+	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.innerZoneSendBytes)
+
+	tikvDetails.UnpackedBytesReceivedMPPCrossZone += int64(networkTraffic.interZoneReceiveBytes)
+	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.interZoneReceiveBytes)
+	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.innerZoneReceiveBytes)
+}
+
 // Clone implements the deep copy of * TiFlashNetworkTrafficSummary
 func (networkTraffic *TiFlashNetworkTrafficSummary) Clone() TiFlashNetworkTrafficSummary {
 	newSummary := TiFlashNetworkTrafficSummary{
@@ -1610,9 +1637,10 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	rootStats map[int]*RootRuntimeStats
-	copStats  map[int]*CopRuntimeStats
-	mu        sync.Mutex
+	rootStats    map[int]*RootRuntimeStats
+	copStats     map[int]*CopRuntimeStats
+	stmtCopStats StmtCopRuntimeStats
+	mu           sync.Mutex
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -1683,6 +1711,11 @@ func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats
 		stats.basic.executorCount.Add(1)
 	}
 	return stats.basic
+}
+
+// GetRootStats gets execStat for a executor.
+func (e *RuntimeStatsColl) GetStmtCopRuntimeStats() StmtCopRuntimeStats {
+	return e.stmtCopStats
 }
 
 // GetRootStats gets execStat for a executor.
@@ -1775,6 +1808,7 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 			}
 		}
 		copStats.stats.mergeExecSummary(summary)
+		e.stmtCopStats.mergeExecSummary(summary)
 	}
 	return planID
 }
@@ -1796,6 +1830,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 		e.copStats[planID] = copStats
 	}
 	copStats.stats.mergeExecSummary(summary)
+	e.stmtCopStats.mergeExecSummary(summary)
 	return planID
 }
 

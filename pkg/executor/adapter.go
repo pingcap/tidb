@@ -1417,6 +1417,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
+
+	a.updateMPPNetworkTraffic()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1797,6 +1799,18 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 		return 0
 	}
 	return runtimeStatsColl.GetPlanActRows(p.ID())
+}
+
+func (a *ExecStmt) updateMPPNetworkTraffic() {
+	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	var tikvExecDetail util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	}
+	tiflashNetworkStats := stmtCtx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
