@@ -280,7 +280,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 // genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(isPaging bool) string {
-	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, last_analyze_pos from mysql.stats_histograms"
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
 		return selectPrefix + orderSuffix
