@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -163,37 +162,6 @@ func TestSensitiveStatement(t *testing.T) {
 		_, ok := stmt.(ast.SensitiveStmtNode)
 		require.False(t, ok)
 	}
-}
-
-func TestUserSpec(t *testing.T) {
-	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
-	u := ast.UserSpec{
-		User: &auth.UserIdentity{
-			Username: "test",
-		},
-		AuthOpt: &ast.AuthOption{
-			ByAuthString: false,
-			AuthString:   "xxx",
-			HashString:   hashString,
-		},
-	}
-	pwd, ok := u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, u.AuthOpt.HashString, pwd)
-
-	u.AuthOpt.HashString = "not-good-password-format"
-	_, ok = u.EncodedPassword()
-	require.False(t, ok)
-
-	u.AuthOpt.ByAuthString = true
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, hashString, pwd)
-
-	u.AuthOpt.AuthString = ""
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, "", pwd)
 }
 
 func TestTableOptimizerHintRestore(t *testing.T) {

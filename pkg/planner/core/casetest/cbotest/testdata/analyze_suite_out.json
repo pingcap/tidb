@@ -235,12 +235,11 @@
           "explain format = 'brief' SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "Projection 1.00 root  test.t.a",
-          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
-          "  └─IndexReader 1.00 root  index:TopN",
-          "    └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "      └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
-          "        └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
+          "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
       }
     ]

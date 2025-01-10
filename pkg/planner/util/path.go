@@ -194,6 +194,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -217,6 +218,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
@@ -225,6 +227,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero

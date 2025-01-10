@@ -19,7 +19,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 %}
@@ -31,7 +30,7 @@ import (
 	hint    *ast.TableOptimizerHint
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
-	modelIdents []model.CIStr
+	modelIdents []ast.CIStr
 }
 
 %token	<number>
@@ -240,7 +239,7 @@ TableOptimizerHintOpt:
 |	SupportedTableLevelOptimizerHintName '(' HintTableListOpt ')'
 	{
 		h := $3
-		h.HintName = model.NewCIStr($1)
+		h.HintName = ast.NewCIStr($1)
 		$$ = h
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
@@ -251,7 +250,7 @@ TableOptimizerHintOpt:
 |	SupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
 		h := $3
-		h.HintName = model.NewCIStr($1)
+		h.HintName = ast.NewCIStr($1)
 		$$ = h
 	}
 |	SubqueryOptimizerHintName '(' QueryBlockOpt SubqueryStrategiesOpt ')'
@@ -262,23 +261,23 @@ TableOptimizerHintOpt:
 |	"MAX_EXECUTION_TIME" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
 			HintData: $4,
 		}
 	}
 |	"NTH_PLAN" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
 			HintData: int64($4),
 		}
 	}
 |	"SET_VAR" '(' Identifier '=' Value ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
+			HintName: ast.NewCIStr($1),
 			HintData: ast.HintSetVar{
 				VarName: $3,
 				Value:   $5,
@@ -288,22 +287,22 @@ TableOptimizerHintOpt:
 |	"RESOURCE_GROUP" '(' Identifier ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
+			HintName: ast.NewCIStr($1),
 			HintData: $3,
 		}
 	}
 |	"QB_NAME" '(' Identifier ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
 		}
 	}
 |	"QB_NAME" '(' Identifier ',' ViewNameList ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
 			Tables:   $5.Tables,
 		}
 	}
@@ -312,9 +311,9 @@ TableOptimizerHintOpt:
 		maxValue := uint64(math.MaxInt64) / $5
 		if $4 <= maxValue {
 			$$ = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr($1),
+				HintName: ast.NewCIStr($1),
 				HintData: int64($4 * $5),
-				QBName:   model.NewCIStr($3),
+				QBName:   ast.NewCIStr($3),
 			}
 		} else {
 			yylex.AppendError(ErrWarnMemoryQuotaOverflow.GenWithStackByArgs(math.MaxInt64))
@@ -325,7 +324,7 @@ TableOptimizerHintOpt:
 |	"TIME_RANGE" '(' hintStringLit CommaOpt hintStringLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
+			HintName: ast.NewCIStr($1),
 			HintData: ast.HintTimeRange{
 				From: $3,
 				To:   $5,
@@ -335,23 +334,23 @@ TableOptimizerHintOpt:
 |	BooleanHintName '(' QueryBlockOpt HintTrueOrFalse ')'
 	{
 		h := $4
-		h.HintName = model.NewCIStr($1)
-		h.QBName = model.NewCIStr($3)
+		h.HintName = ast.NewCIStr($1)
+		h.QBName = ast.NewCIStr($3)
 		$$ = h
 	}
 |	NullaryHintName '(' QueryBlockOpt ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
 		}
 	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
-			HintData: model.NewCIStr($4),
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+			HintData: ast.NewCIStr($4),
 		}
 	}
 |	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
@@ -380,8 +379,8 @@ StorageOptimizerHintOpt:
 	"READ_FROM_STORAGE" '(' QueryBlockOpt HintStorageTypeAndTableList ')'
 	{
 		hs := $4
-		name := model.NewCIStr($1)
-		qb := model.NewCIStr($3)
+		name := ast.NewCIStr($1)
+		qb := ast.NewCIStr($3)
 		for _, h := range hs {
 			h.HintName = name
 			h.QBName = qb
@@ -403,7 +402,7 @@ HintStorageTypeAndTable:
 	HintStorageType '[' HintTableList ']'
 	{
 		h := $3
-		h.HintData = model.NewCIStr($1)
+		h.HintData = ast.NewCIStr($1)
 		$$ = h
 	}
 
@@ -433,11 +432,11 @@ PartitionListOpt:
 PartitionList:
 	Identifier
 	{
-		$$ = []model.CIStr{model.NewCIStr($1)}
+		$$ = []ast.CIStr{ast.NewCIStr($1)}
 	}
 |	PartitionList CommaOpt Identifier
 	{
-		$$ = append($1, model.NewCIStr($3))
+		$$ = append($1, ast.NewCIStr($3))
 	}
 
 /**
@@ -452,7 +451,7 @@ HintTableListOpt:
 |	QueryBlockOpt
 	{
 		$$ = &ast.TableOptimizerHint{
-			QBName: model.NewCIStr($1),
+			QBName: ast.NewCIStr($1),
 		}
 	}
 
@@ -461,7 +460,7 @@ HintTableList:
 	{
 		$$ = &ast.TableOptimizerHint{
 			Tables: []ast.HintTable{$2},
-			QBName: model.NewCIStr($1),
+			QBName: ast.NewCIStr($1),
 		}
 	}
 |	HintTableList ',' HintTable
@@ -475,17 +474,17 @@ HintTable:
 	Identifier QueryBlockOpt PartitionListOpt
 	{
 		$$ = ast.HintTable{
-			TableName:     model.NewCIStr($1),
-			QBName:        model.NewCIStr($2),
+			TableName:     ast.NewCIStr($1),
+			QBName:        ast.NewCIStr($2),
 			PartitionList: $3,
 		}
 	}
 |	Identifier '.' Identifier QueryBlockOpt PartitionListOpt
 	{
 		$$ = ast.HintTable{
-			DBName:        model.NewCIStr($1),
-			TableName:     model.NewCIStr($3),
-			QBName:        model.NewCIStr($4),
+			DBName:        ast.NewCIStr($1),
+			TableName:     ast.NewCIStr($3),
+			QBName:        ast.NewCIStr($4),
 			PartitionList: $5,
 		}
 	}
@@ -508,14 +507,14 @@ ViewName:
 	Identifier QueryBlockOpt
 	{
 		$$ = ast.HintTable{
-			TableName: model.NewCIStr($1),
-			QBName:    model.NewCIStr($2),
+			TableName: ast.NewCIStr($1),
+			QBName:    ast.NewCIStr($2),
 		}
 	}
 |	QueryBlockOpt
 	{
 		$$ = ast.HintTable{
-			QBName: model.NewCIStr($1),
+			QBName: ast.NewCIStr($1),
 		}
 	}
 
@@ -530,7 +529,7 @@ HintIndexList:
 	{
 		h := $4
 		h.Tables = []ast.HintTable{$2}
-		h.QBName = model.NewCIStr($1)
+		h.QBName = ast.NewCIStr($1)
 		$$ = h
 	}
 
@@ -545,13 +544,13 @@ IndexNameList:
 	Identifier
 	{
 		$$ = &ast.TableOptimizerHint{
-			Indexes: []model.CIStr{model.NewCIStr($1)},
+			Indexes: []ast.CIStr{ast.NewCIStr($1)},
 		}
 	}
 |	IndexNameList ',' Identifier
 	{
 		h := $1
-		h.Indexes = append(h.Indexes, model.NewCIStr($3))
+		h.Indexes = append(h.Indexes, ast.NewCIStr($3))
 		$$ = h
 	}
 

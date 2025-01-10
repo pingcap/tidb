@@ -24,7 +24,7 @@ import (
 // NewMockStatisticsTable creates a mock statistics table with given columns and indices.
 // each column and index consumes 4 bytes memory
 func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHist bool) *statistics.Table {
-	t := &statistics.Table{HistColl: *statistics.NewHistColl(0, false, 0, 0, 0, 0)}
+	t := &statistics.Table{HistColl: *statistics.NewHistColl(0, 0, 0, 0, 0)}
 	for i := 1; i <= columns; i++ {
 		var (
 			cms  *statistics.CMSketch

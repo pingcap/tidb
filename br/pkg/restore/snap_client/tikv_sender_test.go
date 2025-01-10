@@ -27,7 +27,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -78,7 +78,7 @@ func newPartitionID(ids []int64) *model.PartitionInfo {
 	for i, id := range ids {
 		definitions = append(definitions, model.PartitionDefinition{
 			ID:   id,
-			Name: pmodel.NewCIStr(fmt.Sprintf("%d", i)),
+			Name: ast.NewCIStr(fmt.Sprintf("%d", i)),
 		})
 	}
 	return &model.PartitionInfo{Definitions: definitions}
@@ -135,21 +135,21 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 		createdTable := &snapclient.CreatedTable{
 			Table: &model.TableInfo{
 				ID:   downstreamTableID,
-				Name: pmodel.NewCIStr(fmt.Sprintf("tbl-%d", upstreamTableID)),
+				Name: ast.NewCIStr(fmt.Sprintf("tbl-%d", upstreamTableID)),
 				Indices: []*model.IndexInfo{
-					{Name: pmodel.NewCIStr("idx1"), ID: 1},
-					{Name: pmodel.NewCIStr("idx2"), ID: 2},
-					{Name: pmodel.NewCIStr("idx3"), ID: 3},
+					{Name: ast.NewCIStr("idx1"), ID: 1},
+					{Name: ast.NewCIStr("idx2"), ID: 2},
+					{Name: ast.NewCIStr("idx3"), ID: 3},
 				},
 			},
 			OldTable: &metautil.Table{
-				DB: &model.DBInfo{Name: pmodel.NewCIStr("test")},
+				DB: &model.DBInfo{Name: ast.NewCIStr("test")},
 				Info: &model.TableInfo{
 					ID: upstreamTableID,
 					Indices: []*model.IndexInfo{
-						{Name: pmodel.NewCIStr("idx1"), ID: 1},
-						{Name: pmodel.NewCIStr("idx2"), ID: 2},
-						{Name: pmodel.NewCIStr("idx3"), ID: 3},
+						{Name: ast.NewCIStr("idx1"), ID: 1},
+						{Name: ast.NewCIStr("idx2"), ID: 2},
+						{Name: ast.NewCIStr("idx3"), ID: 3},
 					},
 				},
 			},
@@ -161,11 +161,11 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 			upDefs := make([]model.PartitionDefinition, 0, len(partitionIDs))
 			for _, partitionID := range partitionIDs {
 				downDefs = append(downDefs, model.PartitionDefinition{
-					Name: pmodel.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
+					Name: ast.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
 					ID:   downstreamID(partitionID),
 				})
 				upDefs = append(upDefs, model.PartitionDefinition{
-					Name: pmodel.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
+					Name: ast.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
 					ID:   partitionID,
 				})
 			}

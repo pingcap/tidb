@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -53,7 +53,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
 	task := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
@@ -284,9 +284,9 @@ func createAddIndexTask(t *testing.T,
 	tblName string,
 	taskType proto.TaskType,
 	useGlobalSort bool) *proto.Task {
-	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)

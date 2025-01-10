@@ -404,7 +404,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	hg, lastAnalyzePos, statsVer, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +451,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			FMSketch:   fms,
 			Info:       w.idxInfo,
 			StatsVer:   statsVer,
-			Flag:       flag,
 			PhysicalID: item.TableID,
 		}
 		if statsVer != statistics.Version0 {

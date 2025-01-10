@@ -19,7 +19,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/terror",
         "//pkg/session",
         "//pkg/session/types",

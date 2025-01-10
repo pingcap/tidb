@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -50,10 +50,10 @@ func TestPublishToTableStore(t *testing.T) {
 	ctx := context.Background()
 	s := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
 	changes := make([]*notifier.SchemaChange, 8)
@@ -118,13 +118,13 @@ func TestBasicPubSub(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2#special-char?in'name")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2#special-char?in'name")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -196,13 +196,13 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -362,7 +362,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 

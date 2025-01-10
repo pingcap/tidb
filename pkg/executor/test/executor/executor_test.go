@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -301,11 +301,11 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	is := dom.InfoSchema()
-	db := pmodel.NewCIStr("test_admin")
+	db := ast.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	require.True(t, ok)
 
-	tblName := pmodel.NewCIStr("t")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), db, tblName)
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
@@ -421,7 +421,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	// Test the column's version is greater than ColumnInfoVersion1.
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
@@ -682,7 +682,7 @@ func TestIssue19148(t *testing.T) {
 	tk.MustExec("create table t(a decimal(16, 2));")
 	tk.MustExec("select * from t where a > any_value(a);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
@@ -2580,7 +2580,7 @@ func TestAdmin(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	require.Len(t, tb.Indices(), 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext().GetTableCtx(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)

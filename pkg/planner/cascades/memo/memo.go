@@ -48,14 +48,18 @@ type Memo struct {
 }
 
 // NewMemo creates a new memo.
-func NewMemo() *Memo {
+func NewMemo(caps ...uint64) *Memo {
+	// default capacity is 4.
+	capacity := uint64(4)
+	if len(caps) > 1 {
+		capacity = caps[0]
+	}
 	return &Memo{
 		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
 		hash2GlobalGroupExpr: hashmap.New[*GroupExpression, *GroupExpression](
-			// todo: feel the operator count at the prev normalization rule.
-			4,
+			capacity,
 			func(a, b *GroupExpression) bool {
 				return a.Equals(b)
 			},
@@ -315,4 +319,76 @@ func (mm *Memo) replaceGEChild(ge *GroupExpression, older, newer *Group) *GroupE
 	// maintain the new group's parentGEs
 	newer.addParentGEs(ge)
 	return ge
+}
+
+// IteratorLP serves as iterator to get all logical plan inside memo.
+type IteratorLP struct {
+	root      *Group
+	stackInfo []*list.Element
+	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
+	traceID int
+}
+
+// Next return valid logical plan implied in memo without duplication.
+func (it *IteratorLP) Next() (logic base.LogicalPlan) {
+	for {
+		// when non-first time loop here, we should reset traceID back to -1.
+		it.traceID = -1
+		if len(it.stackInfo) != 0 {
+			// when state stack is not empty, we need to pick the next group expression from the top of stack .
+			continueGroup := len(it.stackInfo) - 1
+			continueGroupElement := it.stackInfo[continueGroup]
+			// auto inc gE offset inside group to make sure the next iteration will start from the next group expression.
+			it.stackInfo[continueGroup] = continueGroupElement.Next()
+		}
+		logic = it.dfs(it.root)
+		if logic != nil || len(it.stackInfo) == 0 {
+			break
+		}
+	}
+	return logic
+}
+
+func (it *IteratorLP) dfs(target *Group) base.LogicalPlan {
+	// when stepping into a new group, trace the path.
+	it.traceIn(target)
+	ge := it.pickGroupExpression()
+	if ge == nil {
+		return nil
+	}
+	lp := ge.LogicalPlan
+	// clean the children to avoid pollution.
+	children := lp.Children()[:0]
+	for _, childGroup := range ge.Inputs {
+		lp := it.dfs(childGroup)
+		// one child is nil, quick fail over to iterating next.
+		if lp == nil {
+			return nil
+		}
+		children = append(children, lp)
+	}
+	lp.SetChildren(children...)
+	return lp
+}
+
+func (it *IteratorLP) traceIn(g *Group) {
+	it.traceID++
+	// complement the missing stackInfo when stepping into a new group.
+	for i := len(it.stackInfo); i <= it.traceID; i++ {
+		// for a new stepped-in group, the start iterating index set the first element.
+		it.stackInfo = append(it.stackInfo, g.logicalExpressions.Front())
+	}
+}
+
+// pickGroupExpression tries to find the next matched group expression from the current group.
+func (it *IteratorLP) pickGroupExpression() *GroupExpression {
+	currentGroup := it.traceID
+	currentGroupElement := it.stackInfo[currentGroup]
+	if currentGroupElement == nil {
+		// current group has been exhausted, pop out the current group trace info(*element thing) from stackInfo.
+		it.stackInfo = it.stackInfo[:currentGroup]
+		return nil
+	}
+	// get the current group expression's logical plan
+	return currentGroupElement.Value.(*GroupExpression)
 }
