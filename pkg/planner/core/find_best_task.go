@@ -789,28 +789,11 @@ func compareCandidates(sctx sessionctx.Context, prop *property.PhysicalProperty,
 	return 0
 }
 
-<<<<<<< HEAD
 func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
-=======
-func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
-	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+	if ds.table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return false
 	}
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return false
-		}
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return false
-		}
-
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return false
-		}
-		return true
-	}
->>>>>>> 5301602262c (planner: correct plan when scan tidb related cluster table with KeepOrder (#51922))
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
