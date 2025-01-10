@@ -1242,7 +1242,7 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *copTask) (task, bool) {
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalTopN) Attach2Task(tasks ...task) task {
+func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
