@@ -1226,6 +1226,11 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 		lastKey = pair.Key
 		w.batchSize.Add(int64(len(pair.Key) + len(pair.Val)))
 		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
+		logutil.LoggerFromContext(ctx).Info("key and value size",
+			zap.Int("key", len(pair.Key)),
+			zap.Int("val", len(pair.Val)),
+			zap.Int("total", len(pair.Key)+len(pair.Val)),
+			zap.Int64("memtableSizeLimit", w.memtableSizeLimit))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
