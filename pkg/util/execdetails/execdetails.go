@@ -1001,6 +1001,8 @@ const (
 	TpSnapshotRuntimeStats
 	// TpHashJoinRuntimeStats is the tp for HashJoinRuntimeStats.
 	TpHashJoinRuntimeStats
+	// TpHashJoinRuntimeStatsV2 is the tp for hashJoinRuntimeStatsV2.
+	TpHashJoinRuntimeStatsV2
 	// TpIndexLookUpJoinRuntimeStats is the tp for IndexLookUpJoinRuntimeStats.
 	TpIndexLookUpJoinRuntimeStats
 	// TpRuntimeStatsWithSnapshot is the tp for RuntimeStatsWithSnapshot.

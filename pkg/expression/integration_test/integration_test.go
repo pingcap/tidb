@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,6 +61,101 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func TestVectorLong(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	genVec := func(d int, startValue int) string {
+		vb := strings.Builder{}
+		vb.WriteString("[")
+		value := startValue
+		for i := 0; i < d; i++ {
+			if i > 0 {
+				vb.WriteString(",")
+			}
+			vb.WriteString(strconv.FormatInt(int64(value), 10))
+			value += 100
+		}
+		vb.WriteString("]")
+		return vb.String()
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	runWorkload := func() {
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 200)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 50)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows())
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (2, '%s')`, genVec(16383, 200)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (3, '%s')`, genVec(16383, 300)))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"1",
+		))
+		tk.MustExec(fmt.Sprintf(`update t1 set vec = '%s' where id = 1`, genVec(16383, 500)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows(
+			"1 "+genVec(16383, 500),
+			"2 "+genVec(16383, 200),
+			"3 "+genVec(16383, 300),
+		))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"3",
+		))
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table t1")
+
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383),
+			VECTOR INDEX ((vec_cosine_distance(vec)))
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	tk.MustExec(`alter table t1 set tiflash replica 1`)
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+	tk.MustExec(`alter table t1 add VECTOR INDEX ((vec_cosine_distance(vec)))`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+}
 
 func TestVectorDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -322,6 +418,24 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
 }
 
+func TestVectorExplainTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+
+	// TODO: The output can be improved.
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+		VEC_COSINE_DISTANCE(c, '[3,100,12345,10000]'),
+		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
+		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
+	FROM t;`).Check(testkit.Rows(
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`└─TableReader 10000.00 root  data:TableFullScan`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+}
+
 func TestVectorConstantExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -377,6 +491,59 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+}
+
+func TestVectorIndexExplain(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			vec vector(100)
+		)
+	`)
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
+		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
+		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+	))
 }
 
 func TestFixedVector(t *testing.T) {
@@ -794,9 +961,12 @@ func TestVectorArithmatic(t *testing.T) {
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + 2;`)
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + '2';`)
 
+	// Input outside the float32 value range will result in an error.
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[3e38]') + '[3e38]';`)
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2,3]') * '[4,5,6]';`).Check(testkit.Rows("[4,10,18]"))
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1e37]') * '[1e37]';`)
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]') + 1")
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]')*0 + 1")
 }
 
 func TestVectorFunctions(t *testing.T) {

@@ -110,7 +110,7 @@ require (
 	github.com/tdakkota/asciicheck v0.3.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20241225040645-f2266d6bf259
-	github.com/tikv/pd/client v0.0.0-20241220053006-461b86adc78d
+	github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
