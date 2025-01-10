@@ -106,7 +106,7 @@ func (a *ApplyRuleTask) Execute() error {
 		if !a.rule.PreCheck(holder) {
 			continue
 		}
-		newExprs, err := a.rule.XForm(holder)
+		newExprs, _, err := a.rule.XForm(holder)
 		if err != nil {
 			return err
 		}

@@ -165,6 +165,11 @@ func (e *GroupExpression) addr() unsafe.Pointer {
 	return unsafe.Pointer(e)
 }
 
+// GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
+	return e.LogicalPlan
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children

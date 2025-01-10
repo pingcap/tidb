@@ -405,6 +405,11 @@ func (p *BaseLogicalPlan) SetMaxOneRow(b bool) {
 	p.maxOneRow = b
 }
 
+// GetWrappedLogicalPlan implements the logical plan interface.
+func (p *BaseLogicalPlan) GetWrappedLogicalPlan() base.LogicalPlan {
+	return p.self
+}
+
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.
 func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, qbOffset int) BaseLogicalPlan {
 	return BaseLogicalPlan{

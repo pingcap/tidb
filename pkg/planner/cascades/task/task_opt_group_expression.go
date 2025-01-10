@@ -63,6 +63,5 @@ func (ge *OptGroupExpressionTask) Desc(w util.StrBufferWriter) {
 
 // getValidRules filter the allowed rule from session variable, and system config.
 func (*OptGroupExpressionTask) getValidRules() []rule.Rule {
-	// todo: add rule set
-	return []rule.Rule{}
+	return rule.DefaultRuleSet
 }

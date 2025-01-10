@@ -293,4 +293,8 @@ type LogicalPlan interface {
 
 	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
 	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
+
+	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
+	// For logicalPlan implementation, it just returns itself as well.
+	GetWrappedLogicalPlan() LogicalPlan
 }
