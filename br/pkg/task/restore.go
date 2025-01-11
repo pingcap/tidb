@@ -875,7 +875,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err := AdjustTablesToRestoreAndCreateTableTracker(cfg.logTableHistoryManager, cfg.RestoreConfig,
-			client.GetDatabaseMap(), fileMap, tableMap)
+			client.GetDatabaseMap(), fileMap, tableMap, dbMap)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1070,8 +1070,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if len(dbs) == 0 && len(tables) == 0 {
 		log.Info("nothing to restore, all databases and tables are filtered out")
 		// even nothing to restore, we show a success message since there is no failure.
-		summary.SetSuccessStatus(true)
-		return nil
 	}
 
 	if err = client.CreateDatabases(ctx, dbs); err != nil {
@@ -1403,6 +1401,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	snapshotDBMap map[int64]*metautil.Database,
 	fileMap map[string]*backuppb.File,
 	tableMap map[int64]*metautil.Table,
+	dbMap map[int64]*metautil.Database,
 ) (err error) {
 	// build tracker for pitr restore to use later
 	piTRTableTracker := utils.NewPiTRTableTracker()
@@ -1419,11 +1418,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	tableHistory := logBackupTableHistory.GetTableHistory()
 
 	for tableID, dbIDAndTableName := range tableHistory {
-		if _, exists := tableMap[tableID]; exists {
-			// going to restore anyway, skip
-			continue
-		}
-
 		start := dbIDAndTableName[0]
 		end := dbIDAndTableName[1]
 
@@ -1456,6 +1450,11 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 			// but we still need to capture this table id to restore during log restore.
 			piTRTableTracker.AddTable(end.DbID, tableID)
 
+			// skip if full restore already had this table
+			if _, exists := tableMap[tableID]; exists {
+				continue
+			}
+
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
 			if !exists {
@@ -1473,6 +1472,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 					for _, file := range originalTable.Files {
 						fileMap[file.Name] = file
 					}
+					dbMap[start.DbID] = originalDB
 					tableMap[originalTable.Info.ID] = originalTable
 					// only one table id will match
 					break
@@ -1487,7 +1487,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
 			if !exists {
-				// original db created during log backup, no need to process further
+				// original db created during log backup or filtered out during full backup, no need to process further
 				continue
 			}
 			for _, originalTable := range originalDB.Tables {

@@ -137,23 +137,38 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 
 func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBReplace) {
 	// merge baseMap to DBReplaceMap
+	// also updating globalIdMap, not going to be used in prod but convenient in test
 	for upstreamID, baseDBReplace := range baseMap {
+		tm.globalIdMap[upstreamID] = baseDBReplace.DbID
+
 		if existingDBReplace, exists := tm.DBReplaceMap[upstreamID]; exists {
 			existingDBReplace.DbID = baseDBReplace.DbID
 
 			for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
+				tm.globalIdMap[tableUpID] = baseTableReplace.TableID
+
 				if existingTableReplace, tableExists := existingDBReplace.TableMap[tableUpID]; tableExists {
 					existingTableReplace.TableID = baseTableReplace.TableID
 
 					for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
+						tm.globalIdMap[partUpID] = basePartDownID
 						existingTableReplace.PartitionMap[partUpID] = basePartDownID
 					}
 				} else {
 					existingDBReplace.TableMap[tableUpID] = baseTableReplace
+					for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
+						tm.globalIdMap[partUpID] = basePartDownID
+					}
 				}
 			}
 		} else {
 			tm.DBReplaceMap[upstreamID] = baseDBReplace
+			for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
+				tm.globalIdMap[tableUpID] = baseTableReplace.TableID
+				for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
+					tm.globalIdMap[partUpID] = basePartDownID
+				}
+			}
 		}
 	}
 }

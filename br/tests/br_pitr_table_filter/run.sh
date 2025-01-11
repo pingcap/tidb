@@ -256,7 +256,7 @@ test_table_rename() {
     # add table for multiple rename test
     run_sql "create table ${DB}_other1.multi_rename(c int); insert into ${DB}_other1.multi_rename values (42);"
 
-    run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
     echo "write more data and wait for log backup to catch up"
     create_tables_with_values "log_backup" 3
