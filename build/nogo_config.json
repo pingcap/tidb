@@ -357,7 +357,8 @@
     },
     "only_files": {
       "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/planner/core": "planner/core"
     }
   },
   "inspect": {

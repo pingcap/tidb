@@ -95,7 +95,7 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c.write("if op == nil { return op2 == nil }")
 	c.write("if op2 == nil { return false }")
 	hasValidField := false
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if !isHash64EqualsField(f) {
 			continue
