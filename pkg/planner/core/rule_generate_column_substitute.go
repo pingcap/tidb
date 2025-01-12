@@ -156,8 +156,8 @@ func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprT
 		canSubstitute := true
 		// Can only substitute if all the operands on the right-hand
 		// side are the same type.
-		for i := 1; i < len(sf.GetArgs()); i++ {
-			if sf.GetArgs()[i].GetType(ectx).EvalType() != tp {
+		for _, arg := range sf.GetArgs() {
+			if arg.GetType(ectx).EvalType() != tp {
 				canSubstitute = false
 				break
 			}

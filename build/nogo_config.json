@@ -356,7 +356,8 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
-      "pkg/util/": "util code"
+      "pkg/util/": "util code",
+      "pkg/planner/core": "planner/core"
     }
   },
   "inspect": {
