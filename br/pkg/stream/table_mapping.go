@@ -185,32 +185,37 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	}
 
 	// find actually used temporary IDs
-	usedTempIDs := make(map[DownstreamID]struct{})
+	usedTempIDs := make(map[DownstreamID]UpstreamID)
 
-	// Helper function to check and add temporary ID
-	addTempIDIfNeeded := func(id DownstreamID) error {
-		if id < 0 {
-			if _, exists := usedTempIDs[id]; exists {
+	// helper function to check and add temporary ID
+	addTempIDIfNeeded := func(downID DownstreamID, upID UpstreamID) error {
+		if downID < 0 {
+			if prevUpID, exists := usedTempIDs[downID]; exists {
+				// ok if point to the same upstream
+				if prevUpID == upID {
+					return nil
+				}
 				return errors.Annotate(berrors.ErrRestoreInvalidRewrite,
-					fmt.Sprintf("found duplicate temporary ID: %d", id))
+					fmt.Sprintf("found duplicate temporary ID %d, existing upstream ID: %d, new upstream ID: %d",
+						downID, prevUpID, upID))
 			}
-			usedTempIDs[id] = struct{}{}
+			usedTempIDs[downID] = upID
 		}
 		return nil
 	}
 
 	// check DBReplaceMap for used temporary IDs
 	// any value less than 0 is temporary ID
-	for _, dr := range tm.DBReplaceMap {
-		if err := addTempIDIfNeeded(dr.DbID); err != nil {
+	for upDBId, dr := range tm.DBReplaceMap {
+		if err := addTempIDIfNeeded(dr.DbID, upDBId); err != nil {
 			return err
 		}
-		for _, tr := range dr.TableMap {
-			if err := addTempIDIfNeeded(tr.TableID); err != nil {
+		for upTableID, tr := range dr.TableMap {
+			if err := addTempIDIfNeeded(tr.TableID, upTableID); err != nil {
 				return err
 			}
-			for _, partID := range tr.PartitionMap {
-				if err := addTempIDIfNeeded(partID); err != nil {
+			for upPartID, partID := range tr.PartitionMap {
+				if err := addTempIDIfNeeded(partID, upPartID); err != nil {
 					return err
 				}
 			}

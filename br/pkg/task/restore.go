@@ -1430,7 +1430,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 			dbName = name
 		} else {
 			log.Warn("did not find db id in full/log backup, "+
-				"likely the full&log backup provided have different filters, ignoring this db",
+				"likely different filters are specified for full/log backup and restore, ignoring this db",
 				zap.Any("dbId", end.DbID))
 			continue
 		}
@@ -1450,7 +1450,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 			// but we still need to capture this table id to restore during log restore.
 			piTRTableTracker.AddTable(end.DbID, tableID)
 
-			// skip if full restore already had this table
+			// skip if full restore already have this table
 			if _, exists := tableMap[tableID]; exists {
 				continue
 			}

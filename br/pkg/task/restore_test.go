@@ -540,41 +540,41 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	snapshotDBMap := map[int64]*metautil.Database{
 		1: {
 			Info: &dbInfo1,
+			Tables: []*metautil.Table{
+				{
+					DB: &dbInfo1,
+					Info: &model.TableInfo{
+						ID:   11,
+						Name: ast.NewCIStr("test_table_11"),
+					},
+				},
+				{
+					DB: &dbInfo1,
+					Info: &model.TableInfo{
+						ID:   12,
+						Name: ast.NewCIStr("test_table_12"),
+					},
+				},
+			},
 		},
 		2: {
 			Info: &dbInfo2,
-		},
-	}
-	fileMap := map[string]*backuppb.File{
-		"test_file": {
-			Name: "test_file",
-		},
-	}
-	tableMap := map[int64]*metautil.Table{
-		11: {
-			DB: &dbInfo1,
-			Info: &model.TableInfo{
-				ID:   11,
-				Name: ast.NewCIStr("test_table_11"),
-			},
-		},
-		12: {
-			DB: &dbInfo1,
-			Info: &model.TableInfo{
-				ID:   12,
-				Name: ast.NewCIStr("test_table_12"),
-			},
-		},
-		21: {
-			DB: &dbInfo2,
-			Info: &model.TableInfo{
-				ID:   21,
-				Name: ast.NewCIStr("test_table_21"),
+			Tables: []*metautil.Table{
+				{
+					DB: &dbInfo2,
+					Info: &model.TableInfo{
+						ID:   21,
+						Name: ast.NewCIStr("test_table_21"),
+					},
+				},
 			},
 		},
 	}
 
 	// Test case 1: Basic table tracking
+	fileMap := map[string]*backuppb.File{}
+	tableMap := map[int64]*metautil.Table{}
+	dbMap := map[int64]*metautil.Database{}
 	logBackupTableHistory := stream.NewTableHistoryManager()
 	logBackupTableHistory.AddTableHistory(11, "test_table_11", 1)
 	logBackupTableHistory.AddTableHistory(12, "test_table_12", 1)
@@ -586,25 +586,37 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			TableFilter: testFilter,
 		},
 	}
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 12))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(2, 21))
+	require.NotNil(t, dbMap[1])
+	require.NotNil(t, dbMap[2])
+	require.NotNil(t, tableMap[11])
+	require.NotNil(t, tableMap[12])
+	require.NotNil(t, tableMap[21])
 
 	// Test case 2: Table not in filter
 	tableFilter, err := filter.Parse([]string{"other_db.other_table"})
 	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
+	fileMap = map[string]*backuppb.File{}
+	tableMap = map[int64]*metautil.Table{}
+	dbMap = map[int64]*metautil.Database{}
 	logBackupTableHistory = stream.NewTableHistoryManager()
 	logBackupTableHistory.AddTableHistory(11, "test_table_11", 1)
 	logBackupTableHistory.AddTableHistory(12, "test_table_12", 1)
 	logBackupTableHistory.AddTableHistory(21, "test_table_21", 2)
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 12))
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(2, 21))
+	require.Empty(t, dbMap)
+	require.Empty(t, tableMap)
 
 	// Test case 3: New table created during log backup
 	logBackupTableHistory = stream.NewTableHistoryManager()
@@ -615,14 +627,24 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	logBackupTableHistory.AddTableHistory(12, "test_table_12", 1)
 	logBackupTableHistory.AddTableHistory(21, "test_table_21", 2)
 	logBackupTableHistory.AddTableHistory(13, "new_table", 1)
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 12))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 13))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(2, 21))
+	require.NotNil(t, dbMap[1])
+	require.NotNil(t, dbMap[2])
+	require.NotNil(t, tableMap[11])
+	require.NotNil(t, tableMap[12])
+	require.NotNil(t, tableMap[21])
+	require.Nil(t, tableMap[13]) // not in full backup
 
 	// Test case 4: Table renamed into filter during log backup
+	fileMap = map[string]*backuppb.File{}
+	tableMap = map[int64]*metautil.Table{}
+	dbMap = map[int64]*metautil.Database{}
 	logBackupTableHistory = stream.NewTableHistoryManager()
 	logBackupTableHistory.AddTableHistory(11, "test_table_11", 1) // drop
 	logBackupTableHistory.AddTableHistory(11, "renamed_table", 2) // create
@@ -631,38 +653,58 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 	tableFilter, err = filter.Parse([]string{"test_db_2.*"})
 	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 12))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(2, 11))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(2, 21))
+	require.NotNil(t, dbMap[1]) // since need to restore the original db and table
+	require.NotNil(t, dbMap[2])
+	require.NotNil(t, tableMap[11])
+	require.Nil(t, tableMap[12])
+	require.NotNil(t, tableMap[21])
 
 	// Test case 5: Table renamed out of filter during log backup
+	fileMap = map[string]*backuppb.File{}
+	tableMap = map[int64]*metautil.Table{}
+	dbMap = map[int64]*metautil.Database{}
 	tableFilter, err = filter.Parse([]string{"test_db_1.*"})
 	require.NoError(t, err)
 	cfg.TableFilter = tableFilter
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 12))
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(2, 11))
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(2, 21))
+	require.NotNil(t, dbMap[1])
+	require.Nil(t, dbMap[2])
+	require.Nil(t, tableMap[11])
+	require.NotNil(t, tableMap[12])
+	require.Nil(t, tableMap[21])
 
 	// Test case 6: Log backup table not in snapshot (due to full backup with a different filter)
 	snapshotDBMap = map[int64]*metautil.Database{}
+	fileMap = map[string]*backuppb.File{}
 	tableMap = map[int64]*metautil.Table{}
+	dbMap = map[int64]*metautil.Database{}
 	logBackupTableHistory.AddTableHistory(11, "test_table", 1)
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.False(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
+	require.Nil(t, dbMap[1])
+	require.Nil(t, tableMap[11])
 
 	// Test case 7: DB created during log backup
 	snapshotDBMap = map[int64]*metautil.Database{}
 	tableMap = map[int64]*metautil.Table{}
 	logBackupTableHistory.RecordDBIdToName(1, "test_db_1")
 	logBackupTableHistory.AddTableHistory(11, "test_table", 1)
-	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap)
+	err = task.AdjustTablesToRestoreAndCreateTableTracker(logBackupTableHistory, cfg, snapshotDBMap, fileMap, tableMap, dbMap)
 	require.NoError(t, err)
 	require.True(t, cfg.PiTRTableTracker.ContainsTable(1, 11))
+	require.Nil(t, dbMap[1])     // not in full backup
+	require.Nil(t, tableMap[11]) // not in full backup
 }

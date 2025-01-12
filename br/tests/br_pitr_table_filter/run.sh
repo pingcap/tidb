@@ -260,6 +260,8 @@ test_table_rename() {
 
     echo "write more data and wait for log backup to catch up"
     create_tables_with_values "log_backup" 3
+    rename_tables "full_backup" "full_backup_renamed" 3
+    rename_tables "log_backup" "log_backup_renamed" 3
     rename_tables "renamed_in" "log_backup_renamed_in" 3
     rename_tables "log_renamed_out" "renamed_out" 3
     
@@ -420,7 +422,7 @@ test_exchange_partition() {
 
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
 
     # verify the results
     run_sql "SELECT count(*) = 1 FROM $DB.log_after_exchange WHERE id = 1 AND value = 1" || {
