@@ -1032,13 +1032,13 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatUnityOffline_:
-		planJSON, err := e.unityPlanOne()
+		planJSON, err := e.UnityOffline_()
 		if err != nil {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{planJSON})
 	case types.ExplainFormatUnityOffline:
-		planJSON, err := e.unityPlanAll()
+		planJSON, err := e.UnityOffline()
 		if err != nil {
 			return err
 		}

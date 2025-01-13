@@ -16,7 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-func (e *Explain) unityPlanAll() (string, error) {
+func (e *Explain) UnityOffline() (string, error) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	if err != nil {
@@ -139,7 +139,7 @@ func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
 	return
 }
 
-func (e *Explain) unityPlanOne() (string, error) {
+func (e *Explain) UnityOffline_() (string, error) {
 	up := new(UnityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
 	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)
