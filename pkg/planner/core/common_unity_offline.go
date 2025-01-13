@@ -171,6 +171,7 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
 			ExplainInfoForEncode: explainNode,
 			PreSequence:          planPreSequences(op.Origin),
 			Hints:                planHints(op.Origin),
+			PlanStr:              ToString(op.Origin),
 		}
 		subPlans = append(subPlans, planNode)
 		for _, childIdx := range op.ChildrenIdx {
@@ -185,6 +186,7 @@ type UnityOfflinePlanNode struct {
 	*ExplainInfoForEncode
 	PreSequence *UnityOfflinePreSequence `json:"preSequence"`
 	Hints       string                   `json:"hints"`
+	PlanStr     string                   `json:"planStr"`
 }
 
 type UnityOfflinePlan struct {
