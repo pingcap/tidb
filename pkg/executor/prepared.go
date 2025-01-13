@@ -97,11 +97,11 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.needReset {
 		params = vars.GetParseParams()
 	} else {
-		var params_arr [2]parser.ParseParam
+		var paramsArr [2]parser.ParseParam
 		charset, collation := vars.GetCharsetInfo()
-		params_arr[0] = parser.CharsetConnection(charset)
-		params_arr[1] = parser.CollationConnection(collation)
-		params = params_arr[:]
+		paramsArr[0] = parser.CharsetConnection(charset)
+		paramsArr[1] = parser.CollationConnection(collation)
+		params = paramsArr[:]
 	}
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
