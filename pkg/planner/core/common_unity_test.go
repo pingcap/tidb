@@ -92,6 +92,8 @@ func TestPredCols(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, p := range plans {
+			fmt.Println(">>>>>>>>>> ", stmt)
+			fmt.Println("-->> ", p.SubPlans[0].PreSequence.PredicateColumns)
 			require.True(t, len(p.SubPlans[0].PreSequence.PredicateColumns) > 0)
 		}
 	}
