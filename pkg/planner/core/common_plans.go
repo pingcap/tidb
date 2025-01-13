@@ -1044,7 +1044,7 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{planJSON})
 	case types.ExplainFormatUnity:
-		e.Rows = append(e.Rows, []string{prepareForUnity(e.SCtx(), e.LogicalPlan)})
+		e.Rows = append(e.Rows, []string{e.Unity()})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

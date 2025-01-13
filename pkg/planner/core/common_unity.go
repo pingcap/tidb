@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -129,9 +128,9 @@ func collectJoins(expr expression.Expression, o *UnityOutput) {
 	}
 }
 
-func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
+func (e *Explain) unityCollectInfo(p base.LogicalPlan, o *UnityOutput) {
 	for _, child := range p.Children() {
-		collectUnityInfo(child, o)
+		e.unityCollectInfo(child, o)
 	}
 	switch x := p.(type) {
 	case *logicalop.DataSource:
@@ -216,7 +215,7 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 	}
 }
 
-func fillUpStats(ctx planctx.PlanContext, o *UnityOutput) {
+func (e *Explain) unityFillUpStats(o *UnityOutput) {
 	for _, tblInfo := range o.Tables {
 		tblStats := tblInfo.stats
 		tblInfo.ModifiedRows = tblStats.ModifyCount
@@ -252,7 +251,7 @@ func fillUpStats(ctx planctx.PlanContext, o *UnityOutput) {
 				for i := 0; i < len(colStats.TopN.TopN); i++ {
 					var tmpDatum types.Datum
 					tmpDatum.SetBytes(colStats.TopN.TopN[i].Encoded)
-					valStr, err := statistics.ValueToString(ctx.GetSessionVars(), &tmpDatum, 1, []byte{colStats.Histogram.Tp.GetType()})
+					valStr, err := statistics.ValueToString(e.SCtx().GetSessionVars(), &tmpDatum, 1, []byte{colStats.Histogram.Tp.GetType()})
 					must(err)
 					col.MCVs = append(col.MCVs, UnityMCV{
 						Value: valStr,
@@ -273,7 +272,7 @@ func fillUpStats(ctx planctx.PlanContext, o *UnityOutput) {
 	}
 }
 
-func getPossibleHints(ctx planctx.PlanContext, o *UnityOutput) {
+func (e *Explain) unityGetPossibleHints(o *UnityOutput) {
 	possibleHints := make(map[string]bool)
 	var hintTableNames []string
 	for tableName, tblInfo := range o.Tables {
@@ -316,7 +315,7 @@ func getPossibleHints(ctx planctx.PlanContext, o *UnityOutput) {
 	}
 
 	// explain format='unity' select * from t1 where a<1
-	sctx, err := AsSctx(ctx)
+	sctx, err := AsSctx(e.SCtx())
 	must(err)
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	selectIdx := -1
@@ -349,14 +348,14 @@ func getPossibleHints(ctx planctx.PlanContext, o *UnityOutput) {
 	}
 }
 
-func prepareForUnity(ctx planctx.PlanContext, p base.LogicalPlan) string {
+func (e *Explain) Unity() string {
 	o := &UnityOutput{
 		Tables: make(map[string]*UnityTableInfo),
 		joins:  make(map[string]string),
 	}
-	collectUnityInfo(p, o)
-	fillUpStats(ctx, o)
-	getPossibleHints(ctx, o)
+	e.unityCollectInfo(e.LogicalPlan, o)
+	e.unityFillUpStats(o)
+	e.unityGetPossibleHints(o)
 
 	v, err := json.Marshal(o)
 	must(err)
