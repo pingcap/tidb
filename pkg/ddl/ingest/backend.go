@@ -60,7 +60,12 @@ type BackendCtx interface {
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
 	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
-	FlushController
+	// IngestIfQuotaExceeded updates the task and count to checkpoint manager, and try to ingest them to disk or TiKV
+	// according to the last ingest time or the usage of local disk.
+	IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error
+
+	// Ingest checks if all engines need to be flushed and imported. It's concurrent safe.
+	Ingest(ctx context.Context) (err error)
 
 	CheckpointOperator
 
@@ -68,7 +73,7 @@ type BackendCtx interface {
 	// ingest.
 	GetLocalBackend() *local.Backend
 	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
-	// the supplement of FlushController.Flush.
+	// the supplement of Ingest.
 	//
 	// CollectRemoteDuplicateRows is only used in global sort based ingest.
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
@@ -77,16 +82,19 @@ type BackendCtx interface {
 	Close()
 }
 
-// FlushMode is used to control how to flush.
-type FlushMode byte
+// CheckpointOperator contains the operations to checkpoints.
+type CheckpointOperator interface {
+	NextStartKey() tikv.Key
+	TotalKeyCount() int
 
-const (
-	// FlushModeAuto means caller does not enforce any flush, the implementation can
-	// decide it.
-	FlushModeAuto FlushMode = iota
-	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
-	FlushModeForceFlushAndImport
-)
+	AddChunk(id int, endKey tikv.Key)
+	UpdateChunk(id int, count int, done bool)
+	FinishChunk(id int, count int)
+
+	AdvanceWatermark(imported bool) error
+
+	GetImportTS() uint64
+}
 
 // litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
@@ -161,9 +169,9 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
-func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) error {
-	bc.FinishTask(taskID, count)
-	shouldFlush, shouldImport := bc.checkFlush(FlushModeAuto)
+func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error {
+	bc.FinishChunk(taskID, count)
+	shouldFlush, shouldImport := bc.checkFlush()
 	if !shouldFlush {
 		return nil
 	}
@@ -196,8 +204,8 @@ func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) er
 	return bc.AdvanceWatermark(true)
 }
 
-// Flush implements FlushController.
-func (bc *litBackendCtx) Flush(ctx context.Context) error {
+// Ingest implements BackendContext.
+func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 	err := bc.flushEngines(ctx)
 	if err != nil {
 		return err
@@ -313,12 +321,12 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 // ForceSyncFlagForTest is a flag to force sync only for test.
 var ForceSyncFlagForTest = false
 
-func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 	failpoint.Inject("forceSyncFlagForTest", func() {
 		// used in a manual test
 		ForceSyncFlagForTest = true
 	})
-	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
+	if ForceSyncFlagForTest {
 		return true, true
 	}
 	LitDiskRoot.UpdateUsage()
@@ -356,20 +364,6 @@ func (bc *litBackendCtx) Close() {
 	BackendCounterForTest.Dec()
 }
 
-// CheckpointOperator contains the operations to checkpoints.
-type CheckpointOperator interface {
-	NextStartKey() tikv.Key
-	TotalKeyCount() int
-
-	AddTask(id int, endKey tikv.Key)
-	UpdateTask(id int, count int, done bool)
-	FinishTask(id int, count int)
-
-	AdvanceWatermark(imported bool) error
-
-	GetImportTS() uint64
-}
-
 // NextStartKey implements CheckpointOperator interface.
 func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
@@ -386,22 +380,22 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 	return 0
 }
 
-// AddTask implements CheckpointOperator interface.
-func (bc *litBackendCtx) AddTask(id int, endKey tikv.Key) {
+// AddChunk implements CheckpointOperator interface.
+func (bc *litBackendCtx) AddChunk(id int, endKey tikv.Key) {
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Register(id, endKey)
 	}
 }
 
-// UpdateTask implements CheckpointOperator interface.
-func (bc *litBackendCtx) UpdateTask(id int, count int, done bool) {
+// UpdateChunk implements CheckpointOperator interface.
+func (bc *litBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
 	}
 }
 
-// FinishTask implements CheckpointOperator interface.
-func (bc *litBackendCtx) FinishTask(id int, count int) {
+// FinishChunk implements CheckpointOperator interface.
+func (bc *litBackendCtx) FinishChunk(id int, count int) {
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.UpdateWrittenKeys(id, count)
 	}

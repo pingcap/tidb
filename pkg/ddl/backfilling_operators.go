@@ -573,7 +573,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			return err
 		}
 		if w.cpOp != nil {
-			w.cpOp.AddTask(task.ID, task.End)
+			w.cpOp.AddChunk(task.ID, task.End)
 		}
 		var done bool
 		for !done {
@@ -586,7 +586,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			}
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
 			if w.cpOp != nil {
-				w.cpOp.UpdateTask(task.ID, srcChk.NumRows(), done)
+				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
 			}
 			w.totalCount.Add(int64(srcChk.NumRows()))
 			sender(idxResult)
@@ -804,7 +804,7 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	w.rowCntListener.Written(rs.Added)
-	err = w.backendCtx.TryFlush(w.ctx, ck.ID, rs.Added)
+	err = w.backendCtx.IngestIfQuotaExceeded(w.ctx, ck.ID, rs.Added)
 	if err != nil {
 		w.ctx.onError(err)
 		return
@@ -981,7 +981,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	return s.backendCtx.Flush(s.ctx)
+	return s.backendCtx.Ingest(s.ctx)
 }
 
 func (s *indexWriteResultSink) Close() error {

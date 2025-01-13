@@ -39,6 +39,7 @@ type cloudImportExecutor struct {
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
+	backendCtx    ingest.BackendCtx
 }
 
 func newCloudImportExecutor(
@@ -57,8 +58,13 @@ func newCloudImportExecutor(
 	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build()
+	if err != nil {
+		return err
+	}
+	m.backendCtx = bCtx
 	return nil
 }
 
@@ -69,13 +75,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build()
-	if err != nil {
-		return err
-	}
-	defer bCtx.Close()
-	local := bCtx.GetLocalBackend()
+	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -154,7 +154,10 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
-func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
+func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
+	if m.backendCtx != nil {
+		m.backendCtx.Close()
+	}
 	return nil
 }

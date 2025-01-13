@@ -83,16 +83,16 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 	return nil
 }
 
-// TryFlush implements BackendCtx.TryFlush interface.
-func (m *MockBackendCtx) TryFlush(_ context.Context, taskID, cnt int) error {
+// IngestIfQuotaExceeded implements BackendCtx.IngestIfQuotaExceeded interface.
+func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context, taskID, cnt int) error {
 	if m.checkpointMgr != nil {
 		m.checkpointMgr.UpdateWrittenKeys(taskID, cnt)
 	}
 	return nil
 }
 
-// Flush implements BackendCtx.Flush interface.
-func (m *MockBackendCtx) Flush(_ context.Context) error {
+// Ingest implements BackendCtx.Ingest interface.
+func (m *MockBackendCtx) Ingest(_ context.Context) error {
 	if m.checkpointMgr != nil {
 		return m.checkpointMgr.AdvanceWatermark(true)
 	}
@@ -115,22 +115,22 @@ func (m *MockBackendCtx) TotalKeyCount() int {
 	return 0
 }
 
-// AddTask implements CheckpointOperator interface.
-func (m *MockBackendCtx) AddTask(id int, endKey kv.Key) {
+// AddChunk implements CheckpointOperator interface.
+func (m *MockBackendCtx) AddChunk(id int, endKey kv.Key) {
 	if m.checkpointMgr != nil {
 		m.checkpointMgr.Register(id, endKey)
 	}
 }
 
-// UpdateTask implements CheckpointOperator interface.
-func (m *MockBackendCtx) UpdateTask(id int, count int, done bool) {
+// UpdateChunk implements CheckpointOperator interface.
+func (m *MockBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if m.checkpointMgr != nil {
 		m.checkpointMgr.UpdateTotalKeys(id, count, done)
 	}
 }
 
-// FinishTask implements CheckpointOperator interface.
-func (m *MockBackendCtx) FinishTask(id int, count int) {
+// FinishChunk implements CheckpointOperator interface.
+func (m *MockBackendCtx) FinishChunk(id int, count int) {
 	if m.checkpointMgr != nil {
 		m.checkpointMgr.UpdateWrittenKeys(id, count)
 	}

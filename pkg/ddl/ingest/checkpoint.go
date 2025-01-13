@@ -86,18 +86,6 @@ type taskCheckpoint struct {
 	lastBatchRead bool
 }
 
-// FlushController is an interface to control the flush of data so after it
-// returns caller can save checkpoint.
-type FlushController interface {
-	// TryFlush updates the task and count to checkpoint manager, and try to flush them to disk or TiKV
-	// according to the last flush time or the usage of local disk.
-	TryFlush(ctx context.Context, taskID int, count int) error
-
-	// Flush checks if all engines need to be flushed and imported based on given
-	// FlushMode. It's concurrent safe.
-	Flush(ctx context.Context) (err error)
-}
-
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(
 	ctx context.Context,

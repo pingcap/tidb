@@ -15,7 +15,9 @@
 package testutil
 
 import (
+	"fmt"
 	"math"
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -44,4 +46,21 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 		ingest.LitDiskRoot = oldLitDiskRoot
 		ingest.LitMemRoot = oldLitMemRoot
 	}
+}
+
+// CheckIngestLeakageForTest is only used in test.
+func CheckIngestLeakageForTest(exitCode int) {
+	if exitCode == 0 {
+		leakObj := ""
+		if ingest.TrackerCountForTest.Load() != 0 {
+			leakObj = "disk usage tracker"
+		} else if ingest.BackendCounterForTest.Load() != 0 {
+			leakObj = "backend context"
+		}
+		if len(leakObj) > 0 {
+			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+	}
+	os.Exit(exitCode)
 }

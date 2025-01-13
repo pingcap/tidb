@@ -193,20 +193,3 @@ func (d *diskRootImpl) StartupCheck() error {
 func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
 }
-
-// CheckIngestLeakageForTest is only used in test.
-func CheckIngestLeakageForTest(exitCode int) {
-	if exitCode == 0 {
-		leakObj := ""
-		if TrackerCountForTest.Load() != 0 {
-			leakObj = "disk usage tracker"
-		} else if BackendCounterForTest.Load() != 0 {
-			leakObj = "backend context"
-		}
-		if len(leakObj) > 0 {
-			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
-			os.Exit(1)
-		}
-	}
-	os.Exit(exitCode)
-}
