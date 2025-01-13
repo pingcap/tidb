@@ -165,6 +165,7 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 		compactionDirs: compactionDirs,
 		fullBackups:    fullBackups,
 		restoredTS:     builder.restoredTS,
+		startTS:        builder.startTS,
 	}
 	return withMigrations
 }
@@ -218,6 +219,7 @@ type WithMigrations struct {
 	compactionDirs []string
 	fullBackups    []string
 	restoredTS     uint64
+	startTS        uint64
 }
 
 func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -249,7 +251,8 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 
 func (wm *WithMigrations) IngestedSSTss(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
 	filteredOut := iter.FilterOut(stream.LoadIngestedSSTss(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTss) bool {
-		return !ebk.GroupFinished() || ebk.GroupTS() > wm.restoredTS
+		gts := ebk.GroupTS()
+		return !ebk.GroupFinished() || gts < wm.startTS || gts >= wm.restoredTS
 	})
 	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTss) iter.TryNextor[*backuppb.IngestedSSTs] {
 		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedIngestedSSTs) *backuppb.IngestedSSTs {

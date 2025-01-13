@@ -451,10 +451,13 @@ func TestFilteredOut(t *testing.T) {
 	id := makeID()
 	ebk1 := extFullBkup(prefix("001"), id)
 	ebk2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
+	ebk3 := extFullBkup(prefix("003"), asIfTS(10), finished(), makeID())
 	wm := new(logclient.WithMigrations)
 	wm.AddIngestedSSTs(pef(t, ebk1, 0, strg))
 	wm.AddIngestedSSTs(pef(t, ebk2, 1, strg))
+	wm.AddIngestedSSTs(pef(t, ebk3, 2, strg))
 	wm.SetRestoredTS(89)
+	wm.SetStartTS(42)
 
 	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg))
 }
