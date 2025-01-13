@@ -432,7 +432,7 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		}
 		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
 		if !exist {
-			zoneInfos = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots)
+			zoneInfos = h.inferSameZoneFlags(exec.ExchangeSender.EncodedTaskMeta, slots)
 			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
 		}
 		for i := 0; i < slots; i++ {
