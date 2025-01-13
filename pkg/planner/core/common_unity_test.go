@@ -3,6 +3,9 @@ package core_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -61,4 +64,13 @@ func formatPrint(tk *testkit.TestKit, sql string) {
 		panic(err)
 	}
 	fmt.Println(string(v))
+}
+
+func TestAsName(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select * from t as t1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(reflect.TypeOf(stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source))
 }
