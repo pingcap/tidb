@@ -718,62 +718,58 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	}
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
-	// idxMissingStats == either the lhs or rhs has an index that does NOT have statistics
 	//
 	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
-	// If there is no winner (0), we return idxMissingStats.
+	// If there is no winner (0), we return the OR of lhsPseudo/rhsPseudo.
 	//
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
-	idxMissingStats := false
-	lhsPseudo := statsTbl.HistColl.Pseudo
-	if statsTbl != nil && lhs.path.Index != nil {
-		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-			idxMissingStats, lhsPseudo = true, true
+	lhsPseudo, rhsPseudo := statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	lhsFullScan := lhs.path.IsFullTableRange(tableInfo)
+	rhsFullScan := rhs.path.IsFullTableRange(tableInfo)
+	if statsTbl != nil && len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+		if !lhsFullScan && lhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+				lhsPseudo = false // We have statistics for the lhs index
+			} else {
+				lhsPseudo = true
+			}
+		}
+		if !rhsFullScan && rhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+				rhsPseudo = false // We have statistics on the rhs index
+			} else {
+				rhsPseudo = true
+			}
 		}
 	}
-	rhsPseudo := statsTbl.HistColl.Pseudo
-	if statsTbl != nil && rhs.path.Index != nil {
-		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-			idxMissingStats, rhsPseudo = true, true
+
+	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+
+	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
+	if lhsPseudo != rhsPseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+		// If one index has statistics and the other does not, choose the index with statistics if it
+		// has the same or higher number of equal/IN predicates.
+		if !lhsPseudo && !lhsFullScan && globalResult >= 0 &&
+			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
+			return 1, lhsPseudo // left wins and has statistics
 		}
-	}
-	// It's either "not a table scan" or it's a table scan that scans a subset of the PK
-	lhsLimitedScan := !lhs.path.IsTablePath() || (lhs.path.IsTablePath() && !lhs.path.IsFullTableRange(tableInfo))
-	rhsLimitedScan := !rhs.path.IsTablePath() || (rhs.path.IsTablePath() && !rhs.path.IsFullTableRange(tableInfo))
-	// First set of rules apply to situations where an index doesn't have statistics
-	if (lhsLimitedScan || rhsLimitedScan) && // Not a full table scan
-		(!lhsPseudo || !rhsPseudo || !statsTbl.HistColl.Pseudo) && // An index or the table has statistics
-		idxMissingStats && // At least one index doesn't have statistics
-		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
-		if lhs.path.EqOrInCondCount > 0 || rhs.path.EqOrInCondCount > 0 {
-			// If one index has statistics and the other does not, choose the index with statistics if it
-			// has the same or higher number of equal/IN predicates.
-			// This is to limit a new index being chosen until it's statistics are collected if we cannot determine
-			// that it is "potentially" more selective.
-			if lhsLimitedScan && !lhsPseudo && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
-				return 1, lhsPseudo
+		if !rhsPseudo && !rhsFullScan && globalResult <= 0 &&
+			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
+			return -1, rhsPseudo // right wins and has statistics
+		}
+		if preferRange {
+			// keep an index without statistics if that index has more equal/IN predicates, AND:
+			// 1) there are at least 2 equal/INs, OR - when combined with 1) above
+			// 2) it's a full index match for all index predicates
+			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 &&
+				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
+				return 1, lhsPseudo // left wins and does NOT have statistics
 			}
-			if rhsLimitedScan && !rhsPseudo && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
-				return -1, rhsPseudo
-			}
-			if preferRange {
-				// keep an index without statistics if that index has more equal/IN predicates, AND:
-				// 1) there first must be at least a 5% change in estimated number of rows, AND
-				// 2) there are at least 2 equal/INs, OR - when combined with 1) above
-				// 3) it's a full index match for all index predicates
-				planCountDiff := lhs.path.CountAfterAccess / rhs.path.CountAfterAccess
-				if lhs.path.CountAfterAccess <= 1 || planCountDiff < 0.95 || planCountDiff > 1.05 {
-					if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount &&
-						(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) {
-						return 1, lhsPseudo
-					}
-					if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount &&
-						(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) {
-						return -1, rhsPseudo
-					}
-				}
+			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 &&
+				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
+				return -1, rhsPseudo // right wins and does NOT have statistics
 			}
 		}
 	}
@@ -794,7 +790,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// Below compares the two candidate paths on three dimensions:
+	// Below compares the two candidate paths on four dimensions:
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
@@ -803,13 +799,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
-		return 0, idxMissingStats
+		return 0, lhsPseudo || rhsPseudo
 	}
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	if !comparable2 {
-		return 0, idxMissingStats
+		return 0, lhsPseudo || rhsPseudo
 	}
-	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
 		return 1, lhsPseudo
@@ -817,7 +812,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1, rhsPseudo
 	}
-	return 0, idxMissingStats
+	return 0, lhsPseudo || rhsPseudo
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
@@ -1233,18 +1228,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		preferRange = (preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
 	}
 	if preferRange && len(candidates) > 1 {
-		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
-		// any range scan path, we remove full scan paths and keep range scan paths.
+		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
+		// candidate paths, if there exists any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.Global) || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
 			if !c.path.IsFullTableRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true

@@ -418,10 +418,9 @@ func (path *AccessPath) IsFullTableRange(tableInfo *model.TableInfo) bool {
 				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			}
 		}
-		if !ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
-			return false
+		if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+			return true
 		}
-		return true
 	}
 	return false
 }
