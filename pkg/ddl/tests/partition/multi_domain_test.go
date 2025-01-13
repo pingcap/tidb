@@ -868,6 +868,15 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	domOwner.Reload()
+	domNonOwner.Reload()
+
+	if !tbl.Meta().IsCommonHandle && !tbl.Meta().PKIsHandle {
+		// Debug prints, so it is possible to verify duplicate _tidb_rowid's
+		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
+		logutil.BgLogger().Info("Query result before DDL", zap.String("result", res.String()))
+	}
+
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
@@ -938,6 +947,11 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		hookChan <- struct{}{}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	if !tbl.Meta().IsCommonHandle && !tbl.Meta().PKIsHandle {
+		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
+		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
+		logutil.BgLogger().Info("Query result after DDL", zap.String("result", res.String()))
+	}
 	// Verify that there are no KV entries for old partitions or old indexes!!!
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	require.NoError(t, err)
@@ -1593,6 +1607,47 @@ func TestRemovePartitioningCovering(t *testing.T) {
 	runCoveringTest(t, createSQL, alterSQL)
 }
 
+func TestReorganizePartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t reorganize partition pMax into (partition p2 values less than (30), partition p3 values less than (40), partition p4 values less than (50), partition p5 values less than (60), partition p6 values less than (70), partition p7 values less than (80), partition p8 values less than (90), partition p9 values less than (100), partition p10 values less than (110), partition pMax values less than (MAXVALUE))`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestRePartitionByKeyCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestPartitionByKeyCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestAddKeyPartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t add partition partitions 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestCoalesceKeyPartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t coalesce partition 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+// TODO: add more variants of CREATE TABLE + ALTER
+// TODO: add EXCHANGED partitions, to also test duplicate _tidb_rowid's
+
 func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	//insert a row
 	//insert a row, on duplicate key update - no match
@@ -1709,6 +1764,27 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				logutil.BgLogger().Info("run sql", zap.String("sql", sql))
 			}
 		}
+		// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
+		// the partitions
+		ctx := tkO.Session()
+		dom := domain.GetDomain(ctx)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		if tbl.Meta().Partition != nil {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				partName := def.Name.O
+				tkO.MustExec(`create table tx like t`)
+				tkO.MustExec(`alter table tx remove partitioning`)
+				tkO.MustExec(fmt.Sprintf("insert into tx select * from t partition(`%s`)", partName))
+				res := tkO.MustQuery(`select *, _tidb_rowid from tx`)
+				logutil.BgLogger().Info("rows in Exchanged table", zap.Any("rows", res.Rows()))
+				// Somehow there is an issue internally when using WITH VALIDATION,
+				// giving test.tx does not exist error...
+				tkO.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx without validation", partName))
+				tkO.MustExec(`drop table tx`)
+			}
+		}
 		logutil.BgLogger().Info("initFn Done")
 	}
 
@@ -1747,11 +1823,9 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
-	// TODO: add more variants of CREATE TABLE + ALTER
-	// TODO: add EXCHANGED partitions, to also test duplicate _tidb_rowid's
 }
 
-func TestTest(t *testing.T) {
+func TestIssue58692(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	defer testutil.InjectMockBackendMgr(t, store)()
 
