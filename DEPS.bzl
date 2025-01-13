@@ -7041,6 +7041,7 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sha256 = "587d22d21daa1f44b18b0c2325fcb4233af71a985f397a36aa9db8796777b8f2",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20241212025239-0dc41295f929",
         urls = [
@@ -7048,6 +7049,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241212025239-0dc41295f929.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241212025239-0dc41295f929.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241212025239-0dc41295f929.zip",
+=======
+        sha256 = "1715838db1804050b4c45a54e9bb00d9f8e281fb10dd2bc755296e3a7c2fcf63",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250107062519-2eba2f614b38",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250107062519-2eba2f614b38.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250107062519-2eba2f614b38.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250107062519-2eba2f614b38.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250107062519-2eba2f614b38.zip",
+>>>>>>> b819dadd902 (*: update client-go to interpret InvalidMaxTsUpdate error (#58758))
         ],
     )
     go_repository(

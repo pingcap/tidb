@@ -996,12 +996,21 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+<<<<<<< HEAD
 github.com/tikv/client-go/v2 v2.0.8-0.20241212025239-0dc41295f929 h1:dvY5kl35L+aroDl3HQzOx4J7N6sdd8TiXEV+GhNemtU=
 github.com/tikv/client-go/v2 v2.0.8-0.20241212025239-0dc41295f929/go.mod h1:37p0ryKaieJbBpVDWnaPi2ZS6UFqkgpsemBLkGX2FvM=
 github.com/tikv/pd/client v0.0.0-20240724132535-fcb34c90790c h1:oZygf/SCdTUhjoHuZRE85EBgK0oA6LjikpWuJqqjM8U=
 github.com/tikv/pd/client v0.0.0-20240724132535-fcb34c90790c/go.mod h1:NW6Af689Jw1FDxjq+WL0nqOdmQ1XT0ly2R1SIKfQuUw=
 github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966 h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=
 github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
+=======
+github.com/tikv/client-go/v2 v2.0.8-0.20250107062519-2eba2f614b38 h1:pHuqJqpQaxYZwB7vr64hrWU2ayMADXnleLEd2dBuih0=
+github.com/tikv/client-go/v2 v2.0.8-0.20250107062519-2eba2f614b38/go.mod h1:YMP2WbENjh0V0PaNY9LPRh7bLto2MmmuRE0zJ7IAZIA=
+github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de h1:fefo6U56UMca1CfwY/FVhfVcinyDgXgffQQp9lfMeLg=
+github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de/go.mod h1:6xcCIcECSowarZ9+AqdURngHzS+t5w2x3qhwg1moj4o=
+github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3 h1:y4mJRFlM6fUyPhoXuFg/Yu02fg/nIPFMOY8tOqppoFg=
+github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
+>>>>>>> b819dadd902 (*: update client-go to interpret InvalidMaxTsUpdate error (#58758))
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
 github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU=
 github.com/tklauser/go-sysconf v0.3.12/go.mod h1:Ho14jnntGE1fpdOqQEEaiKRpvIavV0hSfmBq8nJbHYI=
