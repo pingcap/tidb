@@ -199,7 +199,7 @@ func TestWorkerPool(t *testing.T) {
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			spawn: func(workers, tasks uint32) bool {
+			needSpawn: func(workers, tasks uint32) bool {
 				return workers < 1 && tasks > 0
 			},
 		}
@@ -225,7 +225,7 @@ func TestWorkerPool(t *testing.T) {
 	t.Run("TwoWorkers", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			spawn: func(workers, tasks uint32) bool {
+			needSpawn: func(workers, tasks uint32) bool {
 				return workers < 2 && tasks > 0
 			},
 		}
@@ -251,7 +251,7 @@ func TestWorkerPool(t *testing.T) {
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			spawn: func(workers, tasks uint32) bool {
+			needSpawn: func(workers, tasks uint32) bool {
 				return workers < 2 && tasks > 1
 			},
 		}

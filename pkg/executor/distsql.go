@@ -643,7 +643,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
-		spawn: func(workers, tasks uint32) bool {
+		needSpawn: func(workers, tasks uint32) bool {
 			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
 		},
 	}

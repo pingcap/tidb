@@ -136,9 +136,9 @@ type workerPool struct {
 	head *workerTask
 	tail *workerTask
 
-	tasks   uint32
-	workers uint32
-	spawn   func(workers, tasks uint32) bool
+	tasks     uint32
+	workers   uint32
+	needSpawn func(workers, tasks uint32) bool
 }
 
 func (p *workerPool) submit(f func()) {
@@ -154,7 +154,7 @@ func (p *workerPool) submit(f func()) {
 	}
 	p.tail = task
 	p.tasks++
-	if p.workers == 0 || p.spawn == nil || p.spawn(p.workers, p.tasks) {
+	if p.workers == 0 || p.needSpawn == nil || p.needSpawn(p.workers, p.tasks) {
 		p.workers++
 		spawn = true
 	}
