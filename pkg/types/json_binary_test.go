@@ -15,11 +15,16 @@
 package types
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,7 +176,7 @@ func TestQuoteString(t *testing.T) {
 	}{
 		{raw: "3", quoted: `"3"`},
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
-		{raw: "你", quoted: `你`},
+		{raw: "你", quoted: `"你"`},
 		{raw: "true", quoted: `true`},
 		{raw: "null", quoted: `null`},
 		{raw: `"`, quoted: `"\""`},
@@ -740,4 +745,106 @@ func TestHashValue(t *testing.T) {
 	}
 
 	require.Equal(t, len(jsons), len(counter))
+}
+
+func FuzzJSONExtract(f *testing.F) {
+	f.Add(`["abc", 5, 1.234]`, "$[0]")
+	f.Add(`{"key": "value"}`, "$.key")
+	f.Add(`{"key": "value"}`, "$.*")
+	f.Add(`{"key": "value"}`, "$.**")
+	f.Add(`"abc"`, "$")
+	f.Add("5", "$")
+	f.Add("1.2345", "$")
+
+	var db *sql.DB
+	testDBDSN := os.Getenv("TEST_MYSQL_DSN")
+	if testDBDSN != "" {
+		var err error
+		db, err = sql.Open("mysql", testDBDSN)
+		require.NoError(f, err)
+		defer db.Close()
+	}
+
+	caseFile, err := os.OpenFile("/tmp/testcase", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	f.Fuzz(func(t *testing.T, jsonData string, path string) {
+		if !utf8.Valid([]byte(jsonData)) || !utf8.ValidString(path) {
+			// TiDB actually has different behavior with MySQL when there are invalid utf8 characters
+			// ref https://github.com/pingcap/tidb/issues/58886
+			t.Skip()
+		}
+
+		j, err := ParseBinaryJSONFromString(jsonData)
+		if err != nil {
+			// not interesting value
+			t.Skip()
+		}
+
+		pathExpr, err := ParseJSONPathExpr(path)
+		if err != nil {
+			// not interesting value
+			t.Skip()
+		}
+
+		// TODO: support multiple json path expressions
+		output, found := j.Extract([]JSONPathExpression{pathExpr})
+		if found {
+			require.NotEqual(t, output.TypeCode, 0)
+		}
+
+		if db == nil {
+			return
+		}
+
+		output.Walk(func(fullpath JSONPathExpression, bj BinaryJSON) (stop bool, err error) {
+			if bj.TypeCode == JSONTypeCodeFloat64 {
+				// skip the test with float point, as MySQL itself doesn't have a consistent behavior between multiple versions and
+				// in different situation.
+				t.Skip()
+			}
+
+			// skip test case with invalid unicode
+			if bj.TypeCode == JSONTypeCodeString && strings.ContainsRune(string(bj.GetString()), utf8.RuneError) {
+				t.Skip()
+			}
+			if bj.TypeCode == JSONTypeCodeObject {
+				count := bj.GetElemCount()
+				for i := 0; i < count; i++ {
+					key := string(bj.objectGetKey(i))
+					if strings.ContainsRune(key, utf8.RuneError) {
+						t.Skip()
+					}
+				}
+			}
+
+			return false, nil
+		})
+
+		fmt.Fprintf(caseFile, "jsonData: %s, path: %s\n", jsonData, path)
+
+		// validate the result is the same with MySQL
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		defer conn.Close()
+
+		rows, err := conn.QueryContext(context.Background(), `SELECT JSON_EXTRACT(?, ?)`, jsonData, path)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		var mysqlResult *string
+		rows.Next()
+		require.NoError(t, rows.Scan(&mysqlResult))
+		require.NoError(t, rows.Err())
+
+		if mysqlResult == nil {
+			require.False(t, found)
+			// not interesting value
+			t.Skip()
+		}
+
+		require.Equal(t, *mysqlResult, output.String(), "Expect %v, got %v", []byte(*mysqlResult), []byte(output.String()))
+	})
 }
