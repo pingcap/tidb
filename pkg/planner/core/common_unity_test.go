@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
 
@@ -73,4 +74,25 @@ func TestAsName(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Println(reflect.TypeOf(stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source))
+}
+
+func TestPredCols(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int)`)
+
+	for _, cond := range []string{
+		"a=1", "a>1", "a<=1", "a in (1, 2, 3)", "a is null", "a between 1 and 10",
+	} {
+		stmt := fmt.Sprintf(`explain analyze format='unity_offline' select * from t where %v`, cond)
+		ret := tk.MustQuery(stmt).Rows()[0]
+		var plans []*core.UnityOfflinePlan
+		if err := json.Unmarshal([]byte(ret[0].(string)), &plans); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range plans {
+			require.True(t, len(p.SubPlans[0].PreSequence.PredicateColumns) > 0)
+		}
+	}
 }
