@@ -765,7 +765,7 @@ CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3
 create table users1(id int, value int, index index_value(value));
 insert into users1 values(1,2);
 begin;
-There should be no execution info because for user, because temporary table should not visit tikv
+# There should be no execution info because for user table, because temporary table should not visit tikv
 explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 IndexJoin_30	9990.00	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, inner:{total:<num>, concurrency:<num>, task:<num>, construct:<num>, fetch:<num>, build:<num>}, probe:<num>	inner join, inner:IndexLookUp_29, outer key:session__temporary_table.users1.value, inner key:session__temporary_table.users.v1, equal cond:eq(session__temporary_table.users1.value, session__temporary_table.users.v1)	775 Bytes	N/A

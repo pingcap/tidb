@@ -364,7 +364,7 @@ CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3
 create table users1(id int, value int, index index_value(value));
 insert into users1 values(1,2);
 begin;
---echo There should be no execution info because for user, because temporary table should not visit tikv
+--echo # There should be no execution info because for user table, because temporary table should not visit tikv
 --replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);
 commit;
