@@ -51,7 +51,9 @@ func (e *Explain) UnityOffline() string {
 		sqlExec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
-		must(err)
+		if err != nil { // may expected timeout
+			continue
+		}
 		data := rows[0].GetString(0)
 		plan := new(UnityOfflinePlan)
 		must(json.Unmarshal([]byte(data), plan))
