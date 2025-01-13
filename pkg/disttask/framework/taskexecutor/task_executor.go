@@ -188,21 +188,21 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 }
 
 func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
-	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
+	subtaskCtx context.Context, stepExec execute.StepExecutor) {
 	taskMgr := e.taskTable.(*storage.TaskManager)
 	ticker := time.NewTicker(updateSubtaskSummaryInterval)
 	defer ticker.Stop()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskRowCount(subtaskCtx, curSubtaskID, summary.RowCount)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
 	}
 	for {
 		select {
-		case <-checkCtx.Done():
+		case <-subtaskCtx.Done():
 			update()
 			return
 		case <-ticker.C:
@@ -443,21 +443,19 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		subtaskCtx, subtaskCtxCancel = context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
-		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
+			e.checkBalanceSubtask(subtaskCtx, subtaskCtxCancel)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
 			wg.RunWithLog(func() {
-				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
+				e.updateSubtaskSummaryLoop(subtaskCtx, e.stepExec)
 			})
 		}
 		wg.RunWithLog(func() {
 			e.detectAndHandleParamModifyLoop(checkCtx)
 		})
 		defer func() {
-			checkCancel()
 			wg.Wait()
 			subtaskCtxCancel()
 		}()
