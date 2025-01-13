@@ -1111,7 +1111,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
 		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-		it.liteWorker.tryCopLiteWorker.Store(0)
+		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
