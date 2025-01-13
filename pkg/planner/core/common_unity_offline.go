@@ -245,13 +245,31 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 		case *PhysicalIndexScan:
 			collectTable(x.DBName.L, x.Table.Name.L)
 			collectPredCols(x.AccessCondition)
-		case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin,
-			*PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
-			bj := x.(*basePhysicalJoin)
-			collectJoinCols(bj.LeftJoinKeys)
-			collectJoinCols(bj.RightJoinKeys)
-			collectJoinCols(bj.InnerJoinKeys)
-			collectJoinCols(bj.RightJoinKeys)
+		case *PhysicalHashJoin:
+			collectJoinCols(x.LeftJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+			collectJoinCols(x.InnerJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+		case *PhysicalMergeJoin:
+			collectJoinCols(x.LeftJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+			collectJoinCols(x.InnerJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+		case *PhysicalIndexJoin:
+			collectJoinCols(x.LeftJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+			collectJoinCols(x.InnerJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+		case *PhysicalIndexHashJoin:
+			collectJoinCols(x.LeftJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+			collectJoinCols(x.InnerJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+		case *PhysicalIndexMergeJoin:
+			collectJoinCols(x.LeftJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
+			collectJoinCols(x.InnerJoinKeys)
+			collectJoinCols(x.RightJoinKeys)
 		default:
 			continue
 		}
