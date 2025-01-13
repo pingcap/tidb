@@ -348,7 +348,7 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 
 // Fetch compactions that may contain file less than the TS.
 func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
-	return rc.withMigrations.Compactions(ctx, rc.storage)
+	return rc.withMigrations.Compactions(ctx, rc.storage, rc.shiftStartTS, rc.restoreTS)
 }
 
 // the kv entry with ts, the ts is decoded from entry.
@@ -435,14 +435,19 @@ func (rc *LogFileManager) ReadAllEntries(
 	return kvEntries, nextKvEntries, nil
 }
 
-func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubCompactionIter {
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage, shiftStartTS, restoredTS uint64) SubCompactionIter {
 	return iter.FlatMap(storage.UnmarshalDir(
 		ctx,
 		&storage.WalkOption{SubDir: prefix},
 		s,
 		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
 	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
-		return iter.FromSlice(subcs.Subcompactions)
+		return iter.MapFilter(iter.FromSlice(subcs.Subcompactions), func(subc *backuppb.LogFileSubcompaction) (*backuppb.LogFileSubcompaction, bool) {
+			if subc.Meta.InputMaxTs < shiftStartTS || subc.Meta.InputMinTs > restoredTS {
+				return nil, true
+			}
+			return subc, false
+		})
 	})
 }
 

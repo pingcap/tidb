@@ -133,7 +133,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 	//         log file [ ..  ..  ..  .. ]
 	//
 	for _, compaction := range mig.Compactions {
-		if compaction.CompactionUntilTs < builder.shiftStartTS || compaction.CompactionFromTs > builder.restoredTS {
+		if compaction.InputMaxTs < builder.shiftStartTS || compaction.InputMinTs > builder.restoredTS {
 			return true
 		}
 	}
@@ -231,10 +231,10 @@ func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	})
 }
 
-func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage, shiftStartTS, restoreTS uint64) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 	compactionDirIter := iter.FromSlice(wm.compactionDirs)
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.
-		return Subcompactions(ctx, name, s)
+		return Subcompactions(ctx, name, s, shiftStartTS, restoreTS)
 	})
 }

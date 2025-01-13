@@ -58,20 +58,26 @@ func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
 }
 
-func (r *RewriteRules) GenTsRule(cfName string) {
+func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
 	if r.startTs == 0 || r.restoredTs == 0 {
-		return
+		return nil
 	}
+
+	var ignoreBeforeTs uint64
+	switch {
+	case strings.Contains(cfName, DefaultCFName):
+		ignoreBeforeTs = r.shiftStartTs
+	case strings.Contains(cfName, WriteCFName):
+		ignoreBeforeTs = r.startTs
+	default:
+		return errors.Errorf("unsupported column family type: %s", cfName)
+	}
+
 	for _, rule := range r.Data {
-		if strings.Contains(cfName, DefaultCFName) {
-			rule.IgnoreBeforeTimestamp = r.shiftStartTs
-		} else if strings.Contains(cfName, WriteCFName) {
-			rule.IgnoreBeforeTimestamp = r.startTs
-		} else {
-			log.Panic("unsupport cf type", zap.String("cf", cfName))
-		}
+		rule.IgnoreBeforeTimestamp = ignoreBeforeTs
 		rule.IgnoreAfterTimestamp = r.restoredTs
 	}
+	return nil
 }
 
 // EmptyRewriteRule make a map of new, empty rewrite rules.
