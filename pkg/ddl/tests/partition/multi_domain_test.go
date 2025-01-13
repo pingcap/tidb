@@ -1597,6 +1597,54 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
 }
 
+func TestRemovePartitioningNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t remove partitioning`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestReorganizePartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t reorganize partition pMax into (partition p2 values less than (30), partition p3 values less than (40), partition p4 values less than (50), partition p5 values less than (60), partition p6 values less than (70), partition p7 values less than (80), partition p8 values less than (90), partition p9 values less than (100), partition p10 values less than (110), partition pMax values less than (MAXVALUE))`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestRePartitionByKeyNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestPartitionByKeyNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestAddKeyPartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t add partition partitions 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestCoalesceKeyPartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t coalesce partition 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
 func TestRemovePartitioningCovering(t *testing.T) {
 	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
 		` partition by range (a) ` +
@@ -1644,9 +1692,6 @@ func TestCoalesceKeyPartitionCovering(t *testing.T) {
 	alterSQL := `alter table t coalesce partition 1`
 	runCoveringTest(t, createSQL, alterSQL)
 }
-
-// TODO: add more variants of CREATE TABLE + ALTER
-// TODO: add EXCHANGED partitions, to also test duplicate _tidb_rowid's
 
 func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	//insert a row
@@ -1771,7 +1816,9 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		is := dom.InfoSchema()
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
-		if tbl.Meta().Partition != nil {
+		if tbl.Meta().Partition != nil &&
+			!tbl.Meta().IsCommonHandle &&
+			!tbl.Meta().PKIsHandle {
 			for _, def := range tbl.Meta().Partition.Definitions {
 				partName := def.Name.O
 				tkO.MustExec(`create table tx like t`)
@@ -1785,6 +1832,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				tkO.MustExec(`drop table tx`)
 			}
 		}
+		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("18"))
 		logutil.BgLogger().Info("initFn Done")
 	}
 
@@ -1820,6 +1868,10 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		state++
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		// Total number of rows after above operations.
+		// Just to check for duplicates or missing rows
+		// TODO: Fix this for non-PK tests
+		//tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("61"))
 		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
