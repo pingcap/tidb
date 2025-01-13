@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -308,16 +309,8 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if err != nil {
 		return nil, nil, 0, err
 	}
-<<<<<<< HEAD
-=======
 
 	finalPlan := postOptimize(ctx, sctx, physical)
-<<<<<<< HEAD
->>>>>>> 65d63163cf (.)
-
-	finalPlan := postOptimize(ctx, sctx, physical)
-=======
->>>>>>> cf4b8c7765 (.)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
