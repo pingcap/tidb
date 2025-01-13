@@ -19,12 +19,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
 
-// CascadesContext define the cascades context as interface, since it will be defined
+// Context define the cascades context as interface, since it will be defined
 // in cascades pkg, which ref task pkg with no doubt.
 // while in the task pkg, the concrete task need receive cascades context as its
 // constructing args, which will lead an import cycle.
 // so that's why we separate it out of base pkg.
-type CascadesContext interface {
+type Context interface {
 	Destroy()
 	GetScheduler() base.Scheduler
 	PushTask(task base.Task)

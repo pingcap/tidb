@@ -181,7 +181,7 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	require.Equal(t, "", pwd)
 }
 
-func TestGoPool(t *testing.T) {
+func TestWorkerPool(t *testing.T) {
 	var (
 		list []int
 		lock sync.Mutex
@@ -200,8 +200,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            1,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 1 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -225,8 +226,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TwoWorkers", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -250,8 +252,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 1,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 1
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)

@@ -190,7 +190,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			table.StatsVer = int(statsVer)
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
-		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
+		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
 		if !ok {
 			// this table has been dropped. but stats meta still exists and wait for being deleted.
@@ -227,7 +227,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				TopN:       topN,
 				Info:       idxInfo,
 				StatsVer:   statsVer,
-				Flag:       row.GetInt64(10),
 				PhysicalID: tblID,
 			}
 			if statsVer != statistics.Version0 {
@@ -257,7 +256,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -285,7 +283,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 // genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(isPaging bool) string {
-	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
 		return selectPrefix + orderSuffix
