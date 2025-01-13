@@ -1804,6 +1804,10 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 func (a *ExecStmt) updateMPPNetworkTraffic() {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return
+	}
 	var tikvExecDetail util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw == nil {
@@ -1812,7 +1816,7 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 	}
 
 	tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	tiflashNetworkStats := stmtCtx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
 	if tiflashNetworkStats != nil {
 		tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 	}
