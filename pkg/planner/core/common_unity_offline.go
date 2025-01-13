@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"sort"
@@ -193,25 +194,70 @@ type UnityOfflinePlan struct {
 	SubPlans   []*UnityOfflinePlanNode `json:"subPlans"`
 }
 
+type UnityOfflinePreSequence struct {
+	Tables           []string `json:"tables"`
+	PredicateColumns []string `json:"predicateColumns"`
+	JoinColumns      []string `json:"joinColumns"`
+}
+
 func planPreSequences(p base.Plan) (preSeq []string) {
+	var tables, predCols, joinCols []string
+	m := make(map[string]struct{})
+
+	collectTable := func(db, table string) {
+		str := fmt.Sprintf("%s.%s", db, table)
+		if _, ok := m[str]; ok {
+			return
+		}
+		m[str] = struct{}{}
+		tables = append(tables, str)
+	}
+	collectPredCols := func(preds []expression.Expression) {
+		for _, pred := range preds {
+			if sf, ok := pred.(*expression.ScalarFunction); ok {
+				for _, arg := range sf.GetArgs() {
+					if col, ok := arg.(*expression.Column); ok {
+						str := "P:" + col.OrigName
+						if _, ok := m[str]; ok {
+							continue
+						}
+						m[str] = struct{}{}
+						predCols = append(predCols, col.OrigName)
+					}
+				}
+			}
+		}
+	}
+	collectJoinCols := func(joinKeys []*expression.Column) {
+		for _, col := range joinKeys {
+			str := "J:" + col.OrigName
+			if _, ok := m[str]; ok {
+				continue
+			}
+			m[str] = struct{}{}
+			joinCols = append(joinCols, col.OrigName)
+		}
+	}
+
 	flat := FlattenPhysicalPlan(p, true)
 	for _, op := range flat.Main {
 		if !op.IsRoot {
 			continue
 		}
-		switch node := op.Origin.(type) {
-		case *PhysicalTableReader:
-			tableScan := node.TablePlans[0].(*PhysicalTableScan)
-			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
-		case *PhysicalIndexReader:
-			indexScan := node.IndexPlans[0].(*PhysicalIndexScan)
-			preSeq = append(preSeq, fmt.Sprintf("%s.%s", indexScan.DBName.L, indexScan.Table.Name.L))
-		case *PhysicalIndexLookUpReader:
-			tableScan := node.TablePlans[0].(*PhysicalTableScan)
-			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
-		case *PhysicalIndexMergeReader:
-			tableScan := node.TablePlans[0].(*PhysicalTableScan)
-			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
+		switch x := op.Origin.(type) {
+		case *PhysicalTableScan:
+			collectTable(x.DBName.L, x.Table.Name.L)
+			collectPredCols(x.AccessCondition)
+		case *PhysicalIndexScan:
+			collectTable(x.DBName.L, x.Table.Name.L)
+			collectPredCols(x.AccessCondition)
+		case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin,
+			*PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+			bj := x.(*basePhysicalJoin)
+			collectJoinCols(bj.LeftJoinKeys)
+			collectJoinCols(bj.RightJoinKeys)
+			collectJoinCols(bj.InnerJoinKeys)
+			collectJoinCols(bj.RightJoinKeys)
 		default:
 			continue
 		}
