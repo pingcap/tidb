@@ -109,7 +109,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			e.resultChannel,
 			e.memTracker,
 			e.diskTracker,
-			exec.RetTypes(e),
+			exec.RetTypes(e.Children(0)),
 			workers,
 			e.Concurrency,
 			&e.Ctx().GetSessionVars().SQLKiller,

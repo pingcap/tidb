@@ -15,9 +15,9 @@
 package executor
 
 import (
+	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -183,7 +183,7 @@ func encodedPassword(n *ast.UserSpec, defaultPlugin string) (string, bool) {
 	return opt.HashString, true
 }
 
-var taskPool = sync.Pool{
+var globalTaskPool = sync.Pool{
 	New: func() any { return &workerTask{} },
 }
 
@@ -197,19 +197,16 @@ type workerPool struct {
 	head *workerTask
 	tail *workerTask
 
-	tasks   atomic.Int32
-	workers atomic.Int32
-
-	// TolerablePendingTasks is the number of tasks that can be tolerated in the queue, that is, the pool won't spawn a
-	// new goroutine if the number of tasks is less than this number.
-	TolerablePendingTasks int32
-	// MaxWorkers is the maximum number of workers that the pool can spawn.
-	MaxWorkers int32
+	tasks     uint32
+	workers   uint32
+	needSpawn func(workers, tasks uint32) bool
 }
 
 func (p *workerPool) submit(f func()) {
-	task := taskPool.Get().(*workerTask)
+	task := globalTaskPool.Get().(*workerTask)
 	task.f, task.next = f, nil
+
+	spawn := false
 	p.lock.Lock()
 	if p.head == nil {
 		p.head = task
@@ -217,11 +214,14 @@ func (p *workerPool) submit(f func()) {
 		p.tail.next = task
 	}
 	p.tail = task
+	p.tasks++
+	if p.workers == 0 || p.needSpawn == nil || p.needSpawn(p.workers, p.tasks) {
+		p.workers++
+		spawn = true
+	}
 	p.lock.Unlock()
-	tasks := p.tasks.Add(1)
 
-	if workers := p.workers.Load(); workers == 0 || (workers < p.MaxWorkers && tasks > p.TolerablePendingTasks) {
-		p.workers.Add(1)
+	if spawn {
 		go p.run()
 	}
 }
@@ -231,21 +231,22 @@ func (p *workerPool) run() {
 		var task *workerTask
 
 		p.lock.Lock()
-		if p.head != nil {
-			task, p.head = p.head, p.head.next
-			if p.head == nil {
-				p.tail = nil
-			}
-		}
-		p.lock.Unlock()
-
-		if task == nil {
-			p.workers.Add(-1)
+		if p.head == nil {
+			p.workers--
+			p.lock.Unlock()
 			return
 		}
-		p.tasks.Add(-1)
+		task, p.head = p.head, p.head.next
+		p.tasks--
+		p.lock.Unlock()
 
 		task.f()
-		taskPool.Put(task)
+		globalTaskPool.Put(task)
 	}
+}
+
+//go:noinline
+func growWorkerStack16K() {
+	var data [8192]byte
+	runtime.KeepAlive(&data)
 }
