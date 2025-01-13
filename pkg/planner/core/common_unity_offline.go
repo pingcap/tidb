@@ -241,9 +241,6 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 
 	flat := FlattenPhysicalPlan(p, true)
 	for _, op := range flat.Main {
-		if !op.IsRoot {
-			continue
-		}
 		switch x := op.Origin.(type) {
 		case *PhysicalTableScan:
 			collectTable(x.DBName.L, x.Table.Name.L)
