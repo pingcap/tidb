@@ -720,7 +720,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
 	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
-	// If there is no winner (0), we return the OR of lhsPseudo/rhsPseudo.
+	// If there is no winner (0), we return false.
 	//
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
@@ -799,11 +799,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
-		return 0, lhsPseudo || rhsPseudo
+		return 0, false
 	}
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	if !comparable2 {
-		return 0, lhsPseudo || rhsPseudo
+		return 0, false
 	}
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
@@ -812,7 +812,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1, rhsPseudo
 	}
-	return 0, lhsPseudo || rhsPseudo
+	return 0, false
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
