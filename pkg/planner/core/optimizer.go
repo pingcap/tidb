@@ -301,6 +301,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		}
 		if tmpCost < cost {
 			physical = tmpPhysical
+			cost = tmpCost
 		}
 		return true
 	})

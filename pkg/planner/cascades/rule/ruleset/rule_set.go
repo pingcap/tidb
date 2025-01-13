@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package ruleset
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
 )
 
-var DefaultRuleSet = map[pattern.Operand][]Rule{
+var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
 	pattern.OperandApply: {
 		decorrelate_apply.NewXFDeCorrelateApply(),
 	},
