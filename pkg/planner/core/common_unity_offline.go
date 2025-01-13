@@ -42,7 +42,7 @@ func (e *Explain) UnityOffline() string {
 	for _, hs := range allPossibleHintSets {
 		maxExecHint := ""
 		if currentBestInMS > 0 {
-			maxExecHint = fmt.Sprintf("max_execution_time(%d)", currentBestInMS)
+			maxExecHint = fmt.Sprintf("max_execution_time(%d)", currentBestInMS*3)
 		}
 		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 		prefix := fmt.Sprintf("explain analyze format='%s' SELECT ", types.ExplainFormatUnityOffline)
