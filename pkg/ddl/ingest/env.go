@@ -48,7 +48,10 @@ var (
 	LitInitialized bool
 )
 
-const defaultMemoryQuota = 2 * size.GB
+const (
+	defaultMemoryQuota     = 2 * size.GB
+	distributedKeyTTLInSec = 10 // seconds
+)
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv(path string) (ok bool) {

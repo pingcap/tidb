@@ -243,7 +243,7 @@ func (bc *litBackendCtx) tryAcquireDistLock() (func(), error) {
 		return nil, nil
 	}
 	key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
-	return owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
+	return owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, distributedKeyTTLInSec)
 }
 
 func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) error {

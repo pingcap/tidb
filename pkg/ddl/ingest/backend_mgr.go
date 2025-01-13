@@ -72,8 +72,8 @@ func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, 
 	return b
 }
 
-// WithCheckpointManager only is used by non-DXF local ingest mode.
-func (b *BackendCtxBuilder) WithCheckpointManager(
+// WithCheckpointManagerParam only is used by non-DXF local ingest mode.
+func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	sessPool *sess.Pool,
 	physicalID int64,
 ) *BackendCtxBuilder {

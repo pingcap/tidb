@@ -29,14 +29,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// UsageTracker has the method of GetUsage.
-type UsageTracker interface {
+// ResourceTracker has the method of GetUsage.
+type ResourceTracker interface {
 	GetDiskUsage() uint64
 }
 
 // DiskRoot is used to track the disk usage for the lightning backfill process.
 type DiskRoot interface {
-	Add(id int64, tracker UsageTracker)
+	Add(id int64, tracker ResourceTracker)
 	Remove(id int64)
 	Count() int
 
@@ -56,7 +56,7 @@ type diskRootImpl struct {
 	used     uint64
 	bcUsed   uint64
 	mu       sync.RWMutex
-	items    map[int64]UsageTracker
+	items    map[int64]ResourceTracker
 	updating atomic.Bool
 }
 
@@ -64,7 +64,7 @@ type diskRootImpl struct {
 func NewDiskRootImpl(path string) DiskRoot {
 	return &diskRootImpl{
 		path:  path,
-		items: make(map[int64]UsageTracker),
+		items: make(map[int64]ResourceTracker),
 	}
 }
 
@@ -72,7 +72,7 @@ func NewDiskRootImpl(path string) DiskRoot {
 var TrackerCountForTest = atomic.Int64{}
 
 // Add adds a tracker to disk root.
-func (d *diskRootImpl) Add(id int64, tracker UsageTracker) {
+func (d *diskRootImpl) Add(id int64, tracker ResourceTracker) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.items[id] = tracker

@@ -736,7 +736,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	}
 
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
-		WithCheckpointManager(sessPool, reorgInfo.PhysicalTableID).
+		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
