@@ -463,7 +463,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	var dataFile, statFile string
 	for i := 0; i < flushKVsRetryTimes; i++ {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
-		if err == nil {
+		if err == nil || ctx.Err() != nil {
 			break
 		}
 		logger.Warn("flush sorted kv failed",

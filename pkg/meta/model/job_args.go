@@ -1688,6 +1688,12 @@ type ModifyColumnArgs struct {
 }
 
 func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
+	// during upgrade, if https://github.com/pingcap/tidb/issues/54689 triggered,
+	// older node might run the job submitted by new version, but it expects 5
+	// args initially, and append the later 3 at runtime.
+	if a.ChangingColumn == nil {
+		return []any{a.Column, a.OldColumnName, a.Position, a.ModifyColumnType, a.NewShardBits}
+	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
 		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
