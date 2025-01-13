@@ -2967,7 +2967,27 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControlStrictMode.Load()), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		if config.GetGlobalKeyspaceName() != "" {
+			return "OFF", nil
+		}
+		return getTiDBTableValue(s, TiDBPessimisticTransactionFairLocking, BoolToOnOff(DefTiDBPessimisticTransactionFairLocking))
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if config.GetGlobalKeyspaceName() != "" {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
+			return nil
+		}
+		return setTiDBTableValue(s, TiDBPessimisticTransactionFairLocking, val, "Enable pessimistic transaction fair locking")
+	}, GetSession: func(s *SessionVars) (string, error) {
+		if config.GetGlobalKeyspaceName() != "" {
+			return "OFF", nil
+		}
+		return BoolToOnOff(s.PessimisticTransactionFairLocking), nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		if config.GetGlobalKeyspaceName() != "" {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
+			return nil
+		}
 		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
 		return nil
 	}},
