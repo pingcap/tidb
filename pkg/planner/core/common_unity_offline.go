@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"sort"
 	"strings"
@@ -59,6 +60,14 @@ func (e *Explain) UnityOffline() string {
 		if len(plans) >= 5 {
 			break
 		}
+	}
+
+	sort.Slice(plans, func(i, j int) bool {
+		return plans[i].TimeInMS < plans[j].TimeInMS
+	})
+	k := variable.UnityOfflineK.Load()
+	if k > 0 && len(plans) > int(k) {
+		plans = plans[:k]
 	}
 
 	data, err := json.Marshal(plans)
