@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -274,18 +275,41 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	// todo: add cascadesOptimize(logic)
 
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	var cas *cascades.Optimizer
+	if cas, err = cascades.NewCascades(logic); err == nil {
+		defer cas.Destroy()
+		err = cas.Execute()
+	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	finalPlan := postOptimize(ctx, sctx, physical)
+	var (
+		physical base.PhysicalPlan
+		cost     = math.MaxFloat64
+	)
+	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
+	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
+	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
+		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+		if planCounter == 0 {
+			planCounter = -1
+		}
+		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+		if tmpErr != nil {
+			err = tmpErr
+			return false
+		}
+		if tmpCost < cost {
+			physical = tmpPhysical
+		}
+		return true
+	})
+	if err != nil {
+		return nil, nil, 0, err
+	}
 
+	finalPlan := postOptimize(ctx, sctx, physical)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
