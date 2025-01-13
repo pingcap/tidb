@@ -348,6 +348,7 @@ func (mm *Memo) NewIterator() *IteratorLP {
 		root:      mm.rootGroup,
 		stackInfo: make([]*list.Element, 0, mm.groups.Len()),
 		traceID:   -1,
+		hasher:    mm.GetHasher(),
 	}
 }
 
