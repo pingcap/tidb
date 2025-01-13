@@ -41,7 +41,7 @@ func (e *Explain) UnityOffline() string {
 	for _, hs := range allPossibleHintSets {
 		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 		prefix := fmt.Sprintf("explain analyze format='%s' SELECT ", types.ExplainFormatUnityOffline)
-		sql := fmt.Sprintf("explain analyze format='%s' select %s %s ", types.ExplainFormatUnityOffline_, hs, currentSQL[len(prefix):])
+		sql := fmt.Sprintf("explain analyze format='%s' select /*+ %s */ %s ", types.ExplainFormatUnityOffline_, hs, currentSQL[len(prefix):])
 		sqlExec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
@@ -86,7 +86,7 @@ func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][
 	f(0)
 	for _, leading := range leadingHints {
 		for _, hint := range possibleIndexHints {
-			hints = append(hints, fmt.Sprintf("/*+ %s %s */", leading, hint))
+			hints = append(hints, fmt.Sprintf("%s %s", leading, hint))
 		}
 	}
 	return
