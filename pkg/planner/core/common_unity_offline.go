@@ -216,9 +216,15 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 		m[str] = struct{}{}
 		tables = append(tables, str)
 	}
+	desireFuncName := map[string]struct{}{
+		"eq": {}, "lt": {}, "le": {}, "gt": {}, "ge": {}, "ne": {},
+	}
 	collectPredCols := func(preds []expression.Expression) {
 		for _, pred := range preds {
 			if sf, ok := pred.(*expression.ScalarFunction); ok {
+				if _, ok := desireFuncName[sf.FuncName.L]; !ok {
+					continue
+				}
 				for _, arg := range sf.GetArgs() {
 					if col, ok := arg.(*expression.Column); ok {
 						str := "P:" + col.OrigName
@@ -249,6 +255,7 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 		case *PhysicalTableScan:
 			collectTable(x.DBName.L, x.Table.Name.L)
 			collectPredCols(x.AccessCondition)
+			collectPredCols(x.filterCondition)
 		case *PhysicalIndexScan:
 			collectTable(x.DBName.L, x.Table.Name.L)
 			collectPredCols(x.AccessCondition)
