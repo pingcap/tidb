@@ -441,7 +441,7 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeExchangeReceiver:
-		slots := len(exec.ExchangeSender.EncodedTaskMeta)
+		slots := len(exec.ExchangeReceiver.EncodedTaskMeta)
 		sameZoneFlags := make([]bool, 0, slots)
 		filled := false
 		if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
