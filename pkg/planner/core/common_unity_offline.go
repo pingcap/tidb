@@ -38,10 +38,16 @@ func (e *Explain) UnityOffline() string {
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
 	plans := make([]*UnityOfflinePlan, 0, len(allPossibleHintSets))
+	var currentBestInMS int
 	for _, hs := range allPossibleHintSets {
+		maxExecHint := ""
+		if currentBestInMS > 0 {
+			maxExecHint = fmt.Sprintf("max_execution_time(%d)", currentBestInMS)
+		}
 		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 		prefix := fmt.Sprintf("explain analyze format='%s' SELECT ", types.ExplainFormatUnityOffline)
-		sql := fmt.Sprintf("explain analyze format='%s' select /*+ %s */ %s ", types.ExplainFormatUnityOffline_, hs, currentSQL[len(prefix):])
+		sql := fmt.Sprintf("explain analyze format='%s' select /*+ %s %s */ %s ",
+			types.ExplainFormatUnityOffline_, hs, maxExecHint, currentSQL[len(prefix):])
 		sqlExec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
@@ -54,6 +60,9 @@ func (e *Explain) UnityOffline() string {
 		}
 		planDigestMap[plan.PlanDigest] = struct{}{}
 		plans = append(plans, plan)
+		if currentBestInMS == 0 || plan.TimeInMS < float64(currentBestInMS) {
+			currentBestInMS = int(plan.TimeInMS)
+		}
 	}
 
 	sort.Slice(plans, func(i, j int) bool {
