@@ -345,7 +345,7 @@ type StatsReadWriter interface {
 
 	// SaveStatsToStorage save the stats data to the storage.
 	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
 
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)

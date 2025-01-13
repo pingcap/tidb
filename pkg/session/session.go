@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -238,7 +237,7 @@ var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
 		// read only lock is session unrelated, skip it when adding lock to session.
-		if l.Tp != pmodel.TableLockReadOnly {
+		if l.Tp != ast.TableLockReadOnly {
 			s.lockedTables[l.TableID] = l
 		}
 	}
@@ -259,10 +258,10 @@ func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
 }
 
 // CheckTableLocked checks the table lock.
-func (s *session) CheckTableLocked(tblID int64) (bool, pmodel.TableLockType) {
+func (s *session) CheckTableLocked(tblID int64) (bool, ast.TableLockType) {
 	lt, ok := s.lockedTables[tblID]
 	if !ok {
-		return false, pmodel.TableLockNone
+		return false, ast.TableLockNone
 	}
 	return true, lt.Tp
 }
@@ -429,8 +428,8 @@ func (s *session) UpdateColStatsUsage(colStatsUsage iter.Seq[model.TableItemID])
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbName := pmodel.NewCIStr(s.GetSessionVars().CurrentDB)
-	tName := pmodel.NewCIStr(tableName)
+	dbName := ast.NewCIStr(s.GetSessionVars().CurrentDB)
+	tName := ast.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
@@ -2103,7 +2102,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(pmodel.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
 			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
 			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -4093,7 +4092,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		}
 	case *ast.CreateIndexStmt:
 		isCrucial = true
-		if stmt.IndexOption != nil && stmt.IndexOption.Tp == pmodel.IndexTypeHypo {
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == ast.IndexTypeHypo {
 			isCrucial = false
 		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
@@ -4565,7 +4564,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(ctx, pmodel.NewCIStr(t.DB), pmodel.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(t.DB), ast.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false

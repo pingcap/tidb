@@ -30,7 +30,6 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
         "//pkg/planner/util/fixcontrol",

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -209,7 +209,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
@@ -248,7 +248,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tt"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
@@ -275,7 +275,7 @@ func TestTableAnalyzed(t *testing.T) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -665,7 +665,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
 	tk.MustExec("analyze table t all columns")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetTableStats(tableInfo)

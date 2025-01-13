@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/slice"
@@ -31,7 +31,7 @@ import (
 
 func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
-	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
 		return "", err
 	}
@@ -59,7 +59,7 @@ func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 
 func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
-	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 	return nil
 }
 
-func (w *worker) createAllTables(ctx context.Context) error {
+func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
@@ -111,7 +111,7 @@ func (w *worker) createAllTables(ctx context.Context) error {
 		}
 	}
 
-	for _, tbl := range workloadTables {
+	for _, tbl := range w.workloadTables {
 		if checkTableExistsByIS(ctx, is, tbl.destTable, zeroTime) {
 			continue
 		}
@@ -128,12 +128,12 @@ func (w *worker) createAllTables(ctx context.Context) error {
 		if tbl.tableType == metadataTable {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "BEGIN_TIME")
+			generatePartitionDef(sb, "BEGIN_TIME", now)
 			createStmt = sb.String()
 		} else {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "TS")
+			generatePartitionDef(sb, "TS", now)
 			createStmt = sb.String()
 		}
 
@@ -142,42 +142,46 @@ func (w *worker) createAllTables(ctx context.Context) error {
 		}
 	}
 
-	return createAllPartitions(ctx, sess, is)
+	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	return w.createAllPartitions(ctx, sess, is, now)
 }
 
-// checkTablesExists will check if all tables are created and if the work is bootstrapped.
-func (w *worker) checkTablesExists(ctx context.Context) bool {
+func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-	now := time.Now()
-	return slice.AllOf(workloadTables, func(i int) bool {
-		return checkTableExistsByIS(ctx, is, workloadTables[i].destTable, now)
+	return slice.AllOf(w.workloadTables, func(i int) bool {
+		return checkTableExistsByIS(ctx, is, w.workloadTables[i].destTable, now)
 	})
 }
 
 func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
 	if now == zeroTime {
-		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblName))
+		return is.TableExists(workloadSchemaCIStr, ast.NewCIStr(tblName))
 	}
 
 	// check for partitions, too
-	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tblName))
+	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tblName))
 	if err != nil {
 		return false
 	}
 
+	// Insure that the table has a partition for tomorrow.
 	tbInfo := tbSchema.Meta()
-	for i := range 2 {
-		newPtTime := now.AddDate(0, 0, i+1)
-		newPtName := "p" + newPtTime.Format("20060102")
-		ptInfos := tbInfo.GetPartitionInfo().Definitions
-		if slice.NoneOf(ptInfos, func(i int) bool {
-			return ptInfos[i].Name.L == newPtName
-		}) {
-			return false
-		}
+	if tbInfo == nil {
+		return false
 	}
-	return true
+	pi := tbInfo.GetPartitionInfo()
+	if pi == nil || pi.Definitions == nil || len(pi.Definitions) == 0 {
+		return false
+	}
+	ptInfos := pi.Definitions
+	ot, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
+	if err != nil {
+		return false
+	}
+
+	// It doesn't matter if now has a timestamp.
+	return ot.After(now.AddDate(0, 0, 1))
 }

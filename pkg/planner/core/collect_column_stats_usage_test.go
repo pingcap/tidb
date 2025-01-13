@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
@@ -36,7 +36,7 @@ func getTblInfoByPhyID(t *testing.T, is infoschema.InfoSchema, physicalTblID int
 		tblInfo := tbl.Meta()
 		return tblInfo, tblInfo.Name.L
 	}
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 	require.NoError(t, err)

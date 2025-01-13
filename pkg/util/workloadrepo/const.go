@@ -17,7 +17,7 @@ package workloadrepo
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 const (
@@ -41,6 +41,6 @@ const (
 )
 
 var (
-	workloadSchemaCIStr = model.NewCIStr(WorkloadSchema)
+	workloadSchemaCIStr = ast.NewCIStr(WorkloadSchema)
 	zeroTime            = time.Time{}
 )

@@ -75,7 +75,6 @@ go_test(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/tablecodec",
         "//pkg/types",

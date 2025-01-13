@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -31,7 +31,7 @@ import (
 
 // nolint:unused
 func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp string, topn, buckets int) {
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tt))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tt))
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()

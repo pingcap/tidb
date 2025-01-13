@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,13 +45,13 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 			[]*ast.TableOption{
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: pmodel.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       pmodel.NewCIStr("test_column"),
+				ColumnName:       ast.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
@@ -70,13 +69,13 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: pmodel.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       pmodel.NewCIStr("test_column"),
+				ColumnName:       ast.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
@@ -94,7 +93,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: pmodel.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
@@ -104,7 +103,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       pmodel.NewCIStr("test_column"),
+				ColumnName:       ast.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
@@ -118,7 +117,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 			[]*ast.TableOption{
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: pmodel.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
@@ -128,7 +127,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       pmodel.NewCIStr("test_column"),
+				ColumnName:       ast.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,

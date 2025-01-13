@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -358,15 +358,15 @@ func TestIteratorLogicalPlan(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
 	}()
 	ctx := mock.NewContext()
-	asT1 := pmodel.NewCIStr("t1")
-	asT2 := pmodel.NewCIStr("t2")
+	asT1 := ast.NewCIStr("t1")
+	asT2 := ast.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
 	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join1.SetChildren(t1, t2)
 
-	asT3 := pmodel.NewCIStr("t3")
-	asT4 := pmodel.NewCIStr("t4")
+	asT3 := ast.NewCIStr("t3")
+	asT4 := ast.NewCIStr("t4")
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
