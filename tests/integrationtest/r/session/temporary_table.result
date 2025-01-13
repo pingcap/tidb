@@ -761,6 +761,7 @@ id	u	v
 2	12	102
 3	13	103
 5	15	105
+drop table if exists users, users1;
 CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3 int, v4 int,   PRIMARY KEY(id), index v1_index(v1,v2,v3) ) ON COMMIT DELETE ROWS;
 create table users1(id int, value int, index index_value(value));
 insert into users1 values(1,2);
