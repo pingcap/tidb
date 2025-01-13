@@ -135,3 +135,7 @@ func (w *WithMigrations) AddIngestedSSTs(extPath string) {
 func (w *WithMigrations) SetRestoredTS(ts uint64) {
 	w.restoredTS = ts
 }
+
+func (w *WithMigrations) SetStartTS(ts uint64) {
+	w.startTS = ts
+}

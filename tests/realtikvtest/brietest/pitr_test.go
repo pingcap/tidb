@@ -331,6 +331,58 @@ func TestPiTRAndBackupInSQL(t *testing.T) {
 	s.verifySimpleData(kit)
 }
 
+func TestPiTRAndRestoreFromMid(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
+	s.insertSimpleIncreaseData(kit)
+
+	taskName := t.Name()
+
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s.tbl))
+		bc.Storage = kit.LocalURI("fulla")
+	})
+	s.cleanSimpleData(kit)
+
+	s2 := kit.simpleWorkload()
+	s2.tbl += "2"
+	s2.createSimpleTableWithData(kit)
+	s2.insertSimpleIncreaseData(kit)
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s2.tbl))
+		bc.Storage = kit.LocalURI("fullb")
+	})
+	s2.cleanSimpleData(kit)
+
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {
+		rc.Storage = kit.LocalURI("fulla")
+		kit.SetFilter(&rc.Config, fmt.Sprintf("test.%s", s.tbl))
+	})
+	s.cleanSimpleData(kit)
+
+	ts2 := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		bc.Storage = kit.LocalURI("pitr_base_2")
+		bc.BackupTS = ts2
+	})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {
+		rc.Storage = kit.LocalURI("fullb")
+		kit.SetFilter(&rc.Config, fmt.Sprintf("test.%s", s2.tbl))
+	})
+
+	kit.forceFlushAndWait(taskName)
+	s.cleanSimpleData(kit)
+	s2.cleanSimpleData(kit)
+	kit.StopTaskIfExists(taskName)
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.FullBackupStorage = kit.LocalURI("pitr_base_2")
+	})
+	s2.verifySimpleData(kit)
+	kit.tk.MustQuery("SELECT * FROM information_schema.tables WHERE table_name = ?", s.tbl).Check([][]any{})
+}
+
 func TestPiTRAndManyBackups(t *testing.T) {
 	kit := NewLogBackupKit(t)
 	s := kit.simpleWorkload()

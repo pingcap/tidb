@@ -128,7 +128,7 @@ func AsSeq[T any](ctx context.Context, i TryNextor[T]) goiter.Seq2[error, T] {
 	return func(yield func(error, T) bool) {
 		for {
 			res := i.TryNext(ctx)
-			cont := true
+			var cont bool
 			if res.Err != nil {
 				cont = yield(res.Err, *new(T))
 			} else if res.Finished {
