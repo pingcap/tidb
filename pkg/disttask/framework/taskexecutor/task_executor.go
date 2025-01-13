@@ -434,9 +434,13 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
+	var (
+		subtaskCtx       context.Context
+		subtaskCtxCancel context.CancelFunc
+	)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
-		subtaskCtx, subtaskCtxCancel := context.WithCancel(e.stepCtx)
+		subtaskCtx, subtaskCtxCancel = context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
@@ -465,7 +469,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
-		if err := e.markSubTaskCanceledOrFailed(e.stepCtx, subtask, subtaskErr); err != nil {
+		if err := e.markSubTaskCanceledOrFailed(subtaskCtx, subtask, subtaskErr); err != nil {
 			logger.Error("failed to handle subtask error", zap.Error(err))
 		}
 		return subtaskErr
