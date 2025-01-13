@@ -56,11 +56,6 @@ func (e *Explain) UnityOffline() string {
 		}
 		planDigestMap[plan.PlanDigest] = struct{}{}
 		plans = append(plans, plan)
-
-		// TODO:
-		if len(plans) >= 5 {
-			break
-		}
 	}
 
 	sort.Slice(plans, func(i, j int) bool {
