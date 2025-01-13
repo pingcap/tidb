@@ -380,7 +380,7 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 		children = append(children, exec.Limit.Child)
 	case tipb.ExecType_TypeExchangeSender:
 		children = append(children, exec.ExchangeSender.Child)
-		sameZoneFlags := make([]bool, len(exec.ExchangeSender.EncodedTaskMeta))
+		sameZoneFlags := make([]bool, 0, len(exec.ExchangeSender.EncodedTaskMeta))
 		if len(taskZoneLabel) == 0 {
 			for i := 0; i < len(exec.ExchangeSender.EncodedTaskMeta); i++ {
 				sameZoneFlags = append(sameZoneFlags, true)
@@ -400,7 +400,7 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 		}
 		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeExchangeReceiver:
-		sameZoneFlags := make([]bool, len(exec.ExchangeReceiver.EncodedTaskMeta))
+		sameZoneFlags := make([]bool, 0, len(exec.ExchangeReceiver.EncodedTaskMeta))
 		if len(taskZoneLabel) == 0 {
 			for i := 0; i < len(exec.ExchangeReceiver.EncodedTaskMeta); i++ {
 				sameZoneFlags = append(sameZoneFlags, true)
