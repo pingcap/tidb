@@ -858,7 +858,7 @@ const (
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
-	TiDBUnityK = "tidb_unity_k"
+	TiDBUnityOfflineK = "tidb_unity_offline_k"
 
 	// TiDBEnableInstancePlanCache indicates whether to enable instance plan cache.
 	// If this variable is false, session-level plan cache will be used.
@@ -1625,7 +1625,7 @@ var (
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 
-	UnityK = atomic.NewInt64(0)
+	UnityOfflineK = atomic.NewInt64(0)
 
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
