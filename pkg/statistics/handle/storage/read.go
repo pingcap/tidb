@@ -746,6 +746,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
+	if idxInfo == nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+		return errors.NotFoundf("index %d in table %d", idx.ID, idx.TableID)
+	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
 		return errors.Trace(err)
