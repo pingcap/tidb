@@ -215,8 +215,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  0,
-							CompactionUntilTs: 9,
+							InputMinTs: 1,
+							InputMaxTs: 9,
 						},
 					},
 				},
@@ -240,8 +240,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  50,
-							CompactionUntilTs: 52,
+							InputMinTs: 50,
+							InputMaxTs: 52,
 						},
 					},
 				},
@@ -264,8 +264,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  50,
-							CompactionUntilTs: 52,
+							InputMinTs: 50,
+							InputMaxTs: 52,
 						},
 					},
 				},
@@ -275,8 +275,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  120,
-							CompactionUntilTs: 140,
+							InputMinTs: 120,
+							InputMaxTs: 140,
 						},
 					},
 				},
@@ -299,8 +299,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  50,
-							CompactionUntilTs: 52,
+							InputMinTs: 50,
+							InputMaxTs: 52,
 						},
 					},
 				},
@@ -310,8 +310,8 @@ func TestMigrations(t *testing.T) {
 					},
 					Compactions: []*backuppb.LogFileCompaction{
 						{
-							CompactionFromTs:  1200,
-							CompactionUntilTs: 1400,
+							InputMinTs: 1200,
+							InputMaxTs: 1400,
 						},
 					},
 				},
@@ -329,24 +329,114 @@ func TestMigrations(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, cs := range cases {
-		builder := logclient.NewMigrationBuilder(10, 100, 200)
-		withMigrations := builder.Build(cs.migrations)
-		it := withMigrations.Metas(generateMetaNameIter())
-		checkMetaNameIter(t, cs.expectStoreIds, it)
-		it = withMigrations.Metas(generateMetaNameIter())
-		collect := iter.CollectAll(ctx, it)
-		require.NoError(t, collect.Err)
-		for j, meta := range collect.Item {
-			physicalIter := generatePhysicalIter(meta)
-			checkPhysicalIter(t, cs.expectPhyLengths[j], physicalIter)
-			physicalIter = generatePhysicalIter(meta)
-			collect := iter.CollectAll(ctx, physicalIter)
+	for i, cs := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			builder := logclient.NewMigrationBuilder(10, 100, 200)
+			withMigrations := builder.Build(cs.migrations)
+			it := withMigrations.Metas(generateMetaNameIter())
+			checkMetaNameIter(t, cs.expectStoreIds, it)
+			it = withMigrations.Metas(generateMetaNameIter())
+			collect := iter.CollectAll(ctx, it)
 			require.NoError(t, collect.Err)
-			for k, phy := range collect.Item {
-				logicalIter := generateLogicalIter(phy)
-				checkLogicalIter(t, cs.expectLogLengths[j][k], logicalIter)
+			for j, meta := range collect.Item {
+				physicalIter := generatePhysicalIter(meta)
+				checkPhysicalIter(t, cs.expectPhyLengths[j], physicalIter)
+				physicalIter = generatePhysicalIter(meta)
+				collect := iter.CollectAll(ctx, physicalIter)
+				require.NoError(t, collect.Err)
+				for k, phy := range collect.Item {
+					logicalIter := generateLogicalIter(phy)
+					checkLogicalIter(t, cs.expectLogLengths[j][k], logicalIter)
+				}
 			}
+		})
+	}
+}
+
+func pack[T any](ts ...T) []T {
+	return ts
+}
+
+func TestFilterOut(t *testing.T) {
+	type Case struct {
+		ShiftedStartTs uint64
+		RestoredTs     uint64
+		Migs           []*backuppb.Migration
+
+		ExceptedCompactionsArtificateDir []string
+	}
+	withCompactTsCompaction := func(iMin, iMax, cFrom, cUntil uint64, name string) *backuppb.LogFileCompaction {
+		return &backuppb.LogFileCompaction{
+			InputMinTs:        iMin,
+			InputMaxTs:        iMax,
+			CompactionFromTs:  cFrom,
+			CompactionUntilTs: cUntil,
+			Artifacts:         name,
 		}
+	}
+	simpleCompaction := func(iMin, iMax uint64, name string) *backuppb.LogFileCompaction {
+		return &backuppb.LogFileCompaction{
+			InputMinTs: iMin,
+			InputMaxTs: iMax,
+			Artifacts:  name,
+		}
+	}
+	makeMig := func(cs ...*backuppb.LogFileCompaction) *backuppb.Migration {
+		return &backuppb.Migration{Compactions: cs}
+	}
+
+	cases := []Case{
+		{
+			ShiftedStartTs: 50,
+			RestoredTs:     60,
+			Migs: pack(
+				makeMig(simpleCompaction(49, 61, "a")),
+				makeMig(simpleCompaction(61, 80, "b")),
+			),
+
+			ExceptedCompactionsArtificateDir: pack("a"),
+		},
+		{
+			ShiftedStartTs: 30,
+			RestoredTs:     50,
+			Migs: pack(
+				makeMig(simpleCompaction(40, 60, "1a")),
+				makeMig(simpleCompaction(10, 20, "1b")),
+				makeMig(simpleCompaction(31, 50, "2a")),
+				makeMig(simpleCompaction(50, 80, "2b")),
+			),
+
+			ExceptedCompactionsArtificateDir: pack("1a", "2a", "2b"),
+		},
+		{
+			ShiftedStartTs: 30,
+			RestoredTs:     50,
+			Migs: pack(
+				makeMig(withCompactTsCompaction(49, 100, 50, 99, "a")),
+				makeMig(withCompactTsCompaction(10, 30, 15, 29, "b")),
+				makeMig(withCompactTsCompaction(8, 29, 10, 20, "c")),
+			),
+
+			ExceptedCompactionsArtificateDir: pack("a", "b"),
+		},
+		{
+			ShiftedStartTs: 100,
+			RestoredTs:     120,
+			Migs: pack(
+				makeMig(withCompactTsCompaction(49, 100, 50, 99, "a")),
+				makeMig(withCompactTsCompaction(0, 0, 15, 29, "b")),
+				makeMig(withCompactTsCompaction(0, 0, 10, 20, "c")),
+			),
+
+			ExceptedCompactionsArtificateDir: pack("a", "b", "c"),
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			b := logclient.NewMigrationBuilder(c.ShiftedStartTs, c.ShiftedStartTs, c.RestoredTs)
+			i := b.Build(c.Migs)
+			require.ElementsMatch(t, i.CompactionDirs(), c.ExceptedCompactionsArtificateDir)
+		})
 	}
 }
