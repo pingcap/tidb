@@ -16,6 +16,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/logutil",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util",

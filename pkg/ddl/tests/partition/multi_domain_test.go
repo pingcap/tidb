@@ -872,9 +872,9 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
 		hookChan <- struct{}{}
-		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
-		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
 	alterChan := make(chan error)
@@ -1639,7 +1639,18 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	}
 	// Skip first state, since it is none, i.e. before the DDL started...
 	for s := states - 1; s > 0; s-- {
-		for _, from := range []int{Original, Previous, Current} {
+		// Check operation against 'before DDL'
+		IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
+		currId++
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
+		currId++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
+		currId++
+		for _, from := range []int{Previous, Current} {
+			// Check operation against previous and current state
 			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
 			IDs[s][from][Update] = append(IDs[s][from][Update], currId)
 			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
@@ -1654,7 +1665,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
 			currId++
 		}
-		// Next, use 'Previous' as current and 'Current' as Next.
+		// Check against Next state, use 'Previous' as current and 'Current' as Next.
 		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currId)
 		IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
 		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
@@ -1675,7 +1686,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
 		currId++
 	}
-	require.Equal(t, 109, currId)
+	require.Equal(t, 103, currId)
 
 	// Run like this:
 	// prepare in previous state + run in Current
@@ -1692,10 +1703,10 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	initFn := func(tkO *testkit.TestKit) {
 		logutil.BgLogger().Info("initFn start")
 		for s := range IDs {
-			// `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
 			for _, id := range IDs[s][Original][Insert] {
-				tkO.MustExec(`insert into t values (?,?,?,?)`, id, id, id, "Original")
-				logutil.BgLogger().Info("run sql", zap.Int("id", id))
+				sql := fmt.Sprintf(`insert into t values (%d,%d,%d,'Original s:%d')`, id, id, id, s)
+				tkO.MustExec(sql)
+				logutil.BgLogger().Info("run sql", zap.String("sql", sql))
 			}
 		}
 		logutil.BgLogger().Info("initFn Done")
@@ -1711,39 +1722,20 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 					tk = tkNO
 				}
 				for _, id := range IDs[state][from][op] {
-					skip := false
 					var sql string
 					switch op {
 					case Insert:
 						sql = fmt.Sprintf(`insert into t values (%d,%d,%d,'Insert s:%d f:%d')`, id, id, id, state, from)
 					case Update:
-						if state == 5 && from == 1 && id == 33 ||
-							state == 6 && from == 1 && (id == 5 || id == 15) {
-							skip = true
-						}
 						sql = fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currId, state, from, id)
 					case Delete:
-						if id == 31 || id == 32 || id == 13 || id == 14 {
-							skip = true
-						}
 						sql = fmt.Sprintf(`delete from t where a = %d /* s:%d f:%d */`, id, state, from)
 					case InsertODKU:
-						if state == 5 && from == 1 && id == 34 ||
-							state == 6 && from == 1 && id == 16 {
-							skip = true
-						}
 						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s:%d f:%d')`, id, id, id, state, from, id+currId, state, from)
 					default:
 						require.Fail(t, "unknown op", "op: %d", op)
 					}
-					logutil.BgLogger().Info("run sql", zap.String("sql", sql), zap.Bool("skip", skip))
-					if skip {
-						err := tk.ExecToErr(sql)
-						require.Error(t, err)
-						require.ErrorContains(t, err, "assertion failed")
-						logutil.BgLogger().Info("Got error", zap.Error(err))
-						continue
-					}
+					logutil.BgLogger().Info("run sql", zap.String("sql", sql))
 					tk.MustExec(sql)
 				}
 			}

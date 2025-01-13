@@ -130,28 +130,29 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	origIndices := ret.meta.Indices
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	changesArePublic := pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic
+	logutil.BgLogger().Info("newPartitionedTable", zap.String("pi.DDLState", pi.DDLState.String()))
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
+		logutil.BgLogger().Info("newPartitionedTable idx", zap.String("idx.State", idx.State.String()), zap.Int64("idx.ID", idx.ID), zap.Bool("newIdx", newIdx), zap.Bool("ok", ok))
 		if !ok {
 			// Untouched index
-			/*
-				if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
-					// Dropping partitions are no longer public, so we cannot assert on them,
-					// Adding partitions are public, so we should assert on them.
-					idx = idx.Clone()
-					idx.State = model.StatePublic
-					AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
-					idx = idx.Clone()
-					idx.State = model.StateDeleteReorganization
-					DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-					continue
-				}
-
-			*/
+			clonedIdx := idx.Clone()
+			if changesArePublic {
+				// Adding partitions are now public, so we should assert on them.
+				AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+				// Dropping partitions are no longer public, so we cannot assert on them.
+				// Using WriteOnly, since DeleteOnly/DeleteReorganization is not classified
+				// as Writable, see tables.IsIndexWritable().
+				clonedIdx.State = model.StateWriteOnly
+				DroppingDefinitionIndices = append(DroppingDefinitionIndices, clonedIdx)
+				continue
+			}
+			// Currently used partitions, continue use StatePublic for assertions
 			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			idx = idx.Clone()
-			idx.State = pi.DDLState
-			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			// new partitions, use current state for skipping assertions
+			clonedIdx.State = pi.DDLState
+			AddingDefinitionIndices = append(AddingDefinitionIndices, clonedIdx)
 			continue
 		}
 		if newIdx {
@@ -1945,22 +1946,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
-			//switch t.Meta().Partition.DDLState {
-			//case model.StateDeleteReorganization, model.StatePublic:
-			//	err = t.getPartition(newTo).RemoveRecord(ctx, txn, h, currData)
-			//	if err != nil {
-			//		return errors.Trace(err)
-			//	}
-			//	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
-			//	if err != nil {
-			//		return errors.Trace(err)
-			//	}
-			//default:
-			//	err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
-			//	if err != nil {
-			//		return errors.Trace(err)
-			//	}
-			//}
 			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
 			if err != nil {
 				return errors.Trace(err)
