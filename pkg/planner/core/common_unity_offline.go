@@ -42,15 +42,10 @@ func (e *Explain) UnityOffline() string {
 		sqlExec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
-		if err != nil {
-			panic(err)
-		}
+		must(err)
 		data := rows[0].GetString(0)
 		plan := new(UnityOfflinePlan)
-		err = json.Unmarshal([]byte(data), plan)
-		if err != nil {
-			panic(err)
-		}
+		must(json.Unmarshal([]byte(data), plan))
 		if _, ok := planDigestMap[plan.PlanDigest]; ok {
 			continue
 		}
@@ -132,9 +127,7 @@ func (e *Explain) unityOfflineIterateLeadingHints(tableNames []*tableName) (hint
 func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
 	is := domain.GetDomain(e.SCtx()).InfoSchema()
 	tt, err := is.TableByName(context.Background(), ast.NewCIStr(t.schema), ast.NewCIStr(t.table))
-	if err != nil {
-		panic(err)
-	}
+	must(err)
 	for _, idx := range tt.Indices() {
 		idxNames = append(idxNames, idx.Meta().Name.O)
 	}
