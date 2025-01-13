@@ -16,12 +16,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-func (e *Explain) UnityOffline() (string, error) {
+func (e *Explain) UnityOffline() string {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
-	if err != nil {
-		return "", err
-	}
+	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
 	leadingHints := e.iterateLeadingHints(tableNames)
 
@@ -63,10 +61,8 @@ func (e *Explain) UnityOffline() (string, error) {
 	}
 
 	data, err := json.Marshal(plans)
-	if err != nil {
-		panic(err)
-	}
-	return string(data), nil
+	must(err)
+	return string(data)
 }
 
 func (e *Explain) iterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
@@ -139,7 +135,7 @@ func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
 	return
 }
 
-func (e *Explain) UnityOffline_() (string, error) {
+func (e *Explain) UnityOffline_() string {
 	up := new(UnityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
 	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)
@@ -148,7 +144,8 @@ func (e *Explain) UnityOffline_() (string, error) {
 	up.MemInByte = memTracker.MaxConsumed()
 	up.SubPlans = e.unitySubPlan()
 	data, err := json.Marshal(up)
-	return string(data), err
+	must(err)
+	return string(data)
 }
 
 func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
