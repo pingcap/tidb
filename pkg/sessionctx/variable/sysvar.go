@@ -1388,7 +1388,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
-	{Scope: ScopeGlobal, Name: TiDBUnityOfflineK, Value: "0", Type: TypeInt,
+	{Scope: ScopeGlobal, Name: TiDBUnityOfflineK, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: 100000000,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.Itoa(int(UnityOfflineK.Load())), nil
 		},
