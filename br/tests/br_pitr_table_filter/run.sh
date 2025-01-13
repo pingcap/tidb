@@ -276,7 +276,8 @@ test_table_rename() {
 
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
 
-    verify_tables "log_backup" 3 true
+    verify_tables "log_backup" 3 false
+    verify_tables "log_backup_renamed" 3 true
     verify_tables "log_backup_renamed_in" 3 true
 
     verify_tables "full_backup" 3 false
@@ -422,7 +423,7 @@ test_exchange_partition() {
 
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
 
     # verify the results
     run_sql "SELECT count(*) = 1 FROM $DB.log_after_exchange WHERE id = 1 AND value = 1" || {
