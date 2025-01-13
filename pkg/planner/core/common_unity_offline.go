@@ -218,6 +218,7 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 	}
 	desireFuncName := map[string]struct{}{
 		"eq": {}, "lt": {}, "le": {}, "gt": {}, "ge": {}, "ne": {},
+		"in": {}, "isnull": {}, "between": {},
 	}
 	collectPredCols := func(preds []expression.Expression) {
 		for _, pred := range preds {
