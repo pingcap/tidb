@@ -70,6 +70,17 @@ func NewMemo(caps ...uint64) *Memo {
 	}
 }
 
+// Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
+func (mm *Memo) Destroy() {
+	// when a memo itself is useless, we can clean itself actively.
+	mm.groupIDGen.id = 0
+	mm.rootGroup = nil
+	mm.groups.Init()
+	clear(mm.groupID2Group)
+	mm.hash2GlobalGroupExpr.Clear()
+	mm.hasher.Reset()
+}
+
 // GetHasher gets a hasher from the memo that ready to use.
 func (mm *Memo) GetHasher() base2.Hasher {
 	mm.hasher.Reset()
@@ -327,6 +338,25 @@ type IteratorLP struct {
 	stackInfo []*list.Element
 	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
 	traceID int
+}
+
+// NewIterator new a logical plan iterator from current memo based on its root group.
+func (mm *Memo) NewIterator() *IteratorLP {
+	return &IteratorLP{
+		root:      mm.rootGroup,
+		stackInfo: make([]*list.Element, 0, mm.groups.Len()),
+		traceID:   -1,
+	}
+}
+
+// Each iterator all logical plan from current memo group.
+func (it *IteratorLP) Each(f func(base.LogicalPlan) bool) {
+	cur := it.Next()
+	for ; cur != nil; cur = it.Next() {
+		if !f(cur) {
+			break
+		}
+	}
 }
 
 // Next return valid logical plan implied in memo without duplication.
