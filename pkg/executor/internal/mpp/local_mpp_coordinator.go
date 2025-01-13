@@ -396,20 +396,18 @@ func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor,
 	return false, sameZoneFlags
 }
 
-func (h *taskZoneInfoHelper) inferSameZoneFlags(encodedTaskMeta [][]byte, slots int, sameZoneFlags []bool) ([]string, []bool) {
+func (h *taskZoneInfoHelper) inferSameZoneFlags(encodedTaskMeta [][]byte, slots int) []string {
 	zoneInfos := make([]string, 0, slots)
 	for _, taskBytes := range encodedTaskMeta {
 		taskMeta := &mpp.TaskMeta{}
 		err := taskMeta.Unmarshal(taskBytes)
 		if err != nil {
-			sameZoneFlags = append(sameZoneFlags, true)
+			zoneInfos = append(zoneInfos, "")
 			continue
 		}
-		senderZone, senderExist := h.allTiflashZoneInfo[taskMeta.GetAddress()]
-		zoneInfos = append(zoneInfos, senderZone)
-		sameZoneFlags = append(sameZoneFlags, !senderExist || h.currentTaskZone == senderZone)
+		zoneInfos = append(zoneInfos, h.allTiflashZoneInfo[taskMeta.GetAddress()])
 	}
-	return zoneInfos, sameZoneFlags
+	return zoneInfos
 }
 
 func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
@@ -434,7 +432,7 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		}
 		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
 		if !exist {
-			zoneInfos, sameZoneFlags = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots, sameZoneFlags)
+			zoneInfos = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots)
 			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
 		}
 		for i := 0; i < slots; i++ {
@@ -451,7 +449,7 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		}
 		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
 		if !exist {
-			zoneInfos, sameZoneFlags = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots, sameZoneFlags)
+			zoneInfos = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots)
 			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
 		}
 		for i := 0; i < slots; i++ {
