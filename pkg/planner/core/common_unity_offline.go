@@ -21,17 +21,17 @@ func (e *Explain) UnityOffline() string {
 	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
-	leadingHints := e.iterateLeadingHints(tableNames)
+	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
 
 	indexHints := make([][]string, len(tableNames))
 	for i, t := range tableNames {
-		indexHints[i] = e.iterateIndexHints(t)
+		indexHints[i] = e.unityOfflineIterateIndexHints(t)
 	}
 
-	allPossibleHintSets := e.iterateHints(leadingHints, indexHints)
+	allPossibleHintSets := e.unityOfflineIterateHints(leadingHints, indexHints)
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
-	plans := make([]*UnityPlan, 0, len(allPossibleHintSets))
+	plans := make([]*UnityOfflinePlan, 0, len(allPossibleHintSets))
 	for _, hs := range allPossibleHintSets {
 		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 		prefix := "explain analyze format='unity_offline' SELECT "
@@ -43,7 +43,7 @@ func (e *Explain) UnityOffline() string {
 			panic(err)
 		}
 		data := rows[0].GetString(0)
-		plan := new(UnityPlan)
+		plan := new(UnityOfflinePlan)
 		err = json.Unmarshal([]byte(data), plan)
 		if err != nil {
 			panic(err)
@@ -65,7 +65,7 @@ func (e *Explain) UnityOffline() string {
 	return string(data)
 }
 
-func (e *Explain) iterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
+func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
 	currentIndexHints := make([]string, len(indexHints))
 	var possibleIndexHints []string
 	var f func(int)
@@ -88,7 +88,7 @@ func (e *Explain) iterateHints(leadingHints []string, indexHints [][]string) (hi
 	return
 }
 
-func (e *Explain) iterateIndexHints(t *tableName) (hints []string) {
+func (e *Explain) unityOfflineIterateIndexHints(t *tableName) (hints []string) {
 	hints = append(hints, "")                                         // empty hint
 	hints = append(hints, fmt.Sprintf("use_index(%s)", t.HintName())) // don't use index
 	idxNames := e.tableIndexNames(t)
@@ -98,7 +98,7 @@ func (e *Explain) iterateIndexHints(t *tableName) (hints []string) {
 	return
 }
 
-func (e *Explain) iterateLeadingHints(tableNames []*tableName) (hints []string) {
+func (e *Explain) unityOfflineIterateLeadingHints(tableNames []*tableName) (hints []string) {
 	hints = append(hints, "") // empty
 	n := len(tableNames)
 	switch n {
@@ -136,7 +136,7 @@ func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
 }
 
 func (e *Explain) UnityOffline_() string {
-	up := new(UnityPlan)
+	up := new(UnityOfflinePlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
 	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)
 	basicStats, _ := rootStats.MergeStats()
@@ -148,7 +148,7 @@ func (e *Explain) UnityOffline_() string {
 	return string(data)
 }
 
-func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
+func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
 	var iterSubPlanFunc func(op *FlatOperator)
 	iterSubPlanFunc = func(op *FlatOperator) {
@@ -156,7 +156,7 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 			return
 		}
 		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
-		planNode := &UnityPlanNode{
+		planNode := &UnityOfflinePlanNode{
 			ExplainInfoForEncode: explainNode,
 			PreSequences:         planPreSequences(op.Origin),
 			Hints:                planHints(op.Origin),
@@ -170,17 +170,17 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 	return
 }
 
-type UnityPlanNode struct {
+type UnityOfflinePlanNode struct {
 	*ExplainInfoForEncode
 	PreSequences []string `json:"preSequences"`
 	Hints        string   `json:"hints"`
 }
 
-type UnityPlan struct {
-	PlanDigest string           `json:"planDigest"`
-	TimeInMS   float64          `json:"TimeInMS"`
-	MemInByte  int64            `json:"memInByte"`
-	SubPlans   []*UnityPlanNode `json:"subPlans"`
+type UnityOfflinePlan struct {
+	PlanDigest string                  `json:"planDigest"`
+	TimeInMS   float64                 `json:"TimeInMS"`
+	MemInByte  int64                   `json:"memInByte"`
+	SubPlans   []*UnityOfflinePlanNode `json:"subPlans"`
 }
 
 func planPreSequences(p base.Plan) (preSeq []string) {
