@@ -205,7 +205,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	storeZoneMap := prepareZoneInfo(c.sessionCtx.GetStore())
+	zoneHelper := taskZoneInfoHelper{}
+	zoneHelper.init(c.sessionCtx.GetStore())
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
@@ -221,8 +222,9 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		if err != nil {
 			return err
 		}
-		taskZoneLabel := storeZoneMap[mppTask.Meta.GetAddress()]
-		c.fillSameZoneFlagForExchange(dagReq.RootExecutor, taskZoneLabel, storeZoneMap)
+		zoneHelper.isRoot = pf.IsRoot
+		zoneHelper.currentTaskZone = zoneHelper.allTiflashZoneInfo[mppTask.Meta.GetAddress()]
+		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
@@ -349,24 +351,68 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 	return nil
 }
 
-func prepareZoneInfo(store kv.Storage) map[string]string {
+// taskZoneInfoHelper used to help reset exchange executor's same zone flags
+type taskZoneInfoHelper struct {
+	isRoot             bool
+	tidbZone           string
+	currentTaskZone    string
+	allTiflashZoneInfo map[string]string
+	// exchangeZoneInfo is used to cache one mpp task's zone info:
+	// key is executor id, value is zone_info array
+	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
+	exchangeZoneInfo map[string][]string
+}
+
+func (h *taskZoneInfoHelper) init(store kv.Storage) {
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
-		return nil
+		return
 	}
-	storeZoneMap := make(map[string]string)
+	h.tidbZone = config.GetGlobalConfig().Labels[placement.DCLabelKey]
 	cache := tikvStore.GetRegionCache()
 	allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	h.allTiflashZoneInfo = make(map[string]string, len(allTiFlashStores))
 	for _, tiflashStore := range allTiFlashStores {
 		tiflashStoreAddr := tiflashStore.GetAddr()
 		if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
-			storeZoneMap[tiflashStoreAddr] = tiflashZone
+			h.allTiflashZoneInfo[tiflashStoreAddr] = tiflashZone
 		}
 	}
-	return storeZoneMap
+	// initial capacity to 2, for one exchange sender and one exchange receiver
+	h.exchangeZoneInfo = make(map[string][]string, 2)
 }
 
-func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, taskZoneLabel string, zoneMap map[string]string) {
+func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
+	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
+		for i := 0; i < slots; i++ {
+			sameZoneFlags = append(sameZoneFlags, true)
+		}
+		return true, sameZoneFlags
+	}
+	if h.isRoot && exec.Tp == tipb.ExecType_TypeExchangeSender {
+		sameZoneFlags = append(sameZoneFlags, len(h.tidbZone) == 0 || h.currentTaskZone == h.tidbZone)
+		return true, sameZoneFlags
+	}
+	return false, sameZoneFlags
+}
+
+func (h *taskZoneInfoHelper) inferSameZoneFlags(encodedTaskMeta [][]byte, slots int, sameZoneFlags []bool) ([]string, []bool) {
+	zoneInfos := make([]string, 0, slots)
+	for _, taskBytes := range encodedTaskMeta {
+		taskMeta := &mpp.TaskMeta{}
+		err := taskMeta.Unmarshal(taskBytes)
+		if err != nil {
+			sameZoneFlags = append(sameZoneFlags, true)
+			continue
+		}
+		senderZone, senderExist := h.allTiflashZoneInfo[taskMeta.GetAddress()]
+		zoneInfos = append(zoneInfos, senderZone)
+		sameZoneFlags = append(sameZoneFlags, !senderExist || h.currentTaskZone == senderZone)
+	}
+	return zoneInfos, sameZoneFlags
+}
+
+func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 	children := make([]*tipb.Executor, 0, 2)
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
@@ -380,44 +426,36 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 		children = append(children, exec.Limit.Child)
 	case tipb.ExecType_TypeExchangeSender:
 		children = append(children, exec.ExchangeSender.Child)
-		sameZoneFlags := make([]bool, 0, len(exec.ExchangeSender.EncodedTaskMeta))
-		if len(taskZoneLabel) == 0 {
-			for i := 0; i < len(exec.ExchangeSender.EncodedTaskMeta); i++ {
-				sameZoneFlags = append(sameZoneFlags, true)
-			}
-			exec.ExchangeSender.SameZoneFlag = sameZoneFlags
+		slots := len(exec.ExchangeSender.EncodedTaskMeta)
+		sameZoneFlags := make([]bool, 0, slots)
+		filled := false
+		if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
 			break
 		}
-		for _, taskBytes := range exec.ExchangeSender.EncodedTaskMeta {
-			taskMeta := &mpp.TaskMeta{}
-			err := taskMeta.Unmarshal(taskBytes)
-			if err != nil {
-				sameZoneFlags = append(sameZoneFlags, true)
-				continue
-			}
-			receiverZone, receiverExist := zoneMap[taskMeta.GetAddress()]
-			sameZoneFlags = append(sameZoneFlags, !receiverExist || taskZoneLabel == receiverZone)
+		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
+		if !exist {
+			zoneInfos, sameZoneFlags = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots, sameZoneFlags)
+			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
+		}
+		for i := 0; i < slots; i++ {
+			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 		}
 		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeExchangeReceiver:
-		sameZoneFlags := make([]bool, 0, len(exec.ExchangeReceiver.EncodedTaskMeta))
-		if len(taskZoneLabel) == 0 {
-			for i := 0; i < len(exec.ExchangeReceiver.EncodedTaskMeta); i++ {
-				sameZoneFlags = append(sameZoneFlags, true)
-			}
-			exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
+		slots := len(exec.ExchangeSender.EncodedTaskMeta)
+		sameZoneFlags := make([]bool, 0, slots)
+		filled := false
+		if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
 			break
 		}
-		for _, taskBytes := range exec.ExchangeReceiver.EncodedTaskMeta {
-			taskMeta := &mpp.TaskMeta{}
-			err := taskMeta.Unmarshal(taskBytes)
-			if err != nil {
-				sameZoneFlags = append(sameZoneFlags, true)
-				continue
-			}
-			senderZone, senderExist := zoneMap[taskMeta.GetAddress()]
-			sameZoneFlags = append(sameZoneFlags, !senderExist || taskZoneLabel == senderZone)
+		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
+		if !exist {
+			zoneInfos, sameZoneFlags = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots, sameZoneFlags)
+			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
+		}
+		for i := 0; i < slots; i++ {
+			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 		}
 		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
@@ -437,7 +475,7 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %d", exec.Tp))
 	}
 	for _, child := range children {
-		c.fillSameZoneFlagForExchange(child, taskZoneLabel, zoneMap)
+		h.fillSameZoneFlagForExchange(child)
 	}
 }
 

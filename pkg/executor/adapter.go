@@ -1808,6 +1808,10 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 	if runtimeStatsColl == nil {
 		return
 	}
+	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	if tiflashNetworkStats == nil {
+		return
+	}
 	var tikvExecDetail util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw == nil {
@@ -1816,10 +1820,7 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 	}
 
 	tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
-	if tiflashNetworkStats != nil {
-		tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
-	}
+	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
