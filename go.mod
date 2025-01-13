@@ -94,9 +94,15 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20241204085508-80a6b021f0f6
 	github.com/tikv/pd/client v0.0.0-20240725070735-fb162bf0aa3f
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20250107062519-2eba2f614b38
+	github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de
+	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
+>>>>>>> b819dadd902 (*: update client-go to interpret InvalidMaxTsUpdate error (#58758))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
