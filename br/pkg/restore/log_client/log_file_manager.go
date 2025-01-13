@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
@@ -374,18 +373,18 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 
 // Fetch compactions that may contain file less than the TS.
 func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backup.LogFileSubcompaction) SSTs {
+	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
 		return &CompactedSSTs{c}
 	})
 }
 
 func (rc *LogFileManager) GetIngestedSSTsSSTs(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.FlatMap(rc.withMigrations.IngestedSSTss(ctx, rc.storage), func(c *backup.IngestedSSTs) iter.TryNextor[SSTs] {
+	return iter.FlatMap(rc.withMigrations.IngestedSSTss(ctx, rc.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
 		remap := map[int64]int64{}
 		for _, r := range c.RewrittenTables {
 			remap[r.AncestorUpstream] = r.Upstream
 		}
-		return iter.TryMap(iter.FromSlice(c.Files), func(f *backup.File) (SSTs, error) {
+		return iter.TryMap(iter.FromSlice(c.Files), func(f *backuppb.File) (SSTs, error) {
 			sst := &AddedSSTs{File: f}
 			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
 				sst.Rewritten = backuppb.RewrittenTableID{

@@ -1583,7 +1583,7 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
-	totalWorkUnits := numberOfKVsInSST + int64(client.Stats.NumEntries)
+	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
 	pd := g.StartProgress(ctx, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {

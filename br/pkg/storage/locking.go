@@ -192,6 +192,10 @@ type RemoteLock struct {
 	path    string
 }
 
+func (l *RemoteLock) String() string {
+	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
+}
+
 func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path string) error {
 	meta, err := readLockMeta(ctx, storage, path)
 	if err != nil {
@@ -253,6 +257,23 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to delete lock file %s", l.path)
 	}
 	return nil
+}
+
+func (l RemoteLock) UnlockOnCleanUp(ctx context.Context) {
+	const cleanUpContextTimeOut = 30 * time.Second
+
+	if ctx.Err() != nil {
+		logutil.CL(ctx).Warn("Unlocking but the context was done. Use the background context with a deadline.",
+			logutil.AShortError("ctx-err", ctx.Err()))
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), cleanUpContextTimeOut)
+		defer cancel()
+	}
+
+	if err := l.Unlock(ctx); err != nil {
+		logutil.CL(ctx).Warn("Failed to unlock a lock, you may need to manually delete it.",
+			zap.Stringer("lock", &l), zap.Int("pid", os.Getpid()), logutil.ShortError(err))
+	}
 }
 
 func writeLockName(path string) string {

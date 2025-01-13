@@ -34,7 +34,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
@@ -586,7 +585,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 }
 
 type LockedMigrations struct {
-	Migs     []*backup.Migration
+	Migs     []*backuppb.Migration
 	ReadLock storage.RemoteLock
 }
 

@@ -764,7 +764,7 @@ func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (i
 	if err != nil {
 		return 0, err
 	}
-	defer lock.Unlock(ctx)
+	defer lock.UnlockOnCleanUp(ctx)
 
 	migs, err := m.Load(ctx)
 	if err != nil {
@@ -859,7 +859,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			}}
 		return
 	}
-	defer lock.Unlock(ctx)
+	defer lock.UnlockOnCleanUp(ctx)
 
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
@@ -1281,7 +1281,6 @@ func (ebs IngestedSSTss) GroupTS() uint64 {
 }
 
 func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[IngestedSSTss] {
-
 	fullBackupDirIter := iter.FromSlice(paths)
 	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.
@@ -1316,10 +1315,12 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]
 
 		fbk := res.Item
 		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
-			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+				"the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
 		}
 		uid := uuid.UUID(fbk.BackupUuid)
-		log.Info("Collecting extra full backup", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
+		log.Info("Collecting extra full backup",
+			zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
 
 		if _, ok := finished[uid]; ok {
 			log.Warn("Encountered a finished full backup.", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint))

@@ -182,7 +182,7 @@ func (c *pitrCollector) close() error {
 	return nil
 }
 
-func (C *pitrCollector) verifyCompatibilityFor(fileset *restore.BackupFileSet) error {
+func (c *pitrCollector) verifyCompatibilityFor(fileset *restore.BackupFileSet) error {
 	if len(fileset.RewriteRules.NewKeyspace) > 0 {
 		return errors.Annotate(berrors.ErrUnsupportedOperation, "keyspace rewriting isn't supported when log backup enabled")
 	}
@@ -217,7 +217,6 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 		}
 
 		for _, file := range fileSet.SSTFiles {
-			file := file
 			fileCount += 1
 			eg.Go(func() error {
 				if err := c.putSST(ectx, file); err != nil {
@@ -227,7 +226,6 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 			})
 		}
 		for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
-			hint := hint
 			eg.Go(func() error {
 				if err := c.putRewriteRule(ectx, hint.Origin, hint.Rewritten); err != nil {
 					return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)

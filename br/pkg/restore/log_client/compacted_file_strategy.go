@@ -10,7 +10,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"go.uber.org/zap"
 )
 
@@ -27,7 +26,7 @@ type CompactedFileSplitStrategy struct {
 var _ split.SplitStrategy[SSTs] = &CompactedFileSplitStrategy{}
 
 func NewCompactedFileSplitStrategy(
-	rules map[int64]*restoreutils.RewriteRules,
+	rules map[int64]*utils.RewriteRules,
 	checkpointsSet map[string]struct{},
 	updateStatsFn func(uint64, uint64),
 ) *CompactedFileSplitStrategy {
@@ -40,7 +39,7 @@ func NewCompactedFileSplitStrategy(
 
 type sstIdentity struct {
 	EffectiveID     int64
-	RewriteBoundary *restoreutils.RewriteRules
+	RewriteBoundary *utils.RewriteRules
 }
 
 func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
@@ -52,7 +51,7 @@ func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
 		}
 	}
 
-	rule := restoreutils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), 0, map[int64]int64{}, false)
+	rule := utils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), 0, map[int64]int64{}, false)
 
 	return sstIdentity{
 		EffectiveID:     r.RewrittenTo(),

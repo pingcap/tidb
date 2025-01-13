@@ -280,8 +280,8 @@ type RestoreConfig struct {
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
 }
 
-func (r *RestoreConfig) LocalEncryptionEnabled() bool {
-	return r.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
+func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
+	return cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
