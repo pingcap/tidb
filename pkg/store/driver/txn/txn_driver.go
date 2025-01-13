@@ -17,7 +17,6 @@ package txn
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"sync/atomic"
 	"time"
 
@@ -387,13 +386,11 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 
 // SetAssertion sets an assertion for the key operation.
 func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
-	logutil.BgLogger().Info("SetAssertion", zap.String("key", hex.EncodeToString(key)), zap.Any("assertion", assertion))
 	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key)
 	if err != nil && !tikverr.IsErrNotFound(err) {
 		return err
 	}
 	if err == nil && f.HasAssertionFlags() {
-		logutil.BgLogger().Info("SetAssertion already done for key", zap.String("key", hex.EncodeToString(key)))
 		return nil
 	}
 	txn.UpdateMemBufferFlags(key, assertion...)

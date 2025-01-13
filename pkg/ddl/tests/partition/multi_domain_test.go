@@ -18,12 +18,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"math"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1753,7 +1753,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 
 func TestTest(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer testutil.InjectMockBackendMgr(t, store)()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
