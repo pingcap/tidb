@@ -110,7 +110,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			zap.Duration("duration", time.Since(start)))
 	}
 
-	// Sort table IDs to ensure a consistent dump order and avoid potential deadlocks.
+	// Sort table IDs to ensure a consistent dump order to reduce the chance of deadlock.
 	tableIDs := make([]int64, 0, len(deltaMap))
 	for id := range deltaMap {
 		tableIDs = append(tableIDs, id)
@@ -165,7 +165,6 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				return nil
 			}
 
-			beforeLen := len(batchUpdates)
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV.
 			startTs, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
@@ -173,8 +172,15 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				return errors.Trace(err)
 			}
 			statsVersion = startTs
+			intest.AssertFunc(
+				func() bool {
+					return slices.IsSortedFunc(batchUpdates, func(i, j *storage.DeltaUpdate) int {
+						return cmp.Compare(i.TableID, j.TableID)
+					})
+				},
+				"batchUpdates should be sorted by table ID",
+			)
 
-			intest.Assert(len(batchUpdates) >= beforeLen, "batchUpdates can only be appended")
 			// Update deltaMap after the batch is successfully dumped.
 			for _, update := range batchUpdates {
 				UpdateTableDeltaMap(deltaMap, update.TableID, -update.Delta.Delta, -update.Delta.Count)
@@ -232,6 +238,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	if len(updates) == 0 {
 		return 0, nil
 	}
+	beforeLen := len(updates)
 	statsVersion, err = utilstats.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -302,6 +309,13 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			}
 			update.IsLocked = isTableLocked
 		}
+	}
+	intest.Assert(len(updates) >= beforeLen, "updates can only be appended")
+	if len(updates) > beforeLen {
+		// Resort updates after appending new updates.
+		slices.SortFunc(updates, func(i, j *storage.DeltaUpdate) int {
+			return cmp.Compare(i.TableID, j.TableID)
+		})
 	}
 
 	// Batch update stats meta.
