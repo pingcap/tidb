@@ -169,7 +169,7 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
 		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
 		planNode := &UnityOfflinePlanNode{
 			ExplainInfoForEncode: explainNode,
-			PreSequences:         planPreSequences(op.Origin),
+			PreSequence:          planPreSequences(op.Origin),
 			Hints:                planHints(op.Origin),
 		}
 		subPlans = append(subPlans, planNode)
@@ -183,8 +183,8 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
 
 type UnityOfflinePlanNode struct {
 	*ExplainInfoForEncode
-	PreSequences []string `json:"preSequences"`
-	Hints        string   `json:"hints"`
+	PreSequence *UnityOfflinePreSequence `json:"preSequence"`
+	Hints       string                   `json:"hints"`
 }
 
 type UnityOfflinePlan struct {
@@ -200,7 +200,7 @@ type UnityOfflinePreSequence struct {
 	JoinColumns      []string `json:"joinColumns"`
 }
 
-func planPreSequences(p base.Plan) (preSeq []string) {
+func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 	var tables, predCols, joinCols []string
 	m := make(map[string]struct{})
 
@@ -262,7 +262,15 @@ func planPreSequences(p base.Plan) (preSeq []string) {
 			continue
 		}
 	}
-	return
+
+	sort.Strings(tables)
+	sort.Strings(predCols)
+	sort.Strings(joinCols)
+	return &UnityOfflinePreSequence{
+		Tables:           tables,
+		PredicateColumns: predCols,
+		JoinColumns:      joinCols,
+	}
 }
 
 func planHints(p base.Plan) string {
