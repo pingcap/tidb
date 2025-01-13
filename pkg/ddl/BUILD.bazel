@@ -282,6 +282,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/logutil",
         "//pkg/ddl/mock",
         "//pkg/ddl/placement",
