@@ -906,12 +906,10 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"TiDB_JSON"}
 	case format == types.ExplainFormatUnity:
 		fieldNames = []string{"unity"}
-	case format == types.ExplainFormatUnitySQL:
-		fieldNames = []string{"unity plan"}
+	case format == types.ExplainFormatUnityOffline_:
+		fieldNames = []string{"unity offline"}
 	case format == types.ExplainFormatUnityOffline:
-		fieldNames = []string{"unity plan gen"}
-	case format == types.ExplainFormatUnityJoin:
-		fieldNames = []string{"unity join"}
+		fieldNames = []string{"unity offline"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -935,7 +933,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 
-	if e.Format == types.ExplainFormatUnitySQL {
+	if e.Format == types.ExplainFormatUnityOffline_ {
 		if e.Analyze == false {
 			return errors.New("explain format unity plan must be used with analyze")
 		}
@@ -1033,7 +1031,7 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
-	case types.ExplainFormatUnitySQL:
+	case types.ExplainFormatUnityOffline_:
 		planJSON, err := e.unityPlanOne()
 		if err != nil {
 			return err
@@ -1045,8 +1043,6 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{planJSON})
-	case types.ExplainFormatUnityJoin:
-		panic("TODO")
 	case types.ExplainFormatUnity:
 		e.Rows = append(e.Rows, []string{prepareForUnity(e.SCtx(), e.LogicalPlan)})
 	default:
