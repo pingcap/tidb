@@ -34,7 +34,11 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 10,
+>>>>>>> b74eb0f906a (ddl notifier: fix shared session by List and DeleteAndCommit (#58833))
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/session",

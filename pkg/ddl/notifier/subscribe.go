@@ -190,8 +190,35 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 			if err2 := n.processEventForHandler(ctx, session, change, handlerID, handler); err2 != nil {
 				skipHandlers[handlerID] = struct{}{}
 
+<<<<<<< HEAD
 				if !goerr.Is(err2, ErrNotReadyRetryLater) {
 					logutil.Logger(ctx).Error("Error processing change",
+=======
+			if intest.InTest {
+				if n.handlersBitMap == 0 {
+					// There are unit tests that directly check the system table while no subscriber
+					// is registered. We continue the loop to skip DELETE the events in table so
+					// tests can check them.
+					continue
+				}
+			}
+
+			if change.processedByFlag == n.handlersBitMap {
+				s3, err3 := n.sysSessionPool.Get()
+				if err3 != nil {
+					return errors.Trace(err3)
+				}
+				sess4Del := sess.NewSession(s3.(sessionctx.Context))
+				err3 = n.store.DeleteAndCommit(
+					ctx,
+					sess4Del,
+					change.ddlJobID,
+					int(change.subJobID),
+				)
+				n.sysSessionPool.Put(s3)
+				if err3 != nil {
+					logutil.Logger(ctx).Error("Error deleting change",
+>>>>>>> b74eb0f906a (ddl notifier: fix shared session by List and DeleteAndCommit (#58833))
 						zap.Int64("ddlJobID", change.ddlJobID),
 						zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
 						zap.Stringer("handler", handlerID),
