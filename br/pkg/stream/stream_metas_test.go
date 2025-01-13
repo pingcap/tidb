@@ -452,13 +452,13 @@ func mDstrPfx(path ...string) migOP {
 	}
 }
 
-func mCompaction(cPath, aPath string, fromTs, untilTs uint64) migOP {
+func mCompaction(cPath, aPath string, minTs, maxTs uint64) migOP {
 	return func(m *backuppb.Migration) {
 		c := &backuppb.LogFileCompaction{}
 		c.GeneratedFiles = cPath
 		c.Artifacts = aPath
-		c.CompactionFromTs = fromTs
-		c.CompactionUntilTs = untilTs
+		c.InputMinTs = minTs
+		c.InputMaxTs = maxTs
 		m.Compactions = append(m.Compactions, c)
 	}
 }
