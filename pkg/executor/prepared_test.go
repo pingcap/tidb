@@ -1210,7 +1210,7 @@ func TestIssue58870(t *testing.T) {
 	tk.MustExec("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (1, '1', 1 ,'\xB2\xE2')")
 	tk.MustExec("PREPARE a FROM 'INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (2, 2, 2 ,\"\xB2\xE2\")'")
 	tk.MustExec("EXECUTE a")
-	stmt, _, _, err  := tk.Session().PrepareStmt("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (3, 3, 3 ,\"\xB2\xE2\")")
+	stmt, _, _, err := tk.Session().PrepareStmt("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (3, 3, 3 ,\"\xB2\xE2\")")
 	require.Nil(t, err)
 	rs, err := tk.Session().ExecutePreparedStmt(context.TODO(), stmt, nil)
 	require.Nil(t, err)
