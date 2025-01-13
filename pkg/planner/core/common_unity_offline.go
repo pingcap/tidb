@@ -26,12 +26,14 @@ func (e *Explain) UnityOffline() string {
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
 	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
 
-	indexHints := make([][]string, len(tableNames))
-	for i, t := range tableNames {
-		indexHints[i] = e.unityOfflineIterateIndexHints(t)
-	}
+	//indexHints := make([][]string, len(tableNames))
+	//for i, t := range tableNames {
+	//	indexHints[i] = e.unityOfflineIterateIndexHints(t)
+	//}
+	//
+	//allPossibleHintSets := e.unityOfflineIterateHints(leadingHints, indexHints)
+	allPossibleHintSets := leadingHints
 
-	allPossibleHintSets := e.unityOfflineIterateHints(leadingHints, indexHints)
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
 	plans := make([]*UnityOfflinePlan, 0, len(allPossibleHintSets))
