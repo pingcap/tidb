@@ -398,6 +398,7 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 			receiverZone, receiverExist := zoneMap[taskMeta.GetAddress()]
 			sameZoneFlags = append(sameZoneFlags, !receiverExist || taskZoneLabel == receiverZone)
 		}
+		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeExchangeReceiver:
 		sameZoneFlags := make([]bool, 0, len(exec.ExchangeReceiver.EncodedTaskMeta))
@@ -418,6 +419,7 @@ func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, t
 			senderZone, senderExist := zoneMap[taskMeta.GetAddress()]
 			sameZoneFlags = append(sameZoneFlags, !senderExist || taskZoneLabel == senderZone)
 		}
+		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeJoin:
 		children = append(children, exec.Join.Children...)
