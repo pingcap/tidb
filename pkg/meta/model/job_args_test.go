@@ -1129,6 +1129,12 @@ func TestModifyColumnsArgs(t *testing.T) {
 		require.Equal(t, *inArgs.ChangingColumn, *args.ChangingColumn)
 		require.Equal(t, inArgs.ChangingIdxs, args.ChangingIdxs)
 		require.Equal(t, inArgs.RedundantIdxs, args.RedundantIdxs)
+
+		if v == JobVersion1 {
+			var rawArgs []json.RawMessage
+			require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+			require.Len(t, rawArgs, 8)
+		}
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1140,4 +1146,10 @@ func TestModifyColumnsArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexIDs, args.IndexIDs)
 		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &ModifyColumnArgs{}, JobVersion1, ActionModifyColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 5)
 }
