@@ -126,7 +126,7 @@ func (m *mockStatusHook) onMiss() {
 func (m *mockStatusHook) onEvict() {
 	m.Called()
 }
-func (m *mockStatusHook) onUpdateSize(size uint64) {
+func (m *mockStatusHook) onUpdate(size uint64, count uint64) {
 	m.Called()
 }
 func (m *mockStatusHook) onUpdateLimit(limit uint64) {
@@ -152,7 +152,7 @@ func (tc *testCase) run(t *testing.T) {
 
 	data := NewData()
 	data.tableCache.SetStatusHook(tc.statusHook)
-	tc.statusHook.On("onUpdateSize").Return()
+	tc.statusHook.On("onUpdate").Return()
 
 	tableSize := mockTableSize(tc.r, t)
 	tc.statusHook.On("onUpdateLimit").Return().Once()

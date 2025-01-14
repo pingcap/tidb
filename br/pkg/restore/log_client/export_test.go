@@ -127,3 +127,7 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
 }
+
+func (m WithMigrations) CompactionDirs() []string {
+	return m.compactionDirs
+}

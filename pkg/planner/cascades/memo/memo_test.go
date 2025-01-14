@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -361,14 +362,19 @@ func TestIteratorLogicalPlan(t *testing.T) {
 	asT1 := ast.NewCIStr("t1")
 	asT2 := ast.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
+	require.Equal(t, t1.ID(), 1)
 	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
+	require.Equal(t, t2.ID(), 2)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join1.SetChildren(t1, t2)
+	require.Equal(t, join1.ID(), 3)
 
 	asT3 := ast.NewCIStr("t3")
 	asT4 := ast.NewCIStr("t4")
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
+	require.Equal(t, t3.ID(), 4)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
+	require.Equal(t, t4.ID(), 5)
 
 	mm := NewMemo()
 	gE, err := mm.Init(join1)
@@ -378,7 +384,7 @@ func TestIteratorLogicalPlan(t *testing.T) {
 	mm.CopyIn(gE.Inputs[0], t3)
 	// which means t2 and t4 are equivalent class.
 	mm.CopyIn(gE.Inputs[1], t4)
-	//           G1
+	//           G1 join1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 
@@ -386,34 +392,107 @@ func TestIteratorLogicalPlan(t *testing.T) {
 		root:      mm.rootGroup,
 		stackInfo: make([]*list.Element, 0, 4),
 		traceID:   -1,
+		hasher:    base.NewHashEqualer(),
 	}
+	assertHasher := base.NewHashEqualer()
+	// t1
+	assertHasher.HashInt(1)
+	lhs := assertHasher.Sum64()
+	// t2
+	assertHasher.Reset()
+	assertHasher.HashInt(2)
+	rhs := assertHasher.Sum64()
+	// join
+	assertHasher.Reset()
+	assertHasher.HashUint64(lhs)
+	assertHasher.HashUint64(rhs)
+	assertHasher.HashInt(3)
+	jhs := assertHasher.Sum64()
+
 	lp := iter.Next()
 	require.NotNil(t, lp)
 	join, ok := lp.(*logicalop.LogicalJoin)
 	require.True(t, ok)
+	require.Equal(t, join.GetPlanIDsHash(), jhs)
 	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t1")
+	require.Equal(t, join.Children()[0].(*logicalop.DataSource).GetPlanIDsHash(), lhs)
 	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t2")
+	require.Equal(t, join.Children()[1].(*logicalop.DataSource).GetPlanIDsHash(), rhs)
+
+	// t1
+	assertHasher.Reset()
+	assertHasher.HashInt(1)
+	lhs = assertHasher.Sum64()
+	// t4
+	assertHasher.Reset()
+	assertHasher.HashInt(5)
+	rhs = assertHasher.Sum64()
+	// join
+	assertHasher.Reset()
+	assertHasher.HashUint64(lhs)
+	assertHasher.HashUint64(rhs)
+	assertHasher.HashInt(3)
+	jhs = assertHasher.Sum64()
 
 	lp = iter.Next()
 	require.NotNil(t, lp)
 	join, ok = lp.(*logicalop.LogicalJoin)
 	require.True(t, ok)
+	require.Equal(t, join.GetPlanIDsHash(), jhs)
 	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t1")
+	require.Equal(t, join.Children()[0].(*logicalop.DataSource).GetPlanIDsHash(), lhs)
 	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t4")
+	require.Equal(t, join.Children()[1].(*logicalop.DataSource).GetPlanIDsHash(), rhs)
+
+	// t3
+	assertHasher.Reset()
+	assertHasher.HashInt(4)
+	lhs = assertHasher.Sum64()
+	// t2
+	assertHasher.Reset()
+	assertHasher.HashInt(2)
+	rhs = assertHasher.Sum64()
+	// join
+	assertHasher.Reset()
+	assertHasher.HashUint64(lhs)
+	assertHasher.HashUint64(rhs)
+	assertHasher.HashInt(3)
+	jhs = assertHasher.Sum64()
 
 	lp = iter.Next()
 	require.NotNil(t, lp)
 	join, ok = lp.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	require.Equal(t, join.GetPlanIDsHash(), jhs)
+	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t3")
+	require.Equal(t, join.Children()[0].(*logicalop.DataSource).GetPlanIDsHash(), lhs)
+	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t2")
+	require.Equal(t, join.Children()[1].(*logicalop.DataSource).GetPlanIDsHash(), rhs)
+
+	// t3
+	assertHasher.Reset()
+	assertHasher.HashInt(4)
+	lhs = assertHasher.Sum64()
+	// t4
+	assertHasher.Reset()
+	assertHasher.HashInt(5)
+	rhs = assertHasher.Sum64()
+	// join
+	assertHasher.Reset()
+	assertHasher.HashUint64(lhs)
+	assertHasher.HashUint64(rhs)
+	assertHasher.HashInt(3)
+	jhs = assertHasher.Sum64()
+
+	lp = iter.Next()
+	require.NotNil(t, lp)
+	join, ok = lp.(*logicalop.LogicalJoin)
+	require.Equal(t, join.GetPlanIDsHash(), jhs)
 	require.True(t, ok)
 	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t3")
-	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t2")
-
-	lp = iter.Next()
-	require.NotNil(t, lp)
-	join, ok = lp.(*logicalop.LogicalJoin)
-	require.True(t, ok)
-	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t3")
+	require.Equal(t, join.Children()[0].(*logicalop.DataSource).GetPlanIDsHash(), lhs)
 	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t4")
+	require.Equal(t, join.Children()[1].(*logicalop.DataSource).GetPlanIDsHash(), rhs)
 
 	lp = iter.Next()
 	require.Nil(t, lp)
