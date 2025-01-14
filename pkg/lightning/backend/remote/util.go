@@ -57,6 +57,7 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client, method, 
 			statusCode := 0
 			if resp != nil {
 				statusCode = resp.StatusCode
+				_ = resp.Body.Close()
 			}
 			log.FromContext(ctx).Warn("failed to send http request", zap.Error(err), zap.Int("status code", statusCode))
 			select {

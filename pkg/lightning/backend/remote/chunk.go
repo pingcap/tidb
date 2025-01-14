@@ -93,7 +93,7 @@ func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 	_, err = file.Write(buf)
 	if err != nil {
 		file.Close()
-		os.Remove(fileName)
+		_ = os.Remove(fileName)
 		return err
 	}
 
