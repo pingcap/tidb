@@ -136,37 +136,56 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 }
 
 func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBReplace) {
-	// merge baseMap to DBReplaceMap
-	// also updating globalIdMap, not going to be used in prod but convenient in test
+	// first pass: update all global IDs
 	for upstreamID, baseDBReplace := range baseMap {
 		tm.globalIdMap[upstreamID] = baseDBReplace.DbID
 
-		if existingDBReplace, exists := tm.DBReplaceMap[upstreamID]; exists {
-			existingDBReplace.DbID = baseDBReplace.DbID
+		for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
+			tm.globalIdMap[tableUpID] = baseTableReplace.TableID
 
-			for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
-				tm.globalIdMap[tableUpID] = baseTableReplace.TableID
+			for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
+				tm.globalIdMap[partUpID] = basePartDownID
+			}
+		}
+	}
 
-				if existingTableReplace, tableExists := existingDBReplace.TableMap[tableUpID]; tableExists {
-					existingTableReplace.TableID = baseTableReplace.TableID
+	// second pass: update the DBReplaceMap structure
+	// first update all existing entries using the global ID map
+	for upDBID, existingDBReplace := range tm.DBReplaceMap {
+		if newID, exists := tm.globalIdMap[upDBID]; exists {
+			existingDBReplace.DbID = newID
+		}
 
-					for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
-						tm.globalIdMap[partUpID] = basePartDownID
-						existingTableReplace.PartitionMap[partUpID] = basePartDownID
-					}
-				} else {
-					existingDBReplace.TableMap[tableUpID] = baseTableReplace
-					for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
-						tm.globalIdMap[partUpID] = basePartDownID
-					}
+		for upTableID, existingTableReplace := range existingDBReplace.TableMap {
+			if newID, exists := tm.globalIdMap[upTableID]; exists {
+				existingTableReplace.TableID = newID
+			}
+
+			for partUpID := range existingTableReplace.PartitionMap {
+				if newID, exists := tm.globalIdMap[partUpID]; exists {
+					existingTableReplace.PartitionMap[partUpID] = newID
 				}
 			}
-		} else {
+		}
+	}
+
+	// then add any new entries from the base map
+	for upstreamID, baseDBReplace := range baseMap {
+		if _, exists := tm.DBReplaceMap[upstreamID]; !exists {
 			tm.DBReplaceMap[upstreamID] = baseDBReplace
+		} else {
+			existingDBReplace := tm.DBReplaceMap[upstreamID]
 			for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
-				tm.globalIdMap[tableUpID] = baseTableReplace.TableID
-				for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
-					tm.globalIdMap[partUpID] = basePartDownID
+				if _, exists := existingDBReplace.TableMap[tableUpID]; !exists {
+					existingDBReplace.TableMap[tableUpID] = baseTableReplace
+				} else {
+					// Merge partition mappings for existing tables
+					existingTableReplace := existingDBReplace.TableMap[tableUpID]
+					for partUpID, partDownID := range baseTableReplace.PartitionMap {
+						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
+							existingTableReplace.PartitionMap[partUpID] = partDownID
+						}
+					}
 				}
 			}
 		}
@@ -274,18 +293,18 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	return nil
 }
 
-func (tm *TableMappingManager) FilterDBReplaceMap(filter *utils.PiTRTableTracker) {
+func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRTableTracker) {
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
 		// remove entire database if not in filter
-		if !filter.ContainsDB(dbID) {
+		if !tracker.ContainsDB(dbID) {
 			delete(tm.DBReplaceMap, dbID)
 			continue
 		}
 
 		// filter tables in this database
 		for tableID := range dbReplace.TableMap {
-			if !filter.ContainsTable(dbID, tableID) {
+			if !tracker.ContainsTable(dbID, tableID) {
 				delete(dbReplace.TableMap, tableID)
 			}
 		}

@@ -1406,7 +1406,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	// build tracker for pitr restore to use later
 	piTRTableTracker := utils.NewPiTRTableTracker()
 
-	// put all the newly created db that matches the filter during log backup into the pitr filter
+	// put all the newly created db that matches the filter during log backup into the pitr table tracker
 	newlyCreatedDBs := logBackupTableHistory.GetNewlyCreatedDBHistory()
 	for dbId, dbName := range newlyCreatedDBs {
 		if utils.MatchSchema(cfg.TableFilter, dbName) {
@@ -1506,7 +1506,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 		}
 	}
 	// store the tracker into config
-	log.Info("pitr table tracker", zap.String("map", piTRTableTracker.String()))
 	cfg.PiTRTableTracker = piTRTableTracker
 	return
 }
@@ -1515,6 +1514,7 @@ func UpdatePiTRTableTracker(cfg *RestoreConfig, tableMap map[int64]*metautil.Tab
 	for _, table := range tableMap {
 		cfg.PiTRTableTracker.AddTable(table.DB.ID, table.Info.ID)
 	}
+	log.Info("pitr table tracker", zap.String("map", cfg.PiTRTableTracker.String()))
 }
 
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
