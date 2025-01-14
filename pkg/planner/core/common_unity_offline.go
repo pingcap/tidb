@@ -67,8 +67,7 @@ func (e *Explain) UnityOffline() string {
 }
 
 func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
-	p := parser.New()
-	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
+	stmt, err := parser.New().ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
 	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
