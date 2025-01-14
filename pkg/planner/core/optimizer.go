@@ -21,7 +21,6 @@ import (
 	"math"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -278,10 +277,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	var cas *cascades.Optimizer
-	if strings.Contains(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "(EXISTS(SELECT  1 FROM t2 WHERE a2 = a1 )") {
-		fmt.Println(1)
-	}
-
 	if cas, err = cascades.NewOptimizer(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
