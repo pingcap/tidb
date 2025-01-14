@@ -20,21 +20,7 @@ import (
 )
 
 func (e *Explain) UnityOffline() string {
-	p := parser.New()
-	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
-	must(err)
-	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
-	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
-
-	allPossibleHintSets := leadingHints
-	if len(tableNames) <= 4 {
-		indexHints := make([][]string, len(tableNames))
-		for i, t := range tableNames {
-			indexHints[i] = e.unityOfflineIterateIndexHints(t)
-		}
-		allPossibleHintSets = e.unityOfflineIterateHints(leadingHints, indexHints)
-	}
-
+	allPossibleHintSets := e.unityOfflinePossibleHints()
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
 	plans := make([]*UnityOfflinePlan, 0, len(allPossibleHintSets))
@@ -78,6 +64,26 @@ func (e *Explain) UnityOffline() string {
 	data, err := json.Marshal(plans)
 	must(err)
 	return string(data)
+}
+
+func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
+	must(err)
+	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
+	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
+
+	//_, sqlDigest := stmtCtx.SQLDigest()
+
+	allPossibleHintSets = leadingHints
+	if len(tableNames) <= 4 {
+		indexHints := make([][]string, len(tableNames))
+		for i, t := range tableNames {
+			indexHints[i] = e.unityOfflineIterateIndexHints(t)
+		}
+		allPossibleHintSets = e.unityOfflineIterateHints(leadingHints, indexHints)
+	}
+	return
 }
 
 func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
