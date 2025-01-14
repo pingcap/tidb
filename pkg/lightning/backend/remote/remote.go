@@ -503,7 +503,7 @@ func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, en
 		return err
 	}
 
-	engine.writers.Range(func(key, value interface{}) bool {
+	engine.writers.Range(func(key, value any) bool {
 		sender := key.(*writer).chunkSender
 		err = sender.close()
 		if err != nil {
