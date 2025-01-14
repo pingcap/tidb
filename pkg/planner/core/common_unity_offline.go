@@ -76,7 +76,7 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	}
 
 	indexHints := e.unityOfflineIndexHintsManually()
-	if len(indexHints) == 0 {
+	if len(indexHints) == 0 && len(leadingHints) < 30 {
 		indexHints = make([][]string, len(tableNames))
 		for i, t := range tableNames {
 			indexHints[i] = e.unityOfflineIndexHints(t)
@@ -87,6 +87,10 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 }
 
 func (e *Explain) unityOfflineCombineHints(leadingHints []string, indexHints [][]string) (hints []string) {
+	if len(indexHints) == 0 { // only consider leading hints
+		return leadingHints
+	}
+
 	currentIndexHints := make([]string, len(indexHints))
 	var possibleIndexHints []string
 	var f func(int)
@@ -128,7 +132,7 @@ func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 
 func (e *Explain) unityOfflineLeadingHintsManually() []string {
 	switch e.queryLabel() {
-	case "job-q1a":
+	case "job-q1a", "job-q1b", "job-q1c", "job-q1d":
 	}
 	return nil
 }
