@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,10 @@ var (
 	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
 	// subtask table.
 	updateSubtaskSummaryInterval = 3 * time.Second
+	// DetectParamModifyInterval is the interval to detect whether task params
+	// are modified.
+	// exported for testing.
+	DetectParamModifyInterval = 10 * time.Second
 )
 
 var (
@@ -78,6 +83,10 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeReso
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	Param
+	// this field represents the last task that we have refreshed from the system
+	// table, but if the task has modified params, it might be updated in memory
+	// to reflect that some param modification have been applied successfully,
+	// see detectAndHandleParamModifyLoop for more detail.
 	task   atomic.Pointer[proto.Task]
 	logger *zap.Logger
 	ctx    context.Context
@@ -264,7 +273,7 @@ func (e *BaseTaskExecutor) Run() {
 			// meta, so we only notify it when it's still running the same step.
 			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
 				e.logger.Info("notify step executor to update task meta")
-				if err2 := e.stepExec.TaskMetaModified(newTask); err2 != nil {
+				if err2 := e.stepExec.TaskMetaModified(newTask.Meta); err2 != nil {
 					e.logger.Info("notify step executor failed, will recreate it", zap.Error(err2))
 					e.cleanStepExecutor()
 					continue
@@ -467,6 +476,123 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 func (e *BaseTaskExecutor) hasRealtimeSummary(stepExecutor execute.StepExecutor) bool {
 	_, ok := e.taskTable.(*storage.TaskManager)
 	return ok && stepExecutor.RealtimeSummary() != nil
+}
+
+// there are 2 places that will detect task param modification:
+//   - Run loop to make 'modifies' apply to all later subtasks
+//   - this loop to try to make 'modifies' apply to current running subtask
+//
+// for a single step executor, successfully applied 'modifies' will not be applied
+// again, failed ones will be retried in this loop. To achieve this, we will update
+// the task inside BaseTaskExecutor to reflect the 'modifies' that have applied
+// successfully. the 'modifies' that failed to apply in this loop will be retried
+// in the Run loop.
+func (e *BaseTaskExecutor) detectAndHandleParamModifyLoop(ctx context.Context) {
+	ticker := time.NewTicker(DetectParamModifyInterval)
+	defer ticker.Stop()
+	e.GetTaskBase()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		err := e.detectAndHandleParamModify(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				e.logger.Warn("failed to detect and handle param modification", zap.Error(err))
+			}
+			continue
+		}
+	}
+}
+
+func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error {
+	oldTask := e.task.Load()
+	latestTask, err := e.taskTable.GetTaskByID(ctx, oldTask.ID)
+	if err != nil {
+		return err
+	}
+
+	metaModified := !bytes.Equal(latestTask.Meta, oldTask.Meta)
+	if latestTask.Concurrency == oldTask.Concurrency && !metaModified {
+		return nil
+	}
+
+	e.logger.Info("task param modification detected", zap.Bool("metaModified", metaModified),
+		zap.Int("oldConcurrency", oldTask.Concurrency), zap.Int("newConcurrency", latestTask.Concurrency))
+
+	e.tryModifyTaskConcurrency(oldTask, latestTask)
+	if metaModified {
+		if err := e.stepExec.TaskMetaModified(latestTask.Meta); err != nil {
+			e.logger.Warn("failed to apply task param modification", zap.Error(err))
+			return err
+		}
+		e.metaModified(latestTask.Meta)
+	}
+	return nil
+}
+
+func (e *BaseTaskExecutor) tryModifyTaskConcurrency(oldTask, latestTask *proto.Task) {
+	if latestTask.Concurrency < oldTask.Concurrency {
+		// we need try to release the resource first, then free slots, to avoid
+		// OOM when manager starts other task executor and start to allocate memory
+		// immediately.
+		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		if err := e.stepExec.ResourceModified(newResource); err != nil {
+			e.logger.Warn("failed to reduce resource usage", zap.Error(err),
+				zap.Int("old", oldTask.Concurrency), zap.Int("new", latestTask.Concurrency))
+			return
+		}
+		if !e.slotMgr.exchange(&latestTask.TaskBase) {
+			// we are returning resource back, should not happen
+			e.logger.Warn("failed to free slots", zap.Int("old", oldTask.Concurrency),
+				zap.Int("new", latestTask.Concurrency))
+			intest.Assert(false, "failed to return slots")
+			return
+		}
+
+		// after application reduced memory usage, the garbage might not recycle
+		// in time, but manager might start other task executor and start to allocate
+		// memory immediately, so we trigger GC here to release memory.
+		runtime.GC()
+		e.logger.Info("task concurrency modified", zap.Int("old", oldTask.Concurrency),
+			zap.Int("new", latestTask.Concurrency), zap.Int("availableSlots", e.slotMgr.availableSlots()))
+		e.concurrencyModified(latestTask.Concurrency)
+	} else if latestTask.Concurrency > oldTask.Concurrency {
+		exchanged := e.slotMgr.exchange(&latestTask.TaskBase)
+		if !exchanged {
+			e.logger.Info("failed to exchange slots", zap.Int("old", oldTask.Concurrency),
+				zap.Int("new", latestTask.Concurrency))
+			return
+		}
+		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		if err := e.stepExec.ResourceModified(newResource); err != nil {
+			exchanged := e.slotMgr.exchange(&oldTask.TaskBase)
+			intest.Assert(exchanged, "failed to return slots")
+			e.logger.Warn("failed to increase resource usage, return slots back", zap.Error(err),
+				zap.Int("old", oldTask.Concurrency), zap.Int("new", latestTask.Concurrency),
+				zap.Int("availableSlots", e.slotMgr.availableSlots()), zap.Bool("exchanged", exchanged))
+			return
+		}
+
+		e.logger.Info("task concurrency modified", zap.Int("old", oldTask.Concurrency),
+			zap.Int("new", latestTask.Concurrency), zap.Int("availableSlots", e.slotMgr.availableSlots()))
+		e.concurrencyModified(latestTask.Concurrency)
+	}
+}
+
+func (e *BaseTaskExecutor) concurrencyModified(newConcurrency int) {
+	clone := *e.task.Load()
+	clone.Concurrency = newConcurrency
+	e.task.Store(&clone)
+}
+
+func (e *BaseTaskExecutor) metaModified(newMeta []byte) {
+	clone := *e.task.Load()
+	clone.Meta = newMeta
+	e.task.Store(&clone)
 }
 
 // GetTaskBase implements TaskExecutor.GetTaskBase.

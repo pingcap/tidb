@@ -117,6 +117,20 @@ func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RealtimeSummary", reflect.TypeOf((*MockStepExecutor)(nil).RealtimeSummary))
 }
 
+// ResourceModified mocks base method.
+func (m *MockStepExecutor) ResourceModified(arg0 *proto.StepResource) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResourceModified", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResourceModified indicates an expected call of ResourceModified.
+func (mr *MockStepExecutorMockRecorder) ResourceModified(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResourceModified", reflect.TypeOf((*MockStepExecutor)(nil).ResourceModified), arg0)
+}
+
 // RunSubtask mocks base method.
 func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
 	m.ctrl.T.Helper()
@@ -144,7 +158,7 @@ func (mr *MockStepExecutorMockRecorder) SetResource(arg0 any) *gomock.Call {
 }
 
 // TaskMetaModified mocks base method.
-func (m *MockStepExecutor) TaskMetaModified(arg0 *proto.Task) error {
+func (m *MockStepExecutor) TaskMetaModified(arg0 []byte) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TaskMetaModified", arg0)
 	ret0, _ := ret[0].(error)
