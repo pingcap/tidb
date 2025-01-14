@@ -73,16 +73,11 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
 	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
 
-	//_, sqlDigest := stmtCtx.SQLDigest()
-
-	allPossibleHintSets = leadingHints
-	if len(tableNames) <= 4 {
-		indexHints := make([][]string, len(tableNames))
-		for i, t := range tableNames {
-			indexHints[i] = e.unityOfflineIterateIndexHints(t)
-		}
-		allPossibleHintSets = e.unityOfflineIterateHints(leadingHints, indexHints)
+	indexHints := make([][]string, len(tableNames))
+	for i, t := range tableNames {
+		indexHints[i] = e.unityOfflineIterateIndexHints(t)
 	}
+	allPossibleHintSets = e.unityOfflineIterateHints(leadingHints, indexHints)
 	return
 }
 
