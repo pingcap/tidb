@@ -289,21 +289,21 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
 			colListStr, colListStr,
-			utils.EncloseDBAndTable(db.Name.L, tableName),)
+			utils.EncloseDBAndTable(db.Name.L, tableName))
 		if err := execSQL(replaceIntoSQL); err != nil {
 			return err
 		}
 
 		renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
-		utils.EncloseDBAndTable(db.Name.L, tableName),
-		utils.EncloseDBAndTable(db.TemporaryName.L, tableName+"__replaced__"),)
+			utils.EncloseDBAndTable(db.Name.L, tableName),
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName+"__replaced__"))
 		if err := execSQL(renameSQL); err != nil {
 			return err
 		}
-		
+
 		renameSQL = fmt.Sprintf("RENAME TABLE %s TO %s;",
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
-			utils.EncloseDBAndTable(db.Name.L, tableName),)
+			utils.EncloseDBAndTable(db.Name.L, tableName))
 		return execSQL(renameSQL)
 	}
 
