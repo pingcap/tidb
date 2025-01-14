@@ -14,6 +14,7 @@
 
 package rule
 
+// Type indicates the rule type.
 type Type int
 
 const (
