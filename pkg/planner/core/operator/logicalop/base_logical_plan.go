@@ -204,33 +204,40 @@ func (*BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 }
 
 // RecursiveDeriveStats implements LogicalPlan.<10th> interface.
-func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, bool, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
+	reloads := make([]bool, 0, len(p.children))
 	for i, child := range p.children {
-		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
+		childProfile, reload, err := child.RecursiveDeriveStats(cumColGroups)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		reloads = append(reloads, reload)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema)
+	// when the child has reloaded their stats, current logical operator should reload itself too.
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, reloads)
 }
 
 // DeriveStats implements LogicalPlan.<11th> interface.
-func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
 	if len(childStats) == 1 {
 		p.SetStats(childStats[0])
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	if len(childStats) > 1 {
 		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
-		return nil, err
+		return nil, false, err
 	}
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	profile := &property.StatsInfo{
 		RowCount: float64(1),
@@ -240,7 +247,7 @@ func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		profile.ColNDVs[col.UniqueID] = 1
 	}
 	p.SetStats(profile)
-	return profile, nil
+	return profile, true, nil
 }
 
 // ExtractColGroups implements LogicalPlan.<12th> interface.

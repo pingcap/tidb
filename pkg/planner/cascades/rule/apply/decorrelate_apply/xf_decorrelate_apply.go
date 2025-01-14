@@ -57,6 +57,8 @@ func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.Logic
 		clonedJoin := apply.LogicalJoin
 		clonedJoin.SetSelf(&clonedJoin)
 		clonedJoin.SetTP(plancodec.TypeJoin)
+		// set the new GE's stats to nil, since the inherited stats is not precious, which will be filled in physicalOpt.
+		clonedJoin.SetStats(nil)
 		intest.Assert(clonedJoin.Children() != nil)
 		return []corebase.LogicalPlan{&clonedJoin}, rule.DefaultNone, nil
 	}

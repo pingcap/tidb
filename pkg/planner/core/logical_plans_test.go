@@ -2067,7 +2067,7 @@ func TestSkylinePruning(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *logicalop.DataSource
 		var byItems []*util.ByItems
