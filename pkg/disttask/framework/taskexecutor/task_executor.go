@@ -459,9 +459,11 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		defer func() {
 			checkCancel()
 			wg.Wait()
-			subtaskCtxCancel()
 		}()
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
+	}()
+	defer func() {
+		subtaskCtxCancel()
 	}()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
@@ -475,7 +477,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return subtaskErr
 	}
 
-	err := e.finishSubtask(e.stepCtx, subtask)
+	err := e.finishSubtask(subtaskCtx, subtask)
 	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err
 }
@@ -701,7 +703,7 @@ func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 			return e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
 		}
 
-		e.logger.Info("meet context canceled for gracefully shutdown")
+		e.logger.Info("meet context canceled for gracefully shutdown", zap.Error(ctx.Err()))
 	} else if e.IsRetryableError(stErr) {
 		e.logger.Warn("meet retryable error", zap.Error(stErr))
 	} else {
