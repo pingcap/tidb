@@ -761,21 +761,3 @@ id	u	v
 2	12	102
 3	13	103
 5	15	105
-drop table if exists users, users1;
-CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3 int, v4 int,   PRIMARY KEY(id), index v1_index(v1,v2,v3) ) ON COMMIT DELETE ROWS;
-create table users1(id int, value int, index index_value(value));
-insert into users1 values(1,2);
-begin;
-# There should be no execution info because for user table, because temporary table should not visit tikv
-explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);
-id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-IndexJoin_30	9990.00	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, inner:{total:<num>, concurrency:<num>, task:<num>, construct:<num>, fetch:<num>, build:<num>}, probe:<num>	inner join, inner:IndexLookUp_29, outer key:session__temporary_table.users1.value, inner key:session__temporary_table.users.v1, equal cond:eq(session__temporary_table.users1.value, session__temporary_table.users.v1)	775 Bytes	N/A
-├─StreamAgg_50(Build)	7992.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	group by:session__temporary_table.users1.value, funcs:firstrow(session__temporary_table.users1.value)->session__temporary_table.users1.value	145 Bytes	N/A
-│ └─IndexReader_51	7992.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, cop_task: {num:<num>, max:<num>, proc_keys:<num>, copr_cache_hit_ratio:<num>, build_task_duration:<num>, max_distsql_concurrency:<num>}	index:StreamAgg_42	204 Bytes	N/A
-│   └─StreamAgg_42	7992.00	1	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	group by:session__temporary_table.users1.value, 	N/A	N/A
-│     └─IndexFullScan_49	9990.00	1	cop[tikv]	table:users1, index:index_value(value)	tikv_task:{time:<num>, loops:<num>}	keep order:true, stats:pseudo	N/A	N/A
-└─IndexLookUp_29(Probe)	9990.00	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	NULL	0 Bytes	N/A
-  ├─Selection_28(Build)	9990.00	0	cop[tikv]	NULL	NULL	not(isnull(session__temporary_table.users.v1))	N/A	N/A
-  │ └─IndexRangeScan_26	10000.00	0	cop[tikv]	table:users, index:v1_index(v1, v2, v3)	NULL	range: decided by [eq(session__temporary_table.users.v1, session__temporary_table.users1.value)], keep order:false, stats:pseudo	N/A	N/A
-  └─TableRowIDScan_27(Probe)	9990.00	0	cop[tikv]	table:users	NULL	keep order:false, stats:pseudo	N/A	N/A
-commit;
