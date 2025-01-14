@@ -84,7 +84,7 @@ type ApplyRuleTask struct {
 }
 
 // NewApplyRuleTask return a new apply rule task.
-func NewApplyRuleTask(ctx cascadesctx.CascadesContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
+func NewApplyRuleTask(ctx cascadesctx.Context, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
 	return &ApplyRuleTask{
 		BaseTask: BaseTask{
 			ctx: ctx,
