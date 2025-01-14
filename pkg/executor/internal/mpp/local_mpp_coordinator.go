@@ -353,14 +353,11 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 
 // taskZoneInfoHelper used to help reset exchange executor's same zone flags
 type taskZoneInfoHelper struct {
-	isRoot             bool
+	allTiflashZoneInfo map[string]string
+	exchangeZoneInfo   map[string][]string
 	tidbZone           string
 	currentTaskZone    string
-	allTiflashZoneInfo map[string]string
-	// exchangeZoneInfo is used to cache one mpp task's zone info:
-	// key is executor id, value is zone_info array
-	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
-	exchangeZoneInfo map[string][]string
+	isRoot             bool
 }
 
 func (h *taskZoneInfoHelper) init(store kv.Storage) {
