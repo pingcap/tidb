@@ -14721,7 +14721,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
