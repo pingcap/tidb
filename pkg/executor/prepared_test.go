@@ -1172,3 +1172,50 @@ func TestPrepareProtocolWorkWithForeignKey(t *testing.T) {
 	// As schema version increased, the plan cache should be invalidated.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+<<<<<<< HEAD
+=======
+
+func TestExecuteWithWrongType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t3 (c1 int, c2 decimal(32, 30))")
+
+	tk.MustExec(`prepare p1 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p1 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p1 using @i0, @i1`)
+
+	tk.MustExec(`prepare p2 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p2 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p2 using @i0, @i1`)
+}
+
+func TestIssue58870(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set names GBK")
+	tk.MustExec(`CREATE TABLE tsecurity  (
+  security_id int(11) NOT NULL DEFAULT 0,
+  mkt_id smallint(6) NOT NULL DEFAULT 0,
+  security_code varchar(64) CHARACTER SET gbk COLLATE gbk_bin NOT NULL DEFAULT ' ',
+  security_name varchar(128) CHARACTER SET gbk COLLATE gbk_bin NOT NULL DEFAULT ' ',
+  PRIMARY KEY (security_id) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = gbk COLLATE = gbk_bin ROW_FORMAT = Compact;`)
+	tk.MustExec("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (1, '1', 1 ,'\xB2\xE2')")
+	tk.MustExec("PREPARE a FROM 'INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (2, 2, 2 ,\"\xB2\xE2\")'")
+	tk.MustExec("EXECUTE a")
+	stmt, _, _, err := tk.Session().PrepareStmt("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (3, 3, 3 ,\"\xB2\xE2\")")
+	require.Nil(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.TODO(), stmt, nil)
+	require.Nil(t, err)
+	require.Nil(t, rs)
+}
+>>>>>>> 6fac45960ff (executor: fix prepared protocol charset (#58872))
