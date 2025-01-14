@@ -46,7 +46,7 @@ func (*XFDeCorrelateApply) Match(_ corebase.LogicalPlan) bool {
 }
 
 // XForm implements thr Rule interface.
-func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, rule.Type, error) {
+func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, error) {
 	apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
 	outerPlanGE := applyGE.Children()[0]
 	innerPlanGE := applyGE.Children()[1]
@@ -60,17 +60,7 @@ func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.Logic
 		// set the new GE's stats to nil, since the inherited stats is not precious, which will be filled in physicalOpt.
 		clonedJoin.SetStats(nil)
 		intest.Assert(clonedJoin.Children() != nil)
-		return []corebase.LogicalPlan{&clonedJoin}, rule.DefaultNone, nil
+		return []corebase.LogicalPlan{&clonedJoin}, nil
 	}
-	return nil, rule.DefaultNone, nil
-}
-
-func getNextTriggeredRuleType(innerPlanGE corebase.LogicalPlan) rule.Type {
-	// the correlated expression is rooted from deeper inner, try pulling them up.
-	switch pattern.GetOperand(innerPlanGE.GetWrappedLogicalPlan()) {
-	case pattern.OperandProjection:
-		return rule.XFPullCorrExprsFromProj
-	default:
-		return rule.DefaultNone
-	}
+	return nil, nil
 }
