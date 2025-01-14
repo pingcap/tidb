@@ -70,18 +70,20 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	stmt, err := parser.New().ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
-	leadingHints := e.unityOfflineLeadingHints(tableNames)
-
-	indexHints := make([][]string, len(tableNames))
-	for i, t := range tableNames {
-		indexHints[i] = e.unityOfflineIndexHints(t)
+	leadingHints := e.unityOfflineLeadingHintsManually()
+	if len(leadingHints) == 0 {
+		leadingHints = e.unityOfflineLeadingHints(tableNames)
 	}
-	return e.unityOfflineCombineHints(leadingHints, indexHints)
-}
 
-func (e *Explain) queryLabel() string {
-	_, digest := e.SCtx().GetSessionVars().StmtCtx.SQLDigest()
-	return sqlDigestLabel[digest.String()]
+	indexHints := e.unityOfflineIndexHintsManually()
+	if len(indexHints) == 0 {
+		indexHints = make([][]string, len(tableNames))
+		for i, t := range tableNames {
+			indexHints[i] = e.unityOfflineIndexHints(t)
+		}
+	}
+
+	return e.unityOfflineCombineHints(leadingHints, indexHints)
 }
 
 func (e *Explain) unityOfflineCombineHints(leadingHints []string, indexHints [][]string) (hints []string) {
@@ -107,6 +109,13 @@ func (e *Explain) unityOfflineCombineHints(leadingHints []string, indexHints [][
 	return
 }
 
+func (e *Explain) unityOfflineIndexHintsManually() [][]string {
+	switch e.queryLabel() {
+	case "job-q1a":
+	}
+	return nil
+}
+
 func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 	hints = append(hints, "")                                         // empty hint
 	hints = append(hints, fmt.Sprintf("use_index(%s)", t.HintName())) // don't use index
@@ -115,6 +124,13 @@ func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 		hints = append(hints, fmt.Sprintf("use_index(%s, %s)", t.HintName(), idxName))
 	}
 	return
+}
+
+func (e *Explain) unityOfflineLeadingHintsManually() []string {
+	switch e.queryLabel() {
+	case "job-q1a":
+	}
+	return nil
 }
 
 func (e *Explain) unityOfflineLeadingHints(tableNames []*tableName) (hints []string) {
@@ -381,6 +397,11 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 // Leave implements Visitor interface.
 func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+func (e *Explain) queryLabel() string {
+	_, digest := e.SCtx().GetSessionVars().StmtCtx.SQLDigest()
+	return sqlDigestLabel[digest.String()]
 }
 
 var sqlDigestLabel = map[string]string{
