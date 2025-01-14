@@ -219,10 +219,16 @@ type LogClient struct {
 }
 
 type restoreStatistic struct {
-	restoreSSTKVSize  uint64
+	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
+	restoreSSTKVSize uint64
+	// restoreSSTKVCount is the total number of KV pairs restored from SST files.
 	restoreSSTKVCount uint64
+	// restoreSSTPhySize is the total size of SST files after encoding to SST files.
+	// this may be smaller than kv length due to compression or common prefix optimization.
 	restoreSSTPhySize uint64
-	restoreSSTTakes   uint64
+	// restoreSSTTakes is the total time taken for restoring SST files.
+	// the unit is nanoseconds, hence it can be converted between `time.Duration` directly.
+	restoreSSTTakes uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -304,7 +310,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		i := r.Item
 
 		tid := i.TableID()
-		if r, ok := i.(RewrittenSST); ok && r.RewrittenTo() > 0 {
+		if r, ok := i.(RewrittenSST); ok {
 			tid = r.RewrittenTo()
 		}
 		rewriteRules, ok := rules[tid]

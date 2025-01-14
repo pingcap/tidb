@@ -80,7 +80,7 @@ func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
 		}
 		cs.AccumulateCount += 1
 		if f.TotalKvs == 0 || f.Size_ == 0 {
-			log.Warn("No key-value pairs in subcompaction", zap.String("name", f.Name))
+			log.Warn("No key-value pairs in sst files", zap.String("name", f.Name))
 			continue
 		}
 		// The number of MVCC entries in the compacted SST files can be excessive.
@@ -144,13 +144,13 @@ func (cs *CompactedFileSplitStrategy) ShouldSkip(ssts SSTs) bool {
 		}
 	}
 	if len(sstOutputs) == 0 {
-		log.Info("all files in sub compaction skipped")
+		log.Info("all files in SST set skipped", zap.Stringer("ssts", ssts))
 		return true
 	}
 	if len(sstOutputs) != len(ssts.GetSSTs()) {
 		log.Info(
-			"partial files in sub compaction skipped due to checkpoint",
-			zap.Int("origin", len(ssts.GetSSTs())), zap.Int("output", len(sstOutputs)),
+			"partial files in SST set skipped due to checkpoint",
+			zap.Stringer("ssts", ssts), zap.Int("origin", len(ssts.GetSSTs())), zap.Int("output", len(sstOutputs)),
 		)
 		ssts.SetSSTs(sstOutputs)
 		return false

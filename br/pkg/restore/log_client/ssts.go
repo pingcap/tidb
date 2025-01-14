@@ -34,6 +34,8 @@ type RewrittenSST interface {
 
 // SSTs is an interface that represents a collection of SST files.
 type SSTs interface {
+	fmt.Stringer
+
 	// TableID returns the ID of the table associated with the SST files.
 	TableID() int64
 	// GetSSTs returns a slice of pointers to backuppb.File, representing the SST files.
@@ -45,6 +47,10 @@ type SSTs interface {
 
 type CompactedSSTs struct {
 	*backuppb.LogFileSubcompaction
+}
+
+func (s *CompactedSSTs) String() string {
+	return fmt.Sprintf("CompactedSSTs: %s", s.Meta)
 }
 
 func (s *CompactedSSTs) TableID() int64 {
@@ -64,6 +70,10 @@ type AddedSSTs struct {
 	Rewritten backuppb.RewrittenTableID
 
 	cachedTableID atomic.Int64
+}
+
+func (s *AddedSSTs) String() string {
+	return fmt.Sprintf("AddedSSTs: %s", s.File)
 }
 
 func (s *AddedSSTs) TableID() int64 {

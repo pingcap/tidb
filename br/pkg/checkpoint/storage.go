@@ -32,11 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type hookedOnFlush struct {
-	checkpointStorage
-	cb func(ctx context.Context) error
-}
-
 type checkpointStorage interface {
 	flushCheckpointData(ctx context.Context, data []byte) error
 	flushCheckpointChecksum(ctx context.Context, data []byte) error
