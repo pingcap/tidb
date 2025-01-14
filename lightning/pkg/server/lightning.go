@@ -570,7 +570,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 
 	var keyspaceName string
-	if taskCfg.TikvImporter.Backend == config.BackendLocal || taskCfg.TikvImporter.Backend == config.BackendRemote {
+	if taskCfg.IsPhysicalBackend() {
 		keyspaceName = taskCfg.TikvImporter.KeyspaceName
 		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)

@@ -1134,7 +1134,11 @@ func (t *TikvImporter) adjust() error {
 	if t.Backend == "" {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
+
 	t.Backend = strings.ToLower(t.Backend)
+	if t.Backend == BackendRemote {
+		return common.ErrInvalidConfig.GenWithStack(`tikv-importer.backend = "remote" is not supported`)
+	}
 	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 	if !t.ParallelImport && t.IncrementalImport {
 		t.ParallelImport = t.IncrementalImport
@@ -1656,4 +1660,24 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
+}
+
+// IsTiDBBackend returns true if using TiDB backend.
+func (cfg *Config) IsTiDBBackend() bool {
+	return cfg.TikvImporter.Backend == BackendTiDB
+}
+
+// IsLocalBackend returns true if using local backend.
+func (cfg *Config) IsLocalBackend() bool {
+	return cfg.TikvImporter.Backend == BackendLocal
+}
+
+// IsRemoteBackend returns true if using remote backend.
+func (cfg *Config) IsRemoteBackend() bool {
+	return cfg.TikvImporter.Backend == BackendRemote
+}
+
+// IsPhysicalBackend returns true if using physical import.
+func (cfg *Config) IsPhysicalBackend() bool {
+	return cfg.IsLocalBackend() || cfg.IsRemoteBackend()
 }

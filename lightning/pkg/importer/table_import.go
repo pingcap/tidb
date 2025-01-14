@@ -161,7 +161,7 @@ func (tr *TableImporter) importTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
+		if versionInfo.ServerVersion.Major >= 4 && rc.cfg.IsPhysicalBackend() {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -221,7 +221,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+	if rc.cfg.IsPhysicalBackend() && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -254,7 +254,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 3. Drop indexes if add-index-by-sql is enabled
-	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && rc.cfg.IsPhysicalBackend() && rc.cfg.TikvImporter.AddIndexBySQL {
 		err := tr.dropIndexes(ctx, rc.db)
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
 		if err := firstErr(err, saveCpErr); err != nil {
@@ -446,11 +446,11 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
-	if isRemoteBackend(rc.cfg) {
+	if rc.cfg.IsRemoteBackend() {
 		idxEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:              common.IndexEngineID,
-			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
-			RecoverFromCheckpoint: recoverFromEngineCp(indexEngineCp),
+			EngineID:                common.IndexEngineID,
+			EstimatedDataSize:       remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+			IsRecoverFromCheckpoint: recoverFromEngineCp(indexEngineCp),
 		}
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
@@ -642,10 +642,10 @@ func (tr *TableImporter) preprocessEngine(
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
-		if isRemoteBackend(rc.cfg) {
+		if rc.cfg.IsRemoteBackend() {
 			engineCfg.Remote = backend.RemoteEngineConfig{
-				EngineID:              engineID,
-				RecoverFromCheckpoint: recoverFromEngineCp(cp),
+				EngineID:                engineID,
+				IsRecoverFromCheckpoint: remote.IsRecoverFromEngineCp(cp),
 			}
 		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
@@ -687,11 +687,11 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
-	if isRemoteBackend(rc.cfg) {
+	if rc.cfg.IsRemoteBackend() {
 		dataEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:              common.IndexEngineID,
-			EstimatedDataSize:     estimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
-			RecoverFromCheckpoint: recoverFromEngineCp(cp),
+			EngineID:                common.IndexEngineID,
+			EstimatedDataSize:       remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			IsRecoverFromCheckpoint: remote.IsRecoverFromEngineCp(cp),
 		}
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
@@ -904,14 +904,14 @@ ChunkLoop:
 	// in physical mode, this check-point make no sense, because we don't do flush now,
 	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
-	if !isPhysicalBackend(rc.cfg) {
+	if !rc.cfg.IsPhysicalBackend() {
 		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusAllWritten); saveCpErr != nil {
 			return nil, errors.Trace(firstErr(err, saveCpErr))
 		}
 	}
 	if err != nil {
 		// if process is canceled, we should flush all chunk checkpoints for local backend
-		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
+		if rc.cfg.IsLocalBackend() && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
@@ -925,9 +925,9 @@ ChunkLoop:
 	}
 
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
-	// this flush action impact up to 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable && isPhysicalBackend(rc.cfg) {
+	// For physical backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// This flush action for local backend impact up to 10% of the performance, so we only do it if necessary.
+	if err == nil && rc.cfg.Checkpoint.Enable && rc.cfg.IsPhysicalBackend() {
 		if err = indexEngine.Flush(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -997,7 +997,7 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			if isLocalBackend(rc.cfg) {
+			if rc.cfg.IsPhysicalBackend() {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
@@ -1861,33 +1861,6 @@ func (tr *TableImporter) preDeduplicate(
 		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
 	)
 	return err
-}
-
-func estimateEngineDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.TidbTableInfo, isIndexEngine bool, logger log.Logger) int64 {
-	if tblMeta == nil || tblInfo == nil {
-		// if we can't get table meta or table info, we can't estimate data size.
-		return 0
-	}
-	if isIndexEngine {
-		if len(tblInfo.Core.Indices) == 0 || (tblInfo.Core.IsCommonHandle && len(tblInfo.Core.Indices) == 1) {
-			return 0
-		}
-	}
-
-	totalSize := int64(0)
-	for _, dataFile := range tblMeta.DataFiles {
-		totalSize += dataFile.FileMeta.RealSize
-	}
-	if tblMeta.IndexRatio > 1 {
-		totalSize = int64(float64(totalSize) * tblMeta.IndexRatio)
-	}
-	logger.Info("estimate data size",
-		zap.Int64("estimatedDataSize", totalSize),
-		zap.String("db", tblInfo.DB),
-		zap.String("table", tblInfo.Name),
-		zap.Bool("isIndexEngine", isIndexEngine),
-	)
-	return totalSize
 }
 
 func recoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
