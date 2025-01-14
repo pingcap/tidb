@@ -2374,7 +2374,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
+	do.wg.Run(func() { do.updateStatsWorker() }, "updateStatsWorker")
+	do.wg.Run(func() { do.deltaUpdateTickerWorker() }, "deltaUpdateTickerWorker")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2600,7 +2601,7 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle)
 	}
 }
 
-func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
+func (do *Domain) updateStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
@@ -2628,11 +2629,6 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 		case <-do.exit:
 			do.updateStatsWorkerExitPreprocessing(statsHandle)
 			return
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
-			if err != nil {
-				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
-			}
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
 				continue
@@ -2652,6 +2648,28 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorker() {
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	logutil.BgLogger().Info("updateStatsWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			do.updateStatsWorkerExitPreprocessing(statsHandle)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
+			}
 		}
 	}
 }
