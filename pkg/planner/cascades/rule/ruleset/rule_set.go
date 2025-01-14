@@ -22,6 +22,6 @@ import (
 
 var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
 	pattern.OperandApply: {
-		decorrelate_apply.NewXFDeCorrelateApply(),
+		decorrelateapply.NewXFDeCorrelateApply(),
 	},
 }
