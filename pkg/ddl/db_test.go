@@ -1282,21 +1282,23 @@ func TestGetAllTableInfos(t *testing.T) {
 	tblInfos1 := make([]*model.TableInfo, 0)
 	tblInfos2 := make([]*model.TableInfo, 0)
 	dbs := dom.InfoSchema().AllSchemas()
+	maxDBID := int64(0)
 	for _, db := range dbs {
 		if infoschema.IsSpecialDB(db.Name.L) {
 			continue
+		}
+		if db.ID > maxDBID {
+			maxDBID = db.ID
 		}
 		info, err := dom.InfoSchema().SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)
 		tblInfos1 = append(tblInfos1, info...)
 	}
 
-	m := dom.GetSnapshotMeta(oracle.GoTimeToTS(time.Now()))
-	err := m.IterAllTables(
-		func(tblInfo *model.TableInfo) error {
-			tblInfos2 = append(tblInfos2, tblInfo)
-			return nil
-		})
+	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 10, func(tblInfo *model.TableInfo) error {
+		tblInfos2 = append(tblInfos2, tblInfo)
+		return nil
+	}, maxDBID)
 	require.NoError(t, err)
 
 	slices.SortFunc(tblInfos1, func(i, j *model.TableInfo) int {

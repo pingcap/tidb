@@ -254,10 +254,10 @@ func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error)
 }
 
 // IterateHashWithBoundedKey iterates all the fields and values in hash with a bounded key.
-func (t *TxStructure) IterateHashWithBoundedKey(startKey []byte, endKey []byte, fn func(k []byte, f []byte, v []byte) error) error {
-	hashStartKey := t.hashDataKeyPrefix(startKey)
-	hashEndKey := t.hashDataKeyPrefix(endKey)
-	it, err := t.reader.Iter(hashStartKey, hashEndKey.PrefixNext())
+func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey []byte, fn func(k []byte, f []byte, v []byte) error) error {
+	hashStartKey = t.hashDataKeyPrefix(hashStartKey)
+	hashEndKey = t.hashDataKeyPrefix(hashEndKey)
+	it, err := t.reader.Iter(hashStartKey, hashEndKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -267,7 +267,7 @@ func (t *TxStructure) IterateHashWithBoundedKey(startKey []byte, endKey []byte, 
 	for it.Valid() {
 		key, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			continue
 		}
 		if err = fn(key, field, it.Value()); err != nil {
 			return errors.Trace(err)
