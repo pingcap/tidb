@@ -254,7 +254,7 @@ select @@session.mpp_version;
 SET SESSION mpp_version = unspecified;
 select @@session.mpp_version;
 -- error 1105
-SET SESSION mpp_version = 3;
+SET SESSION mpp_version = 4;
 SET GLOBAL mpp_version = 1;
 select @@global.mpp_version;
 SET GLOBAL mpp_version = -1;
