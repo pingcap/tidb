@@ -21,6 +21,9 @@ const (
 	maxDuplicateBatchSize = 4 << 20
 	taskExitsMsg          = "task exists"
 
+	// format of load data task id: ${keyspaceID}-${taskID}-${tableID}-${engineID}
+	loadDatatTaskIDFormat = "%d-%d-%d-%d"
+
 	sleepDuration = 3 * time.Second
 	retryCount    = 6000 // 3s * 6000 = 5h
 
@@ -28,7 +31,7 @@ const (
 )
 
 func genLoadDataTaskID(keyspaceID uint32, taskID int64, cfg *backend.EngineConfig) string {
-	return fmt.Sprintf("%d-%d-%d-%d", keyspaceID, taskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
+	return fmt.Sprintf(loadDatatTaskIDFormat, keyspaceID, taskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
 }
 
 func retryableHTTPStatusCode(statusCode int) bool {
