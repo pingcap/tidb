@@ -396,7 +396,7 @@ func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor,
 	return false, sameZoneFlags
 }
 
-func (h *taskZoneInfoHelper) inferSameZoneFlags(encodedTaskMeta [][]byte, slots int) []string {
+func (h *taskZoneInfoHelper) collectExchangeZoneInfos(encodedTaskMeta [][]byte, slots int) []string {
 	zoneInfos := make([]string, 0, slots)
 	for _, taskBytes := range encodedTaskMeta {
 		taskMeta := &mpp.TaskMeta{}
@@ -432,13 +432,12 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		}
 		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
 		if !exist {
-			zoneInfos = h.inferSameZoneFlags(exec.ExchangeSender.EncodedTaskMeta, slots)
+			zoneInfos = h.collectExchangeZoneInfos(exec.ExchangeSender.EncodedTaskMeta, slots)
 			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
 		}
 		for i := 0; i < slots; i++ {
 			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeExchangeReceiver:
 		slots := len(exec.ExchangeReceiver.EncodedTaskMeta)
@@ -449,13 +448,12 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		}
 		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
 		if !exist {
-			zoneInfos = h.inferSameZoneFlags(exec.ExchangeReceiver.EncodedTaskMeta, slots)
+			zoneInfos = h.collectExchangeZoneInfos(exec.ExchangeReceiver.EncodedTaskMeta, slots)
 			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
 		}
 		for i := 0; i < slots; i++ {
 			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %v %v", exec.ExecutorId, sameZoneFlags))
 		exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
 	case tipb.ExecType_TypeJoin:
 		children = append(children, exec.Join.Children...)
