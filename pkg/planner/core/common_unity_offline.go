@@ -70,16 +70,21 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	stmt, err := parser.New().ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
-	leadingHints := e.unityOfflineIterateLeadingHints(tableNames)
+	leadingHints := e.unityOfflineLeadingHints(tableNames)
 
 	indexHints := make([][]string, len(tableNames))
 	for i, t := range tableNames {
-		indexHints[i] = e.unityOfflineIterateIndexHints(t)
+		indexHints[i] = e.unityOfflineIndexHints(t)
 	}
-	return e.unityOfflineIterateHints(leadingHints, indexHints)
+	return e.unityOfflineCombineHints(leadingHints, indexHints)
 }
 
-func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
+func (e *Explain) queryLabel() string {
+	_, digest := e.SCtx().GetSessionVars().StmtCtx.SQLDigest()
+	return sqlDigestLabel[digest.String()]
+}
+
+func (e *Explain) unityOfflineCombineHints(leadingHints []string, indexHints [][]string) (hints []string) {
 	currentIndexHints := make([]string, len(indexHints))
 	var possibleIndexHints []string
 	var f func(int)
@@ -102,7 +107,7 @@ func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][
 	return
 }
 
-func (e *Explain) unityOfflineIterateIndexHints(t *tableName) (hints []string) {
+func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 	hints = append(hints, "")                                         // empty hint
 	hints = append(hints, fmt.Sprintf("use_index(%s)", t.HintName())) // don't use index
 	idxNames := e.tableIndexNames(t)
@@ -112,7 +117,7 @@ func (e *Explain) unityOfflineIterateIndexHints(t *tableName) (hints []string) {
 	return
 }
 
-func (e *Explain) unityOfflineIterateLeadingHints(tableNames []*tableName) (hints []string) {
+func (e *Explain) unityOfflineLeadingHints(tableNames []*tableName) (hints []string) {
 	hints = append(hints, "") // empty
 	n := len(tableNames)
 	switch n {
@@ -376,4 +381,8 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 // Leave implements Visitor interface.
 func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+var sqlDigestLabel = map[string]string{
+	"": "job-q1a",
 }
