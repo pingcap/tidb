@@ -2025,9 +2025,6 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "/*+ INL_JOIN(t1, t2) */") {
-		fmt.Println(1)
-	}
 	p := lp.(*logicalop.LogicalJoin)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {

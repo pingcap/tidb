@@ -508,11 +508,11 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
-	//bestTask = p.GetTask(prop)
-	//if bestTask != nil {
-	//	planCounter.Dec(1)
-	//	return bestTask, 1, nil
-	//}
+	bestTask = p.GetTask(prop)
+	if bestTask != nil {
+		planCounter.Dec(1)
+		return bestTask, 1, nil
+	}
 
 	canAddEnforcer := prop.CanAddEnforcer
 

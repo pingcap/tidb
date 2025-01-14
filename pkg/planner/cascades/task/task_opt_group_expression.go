@@ -45,8 +45,7 @@ func NewOptGroupExpressionTask(ctx cascadesctx.Context, ge *memo.GroupExpression
 // Execute implements the task.Execute interface.
 func (ge *OptGroupExpressionTask) Execute() error {
 	ruleMap := ge.getValidRules()
-	s := ruleMap[pattern.GetOperand(ge.groupExpression.GetWrappedLogicalPlan())]
-	for _, one := range s {
+	for _, one := range ruleMap[pattern.GetOperand(ge.groupExpression.GetWrappedLogicalPlan())] {
 		ge.Push(NewApplyRuleTask(ge.ctx, ge.groupExpression, one))
 	}
 	// since it's a stack-order, LIFO, when we want to apply a rule for a specific group expression,

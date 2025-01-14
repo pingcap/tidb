@@ -15,10 +15,10 @@
 package cascades_test
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCascadesDrive(t *testing.T) {
