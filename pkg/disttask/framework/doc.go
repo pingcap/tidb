@@ -95,7 +95,7 @@
 // As the resources are limited, we need to schedule tasks in a certain order.
 //
 // In DXF, we manage to run tasks of higher ranking first, and then run tasks of
-// lower ranging. A task of higher ranking might preempt the resources of a task
+// lower ranking. A task of higher ranking might preempt the resources of a task
 // of lower ranking.
 //
 // Note, we use the word rank instead of priority as it's only part of fields that
