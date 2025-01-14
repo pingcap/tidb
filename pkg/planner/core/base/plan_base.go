@@ -294,6 +294,12 @@ type LogicalPlan interface {
 	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
 	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
 
+	// SetPlanIDsHash set sub operator tree's ids hash64
+	SetPlanIDsHash(uint64)
+
+	// GetPlanIDsHash set sub operator tree's ids hash64
+	GetPlanIDsHash() uint64
+
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
