@@ -71,7 +71,9 @@ func RunForceFlush(ctx context.Context, cfg *ForceFlushConfig) error {
 		if !cfg.StoresPattern.MatchString(s.Address) || engine.IsTiFlash(s) {
 			log.Info("Skipping TiFlash or not matched TiKV.",
 				zap.Uint64("store", s.GetId()), zap.String("addr", s.Address), zap.Bool("tiflash?", engine.IsTiFlash(s)))
+			continue
 		}
+
 		log.Info("Starting force flush TiKV.", zap.Uint64("store", s.GetId()), zap.String("addr", s.Address))
 		eg.Go(func() error {
 			var logBackupCli logbackup.LogBackupClient
