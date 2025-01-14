@@ -101,7 +101,17 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 	s.SweepSessionStatsList()
 	deltaMap := s.SessionTableDelta().GetDeltaAndReset()
+	// Before dump
+	statslogutil.SingletonStatsSamplerLogger().Info("Dumping stats delta",
+		zap.Int("tableCount", len(deltaMap)),
+		zap.Bool("dumpAll", dumpAll),
+	)
 	defer func() {
+		// Check if deltaMap is cleaned up.
+		if len(deltaMap) > 0 {
+			statslogutil.SingletonStatsSamplerLogger().Warn("deltaMap is not cleaned up",
+				zap.Int("tableCount", len(deltaMap)))
+		}
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 	if time.Since(start) > tooSlowThreshold {
@@ -185,6 +195,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			for _, update := range batchUpdates {
 				UpdateTableDeltaMap(deltaMap, update.TableID, -update.Delta.Delta, -update.Delta.Count)
 				delete(deltaMap, update.TableID)
+				statslogutil.SingletonStatsSamplerLogger().Info("Dumped stats delta",
+					zap.Int64("tableID", update.TableID),
+					zap.Int64("delta", -update.Delta.Delta),
+					zap.Int64("count", -update.Delta.Count),
+				)
 			}
 
 			if time.Since(batchStart) > tooSlowThreshold {
