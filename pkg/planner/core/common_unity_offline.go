@@ -77,8 +77,7 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	for i, t := range tableNames {
 		indexHints[i] = e.unityOfflineIterateIndexHints(t)
 	}
-	allPossibleHintSets = e.unityOfflineIterateHints(leadingHints, indexHints)
-	return
+	return e.unityOfflineIterateHints(leadingHints, indexHints)
 }
 
 func (e *Explain) unityOfflineIterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
