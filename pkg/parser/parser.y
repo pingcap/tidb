@@ -14413,7 +14413,7 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SHOW"
+|	"RECOMMEND" "INDEX" "SHOW" "OPTION"
 	{
 		x := &ast.RecommendIndexStmt{
 			Action: "show",
