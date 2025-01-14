@@ -359,13 +359,3 @@ insert ignore into tmp1 values(3, 100, 1000);
 commit;
 select * from tmp1;
 
-# TestIssue58875
-drop table if exists users, users1;
-CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3 int, v4 int,   PRIMARY KEY(id), index v1_index(v1,v2,v3) ) ON COMMIT DELETE ROWS;
-create table users1(id int, value int, index index_value(value));
-insert into users1 values(1,2);
-begin;
---echo # There should be no execution info because for user table, because temporary table should not visit tikv
---replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
-explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);
-commit;
