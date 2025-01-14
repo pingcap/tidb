@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 754.0083333101078
+        "Count": 757.0083333101078
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1670.3937391478842
+        "Count": 1673.3937391478842
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1687.5576419798163
+        "Count": 1681.5576419798163
       },
       {
         "Start": 200,
@@ -1064,11 +1064,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 1000)",
-          "│   └─IndexRangeScan 100.00 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1189,11 +1189,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 10.00 cop[tikv]  lt(test.t.a, 1000)",
-          "│   └─IndexRangeScan 1000.00 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1232,11 +1232,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 500)",
-          "│   └─IndexRangeScan 2.00 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1266,11 +1266,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 0.50 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 0.50 cop[tikv]  lt(test.t.a, 500)",
-          "│   └─IndexRangeScan 1.00 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1300,11 +1300,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 0.75 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 0.75 cop[tikv]  lt(test.t.a, 500)",
-          "│   └─IndexRangeScan 1.50 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1334,11 +1334,11 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 6.75 cop[tikv]  lt(test.t.a, 500)",
-          "│   └─IndexRangeScan 13.50 cop[tikv] table:t, index:ic(c) range:[-inf,100), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1544,7 +1544,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1613,7 +1613,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2473,7 +2473,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2611,7 +2611,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
