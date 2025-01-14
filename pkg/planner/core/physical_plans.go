@@ -1075,17 +1075,24 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		}
 		numExtraColumns++
 	}
-	if !ordinaryColumnExists {
-		numExtraColumns = 0
+	if ordinaryColumnExists && numExtraColumns > 0 {
+		extraColumns := make([]*expression.Column, numExtraColumns)
+		copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
+		schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
+
+		extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
+		copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
+		copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
+
+		copyColumn = expandVirtualColumn(schema, copyColumn, colsInfo)
+		schema.Columns = append(schema.Columns, extraColumns...)
+		copyColumn = append(copyColumn, extraColumnModels...)
+		return copyColumn
 	}
-	extraColumns := make([]*expression.Column, numExtraColumns)
-	copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
-	schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
+	return expandVirtualColumn(schema, copyColumn, colsInfo)
+}
 
-	extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
-	copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
-	copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
-
+func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnInfo, colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -1100,9 +1107,6 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 			}
 		}
 	}
-
-	schema.Columns = append(schema.Columns, extraColumns...)
-	copyColumn = append(copyColumn, extraColumnModels...)
 	return copyColumn
 }
 
