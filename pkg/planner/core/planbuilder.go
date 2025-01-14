@@ -5884,7 +5884,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "index_name", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "index_columns", mysql.TypeVarchar, 256))
-		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "est_index_size", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
 		schema.Append(buildColumnWithName("", "create_index_statement", mysql.TypeBlob, -1))
