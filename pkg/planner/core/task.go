@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -31,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -374,7 +377,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
-		})
+		}, nil)
 		lTask = nlTask
 	}
 	if rChanged {
@@ -384,7 +387,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
-		})
+		}, nil)
 		rTask = nrTask
 	}
 	return lTask, rTask
@@ -2410,7 +2413,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		return t
 	case MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
-		if !mpp.needEnforceExchanger(prop) {
+		if !mpp.needEnforceExchanger(prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
@@ -2453,7 +2456,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 
 			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-			newMpp := mpp.enforceExchanger(exProp)
+			newMpp := mpp.enforceExchanger(exProp, nil)
 			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
 			if partialHashAgg, ok := partial.(*PhysicalHashAgg); ok && len(partitionCols) != 0 {
@@ -2462,7 +2465,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 
 		// prop here still be the first generated single-partition requirement.
-		newMpp := mpp.enforceExchanger(prop)
+		newMpp := mpp.enforceExchanger(prop, nil)
 		attachPlan2Task(final, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2633,7 +2636,30 @@ func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	}
 }
 
-func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
+// A is to iter the task.P and task.Children recursively, and get Equal condition.
+func getEqualConditions(task *MppTask) []expression.Expression {
+	return getEqualConditionFromPhysicalPlan(task.p)
+}
+
+func getEqualConditionFromPhysicalPlan(p base.PhysicalPlan) []expression.Expression {
+	if p == nil {
+		return nil
+	}
+	conds := make([]expression.Expression, 0, 4)
+	if p, ok := p.(*PhysicalHashJoin); ok {
+		for _, eqCond := range p.EqualConditions {
+			conds = append(conds, eqCond.Clone())
+		}
+	}
+	if len(p.Children()) == 1 {
+		for _, child := range p.Children() {
+			conds = append(conds, getEqualConditionFromPhysicalPlan(child)...)
+		}
+	}
+	return conds
+}
+
+func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) bool {
 	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
@@ -2645,14 +2671,38 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		if t.partTp != property.HashType {
 			return true
 		}
-		// TODO: consider equalivant class
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
+		equal := getEqualConditions(t)
+		if fd != nil && len(equal) != 0 {
+			mppPartitionCols := slices.Clone(prop.MPPPartitionCols)
+			equivalence := util.ExtractEquivalenceCols(equal, t.p.SCtx(), fd)
+			result := make([]intset.FastIntSet, 0, 2)
+			for _, col := range equivalence {
+				for _, c := range col {
+					result = append(result, fd.ClosureOfStrict(c))
+				}
+				// if all partition cols are in the same equivalence class, then no need to enforce exchange.
+				mppPartitionCols = slices.DeleteFunc(mppPartitionCols, func(col *property.MPPPartitionColumn) bool {
+					for _, r := range result {
+						if r.Has(int(col.Col.UniqueID)) {
+							return true
+						}
+					}
+					return false
+				})
+				if len(mppPartitionCols) == 0 {
+					return false
+				}
+				clear(result)
+			}
+			return true
+		}
 		return !prop.IsSubset(t.hashCols)
 	}
 }
 
-func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty) *MppTask {
-	if !t.needEnforceExchanger(prop) {
+func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) *MppTask {
+	if !t.needEnforceExchanger(prop, fd) {
 		return t
 	}
 	return t.Copy().(*MppTask).enforceExchangerImpl(prop)

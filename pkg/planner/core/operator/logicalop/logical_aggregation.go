@@ -705,7 +705,7 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
+			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg, false)
 			if err != nil {
 				return false
 			}

@@ -106,7 +106,7 @@ func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema
 	}
 	exprCtx := ctx.GetNullRejectCheckExprCtx()
 	sc := ctx.GetSessionVars().StmtCtx
-	result, err := expression.EvaluateExprWithNull(exprCtx, schema, expr)
+	result, err := expression.EvaluateExprWithNull(exprCtx, schema, expr, true)
 	if err != nil {
 		return false
 	}
