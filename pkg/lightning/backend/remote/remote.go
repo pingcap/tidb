@@ -371,13 +371,13 @@ func (b *Backend) Close() {
 }
 
 // RetryImportDelay returns the duration to sleep when retrying an import
-func (b *Backend) RetryImportDelay() time.Duration {
+func (*Backend) RetryImportDelay() time.Duration {
 	return 0
 }
 
 // ShouldPostProcess returns whether KV-specific post-processing should be
 // performed for this backend. Post-processing includes checksum and analyze.
-func (b *Backend) ShouldPostProcess() bool {
+func (*Backend) ShouldPostProcess() bool {
 	return true
 }
 
@@ -437,7 +437,7 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 			dataSize,
 		)
 		client := *b.httpClient
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 
@@ -445,17 +445,19 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusFound {
 			engine.addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
 			b.logger.Info("redirect to remote worker",
 				zap.String("loadDataTaskID", engine.loadDataTaskID),
 				zap.String("worker addr", engine.addr))
+			_ = resp.Body.Close()
 			continue
 		}
+
 		if resp.StatusCode != http.StatusOK {
 			msg, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
 			// If the task exists, we can continue to import data.
 			if err == nil && strings.TrimSpace(string(msg)) == taskExitsMsg {
 				b.logger.Info("loadData task has inited in remote worker",
@@ -469,6 +471,7 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 				zap.String("msg", string(msg)))
 			return common.ErrRequestRemoteWorker.FastGenByArgs(resp.StatusCode, string(msg))
 		}
+		_ = resp.Body.Close()
 		return nil
 	}
 }
@@ -503,7 +506,7 @@ func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, en
 		return err
 	}
 
-	engine.writers.Range(func(key, value any) bool {
+	engine.writers.Range(func(key, _ any) bool {
 		sender := key.(*writer).chunkSender
 		err = sender.close()
 		if err != nil {
@@ -522,7 +525,7 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 	for {
 		url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s", addr, clusterID, loadDataTaskID)
 		client := *b.httpClient
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 
@@ -530,13 +533,13 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusFound {
 			addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
 			b.logger.Info("redirect to remote worker",
 				zap.String("loadDataTaskID", loadDataTaskID),
 				zap.String("worker addr", addr))
+			_ = resp.Body.Close()
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -544,9 +547,11 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 				return false, nil
 			}
 			msg, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
 			b.logger.Warn("failed to get task", zap.String("status", resp.Status), zap.String("msg", string(msg)))
 			return false, common.ErrRequestRemoteWorker.FastGenByArgs(resp.Status, string(msg))
 		}
+		_ = resp.Body.Close()
 		return true, nil
 	}
 }
@@ -629,9 +634,13 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 
 	if b.reportErrOnDup {
 		dupKey, err := hex.DecodeString(states.DuplicateEntries[0].Key)
-		dupKey, err = b.tikvCodec.DecodeKey(dupKey)
 		if err != nil {
 			b.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
+		} else {
+			dupKey, err = b.tikvCodec.DecodeKey(dupKey)
+			if err != nil {
+				b.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
+			}
 		}
 
 		dupVal, err := hex.DecodeString(states.DuplicateEntries[0].Values[0])
@@ -662,7 +671,11 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 				b.logger.Warn("failed to decode value", zap.String("value", value), zap.Error(err))
 				return err
 			}
-			writeBatch.Set(encodedRawKey, rawValue, nil)
+			err = writeBatch.Set(encodedRawKey, rawValue, nil)
+			if err != nil {
+				b.logger.Warn("failed to write duplicate entries", zap.Error(err))
+				return err
+			}
 			writeBatchSize += int64(len(encodedRawKey) + len(rawValue))
 			if writeBatchSize >= maxDuplicateBatchSize {
 				err = writeBatch.Commit(nil)
@@ -750,24 +763,24 @@ func (b *Backend) FlushEngine(ctx context.Context, engineUUID uuid.UUID) error {
 // very expensive operation and should only be used in some rare situation
 // (e.g. preparing to resolve a disk quota violation).
 // This method is only relevant for local backend, and is no-op for remote backend.
-func (b *Backend) FlushAllEngines(ctx context.Context) error {
+func (*Backend) FlushAllEngines(_ context.Context) error {
 	return nil
 }
 
 // EngineFileSizes obtains the size occupied locally of all engines managed
 // by this backend. This method is used to compute disk quota.
 // It can return nil if the content are all stored remotely.
-func (b *Backend) EngineFileSizes() []backend.EngineFileSize {
+func (*Backend) EngineFileSizes() []backend.EngineFileSize {
 	return nil
 }
 
 // ResetEngine clears all written KV pairs in this opened engine.
-func (b *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (*Backend) ResetEngine(_ context.Context, _ uuid.UUID) error {
 	return errors.New("cannot reset an engine in remote backend")
 }
 
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
-func (b *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (b *Backend) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
 		return nil, err
@@ -824,10 +837,7 @@ func (e *engine) flush(ctx context.Context) error {
 		}
 
 		err = w.chunkSender.flush(ctx)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	})
 	if err != nil {
 		e.logger.Warn("failed to flush writer", zap.Error(err))
@@ -851,7 +861,7 @@ const batchSize int = 8 * 1024 * 1024
 
 func (w *writer) AppendRows(
 	ctx context.Context,
-	columnNames []string,
+	_ []string,
 	rows encode.Rows,
 ) error {
 	kvs := kv.Rows2KvPairs(rows)

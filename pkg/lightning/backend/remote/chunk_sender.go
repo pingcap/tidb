@@ -174,7 +174,10 @@ func (c *chunkSender) getFlushedChunkID() uint64 {
 func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 	defer func() {
 		close(c.loopDoneChan)
-		c.chunksCache.close()
+		err := c.chunksCache.close()
+		if err != nil {
+			c.e.logger.Warn("failed to close chunk cache", zap.Error(err))
+		}
 		c.wg.Done()
 	}()
 
@@ -306,7 +309,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 				zap.Uint64("chunkID", lastFlushedChunkID),
 				zap.Error(err))
 		}
-		lastFlushedChunkID += 1
+		lastFlushedChunkID++
 	}
 
 	c.state.Store(&chunksState{
@@ -341,7 +344,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		}
 
 		if result.Finished {
-			c.e.logger.Info("loadDataTask finished", zap.String("taskID", c.e.loadDataTaskID))
+			c.e.logger.Info("loadDataTask finished")
 			return nil
 		}
 
@@ -352,8 +355,11 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			state := c.state.Load().(*chunksState)
 			lastFlushedChunkID := state.FlushedChunkID + 1
 			for lastFlushedChunkID <= flushedChunkID {
-				c.chunksCache.clean(lastFlushedChunkID)
-				lastFlushedChunkID += 1
+				err := c.chunksCache.clean(lastFlushedChunkID)
+				if err != nil {
+					c.e.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
+				}
+				lastFlushedChunkID++
 			}
 			state.FlushedChunkID = flushedChunkID
 
