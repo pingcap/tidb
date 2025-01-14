@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"go.uber.org/zap"
 )
 
@@ -80,10 +82,53 @@ func sendRequest(ctx context.Context, httpClient *http.Client, method, url strin
 	return io.ReadAll(resp.Body)
 }
 
-func parseLDWUrl(resp *http.Response, enableTLS bool) string {
+func parseRemoteWorkerURL(resp *http.Response, enableTLS bool) string {
 	base := strings.TrimSuffix(resp.Header.Get("Location"), "/load_data")
 	if !enableTLS && strings.HasPrefix(base, "https") {
 		return "http" + base[len("https"):]
 	}
 	return base
+}
+
+// EstimateEngineDataSize estimates the data size of the table in the engine.
+func EstimateEngineDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.TidbTableInfo, isIndexEngine bool, logger log.Logger) int64 {
+	if tblMeta == nil || tblInfo == nil {
+		// if we can't get table meta or table info, we can't estimate data size.
+		return 0
+	}
+	if isIndexEngine {
+		if len(tblInfo.Core.Indices) == 0 || (tblInfo.Core.IsCommonHandle && len(tblInfo.Core.Indices) == 1) {
+			return 0
+		}
+	}
+
+	totalSize := int64(0)
+	for _, dataFile := range tblMeta.DataFiles {
+		totalSize += dataFile.FileMeta.RealSize
+	}
+	if tblMeta.IndexRatio > 1 {
+		totalSize = int64(float64(totalSize) * tblMeta.IndexRatio)
+	}
+	logger.Info("estimate data size",
+		zap.Int64("estimatedDataSize", totalSize),
+		zap.String("db", tblInfo.DB),
+		zap.String("table", tblInfo.Name),
+		zap.Bool("isIndexEngine", isIndexEngine),
+	)
+	return totalSize
+}
+
+// IsRecoverFromEngineCp checks whether the engine recover from the engine checkpoint.
+func IsRecoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
+	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
+		cp.Status >= checkpoints.CheckpointStatusImported {
+		return false
+	}
+
+	for _, chunk := range cp.Chunks {
+		if chunk.FinishedSize() > 0 {
+			return true
+		}
+	}
+	return false
 }

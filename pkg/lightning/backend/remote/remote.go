@@ -403,8 +403,8 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 		backend:        b,
 	})
 	engine := e.(*engine)
-	if cfg.Remote.RecoverFromCheckpoint {
-		exist, err := b.checkLoadDataTask(ctx, loadDataTaskID)
+	if cfg.Remote.IsRecoverFromCheckpoint {
+		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
 			return err
 		}
@@ -448,8 +448,8 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusFound {
-			engine.addr = parseLDWUrl(resp, b.tls.TLSConfig() != nil)
-			b.logger.Info("redirect to loadData worker",
+			engine.addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
+			b.logger.Info("redirect to remote worker",
 				zap.String("loadDataTaskID", engine.loadDataTaskID),
 				zap.String("worker addr", engine.addr))
 			continue
@@ -458,7 +458,7 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 			msg, err := io.ReadAll(resp.Body)
 			// If the task exists, we can continue to import data.
 			if err == nil && strings.TrimSpace(string(msg)) == taskExitsMsg {
-				b.logger.Info("loadData task has inited in load_data worker",
+				b.logger.Info("loadData task has inited in remote worker",
 					zap.String("loadDataTask", engine.loadDataTaskID),
 					zap.String("worker addr", engine.addr))
 				return nil
@@ -478,7 +478,7 @@ func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, en
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
 		loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.taskID, cfg)
-		exist, err := b.checkLoadDataTask(ctx, loadDataTaskID)
+		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
 			return err
 		}
@@ -515,7 +515,7 @@ func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, en
 	return err
 }
 
-func (b *Backend) checkLoadDataTask(ctx context.Context, loadDataTaskID string) (bool, error) {
+func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (bool, error) {
 	clusterID := b.pdCli.GetClusterID(ctx)
 	addr := b.workerAddr
 
@@ -533,8 +533,8 @@ func (b *Backend) checkLoadDataTask(ctx context.Context, loadDataTaskID string) 
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusFound {
-			addr = parseLDWUrl(resp, b.tls.TLSConfig() != nil)
-			b.logger.Info("redirect to loadData worker",
+			addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
+			b.logger.Info("redirect to remote worker",
 				zap.String("loadDataTaskID", loadDataTaskID),
 				zap.String("worker addr", addr))
 			continue
