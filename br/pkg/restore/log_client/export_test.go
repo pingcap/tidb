@@ -139,3 +139,7 @@ func (w *WithMigrations) SetRestoredTS(ts uint64) {
 func (w *WithMigrations) SetStartTS(ts uint64) {
 	w.startTS = ts
 }
+
+func (w WithMigrations) CompactionDirs() []string {
+	return w.compactionDirs
+}

@@ -192,6 +192,9 @@ func (cfg *MigrateToConfig) Verify() error {
 type ForceFlushConfig struct {
 	task.Config
 
+	// StoresPattern matches the address of TiKV.
+	// The address usually looks like "<host>:20160".
+	// You may list the store by `pd-ctl stores`.
 	StoresPattern *regexp.Regexp
 }
 

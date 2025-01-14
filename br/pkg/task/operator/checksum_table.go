@@ -7,9 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	kvutil "github.com/tikv/client-go/v2/util"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -22,7 +19,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type checksumTableCtx struct {
@@ -231,7 +230,6 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 	resultsMu := new(sync.Mutex)
 
 	for _, req := range reqs {
-		req := req
 		wkPool.ApplyOnErrorGroup(eg, func() error {
 			total := req.copReq.Len()
 			finished := new(atomic.Int64)
