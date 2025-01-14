@@ -288,8 +288,7 @@ func TestNotFillCacheFlag(t *testing.T) {
 func TestCheckIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	ctx := mock.NewContext()
-	ctx.Store = store
+	ctx := testkit.NewSession(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
