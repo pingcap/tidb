@@ -37,7 +37,7 @@ func newChunkCache(loadDataTaskID string, writerID uint64, basePath string, usin
 		path = basePath
 	}
 	baseDir := filepath.Join(path, loadDataTaskID, fmt.Sprintf("%d", writerID))
-	err := os.MkdirAll(baseDir, 0o755)
+	err := os.MkdirAll(baseDir, 0o750)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
 	}
 
 	path := filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
-	file, err := os.Open(path)
+	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 	}
 
 	fileName := filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
-	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
