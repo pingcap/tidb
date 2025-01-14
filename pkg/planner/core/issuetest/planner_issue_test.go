@@ -16,13 +16,18 @@ package issuetest
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -178,6 +183,25 @@ func TestIssue58476(t *testing.T) {
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
+func loadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := os.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &util.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func TestIssue(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -230,6 +254,9 @@ CREATE TABLE lineitem (
 	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	require.NoError(t, loadTableStats("test.customer.json", dom))
+	require.NoError(t, loadTableStats("test.lineitem.json", dom))
+	require.NoError(t, loadTableStats("test.orders.json", dom))
 	tk.MustQuery(`explain select l_orderkey, sum(l_extendedprice * (1 - l_discount)) as revenue, o_orderdate, o_shippriority
 from customer, orders, lineitem
 where c_mktsegment = 'AUTOMOBILE' and c_custkey = o_custkey and l_orderkey = o_orderkey and o_orderdate < '1995-03-13' and l_shipdate > '1995-03-13'
@@ -237,20 +264,27 @@ group by l_orderkey, o_orderdate, o_shippriority
 order by revenue desc, o_orderdate
 limit 10;`).Check(testkit.Rows(
 		"Projection_14 10.00 root  test.lineitem.l_orderkey, Column#34, test.orders.o_orderdate, test.orders.o_shippriority",
-		"└─TopN_17 10.00 root  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
-		"  └─HashAgg_24 15.62 root  group by:Column#48, Column#49, Column#50, funcs:sum(Column#47)->Column#34, funcs:firstrow(Column#48)->test.orders.o_orderdate, funcs:firstrow(Column#49)->test.orders.o_shippriority, funcs:firstrow(Column#50)->test.lineitem.l_orderkey",
-		"    └─Projection_143 15.62 root  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#47, test.orders.o_orderdate->Column#48, test.orders.o_shippriority->Column#49, test.lineitem.l_orderkey->Column#50",
-		"      └─IndexJoin_37 15.62 root  inner join, inner:TableReader_33, outer key:test.orders.o_orderkey, inner key:test.lineitem.l_orderkey, equal cond:eq(test.orders.o_orderkey, test.lineitem.l_orderkey)",
-		"        ├─TableReader_93(Build) 12.50 root  MppVersion: 2, data:ExchangeSender_92",
-		"        │ └─ExchangeSender_92 12.50 mpp[tiflash]  ExchangeType: PassThrough",
-		"        │   └─Projection_91 12.50 mpp[tiflash]  test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_shippriority",
-		"        │     └─HashJoin_77 12.50 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
-		"        │       ├─ExchangeReceiver_48(Build) 10.00 mpp[tiflash]  ",
-		"        │       │ └─ExchangeSender_47 10.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-		"        │       │   └─TableFullScan_45 10.00 mpp[tiflash] table:customer pushed down filter:eq(test.customer.c_mktsegment, \"AUTOMOBILE\"), keep order:false, stats:pseudo",
-		"        │       └─Selection_50(Probe) 3323.33 mpp[tiflash]  lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000)",
-		"        │         └─TableFullScan_49 10000.00 mpp[tiflash] table:orders pushed down filter:empty, keep order:false, stats:pseudo",
-		"        └─TableReader_33(Probe) 4.17 root  data:Selection_32",
-		"          └─Selection_32 4.17 cop[tikv]  gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)",
-		"            └─TableRangeScan_31 12.50 cop[tikv] table:lineitem range: decided by [eq(test.lineitem.l_orderkey, test.orders.o_orderkey)], keep order:false, stats:pseudo"))
+		"└─TopN_18 10.00 root  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
+		"  └─TableReader_144 10.00 root  MppVersion: 3, data:ExchangeSender_143",
+		"    └─ExchangeSender_143 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"      └─TopN_142 10.00 mpp[tiflash]  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
+		"        └─Projection_138 39998176.29 mpp[tiflash]  Column#34, test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey",
+		"          └─HashAgg_139 39998176.29 mpp[tiflash]  group by:test.lineitem.l_orderkey, test.orders.o_orderdate, test.orders.o_shippriority, funcs:sum(Column#43)->Column#34, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate, funcs:firstrow(test.orders.o_shippriority)->test.orders.o_shippriority, funcs:firstrow(test.lineitem.l_orderkey)->test.lineitem.l_orderkey",
+		"            └─ExchangeReceiver_141 39998176.29 mpp[tiflash]  ",
+		"              └─ExchangeSender_140 39998176.29 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary], [name: test.orders.o_orderdate, collate: binary], [name: test.orders.o_shippriority, collate: binary]",
+		"                └─HashAgg_136 39998176.29 mpp[tiflash]  group by:Column#48, Column#49, Column#50, funcs:sum(Column#47)->Column#43",
+		"                  └─Projection_145 92822759.11 mpp[tiflash]  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#47, test.lineitem.l_orderkey->Column#48, test.orders.o_orderdate->Column#49, test.orders.o_shippriority->Column#50",
+		"                    └─Projection_125 92822759.11 mpp[tiflash]  test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                      └─HashJoin_124 92822759.11 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+		"                        ├─ExchangeReceiver_53(Build) 22867441.30 mpp[tiflash]  ",
+		"                        │ └─ExchangeSender_52 22867441.30 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
+		"                        │   └─Projection_51 22867441.30 mpp[tiflash]  test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_shippriority",
+		"                        │     └─HashJoin_44 22867441.30 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"                        │       ├─ExchangeReceiver_48(Build) 1501762.80 mpp[tiflash]  ",
+		"                        │       │ └─ExchangeSender_47 1501762.80 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"                        │       │   └─TableFullScan_45 1501762.80 mpp[tiflash] table:customer pushed down filter:eq(test.customer.c_mktsegment, \"AUTOMOBILE\"), keep order:false",
+		"                        │       └─TableFullScan_49(Probe) 36377904.50 mpp[tiflash] table:orders pushed down filter:lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000), keep order:false",
+		"                        └─ExchangeReceiver_57(Probe) 162359270.28 mpp[tiflash]  ",
+		"                          └─ExchangeSender_56 162359270.28 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
+		"                            └─TableFullScan_54 162359270.28 mpp[tiflash] table:lineitem pushed down filter:gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000), keep order:false"))
 }
