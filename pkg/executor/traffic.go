@@ -113,18 +113,17 @@ func (e *TrafficReplayExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	var warning error
 	readerNum, tiproxyNum := len(readers), len(addrs)
 	if readerNum > tiproxyNum {
-		warning = errors.Errorf("tiproxy instances number (%d) is less than input paths number (%d), some paths won't be replayed", tiproxyNum, readerNum)
-		readers = readers[:tiproxyNum]
+		logutil.Logger(ctx).Error("tiproxy instances number is less than input paths number", zap.Int("tiproxy number", tiproxyNum),
+			zap.Int("path number", readerNum))
+		return errors.Errorf("tiproxy instances number (%d) is less than input paths number (%d)", tiproxyNum, readerNum)
 	} else if readerNum < tiproxyNum {
-		warning = errors.Errorf("tiproxy instances number (%d) is greater than input paths number (%d), some instances won't replay", tiproxyNum, readerNum)
 		addrs = addrs[:readerNum]
-	}
-	if warning != nil {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warning)
-		logutil.Logger(ctx).Warn("tiproxy instances and input paths don't match", zap.String("input", e.Args[inputKey]), zap.Error(warning))
+		err = errors.Errorf("tiproxy instances number (%d) is greater than input paths number (%d), some instances won't replay", tiproxyNum, readerNum)
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
+		logutil.Logger(ctx).Warn("tiproxy instances number is greater than input paths number, some instances won't replay",
+			zap.Int("tiproxy number", tiproxyNum), zap.Int("path number", readerNum))
 	}
 	_, err = request(ctx, addrs, readers, http.MethodPost, replayPath)
 	return err
@@ -299,13 +298,12 @@ func formReader4Capture(args map[string]string, tiproxyNum int) ([]io.Reader, er
 		return nil, errors.Wrapf(err, "parse output path failed")
 	}
 	readers := make([]io.Reader, tiproxyNum)
-	switch u.Scheme {
-	case "", "file", "local":
+	if storage.IsLocal(u) {
 		form := getForm(args)
 		for i := 0; i < tiproxyNum; i++ {
 			readers[i] = strings.NewReader(form)
 		}
-	default:
+	} else {
 		for i := 0; i < tiproxyNum; i++ {
 			m := maps.Clone(args)
 			m[outputKey] = u.JoinPath(fmt.Sprintf("%s%d", filePrefix, i)).String()

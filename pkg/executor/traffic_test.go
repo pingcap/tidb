@@ -218,24 +218,56 @@ func TestReplayPath(t *testing.T) {
 		}
 	}()
 
-	tests := [][]string{
-		{"tiproxy-0"},
-		{"tiproxy-0", "tiproxy-1"},
-		{"tiproxy-0", "tiproxy-1", "tiproxy-2"},
+	tests := []struct {
+		paths     []string
+		formPaths []string
+		warn      string
+		err       string
+	}{
+		{
+			paths:     []string{},
+			err:       "no replay files found",
+			formPaths: []string{},
+		},
+		{
+			paths:     []string{"tiproxy-0"},
+			formPaths: []string{"tiproxy-0"},
+			warn:      "tiproxy instances number (2) is greater than input paths number (1)",
+		},
+		{
+			paths:     []string{"tiproxy-0", "tiproxy-1"},
+			formPaths: []string{"tiproxy-0", "tiproxy-1"},
+		},
+		{
+			paths:     []string{"tiproxy-0", "tiproxy-1", "tiproxy-2"},
+			formPaths: []string{},
+			err:       "tiproxy instances number (2) is less than input paths number (3)",
+		},
 	}
-
 	ctx := context.TODO()
 	ctx = fillCtxWithTiProxyAddr(ctx, ports)
 	for i, test := range tests {
-		tempCtx := context.WithValue(ctx, trafficPathKey, test)
+		tempCtx := context.WithValue(ctx, trafficPathKey, test.paths)
 		suite := newTrafficTestSuite(t, 10)
 		exec := suite.build(ctx, "traffic replay from 's3://bucket/tmp' user='root'")
 		for j := 0; j < tiproxyNum; j++ {
 			handlers[j].reset()
 		}
-		require.NoError(t, exec.Next(tempCtx, nil))
+		err := exec.Next(tempCtx, nil)
+		if test.err != "" {
+			require.ErrorContains(t, err, test.err)
+		} else {
+			require.NoError(t, err)
+			warnings := suite.execBuilder.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			if test.warn != "" {
+				require.Len(t, warnings, 1)
+				require.ErrorContains(t, warnings[0].Err, test.warn)
+			} else {
+				require.Len(t, warnings, 0)
+			}
+		}
 
-		paths := make([]string, 0, len(test))
+		formPaths := make([]string, 0, len(test.formPaths))
 		for j := 0; j < tiproxyNum; j++ {
 			httpHandler := handlers[j]
 			if httpHandler.getMethod() != "" {
@@ -243,15 +275,11 @@ func TestReplayPath(t *testing.T) {
 				require.NotEmpty(t, form)
 				input := form.Get("input")
 				require.True(t, strings.HasPrefix(input, "s3://bucket/tmp/"), input)
-				paths = append(paths, input[len("s3://bucket/tmp/"):])
+				formPaths = append(formPaths, input[len("s3://bucket/tmp/"):])
 			}
 		}
-		sort.Strings(paths)
-		expectedPaths := test
-		if len(test) > tiproxyNum {
-			expectedPaths = test[:tiproxyNum]
-		}
-		require.Equal(t, expectedPaths, paths, "case %d", i)
+		sort.Strings(formPaths)
+		require.Equal(t, test.formPaths, formPaths, "case %d", i)
 	}
 }
 
