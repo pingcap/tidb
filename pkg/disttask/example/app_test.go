@@ -21,12 +21,29 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
 func TestExampleApplication(t *testing.T) {
+	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return newScheduler(ctx, task, param)
+		},
+	)
+	scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
+		return &postCleanupImpl{}
+	})
+
+	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return newTaskExecutor(ctx, task, param)
+		},
+	)
+
 	_ = testkit.CreateMockStore(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")

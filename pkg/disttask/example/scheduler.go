@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -109,21 +108,4 @@ type postCleanupImpl struct{}
 func (*postCleanupImpl) CleanUp(_ context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("clean up task", zap.Int64("taskID", task.ID))
 	return nil
-}
-
-func init() {
-	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-			return newScheduler(ctx, task, param)
-		},
-	)
-	scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
-		return &postCleanupImpl{}
-	})
-
-	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
-			return newTaskExecutor(ctx, task, param)
-		},
-	)
 }
