@@ -165,9 +165,13 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
-// quoteJSONString escapes interior quote and other characters for JSON_QUOTE
-// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
-// TODO: add JSON_QUOTE builtin
+// quoteJSONString escapes interior quote and other characters for json functions.
+//
+// The implementation of `JSON_QUOTE` doesn't use this function. The `JSON_QUOTE` used `goJSON` to encode the string
+// directly. Therefore, this function is not compatible with `JSON_QUOTE` function for the convience of internal usage.
+//
+// This function will add extra quotes to the string if it contains special characters which needs to escape, or it's not
+// a valid ECMAScript identifier.
 func quoteJSONString(s string) string {
 	var escapeByteMap = map[byte]string{
 		'\\': "\\\\",

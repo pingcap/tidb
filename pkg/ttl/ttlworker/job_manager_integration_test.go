@@ -1727,8 +1727,6 @@ func TestJobManagerWithFault(t *testing.T) {
 	}
 
 	stopTestCh := make(chan struct{})
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
 
 	fault := newFaultWithFilter(func(sql string) bool {
 		// skip some local only sql, ref `getSession()` in `session.go`
@@ -1739,6 +1737,10 @@ func TestJobManagerWithFault(t *testing.T) {
 
 		return true
 	}, newFaultWithProbability(faultPercent))
+
+	wg := &sync.WaitGroup{}
+	// start the goroutine to inject fault to managers randomly
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 
@@ -1771,6 +1773,38 @@ func TestJobManagerWithFault(t *testing.T) {
 					logutil.BgLogger().Info("inject fault", zap.String("id", m.m.ID()))
 					m.pool.(*faultSessionPool).setFault(fault)
 				}
+			}
+		}
+	}()
+
+	// start the goroutine to randomly scale the worker count
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		maxScanWorkerCount := variable.DefTiDBTTLScanWorkerCount * 2
+		minScanWorkerCount := variable.DefTiDBTTLScanWorkerCount / 2
+
+		maxDelWorkerCount := variable.DefTiDBTTLDeleteWorkerCount * 2
+		minDelWorkerCount := variable.DefTiDBTTLDeleteWorkerCount / 2
+		faultTicker := time.NewTicker(time.Second)
+
+		tk := testkit.NewTestKit(t, store)
+		for {
+			select {
+			case <-stopTestCh:
+				// Recover to the default count
+				tk.MustExec("set @@global.tidb_ttl_scan_worker_count = ?", variable.DefTiDBTTLScanWorkerCount)
+				tk.MustExec("set @@global.tidb_ttl_delete_worker_count = ?", variable.DefTiDBTTLDeleteWorkerCount)
+
+				return
+			case <-faultTicker.C:
+				scanWorkerCount := rand.Int()%(maxScanWorkerCount-minScanWorkerCount) + minScanWorkerCount
+				delWorkerCount := rand.Int()%(maxDelWorkerCount-minDelWorkerCount) + minDelWorkerCount
+
+				logutil.BgLogger().Info("scale worker count", zap.Int("scanWorkerCount", scanWorkerCount), zap.Int("delWorkerCount", delWorkerCount))
+				tk.MustExec("set @@global.tidb_ttl_scan_worker_count = ?", scanWorkerCount)
+				tk.MustExec("set @@global.tidb_ttl_delete_worker_count = ?", delWorkerCount)
 			}
 		}
 	}()
@@ -1825,7 +1859,6 @@ func TestJobManagerWithFault(t *testing.T) {
 	}
 
 	logutil.BgLogger().Info("test finished")
-	stopTestCh <- struct{}{}
 	close(stopTestCh)
 
 	wg.Wait()

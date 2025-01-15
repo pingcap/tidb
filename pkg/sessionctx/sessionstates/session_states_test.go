@@ -580,7 +580,7 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
+					`TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11`,
 					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
@@ -1293,9 +1293,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop table test.t1")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrNoSuchTable,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 			},
@@ -1310,9 +1308,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop database test1")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrNoSuchTable,
 		},
 		{
 			// alter the table
@@ -1321,9 +1317,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("alter table test.t1 drop index name")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrKeyDoesNotExist,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("alter table test.t1 add index name(name)")
 			},

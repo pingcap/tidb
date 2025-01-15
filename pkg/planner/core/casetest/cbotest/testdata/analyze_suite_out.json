@@ -285,7 +285,7 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11",
+        "TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11",
         "└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
       ],
@@ -297,7 +297,7 @@
         "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_11 2.00 root  MppVersion: 2, data:ExchangeSender_10",
+        "TableReader_11 2.00 root  MppVersion: 3, data:ExchangeSender_10",
         "└─ExchangeSender_10 2.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableRangeScan_9 2.00 mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]

@@ -33,7 +33,7 @@ type OptGroupExpressionTask struct {
 }
 
 // NewOptGroupExpressionTask return a targeting optimizing group expression task.
-func NewOptGroupExpressionTask(ctx cascadesctx.CascadesContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
+func NewOptGroupExpressionTask(ctx cascadesctx.Context, ge *memo.GroupExpression) *OptGroupExpressionTask {
 	return &OptGroupExpressionTask{
 		BaseTask:        BaseTask{ctx: ctx},
 		groupExpression: ge,
