@@ -1226,11 +1226,11 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 		lastKey = pair.Key
 		w.batchSize.Add(int64(len(pair.Key) + len(pair.Val)))
 		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
-		logutil.LoggerFromContext(ctx).Info("key and value size",
-			zap.Int("key", len(pair.Key)),
-			zap.Int("val", len(pair.Val)),
-			zap.Int("total", len(pair.Key)+len(pair.Val)),
-			zap.Int64("memtableSizeLimit", w.memtableSizeLimit))
+		//logutil.LoggerFromContext(ctx).Info("key and value size",
+		//	zap.Int("key", len(pair.Key)),
+		//	zap.Int("val", len(pair.Val)),
+		//	zap.Int("total", len(pair.Key)+len(pair.Val)),
+		//	zap.Int64("memtableSizeLimit", w.memtableSizeLimit))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
@@ -1362,10 +1362,10 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		})
 		w.isWriteBatchSorted = true
 	}
-	logutil.LoggerFromContext(ctx).Info("flushKVs batch size",
-		zap.Stringer("engine uuid", w.engine.UUID),
-		zap.Int64("size", w.batchSize.Load()),
-		zap.Int("count", w.batchCount))
+	//logutil.LoggerFromContext(ctx).Info("flushKVs batch size",
+	//	zap.Stringer("engine uuid", w.engine.UUID),
+	//	zap.Int64("size", w.batchSize.Load()),
+	//	zap.Int("count", w.batchCount))
 	err = writer.writeKVs(w.writeBatch[:w.batchCount])
 	if err != nil {
 		return errors.Trace(err)
