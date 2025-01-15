@@ -256,7 +256,10 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
 	filteredOut := iter.FilterOut(stream.LoadIngestedSSTs(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
 		gts := ebk.GroupTS()
-		return !ebk.GroupFinished() || gts < wm.startTS || gts >= wm.restoredTS
+		// Note: if a backup happens during restoring, though its `backupts` is less than the ingested ssts' groupts,
+		// it is still possible that it backed the restored stuffs up.
+		// When combining with PiTR, those contents may be restored twice. But it seems harmless for now.
+		return !ebk.GroupFinished() || gts < wm.startTS || gts > wm.restoredTS
 	})
 	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTsGroup) iter.TryNextor[*backuppb.IngestedSSTs] {
 		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedIngestedSSTs) *backuppb.IngestedSSTs {
