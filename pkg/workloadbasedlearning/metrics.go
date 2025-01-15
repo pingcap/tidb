@@ -14,6 +14,8 @@
 
 package workloadbasedlearning
 
+// ReadTableCostMetrics is used to indicate the intermediate status and results analyzed through read workload
+// for function "HandleReadTableCost".
 type ReadTableCostMetrics struct {
 	tableName string
 	// tableScanTime[t] = sum(scan-time * readFrequency) of all records in statement_summary where table-name = t
