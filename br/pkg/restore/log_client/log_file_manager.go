@@ -378,7 +378,7 @@ func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[
 	})
 }
 
-func (rc *LogFileManager) GetIngestedSSTsSSTs(ctx context.Context) iter.TryNextor[SSTs] {
+func (rc *LogFileManager) GetIngestedSSTs(ctx context.Context) iter.TryNextor[SSTs] {
 	return iter.FlatMap(rc.withMigrations.IngestedSSTs(ctx, rc.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
 		remap := map[int64]int64{}
 		for _, r := range c.RewrittenTables {
@@ -399,7 +399,7 @@ func (rc *LogFileManager) GetIngestedSSTsSSTs(ctx context.Context) iter.TryNexto
 
 func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
 	count := int64(0)
-	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetIngestedSSTsSSTs(ctx))
+	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetIngestedSSTs(ctx))
 	for err, ssts := range iter.AsSeq(ctx, ssts) {
 		if err != nil {
 			return 0, errors.Trace(err)

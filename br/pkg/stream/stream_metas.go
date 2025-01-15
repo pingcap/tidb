@@ -1227,7 +1227,7 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 }
 
 func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
-	groups := LoadIngestedSSTss(ctx, m.s, mig.IngestedSstPaths)
+	groups := LoadIngestedSSTs(ctx, m.s, mig.IngestedSstPaths)
 	processGroup := func(outErr error, e IngestedSSTsGroup) (copyToNewMig bool, err error) {
 		if outErr != nil {
 			return true, outErr
@@ -1284,7 +1284,11 @@ func (ebs IngestedSSTsGroup) GroupTS() uint64 {
 	return math.MaxUint64
 }
 
-func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[IngestedSSTsGroup] {
+func LoadIngestedSSTs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	paths []string,
+) iter.TryNextor[IngestedSSTsGroup] {
 	fullBackupDirIter := iter.FromSlice(paths)
 	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.

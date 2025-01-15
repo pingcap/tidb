@@ -254,7 +254,7 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 }
 
 func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
-	filteredOut := iter.FilterOut(stream.LoadIngestedSSTss(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
+	filteredOut := iter.FilterOut(stream.LoadIngestedSSTs(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
 		gts := ebk.GroupTS()
 		return !ebk.GroupFinished() || gts < wm.startTS || gts >= wm.restoredTS
 	})

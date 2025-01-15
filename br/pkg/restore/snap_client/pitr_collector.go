@@ -336,6 +336,10 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 // doPersistExtraBackupMeta writes the current content of extra backup meta to the external storage.
 // This isn't goroutine-safe. Please don't call it concurrently.
 func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error) {
+	if !c.enabled {
+		return nil
+	}
+
 	var bs []byte
 	begin := time.Now()
 	c.doWithMetaLock(func() {
@@ -366,6 +370,10 @@ func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error
 }
 
 func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) {
+	if !c.enabled {
+		return nil
+	}
+
 	return c.writerRoutine.write(ctx)
 }
 
@@ -434,7 +442,12 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 		return nil, errors.Trace(err)
 	}
 	if len(ts) > 1 {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "more than one task found, pitr collector doesn't support that")
+		taskNames := []string{}
+		for _, t := range ts {
+			taskNames = append(taskNames, t.Info.Name)
+		}
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+			"more than one task found, pitr collector doesn't support that, tasks are: %#v", taskNames)
 	}
 	if len(ts) == 0 {
 		return &pitrCollector{}, nil

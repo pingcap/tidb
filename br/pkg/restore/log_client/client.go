@@ -271,7 +271,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 }
 
 func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
-	if r, ok := sst.(RewrittenSST); ok {
+	if r, ok := sst.(RewrittenSSTs); ok {
 		rewritten := r.RewrittenTo()
 		if rewritten > 0 && rewritten != sst.TableID() {
 			rewriteRules := rules.Clone()
@@ -310,7 +310,7 @@ func (rc *LogClient) RestoreSSTFiles(
 		i := r.Item
 
 		tid := i.TableID()
-		if r, ok := i.(RewrittenSST); ok {
+		if r, ok := i.(RewrittenSSTs); ok {
 			tid = r.RewrittenTo()
 		}
 		rewriteRules, ok := rules[tid]

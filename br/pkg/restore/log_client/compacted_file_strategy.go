@@ -43,7 +43,7 @@ type sstIdentity struct {
 }
 
 func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
-	r, ok := ssts.(RewrittenSST)
+	r, ok := ssts.(RewrittenSSTs)
 	if !ok {
 		return sstIdentity{
 			EffectiveID:     ssts.TableID(),
@@ -113,22 +113,33 @@ func (cs *CompactedFileSplitStrategy) ShouldSplit() bool {
 	return cs.AccumulateCount > (4096 / impactFactor)
 }
 
-func hasARule[T any](ssts SSTs, rules map[int64]T) bool {
-	if _, exist := rules[ssts.TableID()]; exist {
-		return true
+func hasRule[T any](ssts SSTs, rules map[int64]T) bool {
+	if r, ok := ssts.(RewrittenSSTs); ok {
+		_, exist := rules[r.RewrittenTo()]
+		// If the SST has been rewritten (logically has another table ID),
+		// don't check table ID in its physical file, or we may mistakenly match it
+		// with another table that has the same ID.
+		//
+		// An example, if there are tables:
+		//
+		// - Foo.ID = 1  (Backup Data)
+		// - Foo.ID = 10 (Upstream after Rewriting)
+		// - Bar.ID = 1  (Upstream Natively)
+		//
+		// If we treat `Foo` in the backup data as if it had table ID `1`,
+		// the restore progress may match it with `Bar`.
+		return exist
 	}
 
-	if r, ok := ssts.(RewrittenSST); ok {
-		if _, exist := rules[r.RewrittenTo()]; exist {
-			return true
-		}
+	if _, exist := rules[ssts.TableID()]; exist {
+		return true
 	}
 
 	return false
 }
 
 func (cs *CompactedFileSplitStrategy) ShouldSkip(ssts SSTs) bool {
-	if !hasARule(ssts, cs.Rules) {
+	if !hasRule(ssts, cs.Rules) {
 		log.Warn("skip for no rule files", zap.Int64("tableID", ssts.TableID()), zap.Any("ssts", ssts))
 		return true
 	}

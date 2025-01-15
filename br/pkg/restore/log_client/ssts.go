@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	_ RewrittenSST = &AddedSSTs{}
+	_ RewrittenSSTs = &AddedSSTs{}
 )
 
-// RewrittenSST is an extension to the `SSTs` that needs extra key rewriting.
+// RewrittenSSTs is an extension to the `SSTs` that needs extra key rewriting.
 // This allows a SST being restored "as if" it in another table.
 //
 // The name "rewritten" means that the SST has already been rewritten somewhere else --
@@ -27,8 +27,9 @@ var (
 // the downstream wants to rewrite table `10` to `100`:
 // - When searching for rewrite rules for the SSTs, we will use the table ID `10`(`RewrittenTo()`).
 // - When importing the SST, we will use the rewrite rule `1`(`TableID()`) -> `100`(RewriteRule).
-type RewrittenSST interface {
-	// RewrittenTo returns the table ID that the SST should be treated as.
+type RewrittenSSTs interface {
+	// RewrittenTo returns the table ID that the SST should be treated as
+	// when doing filtering.
 	RewrittenTo() int64
 }
 
@@ -37,6 +38,7 @@ type SSTs interface {
 	fmt.Stringer
 
 	// TableID returns the ID of the table associated with the SST files.
+	// This should be the same as the physical content's table ID.
 	TableID() int64
 	// GetSSTs returns a slice of pointers to backuppb.File, representing the SST files.
 	GetSSTs() []*backuppb.File
