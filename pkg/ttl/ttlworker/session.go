@@ -208,6 +208,36 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 	}
 }
 
+// NewScanSession creates a session for scan
+func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) (*ttlTableSession, func(), error) {
+	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+	origPaging := se.GetSessionVars().EnablePaging
+
+	restore := func() {
+		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
+		terror.Log(err)
+		_, err = se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=%?", origPaging)
+		terror.Log(err)
+	}
+
+	// Set the distsql scan concurrency to 1 to reduce the number of cop tasks in TTL scan.
+	if _, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=1"); err != nil {
+		restore()
+		return nil, nil, err
+	}
+
+	// Disable tidb_enable_paging because we have already had a `LIMIT` in the SQL to limit the result set.
+	// If `tidb_enable_paging` is enabled, it may have multiple cop tasks even in one region that makes some extra
+	// processed keys in TiKV side, see issue: https://github.com/pingcap/tidb/issues/58342.
+	// Disable it to make the scan more efficient.
+	if _, err := se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=OFF"); err != nil {
+		restore()
+		return nil, nil, err
+	}
+
+	return newTableSession(se, tbl, expire), restore, nil
+}
+
 type ttlTableSession struct {
 	session.Session
 	tbl    *cache.PhysicalTable

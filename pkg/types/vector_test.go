@@ -101,6 +101,9 @@ func TestVectorParse(t *testing.T) {
 	require.False(t, v.IsZeroValue())
 	require.Equal(t, 1, v.Compare(types.ZeroVectorFloat32))
 	require.Equal(t, -1, types.ZeroVectorFloat32.Compare(v))
+
+	v, err = types.ParseVectorFloat32(`[-1e39, 1e39]`)
+	require.EqualError(t, err, "value -1e+39 out of range for float32")
 }
 
 func TestVectorDatum(t *testing.T) {
