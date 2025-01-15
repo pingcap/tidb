@@ -1172,29 +1172,6 @@ func TestPrepareProtocolWorkWithForeignKey(t *testing.T) {
 	// As schema version increased, the plan cache should be invalidated.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
-<<<<<<< HEAD
-=======
-
-func TestExecuteWithWrongType(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t3 (c1 int, c2 decimal(32, 30))")
-
-	tk.MustExec(`prepare p1 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
-	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
-	tk.MustExec(`execute p1 using @i0, @i1`)
-	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
-	tk.MustExecToErr(`execute p1 using @i0, @i1`)
-
-	tk.MustExec(`prepare p2 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
-	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
-	tk.MustExecToErr(`execute p2 using @i0, @i1`)
-	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
-	tk.MustExec(`execute p2 using @i0, @i1`)
-}
 
 func TestIssue58870(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1218,4 +1195,3 @@ func TestIssue58870(t *testing.T) {
 	require.Nil(t, err)
 	require.Nil(t, rs)
 }
->>>>>>> 6fac45960ff (executor: fix prepared protocol charset (#58872))
