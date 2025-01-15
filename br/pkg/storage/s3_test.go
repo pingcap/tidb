@@ -1019,74 +1019,74 @@ func TestWalkDir(t *testing.T) {
 
 	// first call serve item #0, #1; second call #2, #3; third call #4.
 	firstCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(true),
 				Contents:    contents[:2],
 			}, nil
 		})
 	secondCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[1].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, aws.StringValue(contents[1].Key), aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(true),
 				Contents:    contents[2:4],
 			}, nil
 		}).
 		After(firstCall)
 	thirdCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[4:],
 			}, nil
 		}).
 		After(secondCall)
 	fourthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(true),
 				Contents:    contents[:4],
 			}, nil
 		}).
 		After(thirdCall)
 	fifthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
+			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[4:],
 			}, nil
 		}).
 		After(fourthCall)
 	s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2WithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, opt ...request.Option) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/sp/1", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, "", aws.StringValue(input.StartAfter))
 			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[2:],
 			}, nil
