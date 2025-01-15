@@ -1,3 +1,5 @@
+// Copyright 2025 PingCAP, Inc. Licensed under Apache-2.0.
+
 package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
