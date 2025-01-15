@@ -186,7 +186,7 @@ func splitCNF(conditions []expression.Expression) []expression.Expression {
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
-	recursiveRemoveRedundantORBranch(sctx, simplifiedPredicate)
+	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
 	return simplifiedPredicate
@@ -425,13 +425,16 @@ func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression
 	return finalResult
 }
 
-func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicates []expression.Expression) {
+// removeRedundantORBranch recursively iterates over a list of predicates, try to find OR lists and remove redundant in
+// each OR list.
+// It modifies the input slice in place.
+func removeRedundantORBranch(sctx base.PlanContext, predicates []expression.Expression) {
 	for i, predicate := range predicates {
-		predicates[i] = removeRedundantORBranch(sctx, predicate)
+		predicates[i] = recursiveRemoveRedundantORBranch(sctx, predicate)
 	}
 }
 
-func removeRedundantORBranch(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
 	_, tp := FindPredicateType(sctx, predicate)
 	if tp != orPredicate {
 		return predicate
@@ -447,7 +450,7 @@ func removeRedundantORBranch(sctx base.PlanContext, predicate expression.Express
 		if tp == andPredicate {
 			andFunc := orItem.(*expression.ScalarFunction)
 			andList := expression.SplitCNFItems(andFunc)
-			recursiveRemoveRedundantORBranch(sctx, andList)
+			removeRedundantORBranch(sctx, andList)
 			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
 		} else {
 			hashCode := string(orItem.HashCode())
