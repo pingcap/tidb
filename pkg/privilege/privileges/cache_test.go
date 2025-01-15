@@ -71,7 +71,7 @@ func TestLoadUserTable(t *testing.T) {
 
 	// test switching default auth plugin
 	for _, plugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
-		p = privileges.MySQLPrivilege{}
+		p = privileges.NewMySQLPrivilege()
 		p.SetGlobalVarsAccessor(se.GetSessionVars().GlobalVarsAccessor)
 		require.NoError(t, se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultAuthPlugin, plugin))
 		require.NoError(t, p.LoadUserTable(se.GetRestrictedSQLExecutor()))

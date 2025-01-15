@@ -18,9 +18,9 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -450,7 +450,7 @@ func (p *MySQLPrivilege) DB() []dbRecord {
 }
 
 func (p *MySQLPrivilege) TablesPriv() []tablesPrivRecord {
-	var ret []tablesPrivRecord 
+	var ret []tablesPrivRecord
 	p.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
 		ret = append(ret, itm.data...)
 		return true
@@ -485,4 +485,4 @@ func (p *MySQLPrivilege) RoleGraph() map[string]roleGraphEdgesTable {
 	return p.roleGraph
 }
 
-var NewMySQLPrivilege = newMySQLPrivilege 
+var NewMySQLPrivilege = newMySQLPrivilege
