@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"path"
 	"strconv"
 	"sync"
@@ -819,6 +820,11 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		rs.Next = nextKey
 		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
 		w.cpMgr.AdvanceWatermark(flushed, imported)
+	}
+	if flushed && rand.Intn(4) == 0 {
+		time.Sleep(500 * time.Millisecond)
+		w.ctx.onError(errors.New("mock error"))
+		return
 	}
 	send(rs)
 }

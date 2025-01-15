@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -84,6 +85,9 @@ func (d *diskRootImpl) UpdateUsage() {
 func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	if rand.Intn(2) == 0 {
+		return true
+	}
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
 		logutil.DDLIngestLogger().Info("disk usage is over quota",
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),

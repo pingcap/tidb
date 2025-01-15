@@ -217,6 +217,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
 func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
+	logutil.DDLLogger().Info("advance watermark", zap.Bool("flushed", flushed), zap.Bool("imported", imported))
 	if !flushed {
 		return
 	}
@@ -449,7 +450,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 		// used in a manual test
 		failpoint.Return()
 	})
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
@@ -467,6 +468,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			}
 			s.mu.Unlock()
 			err := s.updateCheckpointImpl()
+			logutil.DDLLogger().Info("periodically update checkpoint", zap.Any("key", s.importedKeyLowWatermark), zap.Any("id", s.physicalID))
 			if err != nil {
 				s.logger.Error("periodically update checkpoint failed", zap.Error(err))
 			}
