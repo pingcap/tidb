@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "remote",
@@ -34,5 +34,21 @@ go_library(
         "@com_github_tikv_pd_client//servicediscovery",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "remote_test",
+    timeout = "short",
+    srcs = [
+        "chunk_sender_test.go",
+        "chunk_test.go",
+    ],
+    embed = [":remote"],
+    flaky = True,
+    deps = [
+        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/log",
+        "@com_github_stretchr_testify//require",
     ],
 )

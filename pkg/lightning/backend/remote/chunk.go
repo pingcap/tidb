@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/errors"
 )
 
-const defaultPath = "/tmp/lightning/remote/chunks"
-
 type chunkMeta struct {
 	size     int
 	checksum uint32
@@ -46,8 +44,9 @@ func newChunkCache(loadDataTaskID string, writerID uint64, basePath string, usin
 			usingMem: true,
 		}, nil
 	}
-	path := defaultPath
-	if basePath != "" {
+
+	path := getDefaultTempDir()
+	if len(basePath) != 0 {
 		path = basePath
 	}
 	baseDir := filepath.Join(path, loadDataTaskID, fmt.Sprintf("%d", writerID))
@@ -135,4 +134,8 @@ func (c *chunkCache) close() error {
 	}
 
 	return os.RemoveAll(c.baseDir)
+}
+
+func getDefaultTempDir() string {
+	return filepath.Join(os.TempDir(), "lightning", "remote", "chunks")
 }
