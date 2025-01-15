@@ -174,8 +174,8 @@ func getCurrentMemoryUsage(refCount *stmtctx.ReferenceCount, stmtCtx *stmtctx.St
 			refCount.Decrease()
 		}()
 		if tracker := stmtCtx.MemTracker; tracker != nil {
-			failpoint.Inject("panicWhenGetCurrentMemoryUsage", func() { panic("panic when get current memory usage") })
 			ret = tracker.MaxConsumed()
+			failpoint.Inject("panicWhenGetCurrentMemoryUsage", func() { panic("panic when get current memory usage") })
 		}
 	}
 	return
