@@ -576,22 +576,22 @@ create table t1 (a int, b decimal(65,30));
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
 id	estRows	task	access object	operator info
 TableReader	30.00	root		data:Selection
-└─Selection	30.00	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), eq(planner__core__casetest__predicate_simplification.t1.a, 2)), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), eq(planner__core__casetest__predicate_simplification.t1.a, 5))))
+└─Selection	30.00	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
 id	estRows	task	access object	operator info
 TableReader	59.91	root		data:Selection
-└─Selection	59.91	cop[tikv]		or(or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), eq(planner__core__casetest__predicate_simplification.t1.a, 2)), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), eq(planner__core__casetest__predicate_simplification.t1.a, 5))), or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), eq(planner__core__casetest__predicate_simplification.t1.b, 1.1)), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), or(eq(planner__core__casetest__predicate_simplification.t1.b, 3.3), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))))
+└─Selection	59.91	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5))), or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3))))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
 id	estRows	task	access object	operator info
 TableReader	0.03	root		data:Selection
-└─Selection	0.03	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), eq(planner__core__casetest__predicate_simplification.t1.b, 2.2)), or(eq(planner__core__casetest__predicate_simplification.t1.b, 3.3), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))
+└─Selection	0.03	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
 id	estRows	task	access object	operator info
 TableReader	10.03	root		data:Selection
-└─Selection	10.03	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), eq(planner__core__casetest__predicate_simplification.t1.a, 2)), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), eq(planner__core__casetest__predicate_simplification.t1.a, 5))))))
+└─Selection	10.03	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t2;
 create table t2 (a datetime(6), b timestamp(6), index ia(a), index iab(a,b));
@@ -615,15 +615,13 @@ id	estRows	task	access object	operator info
 IndexMerge	29.98	root		type: union
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["b","b"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["b","b"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["B","B"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	29.98	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format=brief select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
 id	estRows	task	access object	operator info
-TableReader	9601.20	root		data:Selection
-└─Selection	9601.20	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "A"))), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B"))))
+TableReader	8006.00	root		data:Selection
+└─Selection	8006.00	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "A")), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B")))
   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t4;
 create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));
@@ -635,8 +633,5 @@ IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iab(a, b)	range:[1 12,1 12], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iac(a, c)	range:[1 5,1 5], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iac(a, c)	range:[1 4,1 4], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iac(a, c)	range:[1 5,1 5], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
-└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), eq(planner__core__casetest__predicate_simplification.t4.c, 5))), or(or(eq(planner__core__casetest__predicate_simplification.t4.d, 6), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
   └─TableRowIDScan	8.00	cop[tikv]	table:t4	keep order:false, stats:pseudo

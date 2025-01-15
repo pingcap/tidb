@@ -186,6 +186,7 @@ func splitCNF(conditions []expression.Expression) []expression.Expression {
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
+	recursiveRemoveRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
 	return simplifiedPredicate
@@ -422,6 +423,41 @@ func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression
 	}
 
 	return finalResult
+}
+
+func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicates []expression.Expression) {
+	for i, predicate := range predicates {
+		predicates[i] = removeRedundantORBranch(sctx, predicate)
+	}
+}
+
+func removeRedundantORBranch(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+	_, tp := FindPredicateType(sctx, predicate)
+	if tp != orPredicate {
+		return predicate
+	}
+	orFunc := predicate.(*expression.ScalarFunction)
+	ORList := expression.SplitDNFItems(orFunc)
+
+	dedupMap := make(map[string]struct{}, len(ORList))
+	newORList := make([]expression.Expression, 0, len(ORList))
+
+	for _, orItem := range ORList {
+		_, tp := FindPredicateType(sctx, orItem)
+		if tp == andPredicate {
+			andFunc := orItem.(*expression.ScalarFunction)
+			ANDList := expression.SplitCNFItems(andFunc)
+			recursiveRemoveRedundantORBranch(sctx, ANDList)
+			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), ANDList...))
+		} else {
+			hashCode := string(orItem.HashCode())
+			if _, ok := dedupMap[hashCode]; !ok {
+				dedupMap[hashCode] = struct{}{}
+				newORList = append(newORList, orItem)
+			}
+		}
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
