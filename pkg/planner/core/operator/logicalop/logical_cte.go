@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -36,8 +36,8 @@ type LogicalCTE struct {
 	LogicalSchemaProducer
 
 	Cte       *CTEClass
-	CteAsName model.CIStr
-	CteName   model.CIStr
+	CteAsName ast.CIStr
+	CteName   ast.CIStr
 	SeedStat  *property.StatsInfo
 
 	OnlyUsedAsStorage bool

@@ -15,7 +15,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",

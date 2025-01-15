@@ -1507,15 +1507,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
 		"PartitionUnion_11 9970.00 root  ",
-		"├─TableReader_16 3323.33 root  MppVersion: 2, data:ExchangeSender_15",
+		"├─TableReader_16 3323.33 root  MppVersion: 3, data:ExchangeSender_15",
 		"│ └─ExchangeSender_15 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_14 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-		"├─TableReader_20 3323.33 root  MppVersion: 2, data:ExchangeSender_19",
+		"├─TableReader_20 3323.33 root  MppVersion: 3, data:ExchangeSender_19",
 		"│ └─ExchangeSender_19 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_18 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
-		"└─TableReader_24 3323.33 root  MppVersion: 2, data:ExchangeSender_23",
+		"└─TableReader_24 3323.33 root  MppVersion: 3, data:ExchangeSender_23",
 		"  └─ExchangeSender_23 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_22 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
@@ -1820,11 +1820,11 @@ func TestMPP47766(t *testing.T) {
 	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
 		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#5, Column#4",
 		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#4, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
-		"  └─TableReader_20 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+		"  └─TableReader_20 10000.00 root  MppVersion: 3, data:ExchangeSender_19",
 		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
 	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").Check(testkit.Rows(
-		"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
+		"TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
 		"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
 		"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
@@ -2089,13 +2089,13 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 		"  └─PartitionUnion 400.00 root  ",
 		"    ├─Projection 200.00 root  test.t.d",
 		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#12)->Column#9",
-		"    │   └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
+		"    │   └─TableReader 200.00 root  MppVersion: 3, data:ExchangeSender",
 		"    │     └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#12",
 		"    │         └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p1 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
 		"    └─Projection 200.00 root  test.t.d",
 		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#14)->Column#10",
-		"        └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
+		"        └─TableReader 200.00 root  MppVersion: 3, data:ExchangeSender",
 		"          └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#14",
 		"              └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p2 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo"))
@@ -2215,7 +2215,7 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain format=\"brief\" SELECT" +
 		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
-		testkit.Rows("TableReader 0.00 root  MppVersion: 2, data:ExchangeSender",
+		testkit.Rows("TableReader 0.00 root  MppVersion: 3, data:ExchangeSender",
 			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
 			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",

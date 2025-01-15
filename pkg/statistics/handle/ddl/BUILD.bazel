@@ -36,7 +36,7 @@ go_test(
         ":ddl",
         "//pkg/ddl/notifier",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner/cardinality",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/storage",

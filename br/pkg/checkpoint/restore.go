@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/domain"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -173,7 +173,7 @@ func ExistsSstRestoreCheckpoint(
 	// we only check the existence of the checkpoint data table
 	// because the checkpoint metadata is not used for restore
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointDataTableName))
+		TableExists(ast.NewCIStr(dbName), ast.NewCIStr(checkpointDataTableName))
 }
 
 func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {
