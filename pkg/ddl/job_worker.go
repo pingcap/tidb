@@ -800,7 +800,7 @@ func (w *worker) runOneJobStep(
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))
+		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {

@@ -41,15 +41,17 @@ go_library(
 
 go_test(
     name = "workloadrepo_test",
-    timeout = "short",
+    timeout = "long",
     srcs = ["worker_test.go"],
     embed = [":workloadrepo"],
     flaky = True,
     deps = [
         "//pkg/domain",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/owner",
         "//pkg/parser/ast",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",

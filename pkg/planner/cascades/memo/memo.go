@@ -70,6 +70,17 @@ func NewMemo(caps ...uint64) *Memo {
 	}
 }
 
+// Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
+func (mm *Memo) Destroy() {
+	// when a memo itself is useless, we can clean itself actively.
+	mm.groupIDGen.id = 0
+	mm.rootGroup = nil
+	mm.groups.Init()
+	clear(mm.groupID2Group)
+	mm.hash2GlobalGroupExpr.Clear()
+	mm.hasher.Reset()
+}
+
 // GetHasher gets a hasher from the memo that ready to use.
 func (mm *Memo) GetHasher() base2.Hasher {
 	mm.hasher.Reset()
@@ -327,6 +338,28 @@ type IteratorLP struct {
 	stackInfo []*list.Element
 	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
 	traceID int
+	// hasher is for compute the subtree's IDs' hash64 rooted from current logical operator.
+	hasher base2.Hasher
+}
+
+// NewIterator new a logical plan iterator from current memo based on its root group.
+func (mm *Memo) NewIterator() *IteratorLP {
+	return &IteratorLP{
+		root:      mm.rootGroup,
+		stackInfo: make([]*list.Element, 0, mm.groups.Len()),
+		traceID:   -1,
+		hasher:    mm.GetHasher(),
+	}
+}
+
+// Each iterator all logical plan from current memo group.
+func (it *IteratorLP) Each(f func(base.LogicalPlan) bool) {
+	cur := it.Next()
+	for ; cur != nil; cur = it.Next() {
+		if !f(cur) {
+			break
+		}
+	}
 }
 
 // Next return valid logical plan implied in memo without duplication.
@@ -334,6 +367,7 @@ func (it *IteratorLP) Next() (logic base.LogicalPlan) {
 	for {
 		// when non-first time loop here, we should reset traceID back to -1.
 		it.traceID = -1
+		it.hasher.Reset()
 		if len(it.stackInfo) != 0 {
 			// when state stack is not empty, we need to pick the next group expression from the top of stack .
 			continueGroup := len(it.stackInfo) - 1
@@ -368,6 +402,13 @@ func (it *IteratorLP) dfs(target *Group) base.LogicalPlan {
 		children = append(children, lp)
 	}
 	lp.SetChildren(children...)
+	// iterator only hashes the subtree's ids from bottom up.
+	it.hasher.Reset()
+	for _, children := range lp.Children() {
+		it.hasher.HashUint64(children.GetPlanIDsHash())
+	}
+	it.hasher.HashInt(lp.ID())
+	lp.SetPlanIDsHash(it.hasher.Sum64())
 	return lp
 }
 
