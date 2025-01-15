@@ -118,17 +118,17 @@ func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
 }
 
 // ResourceModified mocks base method.
-func (m *MockStepExecutor) ResourceModified(arg0 *proto.StepResource) error {
+func (m *MockStepExecutor) ResourceModified(arg0 context.Context, arg1 *proto.StepResource) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResourceModified", arg0)
+	ret := m.ctrl.Call(m, "ResourceModified", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ResourceModified indicates an expected call of ResourceModified.
-func (mr *MockStepExecutorMockRecorder) ResourceModified(arg0 any) *gomock.Call {
+func (mr *MockStepExecutorMockRecorder) ResourceModified(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResourceModified", reflect.TypeOf((*MockStepExecutor)(nil).ResourceModified), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResourceModified", reflect.TypeOf((*MockStepExecutor)(nil).ResourceModified), arg0, arg1)
 }
 
 // RunSubtask mocks base method.
@@ -158,17 +158,17 @@ func (mr *MockStepExecutorMockRecorder) SetResource(arg0 any) *gomock.Call {
 }
 
 // TaskMetaModified mocks base method.
-func (m *MockStepExecutor) TaskMetaModified(arg0 []byte) error {
+func (m *MockStepExecutor) TaskMetaModified(arg0 context.Context, arg1 []byte) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TaskMetaModified", arg0)
+	ret := m.ctrl.Call(m, "TaskMetaModified", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // TaskMetaModified indicates an expected call of TaskMetaModified.
-func (mr *MockStepExecutorMockRecorder) TaskMetaModified(arg0 any) *gomock.Call {
+func (mr *MockStepExecutorMockRecorder) TaskMetaModified(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TaskMetaModified", reflect.TypeOf((*MockStepExecutor)(nil).TaskMetaModified), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TaskMetaModified", reflect.TypeOf((*MockStepExecutor)(nil).TaskMetaModified), arg0, arg1)
 }
 
 // restricted mocks base method.
