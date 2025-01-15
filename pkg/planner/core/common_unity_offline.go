@@ -70,19 +70,14 @@ func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
 	stmt, err := parser.New().ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
-	leadingHints := e.unityOfflineLeadingHintsManually()
-	if len(leadingHints) == 0 {
-		leadingHints = e.unityOfflineLeadingHints(tableNames)
-	}
-
-	indexHints := e.unityOfflineIndexHintsManually()
-	if len(indexHints) == 0 && len(leadingHints) < 30 {
+	leadingHints := e.unityOfflineLeadingHints(tableNames)
+	var indexHints [][]string
+	if len(leadingHints) < 30 {
 		indexHints = make([][]string, len(tableNames))
 		for i, t := range tableNames {
 			indexHints[i] = e.unityOfflineIndexHints(t)
 		}
 	}
-
 	return e.unityOfflineCombineHints(leadingHints, indexHints)
 }
 
@@ -113,13 +108,6 @@ func (e *Explain) unityOfflineCombineHints(leadingHints []string, indexHints [][
 	return
 }
 
-func (e *Explain) unityOfflineIndexHintsManually() [][]string {
-	switch e.queryLabel() {
-	case "job-q1a":
-	}
-	return nil
-}
-
 func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 	hints = append(hints, "")                                         // empty hint
 	hints = append(hints, fmt.Sprintf("use_index(%s)", t.HintName())) // don't use index
@@ -128,13 +116,6 @@ func (e *Explain) unityOfflineIndexHints(t *tableName) (hints []string) {
 		hints = append(hints, fmt.Sprintf("use_index(%s, %s)", t.HintName(), idxName))
 	}
 	return
-}
-
-func (e *Explain) unityOfflineLeadingHintsManually() []string {
-	switch e.queryLabel() {
-	case "job-q1a", "job-q1b", "job-q1c", "job-q1d":
-	}
-	return nil
 }
 
 func (e *Explain) unityOfflineLeadingHints(tableNames []*tableName) (hints []string) {
