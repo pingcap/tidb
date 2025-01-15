@@ -814,6 +814,8 @@ type mergeAndMigrateToConfig struct {
 	interactiveCheck       func(context.Context, *pb.Migration) bool
 	alwaysRunTruncate      bool
 	appendPhantomMigration []pb.Migration
+
+	skipLockingInTest bool
 }
 
 type MergeAndMigrateToOpt func(*mergeAndMigrateToConfig)
@@ -821,6 +823,12 @@ type MergeAndMigrateToOpt func(*mergeAndMigrateToConfig)
 func MMOptInteractiveCheck(f func(context.Context, *pb.Migration) bool) MergeAndMigrateToOpt {
 	return func(c *mergeAndMigrateToConfig) {
 		c.interactiveCheck = f
+	}
+}
+
+func MMOptSkipLockingInTest() MergeAndMigrateToOpt {
+	return func(c *mergeAndMigrateToConfig) {
+		c.skipLockingInTest = true
 	}
 }
 
@@ -852,19 +860,21 @@ func (m MigrationExt) MergeAndMigrateTo(
 	targetSpec int,
 	opts ...MergeAndMigrateToOpt,
 ) (result MergeAndMigratedTo) {
-	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
-	if err != nil {
-		result.MigratedTo = MigratedTo{
-			Warnings: []error{
-				errors.Annotate(err, "failed to get the lock, nothing will happen"),
-			}}
-		return
-	}
-	defer lock.UnlockOnCleanUp(ctx)
-
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
+	}
+
+	if !config.skipLockingInTest {
+		lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+		if err != nil {
+			result.MigratedTo = MigratedTo{
+				Warnings: []error{
+					errors.Annotate(err, "failed to get the lock, nothing will happen"),
+				}}
+			return
+		}
+		defer lock.UnlockOnCleanUp(ctx)
 	}
 
 	migs, err := m.Load(ctx)
