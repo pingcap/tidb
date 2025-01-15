@@ -699,7 +699,7 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 	return nil
 }
 
-func (b *Backend) allocateSenderID(ctx context.Context) (uint64, error) {
+func (b *Backend) allocateWriterID(ctx context.Context) (uint64, error) {
 	physical, logical, err := b.pdCli.GetTS(ctx)
 	if err != nil {
 		return 0, err
@@ -787,18 +787,18 @@ func (b *Backend) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig,
 	}
 	// If lightning pod is restarted, there is no guarantee that the chunk generated is same as before, so we need to
 	// allocate a new sender id instead of using writer's id.
-	senderID, err := b.allocateSenderID(ctx)
+	writerID, err := b.allocateWriterID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	cache, err := newChunkCache(engine.loadDataTaskID, senderID, b.chunkCacheDir, b.chunkCacheInMem)
+	cache, err := newChunkCache(engine.loadDataTaskID, writerID, b.chunkCacheDir, b.chunkCacheInMem)
 	if err != nil {
 		return nil, err
 	}
 	writer := &writer{
 		e:           engine,
 		keyspace:    b.keyspace,
-		chunkSender: newChunkSender(ctx, senderID, engine, cache),
+		chunkSender: newChunkSender(ctx, writerID, engine, cache),
 	}
 	engine.writers.Store(writer, struct{}{})
 	return writer, nil
