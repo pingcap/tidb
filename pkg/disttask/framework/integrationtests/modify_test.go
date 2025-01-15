@@ -94,7 +94,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, 3, "", []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, 3, "", 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
@@ -145,7 +145,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, 3, "", nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, 3, "", 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		// finish StepOne
@@ -194,7 +194,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 				}
 			},
 		)
-		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, 3, "", nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, 3, "", 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		for i := 0; i < 5; i++ {
@@ -218,7 +218,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, 3, "", nil)
+				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, 3, "", 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				found, err := c.TaskMgr.PauseTask(c.Ctx, task.Key)
@@ -264,7 +264,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, 3, "", nil)
+				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, 3, "", 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{

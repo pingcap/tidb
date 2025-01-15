@@ -460,6 +460,9 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	}
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
 	if len(eligibleNodes) == 0 {

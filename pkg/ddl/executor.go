@@ -4929,6 +4929,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
+	defaultMaxNodeCnt := 0
+
 	setReorgParam := func() {
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
 			m.SetConcurrency(variable.TidbOptInt(sv, 0))
@@ -4942,6 +4944,24 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		m.IsDistReorg = variable.EnableDistTask.Load()
 		m.IsFastReorg = variable.EnableFastReorg.Load()
 		m.TargetScope = variable.ServiceScope.Load()
+
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
+			maxNodeCnt := variable.TidbOptInt(sv, 0)
+			if maxNodeCnt == -1 {
+				if defaultMaxNodeCnt == 0 {
+					store, ok := sctx.GetStore().(kv.StorageWithPD)
+					if ok {
+						stores, err := store.GetPDClient().GetAllStores(context.Background())
+						if err == nil {
+							defaultMaxNodeCnt = max(3, len(stores)/3)
+						}
+					}
+				} else {
+					maxNodeCnt = defaultMaxNodeCnt
+				}
+			}
+			m.MaxNodeCount = maxNodeCnt
+		}
 		if hasSysDB(job) {
 			if m.IsDistReorg {
 				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
@@ -4998,6 +5018,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
+		zap.Int("maxNodeCount", m.MaxNodeCount),
 		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
 		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)

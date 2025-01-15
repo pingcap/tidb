@@ -229,6 +229,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -749,6 +750,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true
+	}
+
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.

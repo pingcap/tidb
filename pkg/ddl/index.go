@@ -2568,7 +2568,9 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 
 		g.Go(func() error {
 			defer close(done)
-			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+			targetScope := reorgInfo.ReorgMeta.TargetScope
+			maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
+			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, metaData)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -2725,8 +2727,8 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 }
 
 // submitAndWaitTask submits a task and wait for it to finish.
-func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) error {
-	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, taskMeta)
 	if err != nil {
 		return err
 	}

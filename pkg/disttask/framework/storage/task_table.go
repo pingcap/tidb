@@ -39,9 +39,9 @@ const (
 	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
-	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params`
+	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params, t.max_node_count`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope, max_node_count`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -194,10 +194,18 @@ func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string
 }
 
 // CreateTask adds a new task to task table.
-func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, targetScope string, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTask(
+	ctx context.Context,
+	key string,
+	tp proto.TaskType,
+	concurrency int,
+	targetScope string,
+	maxNodeCnt int,
+	meta []byte,
+) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, meta)
 		return err2
 	})
 	return
@@ -211,6 +219,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	tp proto.TaskType,
 	concurrency int,
 	targetScope string,
+	maxNodeCount int,
 	meta []byte,
 ) (taskID int64, err error) {
 	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
@@ -222,8 +231,8 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	}
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?)`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope)
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?)`,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope, maxNodeCount)
 	if err != nil {
 		return 0, err
 	}

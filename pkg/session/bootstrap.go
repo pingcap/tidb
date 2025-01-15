@@ -600,6 +600,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -622,6 +623,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1242,11 +1244,14 @@ const (
 
 	// Add index on user field for some mysql tables.
 	version241 = 241
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version242 = 242
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version242
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1423,6 +1428,7 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
 	}
 )
 
@@ -3363,6 +3369,14 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
