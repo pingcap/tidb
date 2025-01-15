@@ -20,9 +20,6 @@ import (
 )
 
 func (e *Explain) UnityOffline() string {
-	fmt.Println("????>> ", e.queryLabel())
-	return ""
-
 	allPossibleHintSets := e.unityOfflinePossibleHints()
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
@@ -70,6 +67,10 @@ func (e *Explain) UnityOffline() string {
 }
 
 func (e *Explain) unityOfflinePossibleHints() (allPossibleHintSets []string) {
+	if hints := e.unityOfflineTunedHints(); len(hints) > 0 {
+		return hints
+	}
+
 	stmt, err := parser.New().ParseOneStmt(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "", "")
 	must(err)
 	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
@@ -387,11 +388,42 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+func (e *Explain) unityOfflineTunedHints() []string {
+	return label2Hints[e.queryLabel()]
+}
+
 func (e *Explain) queryLabel() string {
 	stmt := strings.TrimSpace(e.SCtx().GetSessionVars().StmtCtx.OriginalSQL)
 	stmt = strings.TrimRight(stmt, ";")
 	_, digest := parser.NormalizeDigest(stmt)
 	return sqlDigestLabel[digest.String()]
+}
+
+var label2Hints = map[string][]string{
+	"job-1a": unityL("it-mi_idx mc-mi_idx ct-mc t-mc"),
+}
+
+func unityL(plan string) (leadings []string) {
+	// example: it-mi_idx mc-mi_idx ct-mc t-mc
+	tmp := strings.Split(strings.TrimSpace(plan), " ")
+	var xs []string
+	tableM := make(map[string]struct{})
+	for _, t := range tmp {
+		table0, table1 := strings.Split(t, "-")[0], strings.Split(t, "-")[1]
+		if _, ok := tableM[table0]; !ok {
+			xs = append(xs, table0)
+			tableM[table0] = struct{}{}
+		}
+		if _, ok := tableM[table1]; !ok {
+			xs = append(xs, table1)
+			tableM[table1] = struct{}{}
+		}
+	}
+
+	for i := len(xs); i >= 1; i-- {
+		leadings = append(leadings, fmt.Sprintf("leading(%s)", strings.Join(xs[:i], ",")))
+	}
+	return leadings
 }
 
 var sqlDigestLabel = map[string]string{
