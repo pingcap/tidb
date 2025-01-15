@@ -45,12 +45,12 @@ func reduceRetrySQLTimes(t *testing.T, target int) {
 	scheduler.RetrySQLTimes = target
 }
 
-func setDetectParamModifyInterval(t *testing.T, new time.Duration) {
+func setDetectParamModifyInterval(t *testing.T, newInterval time.Duration) {
 	bak := DetectParamModifyInterval
 	t.Cleanup(func() {
 		DetectParamModifyInterval = bak
 	})
-	DetectParamModifyInterval = new
+	DetectParamModifyInterval = newInterval
 }
 
 // StepExecWrap wraps mock step executor and StepExecFrameworkInfo, so we can
