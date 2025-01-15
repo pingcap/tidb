@@ -3,14 +3,21 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	RestoreImportFileSeconds           prometheus.Histogram
-	RestoreUploadSSTForPiTRSeconds     prometheus.Histogram
+	// RestoreImportFileSeconds records the time cost for importing a file.
+	// Including download / queuing.
+	RestoreImportFileSeconds prometheus.Histogram
+	// RestoreUploadSSTForPiTRSeconds records the time cost for uploading SST
+	// files during restoring for future PiTR.
+	RestoreUploadSSTForPiTRSeconds prometheus.Histogram
+	// RestoreUploadSSTMetaForPiTRSeconds records the time cost for saving metadata
+	// of uploaded SSTs for future PiTR.
 	RestoreUploadSSTMetaForPiTRSeconds prometheus.Histogram
 
 	// RestoreTableCreatedCount counts how many tables created.
 	RestoreTableCreatedCount prometheus.Counter
 )
 
+// InitBRMetrics initializes all metrics in BR.
 func InitBRMetrics() {
 	RestoreTableCreatedCount = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "BR",
