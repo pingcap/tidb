@@ -311,6 +311,9 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return newCred, nil
 }
 
+// see https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-express-APIs.html
+var s3ExpressEndpointRE = regexp.MustCompile(`s3express.*amazonaws\.com`)
+
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
@@ -329,8 +332,19 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
+	skipAutoDetectAWSRegion := false
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
+		if s3ExpressEndpointRE.MatchString(qs.Endpoint) {
+			log.Info("found S3 Express One Zone endpoint", zap.String("endpoint", qs.Endpoint))
+			if qs.Region == "" {
+				return nil, errors.Errorf("must specify region for S3 Express One Zone endpoint")
+			}
+			awsConfig.
+				WithS3DisableContentMD5Validation(true).
+				WithS3ForcePathStyle(false)
+			skipAutoDetectAWSRegion = true
+		}
 	}
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
@@ -383,7 +397,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	c := s3.New(ses, s3CliConfigs...)
 
 	var region string
-	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+	if (len(qs.Provider) == 0 || qs.Provider == "aws") && !skipAutoDetectAWSRegion {
 		confCred := ses.Config.Credentials
 		setCredOpt := func(req *request.Request) {
 			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
@@ -699,17 +713,14 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
 	}
-	req := &s3.ListObjectsInput{
+	req := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int64(maxKeys),
 	}
 
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjectsWithContext(ctx, req)
+		res, err := rs.svc.ListObjectsV2WithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -723,7 +734,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// "If response does not include the NextMarker and it is truncated,
 			// you can use the value of the last Key in the response as the marker
 			// in the subsequent request to get the next set of object keys."
-			req.Marker = r.Key
+			req.StartAfter = r.Key
 
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
