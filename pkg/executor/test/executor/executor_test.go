@@ -907,7 +907,8 @@ func TestExecutorBit(t *testing.T) {
 func TestCheckIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	ctx := testkit.NewSession(t, store)
+	ctx := mock.NewContext()
+	ctx.Store = store
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
