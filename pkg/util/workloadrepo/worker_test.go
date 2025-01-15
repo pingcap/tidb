@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -511,10 +512,10 @@ func TestSettingSQLVariables(t *testing.T) {
 	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
 	// Test that if the strconv.Atoi call fails that the error is correctly handled.
-	testIntervalParseFailures = true
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
 	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
-	testIntervalParseFailures = false
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
 
 	trueWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	trueWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })

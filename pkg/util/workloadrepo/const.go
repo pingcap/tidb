@@ -47,8 +47,6 @@ var (
 	workloadSchemaCIStr = ast.NewCIStr(WorkloadSchema)
 	zeroTime            = time.Time{}
 
-	testIntervalParseFailures = false
-
 	errWrongValueForVar        = dbterror.ClassUtil.NewStd(errno.ErrWrongValueForVar)
 	errUnsupportedEtcdRequired = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("etcd client required for workload repository", nil))
 )

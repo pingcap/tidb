@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -81,9 +82,11 @@ func (w *worker) resetSamplingInterval(newRate int32) {
 
 func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
-	if testIntervalParseFailures {
+
+	failpoint.Inject("FastRunawayGC", func() {
 		err = errors.New("fake error")
-	}
+	})
+
 	if err != nil {
 		return errWrongValueForVar.GenWithStackByArgs(repositorySamplingInterval, d)
 	}
