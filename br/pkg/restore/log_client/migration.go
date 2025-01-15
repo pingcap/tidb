@@ -253,12 +253,12 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 	})
 }
 
-func (wm *WithMigrations) IngestedSSTss(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
-	filteredOut := iter.FilterOut(stream.LoadIngestedSSTss(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTss) bool {
+func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
+	filteredOut := iter.FilterOut(stream.LoadIngestedSSTss(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
 		gts := ebk.GroupTS()
 		return !ebk.GroupFinished() || gts < wm.startTS || gts >= wm.restoredTS
 	})
-	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTss) iter.TryNextor[*backuppb.IngestedSSTs] {
+	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTsGroup) iter.TryNextor[*backuppb.IngestedSSTs] {
 		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedIngestedSSTs) *backuppb.IngestedSSTs {
 			return p.IngestedSSTs
 		})

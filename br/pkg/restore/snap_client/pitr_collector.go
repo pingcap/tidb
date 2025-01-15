@@ -39,7 +39,9 @@ type persisterHandle struct {
 
 // close releases the handle.
 func (w persisterHandle) close() {
-	close(w.hnd)
+	if w.hnd != nil {
+		close(w.hnd)
+	}
 }
 
 // write starts a request to persist the current metadata to the external storage.
@@ -157,11 +159,11 @@ func (c *ingestedSSTsMeta) genMsg() *pb.IngestedSSTs {
 }
 
 func (c *pitrCollector) close() error {
+	defer c.writerRoutine.close()
+
 	if !c.enabled {
 		return nil
 	}
-
-	defer c.writerRoutine.close()
 
 	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

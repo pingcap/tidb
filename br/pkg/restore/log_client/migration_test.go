@@ -16,10 +16,12 @@ package logclient_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -500,14 +502,12 @@ func tmp(t *testing.T) *storage.LocalStorage {
 }
 
 func assertFullBackupPfxs(t *testing.T, it iter.TryNextor[*backuppb.IngestedSSTs], items ...string) {
-	i := 0
-	for res := it.TryNext(context.Background()); !res.Finished; res = it.TryNext(context.Background()) {
-		require.NoError(t, res.Err)
-		require.Equal(t, items[i], res.Item.FilesPrefixHint,
-			"item %d not match, wants %s, got %s", i, items[i], res.Item.FilesPrefixHint)
-		i++
+	actItems := []string{}
+	for err, item := range iter.AsSeq(context.Background(), it) {
+		require.NoError(t, err)
+		actItems = append(actItems, item.FilesPrefixHint)
 	}
-	require.Equal(t, i, len(items), "not exceeded: %#v, i = %d", items, i)
+	require.ElementsMatch(t, actItems, items)
 }
 
 func TestNotRestoreIncomplete(t *testing.T) {
@@ -518,7 +518,7 @@ func TestNotRestoreIncomplete(t *testing.T) {
 	wm.AddIngestedSSTs(pef(t, ebk, 0, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg))
+	assertFullBackupPfxs(t, wm.IngestedSSTs(ctx, strg))
 }
 
 func TestRestoreSegmented(t *testing.T) {
@@ -532,7 +532,7 @@ func TestRestoreSegmented(t *testing.T) {
 	wm.AddIngestedSSTs(pef(t, ebk2, 1, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "001", "002")
+	assertFullBackupPfxs(t, wm.IngestedSSTs(ctx, strg), "001", "002")
 }
 
 func TestFilteredOut(t *testing.T) {
@@ -549,7 +549,7 @@ func TestFilteredOut(t *testing.T) {
 	wm.SetRestoredTS(89)
 	wm.SetStartTS(42)
 
-	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg))
+	assertFullBackupPfxs(t, wm.IngestedSSTs(ctx, strg))
 }
 
 func TestMultiRestores(t *testing.T) {
@@ -570,7 +570,7 @@ func TestMultiRestores(t *testing.T) {
 	wm.AddIngestedSSTs(pef(t, ebka2, 4, strg))
 	wm.SetRestoredTS(91)
 
-	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "101", "102", "001", "002")
+	assertFullBackupPfxs(t, wm.IngestedSSTs(ctx, strg), "101", "102", "001", "002")
 }
 
 func TestMultiFilteredOutOne(t *testing.T) {
@@ -591,5 +591,22 @@ func TestMultiFilteredOutOne(t *testing.T) {
 	wm.AddIngestedSSTs(pef(t, ebka2, 4, strg))
 	wm.SetRestoredTS(89)
 
-	assertFullBackupPfxs(t, wm.IngestedSSTss(ctx, strg), "101", "102")
+	assertFullBackupPfxs(t, wm.IngestedSSTs(ctx, strg), "101", "102")
+}
+
+func TestError(t *testing.T) {
+	ctx := context.Background()
+	strg := tmp(t)
+	id := makeID()
+	ebk1 := extFullBkup(prefix("001"), id, finished())
+	wm := new(logclient.WithMigrations)
+	wm.AddIngestedSSTs(pef(t, ebk1, 0, strg))
+	wm.SetRestoredTS(91)
+
+	failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/stream/load-ingested-ssts-err", func(err *error) {
+		*err = errors.New("not my fault")
+	})
+
+	it := wm.IngestedSSTs(ctx, strg)
+	require.ErrorContains(t, it.TryNext(ctx).Err, "not my fault")
 }

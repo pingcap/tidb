@@ -1604,7 +1604,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}

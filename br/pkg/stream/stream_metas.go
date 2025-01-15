@@ -22,6 +22,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -1227,7 +1228,7 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 
 func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
 	groups := LoadIngestedSSTss(ctx, m.s, mig.IngestedSstPaths)
-	processGroup := func(outErr error, e IngestedSSTss) (copyToNewMig bool, err error) {
+	processGroup := func(outErr error, e IngestedSSTsGroup) (copyToNewMig bool, err error) {
 		if outErr != nil {
 			return true, outErr
 		}
@@ -1263,9 +1264,9 @@ type PathedIngestedSSTs struct {
 	path string
 }
 
-type IngestedSSTss []PathedIngestedSSTs
+type IngestedSSTsGroup []PathedIngestedSSTs
 
-func (ebs IngestedSSTss) GroupFinished() bool {
+func (ebs IngestedSSTsGroup) GroupFinished() bool {
 	for _, b := range ebs {
 		if b.Finished {
 			return true
@@ -1274,7 +1275,7 @@ func (ebs IngestedSSTss) GroupFinished() bool {
 	return false
 }
 
-func (ebs IngestedSSTss) GroupTS() uint64 {
+func (ebs IngestedSSTsGroup) GroupTS() uint64 {
 	for _, b := range ebs {
 		if b.Finished {
 			return b.AsIfTs
@@ -1283,11 +1284,12 @@ func (ebs IngestedSSTss) GroupTS() uint64 {
 	return math.MaxUint64
 }
 
-func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[IngestedSSTss] {
+func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[IngestedSSTsGroup] {
 	fullBackupDirIter := iter.FromSlice(paths)
 	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.
 		bkup, err := readIngestedSSTs(ctx, name, s)
+		failpoint.InjectCall("load-ingested-ssts-err", &err)
 		if err != nil {
 			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
 		}
@@ -1295,28 +1297,22 @@ func LoadIngestedSSTss(ctx context.Context, s storage.ExternalStorage, paths []s
 	})
 	extBackups, err := groupExtraBackups(ctx, backups)
 	if err != nil {
-		return iter.Fail[IngestedSSTss](err)
+		return iter.Fail[IngestedSSTsGroup](err)
 	}
 	return iter.FromSlice(extBackups)
 }
 
-func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]) ([]IngestedSSTss, error) {
+func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]) ([]IngestedSSTsGroup, error) {
 	var (
-		collected = map[uuid.UUID]IngestedSSTss{}
+		collected = map[uuid.UUID]IngestedSSTsGroup{}
 		finished  = map[uuid.UUID]struct{}{}
 	)
 
-	for {
-		res := i.TryNext(ctx)
-		if res.FinishedOrError() {
-			res := make([]IngestedSSTss, 0, len(collected))
-			for v := range maps.Values(collected) {
-				res = append(res, v)
-			}
-			return res, nil
+	for err, fbk := range iter.AsSeq(ctx, i) {
+		if err != nil {
+			return nil, err
 		}
 
-		fbk := res.Item
 		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
 				"the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
@@ -1339,6 +1335,12 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]
 			finished[uid] = struct{}{}
 		}
 	}
+
+	res := make([]IngestedSSTsGroup, 0, len(collected))
+	for v := range maps.Values(collected) {
+		res = append(res, v)
+	}
+	return res, nil
 }
 
 func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorage) (*pb.IngestedSSTs, error) {

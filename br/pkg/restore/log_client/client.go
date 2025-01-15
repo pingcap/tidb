@@ -215,10 +215,10 @@ type LogClient struct {
 	useCheckpoint bool
 
 	logFilesStat logFilesStatistic
-	restoreStat  restoreStatistic
+	restoreStat  restoreStatistics
 }
 
-type restoreStatistic struct {
+type restoreStatistics struct {
 	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
 	restoreSSTKVSize uint64
 	// restoreSSTKVCount is the total number of KV pairs restored from SST files.
@@ -270,7 +270,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
-func rewriteRewriteRuleBy(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
 	if r, ok := sst.(RewrittenSST); ok {
 		rewritten := r.RewrittenTo()
 		if rewritten > 0 && rewritten != sst.TableID() {
@@ -290,7 +290,7 @@ func rewriteRewriteRuleBy(sst SSTs, rules *restoreutils.RewriteRules) (*restoreu
 	return rules, nil
 }
 
-func (rc *LogClient) RestoreCompactedSstFiles(
+func (rc *LogClient) RestoreSSTFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
@@ -318,7 +318,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
-		newRules, err := rewriteRewriteRuleBy(i, rewriteRules)
+		newRules, err := rewriteRulesFor(i, rewriteRules)
 		if err != nil {
 			return err
 		}

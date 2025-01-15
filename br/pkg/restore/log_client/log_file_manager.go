@@ -379,7 +379,7 @@ func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[
 }
 
 func (rc *LogFileManager) GetIngestedSSTsSSTs(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.FlatMap(rc.withMigrations.IngestedSSTss(ctx, rc.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
+	return iter.FlatMap(rc.withMigrations.IngestedSSTs(ctx, rc.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
 		remap := map[int64]int64{}
 		for _, r := range c.RewrittenTables {
 			remap[r.AncestorUpstream] = r.Upstream
