@@ -851,7 +851,6 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sqlexec.RestrictedSQLExecutor) 
 	if err != nil {
 		return err
 	}
-	// p.buildTablesPrivMap()
 	return nil
 }
 
