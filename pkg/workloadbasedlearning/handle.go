@@ -47,7 +47,7 @@ func NewWorkloadBasedLearningHandle() *Handle {
 func (handle *Handle) HandleReadTableCost() {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	middleMetrics := handle.analyzeBasedOnStatementSummary()
-	if middleMetrics == nil || len(middleMetrics) == 0 {
+	if len(middleMetrics) == 0 {
 		return
 	}
 	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
@@ -75,7 +75,6 @@ func (handle *Handle) HandleReadTableCost() {
 		metric.tableCost = metric.tableScanTime/totalScanTime + metric.tableMemUsage/totalMemUsage
 	}
 	// TODO step5: save the table cost metrics to table "mysql.workload_values"
-
 }
 
 func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
