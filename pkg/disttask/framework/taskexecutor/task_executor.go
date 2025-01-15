@@ -435,17 +435,17 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	var (
-		subtaskCtx       context.Context
-		subtaskCtxCancel context.CancelFunc
+		subtaskCtx    context.Context
+		subtaskCancel context.CancelFunc
 	)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
-		subtaskCtx, subtaskCtxCancel = context.WithCancel(e.stepCtx)
+		subtaskCtx, subtaskCancel = context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
+			e.checkBalanceSubtask(checkCtx, subtaskCancel)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
@@ -463,7 +463,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
 	defer func() {
-		subtaskCtxCancel()
+		subtaskCancel()
 	}()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
