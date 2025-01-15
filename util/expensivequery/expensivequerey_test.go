@@ -94,19 +94,23 @@ func TestGetCurrentMemoryUsage(t *testing.T) {
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(nil, stmtCtx))
 	// case 2, refCount is not nil
 	assert.Equal(t, memUsage, getCurrentMemoryUsage(&refCount, stmtCtx))
+	assert.Equal(t, stmtctx.ReferenceCount(0), refCount)
 	// case 3, panic inside getCurrentMemoryUsage
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/expensivequery/panicWhenGetCurrentMemoryUsage", `return`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/expensivequery/panicWhenGetCurrentMemoryUsage"))
 	}()
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
+	assert.Equal(t, stmtctx.ReferenceCount(0), refCount)
 	// case 4, refCount is not nil, but refCount.TryIncrease() return false
 	assert.Equal(t, true, refCount.TryFreeze())
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
 	refCount.UnFreeze()
+	assert.Equal(t, stmtctx.ReferenceCount(0), refCount)
 	// case 5, stmtCtx is reset
 	assert.Equal(t, true, refCount.TryFreeze())
 	*stmtCtx = stmtctx.StatementContext{}
 	refCount.UnFreeze()
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
+	assert.Equal(t, stmtctx.ReferenceCount(0), refCount)
 }
