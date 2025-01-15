@@ -29,6 +29,8 @@ type taskExecutor struct {
 	*taskexecutor.BaseTaskExecutor
 }
 
+var _ taskexecutor.TaskExecutor = (*taskExecutor)(nil)
+
 func newTaskExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param) *taskExecutor {
 	e := &taskExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),

@@ -34,6 +34,8 @@ type schedulerImpl struct {
 	subtaskCount int
 }
 
+var _ scheduler.Scheduler = (*schedulerImpl)(nil)
+
 func newScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) *schedulerImpl {
 	return &schedulerImpl{
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
