@@ -20,7 +20,17 @@ import (
 	_ "unsafe" // required by go:linkname
 )
 
+<<<<<<< HEAD:pkg/util/fastrand/runtime_1.22.go
 // Uint32 returns a lock free uint32 value.
 //
 //go:linkname Uint32 runtime.cheaprand
 func Uint32() uint32
+=======
+// NewContext creates a new mocked sessionctx.Context.
+// This function should only be used for testing.
+// Avoid using this when you are in a context with a `kv.Storage` instance, especially when you are going to access
+// the data in it. Consider using testkit.NewSession(t, store) instead when possible.
+func NewContext() *Context {
+	return newContext()
+}
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/util/mock/fortest.go

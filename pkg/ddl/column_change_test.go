@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,10 +47,14 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
 
+<<<<<<< HEAD
 	d := dom.DDL()
 	tc := &callback.TestDDLCallback{Do: dom}
 
 	ct := testNewContext(store)
+=======
+	ct := testNewContext(t, store)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	// set up hook
 	var (
 		deleteOnlyTable table.Table
@@ -127,8 +130,13 @@ func TestColumnAdd(t *testing.T) {
 				return
 			}
 			first = false
+<<<<<<< HEAD
 			sess := testNewContext(store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
+=======
+			sess := testNewContext(t, store)
+			txn, err := newTxn(sess)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
 			require.NoError(t, err)
@@ -223,7 +231,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -261,7 +277,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,7 +302,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -308,7 +340,15 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	err = sessiontxn.NewTxn(ctx, sctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(sctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -325,7 +365,15 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	err = sessiontxn.NewTxn(ctx, sctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = newTxn(sctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -431,10 +479,8 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(store kv.Storage) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = store
-	return ctx
+func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
+	return testkit.NewSession(t, store)
 }
 
 func TestIssue40135(t *testing.T) {

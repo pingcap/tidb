@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -334,8 +333,7 @@ func TestReplaceLog(t *testing.T) {
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
 
 	// Make some dangling index.
-	ctx := mock.NewContext()
-	ctx.Store = store
+	ctx := testkit.NewSession(t, store)
 	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")
@@ -368,9 +366,14 @@ func TestRebaseIfNeeded(t *testing.T) {
 	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
 	tk.MustExec(`insert into t (b) values (1);`)
 
+<<<<<<< HEAD
 	ctx := mock.NewContext()
 	ctx.Store = store
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+=======
+	ctx := testkit.NewSession(t, store)
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
