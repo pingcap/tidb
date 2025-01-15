@@ -172,8 +172,8 @@ func genMockEngine(ctx context.Context, clusterID uint64, loadDataTaskID, addr s
 	}
 }
 
-func genHTTPServer(ch chan receivedReq) (*http.Server, *mockHttpHandler, string, error) {
-	handler := &mockHttpHandler{
+func genHTTPServer(ch chan receivedReq) (*http.Server, *mockHTTPHandler, string, error) {
+	handler := &mockHTTPHandler{
 		ch: ch,
 	}
 
@@ -205,6 +205,7 @@ func TestChunkSender(t *testing.T) {
 
 	ch := make(chan receivedReq, 16)
 	server, handler, addr, err := genHTTPServer(ch)
+	require.NoError(t, err)
 	go func() {
 		server.ListenAndServe()
 	}()
@@ -240,11 +241,11 @@ func TestChunkSender(t *testing.T) {
 	require.NoError(t, err)
 	// received flush request
 	verfiyRequest(t, ch, clusterID, loadDataTaskID, writerID, 0, nil, true)
-	// received puting a empty chunk request
+	// received putting a empty chunk request
 	verfiyRequest(t, ch, clusterID, loadDataTaskID, writerID, chunkID, []byte{}, false)
-	// put `chunk2` again
+	// received putting `chunk2` request again
 	verfiyRequest(t, ch, clusterID, loadDataTaskID, writerID, chunkID, []byte("chunk2"), false)
-	// flush again
+	// received flush request
 	verfiyRequest(t, ch, clusterID, loadDataTaskID, writerID, 0, nil, true)
 
 	server.Shutdown(ctx)
