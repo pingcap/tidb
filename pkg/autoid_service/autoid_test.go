@@ -214,7 +214,8 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 
 	rebaseRequest(t, cli, to, true, -1).check("")
 	checkCurrValue(t, cli, to, -1, -1, reqKeyspaceID)
-	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(-1, 0)
+	// rebase to max value, the next request should fail
+	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).checkErrmsg()
 }
 
 func TestGRPC(t *testing.T) {
