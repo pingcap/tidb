@@ -192,7 +192,7 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -206,7 +206,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	zoneHelper := taskZoneInfoHelper{}
-	zoneHelper.init(c.sessionCtx.GetStore())
+	zoneHelper.init(allTiFlashZoneInfo)
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
@@ -223,7 +223,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			return err
 		}
 		zoneHelper.isRoot = pf.IsRoot
-		zoneHelper.currentTaskZone = zoneHelper.allTiflashZoneInfo[mppTask.Meta.GetAddress()]
+		zoneHelper.currentTaskZone = zoneHelper.allTiFlashZoneInfo[mppTask.Meta.GetAddress()]
 		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
 		pbData, err := dagReq.Marshal()
 		if err != nil {
@@ -353,7 +353,7 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 
 // taskZoneInfoHelper used to help reset exchange executor's same zone flags
 type taskZoneInfoHelper struct {
-	allTiflashZoneInfo map[string]string
+	allTiFlashZoneInfo map[string]string
 	// exchangeZoneInfo is used to cache one mpp task's zone info:
 	// key is executor id, value is zone info array
 	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
@@ -363,21 +363,9 @@ type taskZoneInfoHelper struct {
 	isRoot           bool
 }
 
-func (h *taskZoneInfoHelper) init(store kv.Storage) {
-	tikvStore, ok := store.(helper.Storage)
-	if !ok {
-		return
-	}
+func (h *taskZoneInfoHelper) init(allTiFlashZoneInfo map[string]string) {
 	h.tidbZone = config.GetGlobalConfig().Labels[placement.DCLabelKey]
-	cache := tikvStore.GetRegionCache()
-	allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-	h.allTiflashZoneInfo = make(map[string]string, len(allTiFlashStores))
-	for _, tiflashStore := range allTiFlashStores {
-		tiflashStoreAddr := tiflashStore.GetAddr()
-		if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
-			h.allTiflashZoneInfo[tiflashStoreAddr] = tiflashZone
-		}
-	}
+	h.allTiFlashZoneInfo = allTiFlashZoneInfo
 	// initial capacity to 2, for one exchange sender and one exchange receiver
 	h.exchangeZoneInfo = make(map[string][]string, 2)
 }
@@ -405,9 +393,27 @@ func (h *taskZoneInfoHelper) collectExchangeZoneInfos(encodedTaskMeta [][]byte, 
 			zoneInfos = append(zoneInfos, "")
 			continue
 		}
-		zoneInfos = append(zoneInfos, h.allTiflashZoneInfo[taskMeta.GetAddress()])
+		zoneInfos = append(zoneInfos, h.allTiFlashZoneInfo[taskMeta.GetAddress()])
 	}
 	return zoneInfos
+}
+
+func (h *taskZoneInfoHelper) inferSameZoneFlag(exec *tipb.Executor, encodedTaskMeta [][]byte) []bool {
+	slots := len(encodedTaskMeta)
+	sameZoneFlags := make([]bool, 0, slots)
+	filled := false
+	if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
+		return sameZoneFlags
+	}
+	zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
+	if !exist {
+		zoneInfos = h.collectExchangeZoneInfos(encodedTaskMeta, slots)
+		h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
+	}
+	for i := 0; i < slots; i++ {
+		sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
+	}
+	return sameZoneFlags
 }
 
 func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
@@ -424,37 +430,9 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		children = append(children, exec.Limit.Child)
 	case tipb.ExecType_TypeExchangeSender:
 		children = append(children, exec.ExchangeSender.Child)
-		slots := len(exec.ExchangeSender.EncodedTaskMeta)
-		sameZoneFlags := make([]bool, 0, slots)
-		filled := false
-		if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
-			break
-		}
-		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
-		if !exist {
-			zoneInfos = h.collectExchangeZoneInfos(exec.ExchangeSender.EncodedTaskMeta, slots)
-			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
-		}
-		for i := 0; i < slots; i++ {
-			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
-		}
-		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
+		exec.ExchangeSender.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeSender.EncodedTaskMeta)
 	case tipb.ExecType_TypeExchangeReceiver:
-		slots := len(exec.ExchangeReceiver.EncodedTaskMeta)
-		sameZoneFlags := make([]bool, 0, slots)
-		filled := false
-		if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
-			break
-		}
-		zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
-		if !exist {
-			zoneInfos = h.collectExchangeZoneInfos(exec.ExchangeReceiver.EncodedTaskMeta, slots)
-			h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
-		}
-		for i := 0; i < slots; i++ {
-			sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
-		}
-		exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
+		exec.ExchangeReceiver.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeReceiver.EncodedTaskMeta)
 	case tipb.ExecType_TypeJoin:
 		children = append(children, exec.Join.Children...)
 	case tipb.ExecType_TypeProjection:
@@ -920,8 +898,24 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	c.nodeCnt = len(nodeInfo)
 
+	var allTiFlashZoneInfo map[string]string
+	if c.sessionCtx.GetStore() == nil {
+		allTiFlashZoneInfo = make(map[string]string)
+	} else if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
+		cache := tikvStore.GetRegionCache()
+		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+		allTiFlashZoneInfo = make(map[string]string, len(allTiFlashStores))
+		for _, tiflashStore := range allTiFlashStores {
+			tiflashStoreAddr := tiflashStore.GetAddr()
+			if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
+				allTiFlashZoneInfo[tiflashStoreAddr] = tiflashZone
+			}
+		}
+	} else {
+		allTiFlashZoneInfo = make(map[string]string)
+	}
 	for _, frag := range frags {
-		err = c.appendMPPDispatchReq(frag)
+		err = c.appendMPPDispatchReq(frag, allTiFlashZoneInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
