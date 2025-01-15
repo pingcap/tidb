@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -60,7 +61,11 @@ func (tk TestKitGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 }
 
 func (tk TestKitGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
-	return gluetidb.WrapSession(tk.tk.Session()), nil
+	se, err := session.CreateSession(tk.tk.Session().GetStore())
+	if err != nil {
+		return nil, err
+	}
+	return gluetidb.WrapSession(se), nil
 }
 
 func (tk TestKitGlue) Open(path string, option pd.SecurityOption) (kv.Storage, error) {
