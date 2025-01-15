@@ -2574,7 +2574,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 			spans(lN(3), 100, sp(0, 42), sp(42, 18), sp(60, 40))),
 	))
 
-	mg := est.MergeAndMigrateTo(ctx, 2)
+	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 
 	require.Len(t, mg.Source, 2)
 	require.Empty(t, mg.Warnings)
@@ -2592,7 +2592,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
 	require.EqualValues(t, migs.Layers[0].SeqNum, 3)
 
-	mg = est.MergeAndMigrateTo(ctx, 3)
+	mg = est.MergeAndMigrateTo(ctx, 3, MMOptSkipLockingInTest())
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
 	effs = effectsOf(bs.ReadOnlyEffects())
@@ -2670,12 +2670,12 @@ func TestRetry(t *testing.T) {
 		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
 	est := MigrationExtension(s)
-	mg := est.MergeAndMigrateTo(ctx, 2)
+	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
 	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
-	mg = est.MergeAndMigrateTo(ctx, 2)
+	mg = est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 	require.Empty(t, slices.DeleteFunc(mg.Warnings, func(err error) bool {
 		return strings.Contains(err.Error(), "failed to delete file")
 	}))
