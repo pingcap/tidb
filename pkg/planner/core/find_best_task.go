@@ -720,12 +720,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
 	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
-	// If there is no winner (0), we return the OR of both.
+	// If there is no winner (0), we return idxMissingStats.
 	//
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo := statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	idxMissingStats := false
 	lhsFullScan := lhs.path.IsFullTableRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullTableRange(tableInfo)
 	if statsTbl != nil && len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
@@ -733,14 +734,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
-				lhsPseudo = true
+				lhsPseudo, idxMissingStats = true, true
 			}
 		}
 		if !rhsFullScan && rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
-				rhsPseudo = true
+				rhsPseudo, idxMissingStats = true, true
 			}
 		}
 	}
@@ -748,7 +749,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	if lhsPseudo != rhsPseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+	if idxMissingStats && lhsPseudo != rhsPseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 &&
@@ -799,11 +800,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
-		return 0, lhsPseudo || rhsPseudo
+		return 0, idxMissingStats
 	}
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	if !comparable2 {
-		return 0, lhsPseudo || rhsPseudo
+		return 0, idxMissingStats
 	}
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
@@ -812,7 +813,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1, rhsPseudo
 	}
-	return 0, lhsPseudo || rhsPseudo
+	return 0, idxMissingStats
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
