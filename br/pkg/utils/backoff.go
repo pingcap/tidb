@@ -53,6 +53,10 @@ const (
 	recoveryMaxAttempts  = 16
 	recoveryDelayTime    = 30 * time.Second
 	recoveryMaxDelayTime = 4 * time.Minute
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
 )
 
 // BackoffStrategy implements a backoff strategy for retry operations.
@@ -343,6 +347,7 @@ func NewDiskCheckBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(resetTSRetryTime),
 		WithDelayTime(resetTSWaitInterval),
+		WithMaxDelayTime(resetTSMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("disk check")),
 		WithRetryErrorFunc(isRetryErrFunc),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -353,6 +358,7 @@ func NewRecoveryBackoffStrategy(isRetryErrFunc func(error) bool) BackoffStrategy
 	return NewBackoffStrategy(
 		WithRemainingAttempts(recoveryMaxAttempts),
 		WithDelayTime(recoveryDelayTime),
+		WithMaxDelayTime(recoveryMaxDelayTime),
 		WithErrorContext(NewZeroRetryContext("recovery")),
 		WithRetryErrorFunc(isRetryErrFunc),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -363,6 +369,7 @@ func NewFlashBackBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(FlashbackRetryTime),
 		WithDelayTime(FlashbackWaitInterval),
+		WithMaxDelayTime(FlashbackMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("flashback")),
 		WithRetryErrorFunc(alwaysTrueFunc()),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -373,7 +380,19 @@ func NewChecksumBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(ChecksumRetryTime),
 		WithDelayTime(ChecksumWaitInterval),
+		WithMaxDelayTime(ChecksumMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("checksum")),
+		WithRetryErrorFunc(alwaysTrueFunc()),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewRawClientBackoffStrategy() BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(rawClientMaxAttempts),
+		WithDelayTime(rawClientDelayTime),
+		WithMaxDelayTime(rawClientMaxDelayTime),
+		WithErrorContext(NewZeroRetryContext("raw client")),
 		WithRetryErrorFunc(alwaysTrueFunc()),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
 	)
