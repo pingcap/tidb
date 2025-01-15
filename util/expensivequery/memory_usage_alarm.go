@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util"
@@ -162,15 +163,22 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func getCurrentMemoryUsage(refcount *stmtctx.ReferenceCount, stmtCtx *stmtctx.StatementContext) int64 {
-	if refcount != nil && refcount.TryIncrease() {
-		defer refcount.Decrease()
-		// note there is still data race when reading MemTracker, but this is the best effort without too many changes
+func getCurrentMemoryUsage(refCount *stmtctx.ReferenceCount, stmtCtx *stmtctx.StatementContext) (ret int64) {
+	ret = 0
+	if refCount != nil && refCount.TryIncrease() {
+		defer func() {
+			// even if we increase the refCount, reading MemTracker is still not thread-safe, so we add recover here
+			if r := recover(); r != nil {
+				ret = 0
+			}
+			refCount.Decrease()
+		}()
 		if tracker := stmtCtx.MemTracker; tracker != nil {
-			return tracker.MaxConsumed()
+			failpoint.Inject("panicWhenGetCurrentMemoryUsage", func() { panic("panic when get current memory usage") })
+			ret = tracker.MaxConsumed()
 		}
 	}
-	return 0
+	return
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {

@@ -18,11 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -92,11 +94,17 @@ func TestGetCurrentMemoryUsage(t *testing.T) {
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(nil, stmtCtx))
 	// case 2, refCount is not nil
 	assert.Equal(t, memUsage, getCurrentMemoryUsage(&refCount, stmtCtx))
-	// case 3, refCount is not nil, but refCount.TryIncrease() return false
+	// case 3, panic inside getCurrentMemoryUsage
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/expensivequery/panicWhenGetCurrentMemoryUsage", `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/expensivequery/panicWhenGetCurrentMemoryUsage"))
+	}()
+	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
+	// case 4, refCount is not nil, but refCount.TryIncrease() return false
 	assert.Equal(t, true, refCount.TryFreeze())
 	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
 	refCount.UnFreeze()
-	// case 4, stmtCtx is reset
+	// case 5, stmtCtx is reset
 	assert.Equal(t, true, refCount.TryFreeze())
 	*stmtCtx = stmtctx.StatementContext{}
 	refCount.UnFreeze()
