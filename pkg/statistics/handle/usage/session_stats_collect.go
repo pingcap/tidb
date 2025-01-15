@@ -183,7 +183,6 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 			// Update deltaMap after the batch is successfully dumped.
 			for _, update := range batchUpdates {
-				UpdateTableDeltaMap(deltaMap, update.TableID, -update.Delta.Delta, -update.Delta.Count)
 				delete(deltaMap, update.TableID)
 			}
 
@@ -311,12 +310,6 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		}
 	}
 	intest.Assert(len(updates) >= beforeLen, "updates can only be appended")
-	if len(updates) > beforeLen {
-		// Resort updates after appending new updates.
-		slices.SortFunc(updates, func(i, j *storage.DeltaUpdate) int {
-			return cmp.Compare(i.TableID, j.TableID)
-		})
-	}
 
 	// Batch update stats meta.
 	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
