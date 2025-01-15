@@ -146,7 +146,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
-	row := make([]any, 8)
+	row := make([]any, 7)
 	row[0] = dbName
 	row[1] = tblName
 	row[2] = partitionName
@@ -157,11 +157,6 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 		row[6] = nil
 	} else {
 		row[6] = e.versionToTime(statsTbl.LastAnalyzeVersion)
-	}
-	if statsTbl.LastStatsFullUpdateVersion == 0 {
-		row[7] = nil
-	} else {
-		row[7] = e.versionToTime(statsTbl.LastStatsFullUpdateVersion)
 	}
 	e.appendRow(row)
 }

@@ -187,6 +187,9 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 		// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
+		// mysql table_id = 21, index_id = 3, table_name = STATS_META, index_name = INDEX_ANALYZE_VERSION
+		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_ANALYZE_VERSION", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_ANALYZE_VERSION", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
 		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
