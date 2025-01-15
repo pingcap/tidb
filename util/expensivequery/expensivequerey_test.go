@@ -79,3 +79,26 @@ func TestLogFormat(t *testing.T) {
 	logFields = genLogFields(costTime, info)
 	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
 }
+
+func TestGetCurrentMemoryUsage(t *testing.T) {
+	mem := memory.NewTracker(-1, -1)
+	memUsage := int64(1<<30 + 1<<29 + 1<<28 + 1<<27)
+	mem.Consume(memUsage)
+	var refCount stmtctx.ReferenceCount = 0
+	stmtCtx := &stmtctx.StatementContext{
+		MemTracker: mem,
+	}
+	// case 1, refCount is nil
+	assert.Equal(t, int64(0), getCurrentMemoryUsage(nil, stmtCtx))
+	// case 2, refCount is not nil
+	assert.Equal(t, memUsage, getCurrentMemoryUsage(&refCount, stmtCtx))
+	// case 3, refCount is not nil, but refCount.TryIncrease() return false
+	assert.Equal(t, true, refCount.TryFreeze())
+	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
+	refCount.UnFreeze()
+	// case 4, stmtCtx is reset
+	assert.Equal(t, true, refCount.TryFreeze())
+	*stmtCtx = stmtctx.StatementContext{}
+	refCount.UnFreeze()
+	assert.Equal(t, int64(0), getCurrentMemoryUsage(&refCount, stmtCtx))
+}
