@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	parserformat "github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/tidb"
@@ -90,12 +89,12 @@ type ShowExec struct {
 	exec.BaseExecutor
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            pmodel.CIStr
+	DBName            ast.CIStr
 	Table             *resolve.TableNameW  // Used for showing columns.
-	Partition         pmodel.CIStr         // Used for showing partition
+	Partition         ast.CIStr            // Used for showing partition
 	Column            *ast.ColumnName      // Used for `desc table column`.
-	IndexName         pmodel.CIStr         // Used for show table regions.
-	ResourceGroupName pmodel.CIStr         // Used for showing resource group
+	IndexName         ast.CIStr            // Used for show table regions.
+	ResourceGroupName ast.CIStr            // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	Roles             []*auth.RoleIdentity // Used for show grants.
 	User              *auth.UserIdentity   // Used by show grants, show create user.
@@ -300,7 +299,7 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if schema == "" {
 			schema = v.defaultDB
 		}
-		if !v.is.TableExists(pmodel.NewCIStr(schema), x.Name) {
+		if !v.is.TableExists(ast.NewCIStr(schema), x.Name) {
 			return in, true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
@@ -489,7 +488,7 @@ func (*ShowExec) fetchShowOpenTables() error {
 
 // showInfo represents the result of `SHOW TABLES`.
 type showInfo struct {
-	Name pmodel.CIStr
+	Name ast.CIStr
 	// only used for show full tables
 	TableType string
 }
@@ -510,7 +509,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 
 // fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
 func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
-	tb, err := e.is.TableByName(ctx, e.DBName, pmodel.NewCIStr(name))
+	tb, err := e.is.TableByName(ctx, e.DBName, ast.NewCIStr(name))
 	if err != nil {
 		// do nothing if table not exists
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -1030,7 +1029,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1241,7 +1240,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
-		if idxInfo.Tp == pmodel.IndexTypeHypo {
+		if idxInfo.Tp == ast.IndexTypeHypo {
 			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
@@ -1278,11 +1277,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
-		if pmodel.ReferOptionType(fk.OnDelete) != 0 {
-			fmt.Fprintf(buf, " ON DELETE %s", pmodel.ReferOptionType(fk.OnDelete).String())
+		if ast.ReferOptionType(fk.OnDelete) != 0 {
+			fmt.Fprintf(buf, " ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String())
 		}
-		if pmodel.ReferOptionType(fk.OnUpdate) != 0 {
-			fmt.Fprintf(buf, " ON UPDATE %s", pmodel.ReferOptionType(fk.OnUpdate).String())
+		if ast.ReferOptionType(fk.OnUpdate) != 0 {
+			fmt.Fprintf(buf, " ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
@@ -2392,7 +2391,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}

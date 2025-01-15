@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -74,7 +74,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	// Before analyze table.
 	handle := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.True(t, tblStats.Pseudo)
@@ -82,7 +82,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
@@ -95,7 +95,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID:       tblInfo.Meta().ID,
@@ -105,7 +105,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
@@ -116,7 +116,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats.GetIdx(1))
@@ -136,7 +136,7 @@ func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table1"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table1"))
 	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID:       tableInfo.Meta().ID,
@@ -180,7 +180,7 @@ func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table1"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table1"))
 	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID: tableInfo.Meta().ID,

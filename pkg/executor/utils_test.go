@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -165,22 +166,22 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	}
 
 	u.AuthOpt.ByAuthString = false
-	_, ok := encodePassword(u, p)
+	_, ok := encodePasswordWithPlugin(*u, p, "")
 	require.False(t, ok)
 
 	u.AuthOpt.AuthString = "xxx"
 	u.AuthOpt.ByAuthString = true
-	pwd, ok := encodePassword(u, p)
+	pwd, ok := encodePasswordWithPlugin(*u, p, "")
 	require.True(t, ok)
 	require.Equal(t, "xxxxxxx", pwd)
 
 	u.AuthOpt = nil
-	pwd, ok = encodePassword(u, p)
+	pwd, ok = encodePasswordWithPlugin(*u, p, "")
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
 }
 
-func TestGoPool(t *testing.T) {
+func TestWorkerPool(t *testing.T) {
 	var (
 		list []int
 		lock sync.Mutex
@@ -199,8 +200,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            1,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 1 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -224,8 +226,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TwoWorkers", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -249,8 +252,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 1,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 1
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -270,4 +274,42 @@ func TestGoPool(t *testing.T) {
 		wg.Wait()
 		require.Equal(t, []int{1, 2, 3, 4}, list)
 	})
+}
+
+func TestEncodedPassword(t *testing.T) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	hashCachingString := "0123456789012345678901234567890123456789012345678901234567890123456789"
+	u := ast.UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &ast.AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+	pwd, ok := encodedPassword(&u, "")
+	require.True(t, ok)
+	require.Equal(t, u.AuthOpt.HashString, pwd)
+
+	u.AuthOpt.HashString = "not-good-password-format"
+	_, ok = encodedPassword(&u, "")
+	require.False(t, ok)
+
+	u.AuthOpt.ByAuthString = true
+	// mysql_native_password
+	pwd, ok = encodedPassword(&u, "")
+	require.True(t, ok)
+	require.Equal(t, hashString, pwd)
+	// caching_sha2_password
+	u.AuthOpt.HashString = hashCachingString
+	pwd, ok = encodedPassword(&u, mysql.AuthCachingSha2Password)
+	require.True(t, ok)
+	require.Len(t, pwd, mysql.SHAPWDHashLen)
+
+	u.AuthOpt.AuthString = ""
+	pwd, ok = encodedPassword(&u, "")
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
 }

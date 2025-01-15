@@ -133,7 +133,11 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 	//         log file [ ..  ..  ..  .. ]
 	//
 	for _, compaction := range mig.Compactions {
-		if compaction.CompactionUntilTs < builder.shiftStartTS || compaction.CompactionFromTs > builder.restoredTS {
+		// Some old compaction may not contain input min / max ts.
+		// In that case, we should never filter it out.
+		rangeValid := compaction.InputMinTs != 0 && compaction.InputMaxTs != 0
+		outOfRange := compaction.InputMaxTs < builder.shiftStartTS || compaction.InputMinTs > builder.restoredTS
+		if rangeValid && outOfRange {
 			return true
 		}
 	}

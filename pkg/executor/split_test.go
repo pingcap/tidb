@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -39,11 +39,11 @@ import (
 
 func TestSplitIndex(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -55,14 +55,14 @@ func TestSplitIndex(t *testing.T) {
 	idxCols := []*model.IndexColumn{{Name: tbInfo.Columns[0].Name, Offset: 0, Length: types.UnspecifiedLength}}
 	idxInfo := &model.IndexInfo{
 		ID:      2,
-		Name:    pmodel.NewCIStr("idx1"),
-		Table:   pmodel.NewCIStr("t1"),
+		Name:    ast.NewCIStr("idx1"),
+		Table:   ast.NewCIStr("t1"),
 		Columns: idxCols,
 		State:   model.StatePublic,
 	}
 	firstIdxInfo0 := idxInfo.Clone()
 	firstIdxInfo0.ID = 1
-	firstIdxInfo0.Name = pmodel.NewCIStr("idx")
+	firstIdxInfo0.Name = ast.NewCIStr("idx")
 	tbInfo.Indices = []*model.IndexInfo{firstIdxInfo0, idxInfo}
 
 	// Test for int index.
@@ -241,11 +241,11 @@ func TestSplitIndex(t *testing.T) {
 
 func TestSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -318,11 +318,11 @@ func TestSplitTable(t *testing.T) {
 func TestStepShouldLargeThanMinStep(t *testing.T) {
 	ctx := mock.NewContext()
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -345,7 +345,7 @@ func TestStepShouldLargeThanMinStep(t *testing.T) {
 
 func TestClusterIndexSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name:                pmodel.NewCIStr("t"),
+		Name:                ast.NewCIStr("t"),
 		ID:                  1,
 		IsCommonHandle:      true,
 		CommonHandleVersion: 1,
@@ -362,21 +362,21 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 		Columns: []*model.ColumnInfo{
 			{
-				Name:      pmodel.NewCIStr("c0"),
+				Name:      ast.NewCIStr("c0"),
 				ID:        1,
 				Offset:    0,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeDouble),
 			},
 			{
-				Name:      pmodel.NewCIStr("c1"),
+				Name:      ast.NewCIStr("c1"),
 				ID:        2,
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:      pmodel.NewCIStr("c2"),
+				Name:      ast.NewCIStr("c2"),
 				ID:        3,
 				Offset:    2,
 				State:     model.StatePublic,

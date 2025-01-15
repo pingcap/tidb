@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -96,24 +95,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: pmodel.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: ast.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, pmodel.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, ast.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -121,7 +120,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
 }
 
@@ -686,23 +685,23 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: pmodel.NewCIStr("test"),
-		Name:   pmodel.NewCIStr("my_table"),
+		Schema: ast.NewCIStr("test"),
+		Name:   ast.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      pmodel.NewCIStr("id"),
+			Name:      ast.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      pmodel.NewCIStr("name"),
+			Name:      ast.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      pmodel.NewCIStr("age"),
+			Name:      ast.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
@@ -714,7 +713,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, ast.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
@@ -726,7 +725,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, ast.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
@@ -740,12 +739,12 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t1"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t2"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t2"),
 		},
 	}
 

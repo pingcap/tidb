@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +37,11 @@ func TestParseHint(t *testing.T) {
 			input: "MEMORY_QUOTA(8 MB) MEMORY_QUOTA(6 GB)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("MEMORY_QUOTA"),
+					HintName: ast.NewCIStr("MEMORY_QUOTA"),
 					HintData: int64(8 * 1024 * 1024),
 				},
 				{
-					HintName: model.NewCIStr("MEMORY_QUOTA"),
+					HintName: ast.NewCIStr("MEMORY_QUOTA"),
 					HintData: int64(6 * 1024 * 1024 * 1024),
 				},
 			},
@@ -52,32 +51,32 @@ func TestParseHint(t *testing.T) {
 			mode:  mysql.ModeANSIQuotes,
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("qb1"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("qb1"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("qb2"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("qb2"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("TRUE"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("TRUE"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("ANSI quoted"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("ANSI quoted"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("_utf8"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("_utf8"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("0b10"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("0b10"),
 				},
 				{
-					HintName: model.NewCIStr("QB_NAME"),
-					QBName:   model.NewCIStr("0x1a"),
+					HintName: ast.NewCIStr("QB_NAME"),
+					QBName:   ast.NewCIStr("0x1a"),
 				},
 			},
 		},
@@ -122,23 +121,23 @@ func TestParseHint(t *testing.T) {
 			input: "HASH_JOIN() TIDB_HJ(@qb1) INL_JOIN(x, `y y`.z) MERGE_JOIN(w@`First QB`)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("HASH_JOIN"),
+					HintName: ast.NewCIStr("HASH_JOIN"),
 				},
 				{
-					HintName: model.NewCIStr("TIDB_HJ"),
-					QBName:   model.NewCIStr("qb1"),
+					HintName: ast.NewCIStr("TIDB_HJ"),
+					QBName:   ast.NewCIStr("qb1"),
 				},
 				{
-					HintName: model.NewCIStr("INL_JOIN"),
+					HintName: ast.NewCIStr("INL_JOIN"),
 					Tables: []ast.HintTable{
-						{TableName: model.NewCIStr("x")},
-						{DBName: model.NewCIStr("y y"), TableName: model.NewCIStr("z")},
+						{TableName: ast.NewCIStr("x")},
+						{DBName: ast.NewCIStr("y y"), TableName: ast.NewCIStr("z")},
 					},
 				},
 				{
-					HintName: model.NewCIStr("MERGE_JOIN"),
+					HintName: ast.NewCIStr("MERGE_JOIN"),
 					Tables: []ast.HintTable{
-						{TableName: model.NewCIStr("w"), QBName: model.NewCIStr("First QB")},
+						{TableName: ast.NewCIStr("w"), QBName: ast.NewCIStr("First QB")},
 					},
 				},
 			},
@@ -147,24 +146,24 @@ func TestParseHint(t *testing.T) {
 			input: "USE_INDEX_MERGE(@qb1 tbl1 x, y, z) IGNORE_INDEX(tbl2@qb2) USE_INDEX(tbl3 PRIMARY) FORCE_INDEX(tbl4@qb3 c1)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("USE_INDEX_MERGE"),
-					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl1")}},
-					QBName:   model.NewCIStr("qb1"),
-					Indexes:  []model.CIStr{model.NewCIStr("x"), model.NewCIStr("y"), model.NewCIStr("z")},
+					HintName: ast.NewCIStr("USE_INDEX_MERGE"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl1")}},
+					QBName:   ast.NewCIStr("qb1"),
+					Indexes:  []ast.CIStr{ast.NewCIStr("x"), ast.NewCIStr("y"), ast.NewCIStr("z")},
 				},
 				{
-					HintName: model.NewCIStr("IGNORE_INDEX"),
-					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl2"), QBName: model.NewCIStr("qb2")}},
+					HintName: ast.NewCIStr("IGNORE_INDEX"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl2"), QBName: ast.NewCIStr("qb2")}},
 				},
 				{
-					HintName: model.NewCIStr("USE_INDEX"),
-					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl3")}},
-					Indexes:  []model.CIStr{model.NewCIStr("PRIMARY")},
+					HintName: ast.NewCIStr("USE_INDEX"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl3")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("PRIMARY")},
 				},
 				{
-					HintName: model.NewCIStr("FORCE_INDEX"),
-					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl4"), QBName: model.NewCIStr("qb3")}},
-					Indexes:  []model.CIStr{model.NewCIStr("c1")},
+					HintName: ast.NewCIStr("FORCE_INDEX"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl4"), QBName: ast.NewCIStr("qb3")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("c1")},
 				},
 			},
 		},
@@ -172,23 +171,23 @@ func TestParseHint(t *testing.T) {
 			input: "USE_INDEX(@qb1 tbl1 partition(p0) x) USE_INDEX_MERGE(@qb2 tbl2@qb2 partition(p0, p1) x, y, z)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("USE_INDEX"),
+					HintName: ast.NewCIStr("USE_INDEX"),
 					Tables: []ast.HintTable{{
-						TableName:     model.NewCIStr("tbl1"),
-						PartitionList: []model.CIStr{model.NewCIStr("p0")},
+						TableName:     ast.NewCIStr("tbl1"),
+						PartitionList: []ast.CIStr{ast.NewCIStr("p0")},
 					}},
-					QBName:  model.NewCIStr("qb1"),
-					Indexes: []model.CIStr{model.NewCIStr("x")},
+					QBName:  ast.NewCIStr("qb1"),
+					Indexes: []ast.CIStr{ast.NewCIStr("x")},
 				},
 				{
-					HintName: model.NewCIStr("USE_INDEX_MERGE"),
+					HintName: ast.NewCIStr("USE_INDEX_MERGE"),
 					Tables: []ast.HintTable{{
-						TableName:     model.NewCIStr("tbl2"),
-						QBName:        model.NewCIStr("qb2"),
-						PartitionList: []model.CIStr{model.NewCIStr("p0"), model.NewCIStr("p1")},
+						TableName:     ast.NewCIStr("tbl2"),
+						QBName:        ast.NewCIStr("qb2"),
+						PartitionList: []ast.CIStr{ast.NewCIStr("p0"), ast.NewCIStr("p1")},
 					}},
-					QBName:  model.NewCIStr("qb2"),
-					Indexes: []model.CIStr{model.NewCIStr("x"), model.NewCIStr("y"), model.NewCIStr("z")},
+					QBName:  ast.NewCIStr("qb2"),
+					Indexes: []ast.CIStr{ast.NewCIStr("x"), ast.NewCIStr("y"), ast.NewCIStr("z")},
 				},
 			},
 		},
@@ -196,35 +195,35 @@ func TestParseHint(t *testing.T) {
 			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off')`,
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("SET_VAR"),
+					HintName: ast.NewCIStr("SET_VAR"),
 					HintData: ast.HintSetVar{
 						VarName: "sbs",
 						Value:   "16M",
 					},
 				},
 				{
-					HintName: model.NewCIStr("SET_VAR"),
+					HintName: ast.NewCIStr("SET_VAR"),
 					HintData: ast.HintSetVar{
 						VarName: "fkc",
 						Value:   "OFF",
 					},
 				},
 				{
-					HintName: model.NewCIStr("SET_VAR"),
+					HintName: ast.NewCIStr("SET_VAR"),
 					HintData: ast.HintSetVar{
 						VarName: "os",
 						Value:   "mcb=off",
 					},
 				},
 				{
-					HintName: model.NewCIStr("set_var"),
+					HintName: ast.NewCIStr("set_var"),
 					HintData: ast.HintSetVar{
 						VarName: "abc",
 						Value:   "1",
 					},
 				},
 				{
-					HintName: model.NewCIStr("set_var"),
+					HintName: ast.NewCIStr("set_var"),
 					HintData: ast.HintSetVar{
 						VarName: "os2",
 						Value:   "mcb2=off",
@@ -236,30 +235,30 @@ func TestParseHint(t *testing.T) {
 			input: "USE_TOJA(TRUE) IGNORE_PLAN_CACHE() USE_CASCADES(TRUE) QUERY_TYPE(@qb1 OLAP) QUERY_TYPE(OLTP) NO_INDEX_MERGE() RESOURCE_GROUP(rg1)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("USE_TOJA"),
+					HintName: ast.NewCIStr("USE_TOJA"),
 					HintData: true,
 				},
 				{
-					HintName: model.NewCIStr("IGNORE_PLAN_CACHE"),
+					HintName: ast.NewCIStr("IGNORE_PLAN_CACHE"),
 				},
 				{
-					HintName: model.NewCIStr("USE_CASCADES"),
+					HintName: ast.NewCIStr("USE_CASCADES"),
 					HintData: true,
 				},
 				{
-					HintName: model.NewCIStr("QUERY_TYPE"),
-					QBName:   model.NewCIStr("qb1"),
-					HintData: model.NewCIStr("OLAP"),
+					HintName: ast.NewCIStr("QUERY_TYPE"),
+					QBName:   ast.NewCIStr("qb1"),
+					HintData: ast.NewCIStr("OLAP"),
 				},
 				{
-					HintName: model.NewCIStr("QUERY_TYPE"),
-					HintData: model.NewCIStr("OLTP"),
+					HintName: ast.NewCIStr("QUERY_TYPE"),
+					HintData: ast.NewCIStr("OLTP"),
 				},
 				{
-					HintName: model.NewCIStr("NO_INDEX_MERGE"),
+					HintName: ast.NewCIStr("NO_INDEX_MERGE"),
 				},
 				{
-					HintName: model.NewCIStr("RESOURCE_GROUP"),
+					HintName: ast.NewCIStr("RESOURCE_GROUP"),
 					HintData: "rg1",
 				},
 			},
@@ -268,34 +267,34 @@ func TestParseHint(t *testing.T) {
 			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() SEMI_JOIN_REWRITE() READ_FROM_STORAGE(TIKV[e])",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("READ_FROM_STORAGE"),
-					HintData: model.NewCIStr("TIKV"),
-					QBName:   model.NewCIStr("foo"),
+					HintName: ast.NewCIStr("READ_FROM_STORAGE"),
+					HintData: ast.NewCIStr("TIKV"),
+					QBName:   ast.NewCIStr("foo"),
 					Tables: []ast.HintTable{
-						{TableName: model.NewCIStr("a")},
-						{TableName: model.NewCIStr("b")},
+						{TableName: ast.NewCIStr("a")},
+						{TableName: ast.NewCIStr("b")},
 					},
 				},
 				{
-					HintName: model.NewCIStr("READ_FROM_STORAGE"),
-					HintData: model.NewCIStr("TIFLASH"),
-					QBName:   model.NewCIStr("foo"),
+					HintName: ast.NewCIStr("READ_FROM_STORAGE"),
+					HintData: ast.NewCIStr("TIFLASH"),
+					QBName:   ast.NewCIStr("foo"),
 					Tables: []ast.HintTable{
-						{TableName: model.NewCIStr("c")},
-						{TableName: model.NewCIStr("d")},
+						{TableName: ast.NewCIStr("c")},
+						{TableName: ast.NewCIStr("d")},
 					},
 				},
 				{
-					HintName: model.NewCIStr("HASH_AGG"),
+					HintName: ast.NewCIStr("HASH_AGG"),
 				},
 				{
-					HintName: model.NewCIStr("SEMI_JOIN_REWRITE"),
+					HintName: ast.NewCIStr("SEMI_JOIN_REWRITE"),
 				},
 				{
-					HintName: model.NewCIStr("READ_FROM_STORAGE"),
-					HintData: model.NewCIStr("TIKV"),
+					HintName: ast.NewCIStr("READ_FROM_STORAGE"),
+					HintData: ast.NewCIStr("TIKV"),
 					Tables: []ast.HintTable{
-						{TableName: model.NewCIStr("e")},
+						{TableName: ast.NewCIStr("e")},
 					},
 				},
 			},
@@ -338,7 +337,7 @@ func TestParseHint(t *testing.T) {
 			input: "TIME_RANGE('2020-02-20 12:12:12','2020-02-20 13:12:12')",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: model.NewCIStr("TIME_RANGE"),
+					HintName: ast.NewCIStr("TIME_RANGE"),
 					HintData: ast.HintTimeRange{
 						From: "2020-02-20 12:12:12",
 						To:   "2020-02-20 13:12:12",

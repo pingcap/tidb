@@ -70,7 +70,7 @@ func run() error {
 		cpRemove = fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
 		cpErrIgnore = fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
 		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
-		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
+		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as three CSV files in the given folder")
 
 		localStoringTables = fs.Bool("check-local-storage", false, "show tables that are missing local intermediate files (value can be 'all' or '`db`.`table`')")
 
@@ -252,7 +252,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	defer tablesFile.Close()
 
 	enginesFileName := filepath.Join(dumpFolder, "engines.csv")
-	enginesFile, err := os.Create(tablesFileName)
+	enginesFile, err := os.Create(enginesFileName)
 	if err != nil {
 		return errors.Annotatef(err, "failed to create %s", enginesFileName)
 	}

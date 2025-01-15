@@ -54,7 +54,6 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/parser/terror",

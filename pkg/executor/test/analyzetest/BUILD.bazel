@@ -19,7 +19,7 @@ go_test(
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",

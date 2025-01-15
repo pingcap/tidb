@@ -58,6 +58,9 @@ type columnStatsUsageCollector struct {
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
 	tblID2PartitionIDs map[int64][]int64
+
+	// operatorNum is the number of operators in the logical plan.
+	operatorNum uint64
 }
 
 func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -304,6 +307,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 		}
 	}
+	c.operatorNum++
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
@@ -312,17 +316,18 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 // First return value: predicate columns
 // Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
 // Third return value: the visited partition IDs. Used for static partition pruning.
-// Forth return value: the recorded asked column group for each datasource table, which will require collecting composite index for it's group ndv info.
+// Forth return value: the number of operators in the logical plan.
 // TODO: remove the third return value when the static partition pruning is totally deprecated.
 func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
+	uint64,
 ) {
 	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
 }
