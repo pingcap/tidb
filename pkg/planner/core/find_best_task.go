@@ -720,13 +720,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
 	// For the return value - if lhs wins (1), we return lhsPseudo. If rhs wins (-1), we return rhsPseudo.
-	// If there is no winner (0), we return idxMissingStats.
+	// If there is no winner (0), we return false.
 	//
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo := false, false
-	idxMissingStats := false
 	lhsFullScan := lhs.path.IsFullTableRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullTableRange(tableInfo)
 	if statsTbl != nil && len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
@@ -734,43 +733,46 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
-				lhsPseudo, idxMissingStats = true, true
+				lhsPseudo = true
 			}
 		}
 		if !rhsFullScan && rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
-				rhsPseudo, idxMissingStats = true, true
+				rhsPseudo = true
 			}
 		}
 	}
 
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	if idxMissingStats && (lhsPseudo != rhsPseudo || !statsTbl.HistColl.Pseudo) && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+	if (lhsPseudo != rhsPseudo || ((lhsPseudo || rhsPseudo) && !statsTbl.HistColl.Pseudo)) && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && globalResult >= 0 &&
+		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
 			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
-			return 1, lhsPseudo // left wins and has statistics
+			return 1, false // left wins and has statistics
 		}
-		if !rhsPseudo && globalResult <= 0 &&
+		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
 			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
-			return -1, rhsPseudo // right wins and has statistics
+			return -1, false // right wins and has statistics
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
 			// 1) there are at least 2 equal/INs, OR - when combined with 1) above
 			// 2) it's a full index match for all index predicates
-			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 &&
+			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
-				return 1, lhsPseudo // left wins and does NOT have statistics
+				return 1, true // left wins and does NOT have statistics
 			}
-			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 &&
+			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
 				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
-				return -1, rhsPseudo // right wins and does NOT have statistics
+				return -1, true // right wins and does NOT have statistics
 			}
 		}
 	}
@@ -783,10 +785,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1, rhsPseudo
+				return -1, false
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1, lhsPseudo
+				return 1, false
 			}
 		}
 	}
@@ -798,22 +800,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// (4): it's a global index path or not.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
-		return 0, idxMissingStats
+		return 0, false
 	}
-	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	if !comparable2 {
-		return 0, idxMissingStats
+		return 0, false
 	}
-	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1, lhsPseudo
+		return 1, false
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1, rhsPseudo
+		return -1, false
 	}
-	return 0, idxMissingStats
+	return 0, false
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
