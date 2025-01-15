@@ -530,7 +530,7 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		zap.Int("newConcurrency", latestTask.Concurrency))
 
 	// we don't report error here, as we might fail to modify task concurrency due
-	// to not enough slots, so we still need try to apply meta modification.
+	// to not enough slots, we still need try to apply meta modification.
 	e.tryModifyTaskConcurrency(ctx, oldTask, latestTask)
 	if metaModified {
 		if err := e.stepExec.TaskMetaModified(ctx, latestTask.Meta); err != nil {
@@ -561,8 +561,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 		}
 
 		// after application reduced memory usage, the garbage might not recycle
-		// in time, but manager might start other task executor and start to allocate
-		// memory immediately, so we trigger GC here to release memory.
+		// in time, so we trigger GC here.
 		runtime.GC()
 		e.concurrencyModifyApplied(latestTask.Concurrency)
 	} else if latestTask.Concurrency > oldTask.Concurrency {
