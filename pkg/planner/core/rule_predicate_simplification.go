@@ -437,18 +437,18 @@ func removeRedundantORBranch(sctx base.PlanContext, predicate expression.Express
 		return predicate
 	}
 	orFunc := predicate.(*expression.ScalarFunction)
-	ORList := expression.SplitDNFItems(orFunc)
+	orList := expression.SplitDNFItems(orFunc)
 
-	dedupMap := make(map[string]struct{}, len(ORList))
-	newORList := make([]expression.Expression, 0, len(ORList))
+	dedupMap := make(map[string]struct{}, len(orList))
+	newORList := make([]expression.Expression, 0, len(orList))
 
-	for _, orItem := range ORList {
+	for _, orItem := range orList {
 		_, tp := FindPredicateType(sctx, orItem)
 		if tp == andPredicate {
 			andFunc := orItem.(*expression.ScalarFunction)
-			ANDList := expression.SplitCNFItems(andFunc)
-			recursiveRemoveRedundantORBranch(sctx, ANDList)
-			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), ANDList...))
+			andList := expression.SplitCNFItems(andFunc)
+			recursiveRemoveRedundantORBranch(sctx, andList)
+			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
 		} else {
 			hashCode := string(orItem.HashCode())
 			if _, ok := dedupMap[hashCode]; !ok {
