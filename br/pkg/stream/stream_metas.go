@@ -1008,7 +1008,7 @@ func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 
 // migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
-// to the new BASE, which can be retried then.
+// to the new BASE, which can be retryed then.
 func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
@@ -1244,6 +1244,161 @@ func (m MigrationExt) processTruncatedTo(ctx context.Context, mig *pb.Migration,
 	m.Hooks.EndLoadingMetaForTruncating()
 
 	m.doTruncateLogs(ctx, mdSet, shiftTS, result)
+}
+
+func (m MigrationExt) processDestroyPrefixes(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	for _, pfx := range mig.DestructPrefix {
+		m.tryRemovePrefix(ctx, pfx, result)
+	}
+}
+
+func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	// NOTE: Execution of truncation wasn't implemented here.
+	// If we are going to truncate some files, for now we still need to use `br log truncate`.
+	for _, compaction := range mig.Compactions {
+		// We can only clean up a compaction when we are sure all its inputs
+		// are no more used.
+		if compaction.InputMaxTs > mig.TruncatedTo {
+			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
+		} else {
+			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
+			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
+		}
+	}
+}
+
+func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	groups := LoadIngestedSSTs(ctx, m.s, mig.IngestedSstPaths)
+	processGroup := func(outErr error, e IngestedSSTsGroup) (copyToNewMig bool, err error) {
+		if outErr != nil {
+			return true, outErr
+		}
+
+		if !e.GroupFinished() {
+			return true, nil
+		}
+
+		if e.GroupTS() >= mig.TruncatedTo {
+			return true, nil
+		}
+
+		for _, b := range e {
+			m.tryRemovePrefix(ctx, b.FilesPrefixHint, result)
+		}
+		return false, nil
+	}
+	for err, item := range iter.AsSeq(ctx, groups) {
+		copyToNewMig, err := processGroup(err, item)
+		if err != nil {
+			result.Warn(err)
+		}
+		if copyToNewMig {
+			for _, exb := range item {
+				result.NewBase.IngestedSstPaths = append(result.NewBase.IngestedSstPaths, exb.path)
+			}
+		}
+	}
+}
+
+type PathedIngestedSSTs struct {
+	*pb.IngestedSSTs
+	path string
+}
+
+type IngestedSSTsGroup []PathedIngestedSSTs
+
+func (ebs IngestedSSTsGroup) GroupFinished() bool {
+	for _, b := range ebs {
+		if b.Finished {
+			return true
+		}
+	}
+	return false
+}
+
+func (ebs IngestedSSTsGroup) GroupTS() uint64 {
+	for _, b := range ebs {
+		if b.Finished {
+			return b.AsIfTs
+		}
+	}
+	return math.MaxUint64
+}
+
+func LoadIngestedSSTs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	paths []string,
+) iter.TryNextor[IngestedSSTsGroup] {
+	fullBackupDirIter := iter.FromSlice(paths)
+	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
+		// name is the absolute path in external storage.
+		bkup, err := readIngestedSSTs(ctx, name, s)
+		failpoint.InjectCall("load-ingested-ssts-err", &err)
+		if err != nil {
+			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
+		}
+		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
+	})
+	extBackups, err := groupExtraBackups(ctx, backups)
+	if err != nil {
+		return iter.Fail[IngestedSSTsGroup](err)
+	}
+	return iter.FromSlice(extBackups)
+}
+
+func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]) ([]IngestedSSTsGroup, error) {
+	var (
+		collected = map[uuid.UUID]IngestedSSTsGroup{}
+		finished  = map[uuid.UUID]struct{}{}
+	)
+
+	for err, fbk := range iter.AsSeq(ctx, i) {
+		if err != nil {
+			return nil, err
+		}
+
+		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+				"the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
+		}
+		uid := uuid.UUID(fbk.BackupUuid)
+		log.Info("Collecting extra full backup",
+			zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
+
+		if _, ok := finished[uid]; ok {
+			log.Warn("Encountered a finished full backup.", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint))
+			return nil, errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"the extra full backup group %s at %s encounters an extra full backup meta after a finished one",
+				uid, fbk.FilesPrefixHint,
+			)
+		}
+
+		collected[uid] = append(collected[uid], fbk)
+		if fbk.Finished {
+			finished[uid] = struct{}{}
+		}
+	}
+
+	res := make([]IngestedSSTsGroup, 0, len(collected))
+	for v := range maps.Values(collected) {
+		res = append(res, v)
+	}
+	return res, nil
+}
+
+func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorage) (*pb.IngestedSSTs, error) {
+	reader, err := s.ReadFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var backup pb.IngestedSSTs
+	if err := backup.Unmarshal(reader); err != nil {
+		return nil, err
+	}
+	return &backup, nil
 }
 
 func (m MigrationExt) processDestroyPrefixes(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
