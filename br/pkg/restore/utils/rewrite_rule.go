@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
@@ -82,7 +82,7 @@ func (r *RewriteRules) RewriteSourceTableID(from, to int64) (rewritten bool) {
 func (r *RewriteRules) Clone() *RewriteRules {
 	data := make([]*import_sstpb.RewriteRule, len(r.Data))
 	for i, rule := range r.Data {
-		data[i] = proto.Clone(rule).(*import_sstpb.RewriteRule)
+		data[i] = util.ProtoV1Clone(rule)
 	}
 	remap := make([]TableIDRemap, len(r.TableIDRemapHint))
 	copy(remap, r.TableIDRemapHint)
@@ -192,9 +192,11 @@ func GetRewriteRules(
 ) *RewriteRules {
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
 				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -218,7 +220,8 @@ func GetRewriteRules(
 	}
 
 	return &RewriteRules{
-		Data: dataRules,
+		Data:             dataRules,
+		TableIDRemapHint: remaps,
 	}
 }
 
@@ -229,8 +232,10 @@ func GetRewriteRulesMap(
 
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		dataRules := make([]*import_sstpb.RewriteRule, 0)
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
@@ -254,7 +259,8 @@ func GetRewriteRulesMap(
 		}
 
 		rules[oldTableID] = &RewriteRules{
-			Data: dataRules,
+			Data:             dataRules,
+			TableIDRemapHint: remaps,
 		}
 	}
 
@@ -268,7 +274,7 @@ func GetRewriteRuleOfTable(
 	getDetailRule bool,
 ) *RewriteRules {
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
-
+	remaps := []TableIDRemap{{Origin: oldTableID, Rewritten: newTableID}}
 	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
 			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -287,7 +293,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules, NewTableID: newTableID}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, TableIDRemapHint: remaps}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.
@@ -399,6 +405,10 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 }
 
 func (r *RewriteRules) String() string {
+	if r == nil {
+		return "[]"
+	}
+
 	var out strings.Builder
 	out.WriteRune('[')
 	if len(r.OldKeyspace) != 0 {
@@ -453,12 +463,14 @@ func GetRewriteEncodedKeys(file AppliedFile, rewriteRules *RewriteRules) (startK
 	if startID == endID {
 		startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s; rewrite rules: %s",
+				redact.Key(file.GetStartKey()), rewriteRules)
 			return
 		}
 		endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s; rewrite rules: %s",
+				redact.Key(file.GetEndKey()), rewriteRules)
 			return
 		}
 	} else {
