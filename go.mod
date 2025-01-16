@@ -156,7 +156,6 @@ require (
 	github.com/cockroachdb/errors v1.11.1 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
-	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
