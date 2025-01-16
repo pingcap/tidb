@@ -2632,13 +2632,11 @@ func (do *Domain) indexUsageWorker() {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
+func (do *Domain) updateStatsWorkerExitPreprocessing() {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
-		statsHandle.FlushStats()
 		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
 		do.statsOwner.Close()
 		ch <- struct{}{}
@@ -2649,6 +2647,25 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle)
 		return
 	case <-timeout.Done():
 		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("deltaUpdateTicker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("deltaUpdateTicker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("deltaUpdateTicker exit preprocessing timeout, force exiting")
 		return
 	}
 }
@@ -2679,7 +2696,7 @@ func (do *Domain) updateStatsWorker() {
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle)
+			do.updateStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
@@ -2715,7 +2732,7 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle)
+			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
 			return
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
