@@ -1394,7 +1394,7 @@ func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	_, err = tk.Exec("insert ignore into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (?, 0, ?, 0, ?)", tbl.Meta().ID, 1, 1)
+	_, err = tk.Exec("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (?, 0, ?, 0, ?)", tbl.Meta().ID, 1, 1)
 	require.NoError(t, err)
 	// Find the DDL event.
 	event := findEvent(h.DDLEventCh(), model.ActionCreateTable)
