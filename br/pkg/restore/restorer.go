@@ -276,7 +276,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 		m.ectx = opentracing.ContextWithSpan(m.ectx, span1)
 	}
 
-	for _, batchFileSet := range batchFileSets {
+	for i, batchFileSet := range batchFileSets {
 		if m.ectx.Err() != nil {
 			log.Warn("Restoring encountered error and already stopped, give up remained files.",
 				logutil.ShortError(m.ectx.Err()))
@@ -287,15 +287,16 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 		}
 		filesReplica := batchFileSet
 		m.fileImporter.PauseForBackpressure()
+		cx := logutil.ContextWithField(m.ectx, zap.Int("sn", i))
 		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
 			fileStart := time.Now()
 			defer func() {
 				if restoreErr == nil {
-					log.Info("import files done", zap.Duration("take", time.Since(fileStart)))
+					logutil.CL(cx).Info("import files done", zap.Duration("take", time.Since(fileStart)))
 					onProgress(int64(len(filesReplica)))
 				}
 			}()
-			if importErr := m.fileImporter.Import(m.ectx, filesReplica...); importErr != nil {
+			if importErr := m.fileImporter.Import(cx, filesReplica...); importErr != nil {
 				return errors.Trace(importErr)
 			}
 

@@ -2,22 +2,18 @@ package operator
 
 import (
 	"context"
-	"crypto/tls"
 	"slices"
 
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 func getAllTiKVs(ctx context.Context, p pd.Client) ([]*metapb.Store, error) {
@@ -27,25 +23,6 @@ func getAllTiKVs(ctx context.Context, p pd.Client) ([]*metapb.Store, error) {
 	}
 	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
 	return withoutTiFlash, err
-}
-
-func createStoreManager(pd pd.Client, cfg *task.Config) (*utils.StoreManager, error) {
-	var (
-		tconf *tls.Config
-		err   error
-	)
-
-	if cfg.TLS.IsEnabled() {
-		tconf, err = cfg.TLS.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Annotate(err, "invalid tls config")
-		}
-	}
-	kvMgr := utils.NewStoreManager(pd, keepalive.ClientParameters{
-		Time:    cfg.GRPCKeepaliveTime,
-		Timeout: cfg.GRPCKeepaliveTimeout,
-	}, tconf)
-	return kvMgr, nil
 }
 
 func RunForceFlush(ctx context.Context, cfg *ForceFlushConfig) error {

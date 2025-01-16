@@ -28,6 +28,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/lightning/log",
         "//pkg/sessionctx/variable",
