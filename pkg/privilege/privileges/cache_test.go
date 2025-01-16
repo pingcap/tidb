@@ -403,8 +403,8 @@ func TestSortUserTable(t *testing.T) {
 	})
 	p.SortUserTable()
 	result := []privileges.UserRecord{
-		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord("localhost", ""),
+		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
 		privileges.NewUserRecord(`%`, "root"),
 	}

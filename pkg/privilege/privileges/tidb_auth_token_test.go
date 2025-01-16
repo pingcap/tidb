@@ -425,11 +425,12 @@ func (p *MySQLPrivilege) User() []UserRecord {
 		ret = append(ret, itm.data...)
 		return true
 	})
-	slices.SortFunc(ret, compareUserRecord)
+	slices.SortStableFunc(ret, compareUserRecord)
 	return ret
 }
 
 func (p *MySQLPrivilege) SetUser(user []UserRecord) {
+	p.user.Clear(false)
 	for _, u := range user {
 		old, exists := p.user.Get(itemUser{username: u.User})
 		if !exists {
