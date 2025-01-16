@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -483,11 +484,6 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 
 	// step2: add selection above of LogicalJoin
 	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
-}
-
-func (p *LogicalJoin) IsDual() bool {
-	fmt.Println("here")
-	return false
 }
 
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
@@ -1875,9 +1871,17 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 
 // Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
 func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
+	for _, cond := range conds {
+		if constraint.IsConstFalse(cond) {
+			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+			dual.SetSchema(p.Schema())
+			return dual
+		}
+	}
 	if len(conds) != 1 {
 		return nil
 	}
+
 	con, ok := conds[0].(*expression.Constant)
 	if !ok {
 		return nil

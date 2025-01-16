@@ -16,6 +16,7 @@ package constraint
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
@@ -39,4 +40,17 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 		newConds = append(newConds, cond)
 	}
 	return newConds
+}
+
+// IsConstFalse is used to check whether the expression is a constant false expression.
+func IsConstFalse(expr expression.Expression) bool {
+	if e, ok := expr.(*expression.ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			if constExpr, ok := e.GetArgs()[1].(*expression.Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
