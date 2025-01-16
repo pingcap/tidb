@@ -1222,14 +1222,12 @@ func (bc *Client) OnBackupResponse(
 		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
 		case utils.StrategyGiveUp:
-			errMsg := res.Reason
-			if len(errMsg) <= 0 {
-				errMsg = errPb.Msg
-			}
+			logutil.CL(ctx).Error("TiKV encountered an error, interrupting the backup.", zap.String("error message", errPb.Msg))
 			// TODO output a precise store address. @3pointer
-			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
+			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s, %s",
 				storeID,
-				errMsg,
+				res.Reason,
+				errPb.Msg,
 			)
 		}
 	}
