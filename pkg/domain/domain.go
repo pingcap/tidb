@@ -2599,7 +2599,7 @@ func (do *Domain) updateStatsWorkerExitPreprocessing() {
 	}
 }
 
-func (do *Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
