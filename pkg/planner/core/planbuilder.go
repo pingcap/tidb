@@ -5837,7 +5837,7 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 	return nil
 }
 
-func (p *PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
+func (b *PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
 	tf := &Traffic{
 		OpType:  pc.OpType,
 		Options: pc.Options,
@@ -5860,7 +5860,7 @@ func (p *PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
 		privs = []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"}
 	}
 	err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(errMsg)
-	p.visitInfo = appendDynamicVisitInfo(p.visitInfo, privs, false, err)
+	b.visitInfo = appendDynamicVisitInfo(b.visitInfo, privs, false, err)
 	return tf
 }
 
