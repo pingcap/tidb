@@ -818,7 +818,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
@@ -869,17 +869,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("finish removing pd scheduler")
 	}()
 
-<<<<<<< HEAD
-	var checkpointFirstRun = true
-	if cfg.UseCheckpoint {
-		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
-		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
-		checkpointFirstRun = !existsCheckpointMetadata
-	}
-
-=======
->>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
