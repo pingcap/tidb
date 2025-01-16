@@ -231,9 +231,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
 	printTop10(func(i, j int) bool {
-		i_consume := getCurrentMemoryUsage(pinfo[i].RefCountOfStmtCtx, pinfo[i].StmtCtx)
-		j_consume := getCurrentMemoryUsage(pinfo[j].RefCountOfStmtCtx, pinfo[j].StmtCtx)
-		return i_consume > j_consume
+		iConsume := getCurrentMemoryUsage(pinfo[i].RefCountOfStmtCtx, pinfo[i].StmtCtx)
+		jConsume := getCurrentMemoryUsage(pinfo[j].RefCountOfStmtCtx, pinfo[j].StmtCtx)
+		return iConsume > jConsume
 	})
 
 	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
