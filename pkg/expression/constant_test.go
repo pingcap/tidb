@@ -176,6 +176,13 @@ func TestConstantPropagation(t *testing.T) {
 			},
 			result: "eq(Column#0, Column#1), le(cast(Column#0, double BINARY), rand())",
 		},
+		{
+			solver: []PropagateConstantSolver{newPropConstSolver()},
+			conditions: []Expression{
+				newFunctionWithMockCtx(ast.NullEQ, newColumn(0)),
+			},
+			result: "",
+		},
 	}
 	for _, tt := range tests {
 		for _, solver := range tt.solver {

@@ -485,6 +485,11 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
+func (p *LogicalJoin) IsDual() bool {
+	fmt.Println("here")
+	return false
+}
+
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
 
 // RecursiveDeriveStats inherits the BaseLogicalPlan.LogicalPlan.<10th> implementation.
