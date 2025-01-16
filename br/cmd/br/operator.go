@@ -35,7 +35,6 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newBase64ifyCommand())
 	cmd.AddCommand(newListMigrationsCommand())
 	cmd.AddCommand(newMigrateToCommand())
-	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
 	return cmd
 }
@@ -131,23 +130,5 @@ func newChecksumCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
 	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
-	return cmd
-}
-
-func newForceFlushCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "force-flush",
-		Short: "force a log backup task to flush",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ForceFlushConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunForceFlush(ctx, &cfg)
-		},
-	}
-	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
 	return cmd
 }

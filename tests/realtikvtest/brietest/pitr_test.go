@@ -22,7 +22,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,12 +33,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/task/operator"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
@@ -136,7 +132,7 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
 	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
 	begin := time.Now()
-	// So the cases can finish faster...
+	// So the cases can finish faster... If force flush not supported...
 	tk.MustExec("set config tikv `log-backup.max-flush-interval` = '30s';")
 	t.Cleanup(func() {
 		if !t.Failed() {
@@ -284,16 +280,7 @@ func (kit *LogBackupKit) runAndCheck(f func(context.Context) error) {
 
 func (kit *LogBackupKit) forceFlush() {
 	kit.runAndCheck(func(ctx context.Context) error {
-		cfg := task.DefaultConfig()
-		cfg.PD = append(cfg.PD, config.GetGlobalConfig().Path)
-		err := operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
-			Config:        cfg,
-			StoresPattern: regexp.MustCompile(".*"),
-		})
-		if err != nil {
-			log.Warn("[TEST.forceFlush] It seems this version of TiKV doesn't support force flush, the test may be much more slower.",
-				logutil.ShortError(err))
-		}
+		log.Warn("[TEST.forceFlush] This version doesn't support force flush, the test may be much more slower.")
 		return nil
 	})
 }

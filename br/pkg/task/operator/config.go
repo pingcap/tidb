@@ -3,7 +3,6 @@
 package operator
 
 import (
-	"regexp"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -16,7 +15,6 @@ import (
 
 const (
 	flagTableConcurrency = "table-concurrency"
-	flagStorePatterns    = "stores"
 	flagTTL              = "ttl"
 	flagSafePoint        = "safepoint"
 	flagStorage          = "storage"
@@ -187,32 +185,6 @@ func (cfg *MigrateToConfig) Verify() error {
 			flagBase, flagTo, flagRecent)
 	}
 	return nil
-}
-
-type ForceFlushConfig struct {
-	task.Config
-
-	// StoresPattern matches the address of TiKV.
-	// The address usually looks like "<host>:20160".
-	// You may list the store by `pd-ctl stores`.
-	StoresPattern *regexp.Regexp
-}
-
-func DefineFlagsForForceFlushConfig(f *pflag.FlagSet) {
-	f.String(flagStorePatterns, ".*", "The regexp to match the store peer address to be force flushed.")
-}
-
-func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
-	storePat, err := flags.GetString(flagStorePatterns)
-	if err != nil {
-		return err
-	}
-	cfg.StoresPattern, err = regexp.Compile(storePat)
-	if err != nil {
-		return errors.Annotatef(err, "invalid expression in --%s", flagStorePatterns)
-	}
-
-	return cfg.Config.ParseFromFlags(flags)
 }
 
 type ChecksumWithRewriteRulesConfig struct {

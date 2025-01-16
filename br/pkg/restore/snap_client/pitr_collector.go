@@ -215,10 +215,6 @@ func (c *pitrCollector) verifyCompatibilityFor(fileset *restore.BackupFileSet) e
 			return errors.Annotatef(berrors.ErrUnsupportedOperation,
 				"rewrite rule #%d: rewrite timestamp isn't supported when log backup enabled", i)
 		}
-		if r.IgnoreAfterTimestamp > 0 || r.IgnoreBeforeTimestamp > 0 {
-			return errors.Annotatef(berrors.ErrUnsupportedOperation,
-				"rewrite rule #%d: truncating timestamp isn't supported when log backup enabled", i)
-		}
 	}
 	return nil
 }

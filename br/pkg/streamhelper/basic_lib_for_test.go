@@ -94,12 +94,6 @@ type fakeStore struct {
 	onGetRegionCheckpoint func(*logbackup.GetLastFlushTSOfRegionRequest) error
 }
 
-// FlushNow implements logbackup.LogBackupClient.
-func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
-	f.flush()
-	return &logbackup.FlushNowResponse{}, nil
-}
-
 type fakeCluster struct {
 	mu        sync.Mutex
 	idAlloced uint64
