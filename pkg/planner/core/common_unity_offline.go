@@ -534,6 +534,9 @@ func unityL(plan string) (leadings []string) {
 
 	for i := len(xs); i >= 1; i-- {
 		leadings = append(leadings, fmt.Sprintf("leading(%s)", strings.Join(xs[:i], ",")))
+		if len(leadings) >= 8 {
+			break
+		}
 	}
 	return leadings
 }
