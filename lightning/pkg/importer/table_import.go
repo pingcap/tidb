@@ -448,9 +448,9 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	}
 	if rc.cfg.IsRemoteBackend() {
 		idxEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:                common.IndexEngineID,
-			EstimatedDataSize:       remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
-			IsRecoverFromCheckpoint: recoverFromEngineCp(indexEngineCp),
+			EngineID:              common.IndexEngineID,
+			EstimatedDataSize:     remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+			RecoverFromCheckpoint: remote.RecoverFromEngineCp(indexEngineCp),
 		}
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
@@ -644,8 +644,8 @@ func (tr *TableImporter) preprocessEngine(
 		}
 		if rc.cfg.IsRemoteBackend() {
 			engineCfg.Remote = backend.RemoteEngineConfig{
-				EngineID:                engineID,
-				IsRecoverFromCheckpoint: remote.IsRecoverFromEngineCp(cp),
+				EngineID:              engineID,
+				RecoverFromCheckpoint: remote.RecoverFromEngineCp(cp),
 			}
 		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
@@ -689,9 +689,9 @@ func (tr *TableImporter) preprocessEngine(
 	}
 	if rc.cfg.IsRemoteBackend() {
 		dataEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:                common.IndexEngineID,
-			EstimatedDataSize:       remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
-			IsRecoverFromCheckpoint: remote.IsRecoverFromEngineCp(cp),
+			EngineID:              common.IndexEngineID,
+			EstimatedDataSize:     remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			RecoverFromCheckpoint: remote.RecoverFromEngineCp(cp),
 		}
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
@@ -1861,18 +1861,4 @@ func (tr *TableImporter) preDeduplicate(
 		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
 	)
 	return err
-}
-
-func recoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
-	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
-		cp.Status >= checkpoints.CheckpointStatusImported {
-		return false
-	}
-
-	for _, chunk := range cp.Chunks {
-		if chunk.FinishedSize() > 0 {
-			return true
-		}
-	}
-	return false
 }

@@ -63,9 +63,9 @@ type GlobalMydumper struct {
 
 // GlobalImporter is the global configuration of tikv-importer.
 type GlobalImporter struct {
-	Backend     string `toml:"backend" json:"backend"`
-	SortedKVDir string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	RemoteAddr  string `toml:"remote-addr" json:"remote-addr"`
+	Backend          string `toml:"backend" json:"backend"`
+	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	RemoteWorkerAddr string `toml:"remote-worker-addr" json:"remote-worker-addr"`
 }
 
 // GlobalConfig is the global configuration of lightning.
@@ -162,7 +162,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
 	backend := flagext.ChoiceVar(fs, "backend", "", `delivery backend: local, tidb, remote`, "", "local", "tidb", "remote")
-	remoteAddr := fs.String("remote-addr", "", "address of remote backend")
+	remoteWorkerAddr := fs.String("remote-worker-addr", "", "address of remote worker for remote backend")
 	sortedKVDir := fs.String("sorted-kv-dir", "", "path for KV pairs when local backend enabled")
 	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
@@ -242,8 +242,8 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if *backend != "" {
 		cfg.TikvImporter.Backend = *backend
 	}
-	if *remoteAddr != "" {
-		cfg.TikvImporter.RemoteAddr = *remoteAddr
+	if *remoteWorkerAddr != "" {
+		cfg.TikvImporter.RemoteWorkerAddr = *remoteWorkerAddr
 	}
 	if *sortedKVDir != "" {
 		cfg.TikvImporter.SortedKVDir = *sortedKVDir

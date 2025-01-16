@@ -35,7 +35,7 @@ const (
 	maxDuplicateBatchSize = 4 << 20
 	taskExitsMsg          = "task exists"
 
-	// format of load data task id: ${keyspaceID}-${taskID}-${tableID}-${engineID}
+	// The format of load data task id: ${keyspaceID}-${taskID}-${tableID}-${engineID}
 	loadDatatTaskIDFormat = "%d-%d-%d-%d"
 
 	sleepDuration = 3 * time.Second
@@ -73,7 +73,7 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client, method, 
 				statusCode = resp.StatusCode
 				_ = resp.Body.Close()
 			}
-			log.FromContext(ctx).Warn("failed to send http request", zap.Error(err), zap.Int("status code", statusCode))
+			log.FromContext(ctx).Warn("failed to send http request", zap.Error(err), zap.Int("http status code", statusCode))
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -128,16 +128,16 @@ func EstimateEngineDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.Ti
 		totalSize = int64(float64(totalSize) * tblMeta.IndexRatio)
 	}
 	logger.Info("estimate data size",
-		zap.Int64("estimatedDataSize", totalSize),
+		zap.Int64("estimated data size", totalSize),
 		zap.String("db", tblInfo.DB),
 		zap.String("table", tblInfo.Name),
-		zap.Bool("isIndexEngine", isIndexEngine),
+		zap.Bool("index engine", isIndexEngine),
 	)
 	return totalSize
 }
 
-// IsRecoverFromEngineCp checks whether the engine recover from the engine checkpoint.
-func IsRecoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
+// RecoverFromEngineCp checks whether the engine recover from the engine checkpoint.
+func RecoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
 	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
 		cp.Status >= checkpoints.CheckpointStatusImported {
 		return false

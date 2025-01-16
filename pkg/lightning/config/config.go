@@ -1089,8 +1089,9 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr    string `toml:"addr" json:"addr"`
-	Backend string `toml:"backend" json:"backend"`
+	Addr             string `toml:"addr" json:"addr"`
+	RemoteWorkerAddr string `toml:"remote-worker-addr" json:"remote-worker-addr"`
+	Backend          string `toml:"backend" json:"backend"`
 	// deprecated, use Conflict.Strategy instead.
 	OnDuplicate DuplicateResolutionAlgorithm `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs  int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
@@ -1125,7 +1126,7 @@ type TikvImporter struct {
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 
-	// TODO
+	ChunkBatchSize  int    `toml:"chunk-batch-size" json:"chunk-batch-size"`
 	ChunkCacheDir   string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
 	ChunkCacheInMem bool   `toml:"chunk-cache-in-mem" json:"chunk-cache-in-mem"`
 }
@@ -1155,7 +1156,7 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
-	case BackendLocal, BackendRemote:
+	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.region-split-batch-size` got %d, should be larger than 0",
@@ -1188,6 +1189,31 @@ func (t *TikvImporter) adjust() error {
 			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 		}
 
+		storageSizeDir := filepath.Clean(t.SortedKVDir)
+		sortedKVDirInfo, err := os.Stat(storageSizeDir)
+
+		switch {
+		case os.IsNotExist(err):
+		case err == nil:
+			if !sortedKVDirInfo.IsDir() {
+				return common.ErrInvalidConfig.
+					GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			}
+		default:
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+		}
+	case BackendRemote:
+		if t.ParallelImport && t.AddIndexBySQL {
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
+		}
+		if len(t.RemoteWorkerAddr) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.remote-worker-addr must not be empty!")
+		}
+
+		if len(t.SortedKVDir) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
+		}
 		storageSizeDir := filepath.Clean(t.SortedKVDir)
 		sortedKVDirInfo, err := os.Stat(storageSizeDir)
 
@@ -1558,6 +1584,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.Filter = global.Mydumper.Filter
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
+	cfg.TikvImporter.RemoteWorkerAddr = global.TikvImporter.RemoteWorkerAddr
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze

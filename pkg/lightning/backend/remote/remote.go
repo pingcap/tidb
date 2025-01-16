@@ -54,7 +54,10 @@ import (
 )
 
 /*
-	Remote load data worker API:
+    Remote Backend is a backend that sends KV pairs to remote worker using HTTP API that using in TiDB Cloud.
+	The remote worker will sort the KV pairs and encode them into SST files, then ingest SST files into TiKV.
+
+	Remote worker API:
 
 	1. init task:
 		POST /load_data?cluster_id=%d&task_id=%s&start_ts=%d&commit_ts=%d
@@ -67,9 +70,9 @@ import (
 		...
 
 	3. flush:
-		POST /load_data?cluster_id=%d&task_id=%s&flush=true
+		POST /load_data?cluster_id=%d&task_id=%s&writer_id=%dflush=true
 
-	4. build task:
+	4. build:
 		POST /load_data?cluster_id=%d&task_id=%s&build=true&compression=zstd&split_size=%d&split_keys=%d
 
 	5. get task states:
@@ -80,6 +83,15 @@ import (
 	6. clean up task:
 		DELETE /load_data?cluster_id=%d&task_id=%s
 */
+
+const (
+	initTaskURL    = "%s/load_data?cluster_id=%d&task_id=%s&start_ts=%d&commit_ts=%d&data_size=%d"
+	putChunkURL    = "%s/load_data?cluster_id=%d&task_id=%s&writer_id=%d&chunk_id=%d"
+	flushURL       = "%s/load_data?cluster_id=%d&task_id=%s&writer_id=%d&flush=true"
+	buildURL       = "%s/load_data?cluster_id=%d&task_id=%s&build=true&compression=zstd&split_size=%d&split_keys=%d"
+	queryTaskURL   = "%s/load_data?cluster_id=%d&task_id=%s"
+	cleanUpTaskURL = "%s/load_data?cluster_id=%d&task_id=%s"
+)
 
 const (
 	pdCliMaxMsgSize = int(128 * units.MiB) // pd.ScanRegion may return a large response
@@ -233,7 +245,7 @@ func NewBackend(
 	keyspace := pdCliForTiKV.GetCodec().GetKeyspace()
 	keyspaceID := pdCliForTiKV.GetCodec().GetKeyspaceID()
 	remote := &Backend{
-		workerAddr: cfg.TikvImporterAddr,
+		workerAddr: cfg.RemoteWorkerAddr,
 		pdCli:      pdCli,
 		tls:        tls,
 		pdAddr:     cfg.PdAddr,
@@ -267,7 +279,7 @@ func NewBackend(
 type BackendConfig struct {
 	TaskID              int64
 	PdAddr              string
-	TikvImporterAddr    string
+	RemoteWorkerAddr    string
 	KeyspaceName        string
 	SortedKVDir         string
 	ChunkCacheDir       string
@@ -285,7 +297,7 @@ func NewBackendConfig(cfg *config.Config, keyspaceName, resourceGroupName, taskT
 	return &BackendConfig{
 		TaskID:              cfg.TaskID,
 		PdAddr:              cfg.TiDB.PdAddr,
-		TikvImporterAddr:    cfg.TikvImporter.Addr,
+		RemoteWorkerAddr:    cfg.TikvImporter.RemoteWorkerAddr,
 		KeyspaceName:        keyspaceName,
 		ResourceGroupName:   resourceGroupName,
 		TaskType:            taskType,
@@ -385,7 +397,7 @@ func (*Backend) ShouldPostProcess() bool {
 func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	physical, logical, err := b.pdCli.GetTS(ctx)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	ts := oracle.ComposeTS(physical, logical)
 
@@ -403,10 +415,10 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 		backend:        b,
 	})
 	engine := e.(*engine)
-	if cfg.Remote.IsRecoverFromCheckpoint {
+	if cfg.Remote.RecoverFromCheckpoint {
 		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if !exist {
 			b.logger.Error("task not found in remote", zap.String("loadDataTaskID", loadDataTaskID))
@@ -419,7 +431,7 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 		err = b.loadDataInit(ctx, engine, cfg.Remote.EstimatedDataSize)
 		if err != nil {
 			b.engines.Delete(engineUUID)
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -427,8 +439,7 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 
 func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int64) error {
 	for {
-		url := fmt.Sprintf(
-			"%s/load_data?cluster_id=%d&task_id=%s&start_ts=%d&commit_ts=%d&data_size=%d&new_client=true",
+		url := fmt.Sprintf(initTaskURL,
 			engine.addr,
 			engine.clusterID,
 			engine.loadDataTaskID,
@@ -443,13 +454,12 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 
 		resp, err := sendRequestWithRetry(ctx, &client, "POST", url, nil)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		if resp.StatusCode == http.StatusFound {
 			engine.addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
-			b.logger.Info("redirect to remote worker",
-				zap.String("loadDataTaskID", engine.loadDataTaskID),
+			engine.logger.Info("redirect to remote worker",
 				zap.String("worker addr", engine.addr))
 			_ = resp.Body.Close()
 			continue
@@ -460,13 +470,11 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 			_ = resp.Body.Close()
 			// If the task exists, we can continue to import data.
 			if err == nil && strings.TrimSpace(string(msg)) == taskExitsMsg {
-				b.logger.Info("loadData task has inited in remote worker",
-					zap.String("loadDataTask", engine.loadDataTaskID),
+				engine.logger.Info("load data task has inited in remote worker",
 					zap.String("worker addr", engine.addr))
 				return nil
 			}
-			b.logger.Error("failed to init loadData task",
-				zap.String("loadDataTaskID", engine.loadDataTaskID),
+			engine.logger.Error("failed to init load data task",
 				zap.String("status", resp.Status),
 				zap.String("msg", string(msg)))
 			return common.ErrRequestRemoteWorker.FastGenByArgs(resp.StatusCode, string(msg))
@@ -483,39 +491,36 @@ func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, en
 		loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.taskID, cfg)
 		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if !exist {
-			b.logger.Error("task not found in remote", zap.String("loadDataTaskID", loadDataTaskID))
 			return common.ErrLoadDataTaskNotFound.FastGenByArgs(loadDataTaskID)
 		}
-		b.logger.Info("not found engine in local, open a new one")
 		err = b.OpenEngine(ctx, cfg, engineUUID)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		engine, err = b.getEngine(engineUUID)
 		if err != nil {
-			b.logger.Warn("failed to open a new engine", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 	}
 
 	err = engine.flush(ctx)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	engine.writers.Range(func(key, _ any) bool {
 		sender := key.(*writer).chunkSender
 		err = sender.close()
 		if err != nil {
-			b.logger.Warn("failed to close chunk sender", zap.Error(err), zap.Uint64("sender", sender.id))
+			engine.logger.Warn("failed to close chunk sender", zap.Error(err), zap.Uint64("sender", sender.id))
 		}
 		return true
 	})
 
-	return err
+	return errors.Trace(err)
 }
 
 func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (bool, error) {
@@ -523,7 +528,7 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 	addr := b.workerAddr
 
 	for {
-		url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s", addr, clusterID, loadDataTaskID)
+		url := fmt.Sprintf(queryTaskURL, addr, clusterID, loadDataTaskID)
 		client := *b.httpClient
 		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -537,8 +542,8 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 		if resp.StatusCode == http.StatusFound {
 			addr = parseRemoteWorkerURL(resp, b.tls.TLSConfig() != nil)
 			b.logger.Info("redirect to remote worker",
-				zap.String("loadDataTaskID", loadDataTaskID),
-				zap.String("worker addr", addr))
+				zap.String("worker addr", addr),
+				zap.String("loadDataTaskID", loadDataTaskID))
 			_ = resp.Body.Close()
 			continue
 		}
@@ -548,7 +553,9 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 			}
 			msg, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			b.logger.Warn("failed to get task", zap.String("status", resp.Status), zap.String("msg", string(msg)))
+			b.logger.Warn("failed to get task", zap.String("status", resp.Status),
+				zap.String("msg", string(msg)),
+				zap.String("loadDataTaskID", loadDataTaskID))
 			return false, common.ErrRequestRemoteWorker.FastGenByArgs(resp.Status, string(msg))
 		}
 		_ = resp.Body.Close()
@@ -560,11 +567,11 @@ func (b *Backend) ensureTaskExists(ctx context.Context, loadDataTaskID string) (
 func (b *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	err = b.loadDataBuild(ctx, engine, regionSplitSize, regionSplitKeys)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	start := time.Now()
 	ticker := time.NewTicker(time.Second * 1)
@@ -576,34 +583,30 @@ func (b *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, region
 		case <-ticker.C:
 			states, err := b.loadDataGetStates(ctx, engine)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			if states.Canceled {
-				b.logger.Error("loadData canceled",
-					zap.String("loadDataTaskID", engine.loadDataTaskID),
-					zap.String("error", states.Error))
+				engine.logger.Error("load data task is canceled", zap.String("error", states.Error))
 				return common.ErrLoadDataTaskCanceled.FastGenByArgs(engine.loadDataTaskID, states.Error)
 			} else if states.Finished {
 				if states.hasDuplicateEntries() {
 					err = b.handleDuplicateEntries(ctx, engine, states)
 					if err != nil {
-						return err
+						return errors.Trace(err)
 					}
 				}
 				engine.importedKVs.Store(states.TotalKVs)
-				b.logger.Info("loadData finished",
+				b.logger.Info("load data task is finished",
 					zap.String("db", engine.tbl.DB),
 					zap.String("table", engine.tbl.Name),
-					zap.String("loadDataTaskID", engine.loadDataTaskID),
 					zap.Int64("imported kvs", states.TotalKVs),
 					zap.Duration("elapsed", time.Since(start)))
 				return nil
 			} else {
 				b.logger.Info(
-					"loadData states",
+					"get load data task states",
 					zap.String("db", engine.tbl.DB),
 					zap.String("table", engine.tbl.Name),
-					zap.String("loadDataTaskID", engine.loadDataTaskID),
 					zap.Int64("total kvs", states.TotalKVs),
 					zap.Int("created files", states.CreatedFiles),
 					zap.Int("ingested regions", states.IngestedRegions))
@@ -627,25 +630,20 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 		return nil
 	}
 
-	b.logger.Info("handling duplicate entries",
-		zap.String("db", engine.tbl.DB),
-		zap.String("table", engine.tbl.Name),
-		zap.Int("duplicateEntries", len(states.DuplicateEntries)))
-
 	if b.reportErrOnDup {
 		dupKey, err := hex.DecodeString(states.DuplicateEntries[0].Key)
 		if err != nil {
-			b.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
+			engine.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
 		} else {
 			dupKey, err = b.tikvCodec.DecodeKey(dupKey)
 			if err != nil {
-				b.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
+				engine.logger.Warn("failed to decode key", zap.String("key", states.DuplicateEntries[0].Key), zap.Error(err))
 			}
 		}
 
 		dupVal, err := hex.DecodeString(states.DuplicateEntries[0].Values[0])
 		if err != nil {
-			b.logger.Warn("failed to decode value", zap.String("value", states.DuplicateEntries[0].Values[0]), zap.Error(err))
+			engine.logger.Warn("failed to decode value", zap.String("value", states.DuplicateEntries[0].Values[0]), zap.Error(err))
 		}
 
 		return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
@@ -659,8 +657,7 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 		}
 		rawKey, err := hex.DecodeString(entry.Key)
 		if err != nil {
-			b.logger.Warn("failed to decode key", zap.String("key", entry.Key), zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 		for i, value := range entry.Values {
 			// append index to rawKey to make it unique.
@@ -668,20 +665,17 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 
 			rawValue, err := hex.DecodeString(value)
 			if err != nil {
-				b.logger.Warn("failed to decode value", zap.String("value", value), zap.Error(err))
-				return err
+				return errors.Trace(err)
 			}
 			err = writeBatch.Set(encodedRawKey, rawValue, nil)
 			if err != nil {
-				b.logger.Warn("failed to write duplicate entries", zap.Error(err))
-				return err
+				return errors.Trace(err)
 			}
 			writeBatchSize += int64(len(encodedRawKey) + len(rawValue))
 			if writeBatchSize >= maxDuplicateBatchSize {
 				err = writeBatch.Commit(nil)
 				if err != nil {
-					b.logger.Warn("failed to write duplicate entries", zap.Error(err))
-					return err
+					return errors.Trace(err)
 				}
 				writeBatch = b.duplicateDB.NewBatch()
 				writeBatchSize = 0
@@ -692,8 +686,7 @@ func (b *Backend) handleDuplicateEntries(_ context.Context, engine *engine, stat
 	if writeBatchSize > 0 {
 		err := writeBatch.Commit(nil)
 		if err != nil {
-			b.logger.Warn("failed to write duplicate entries", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -709,15 +702,14 @@ func (b *Backend) allocateWriterID(ctx context.Context) (uint64, error) {
 }
 
 func (b *Backend) loadDataBuild(ctx context.Context, engine *engine, splitSize, splitKeys int64) error {
-	url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s&build=true&compression=zstd&split_size=%d&split_keys=%d",
-		engine.addr, engine.clusterID, engine.loadDataTaskID, splitSize, splitKeys)
+	url := fmt.Sprintf(buildURL, engine.addr, engine.clusterID, engine.loadDataTaskID, splitSize, splitKeys)
 
 	_, err := sendRequest(ctx, b.httpClient, "POST", url, nil)
-	return err
+	return errors.Trace(err)
 }
 
 func (b *Backend) loadDataGetStates(ctx context.Context, engine *engine) (*LoadDataStates, error) {
-	url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s", engine.addr, engine.clusterID, engine.loadDataTaskID)
+	url := fmt.Sprintf(queryTaskURL, engine.addr, engine.clusterID, engine.loadDataTaskID)
 	data, err := sendRequest(ctx, b.httpClient, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -734,15 +726,15 @@ func (b *Backend) loadDataGetStates(ctx context.Context, engine *engine) (*LoadD
 func (b *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return b.loadDataCleanUp(ctx, engine)
 }
 
 func (b *Backend) loadDataCleanUp(ctx context.Context, engine *engine) error {
-	url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s", engine.addr, engine.clusterID, engine.loadDataTaskID)
+	url := fmt.Sprintf(cleanUpTaskURL, engine.addr, engine.clusterID, engine.loadDataTaskID)
 	_, err := sendRequest(ctx, b.httpClient, "DELETE", url, nil)
-	return err
+	return errors.Trace(err)
 }
 
 // FlushEngine ensures all KV pairs written to an open engine has been
@@ -754,7 +746,7 @@ func (b *Backend) loadDataCleanUp(ctx context.Context, engine *engine) error {
 func (b *Backend) FlushEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return engine.flush(ctx)
 }
@@ -840,11 +832,10 @@ func (e *engine) flush(ctx context.Context) error {
 		return err == nil
 	})
 	if err != nil {
-		e.logger.Warn("failed to flush writer", zap.Error(err))
 		return errors.Trace(err)
 	}
 
-	return err
+	return errors.Trace(err)
 }
 
 // writer implments the EngineWriter interface
@@ -897,7 +888,7 @@ func (w *writer) addChunk(ctx context.Context) error {
 
 	chunkID, err := w.chunkSender.putChunk(ctx, w.buf)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	w.lastChunkID = chunkID
 	w.buf = w.buf[:0]
