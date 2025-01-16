@@ -177,12 +177,3 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
-
-func TestABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
-	tk.MustExec("insert into t values(2001, 1);")
-	tk.MustQuery("explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;")
-}
