@@ -1390,9 +1390,15 @@ func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3)")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Also manually insert a histogram record.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	_, err = tk.Exec("insert ignore into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (?, 0, ?, 0, ?)", tbl.Meta().ID, 1, 1)
+	require.NoError(t, err)
 	// Find the DDL event.
 	event := findEvent(h.DDLEventCh(), model.ActionCreateTable)
-	err := statstestutil.HandleDDLEventWithTxn(h, event)
+	err = statstestutil.HandleDDLEventWithTxn(h, event)
 	require.NoError(t, err)
 }
 
