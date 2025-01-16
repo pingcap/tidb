@@ -35,10 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
-// Exported for testing.
-var AutoAnalyzeMinCnt int64 = 1000
-
 var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,

@@ -33,7 +33,7 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":syncload",
         "//pkg/config",
