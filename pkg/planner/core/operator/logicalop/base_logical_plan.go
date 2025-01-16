@@ -200,6 +200,10 @@ func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimi
 	return nil
 }
 
+func (*BaseLogicalPlan) IsDual() bool {
+	return false
+}
+
 // PullUpConstantPredicates implements the LogicalPlan.<9th> interface.
 func (*BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 	// Only LogicalProjection and LogicalSelection can get constant predicates

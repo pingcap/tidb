@@ -42,6 +42,7 @@ const (
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagResolveExpand
+	FlagEliminaterDual
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {
