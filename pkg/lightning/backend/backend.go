@@ -126,8 +126,9 @@ type RemoteEngineConfig struct {
 	EngineID int32
 	// EstimatedDataSize is the estimated size of the data to be written to the engine.
 	EstimatedDataSize int64
-	// IsRecoverFromCheckpoint indicates whether the engine is recovering from a checkpoint.
-	IsRecoverFromCheckpoint bool
+	// RecoverFromCheckpoint indicates whether the engine is recovering from a checkpoint.
+	// If it's true, remote backend will check the remote worker.
+	RecoverFromCheckpoint bool
 }
 
 // ExternalEngineConfig is the configuration used for local backend external engine.

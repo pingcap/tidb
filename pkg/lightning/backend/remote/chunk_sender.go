@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"go.uber.org/zap"
 )
@@ -248,32 +249,31 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 	if len(chunk.data) != 0 {
 		err := c.chunksCache.put(chunk.id, chunk.data)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
-	url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s&writer_id=%d&chunk_id=%d",
-		c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, chunk.id)
+	url := fmt.Sprintf(putChunkURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, chunk.id)
 
 	data, err := sendRequest(ctx, c.httpClient, "PUT", url, chunk.data)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	result := new(PutChunkResult)
 	err = json.Unmarshal(data, result)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	err = c.handlePutChunkResult(ctx, result, chunk.id)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	return nil
 }
 
-func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectChunkID uint64) error {
+func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
 		c.e.logger.Error("failed to put chunk, task is canceled",
 			zap.String("error", result.Error),
@@ -281,21 +281,19 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 		return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 	}
 
-	if result.HandledChunkID != expectChunkID {
+	if result.HandledChunkID != expectedChunkID {
 		c.e.logger.Info("remote worker may restart, retry to put chunk",
-			zap.Uint64("expectChunkID", expectChunkID),
-			zap.Uint64("handledChunkID", result.HandledChunkID),
-			zap.Uint64("flushedChunkID", result.FlushedChunkID),
-			zap.String("error", result.Error))
+			zap.Uint64("expected ChunkID", expectedChunkID),
+			zap.Uint64("handled ChunkID", result.HandledChunkID),
+			zap.Uint64("flushed ChunkID", result.FlushedChunkID))
 
 		nextChunkID := result.HandledChunkID + 1
-		for nextChunkID <= expectChunkID {
-			url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s&writer_id=%d&chunk_id=%d",
-				c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, nextChunkID)
+		for nextChunkID <= expectedChunkID {
+			url := fmt.Sprintf(putChunkURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, nextChunkID)
 
 			buf, err := c.chunksCache.get(nextChunkID)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			c.e.logger.Info("retry to put chunk",
 				zap.Uint64("sender", c.id),
@@ -303,12 +301,12 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 
 			data, err := sendRequest(ctx, c.httpClient, "PUT", url, buf)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			result = new(PutChunkResult)
 			err = json.Unmarshal(data, result)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			nextChunkID = result.HandledChunkID + 1
 		}
@@ -335,19 +333,18 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 
 func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 	for {
-		url := fmt.Sprintf("%s/load_data?cluster_id=%d&task_id=%s&flush=true&writer_id=%d",
-			c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id)
+		url := fmt.Sprintf(flushURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id)
 
 		data, err := sendRequest(ctx, c.httpClient, "POST", url, nil)
 		if err != nil {
 			c.e.logger.Error("failed to flush", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 
 		result := new(FlushResult)
 		err = json.Unmarshal(data, result)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		if result.Canceled || result.Error != "" {
@@ -358,7 +355,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		}
 
 		if result.Finished {
-			c.e.logger.Info("loadDataTask finished")
+			c.e.logger.Info("load data task finished")
 			return nil
 		}
 
@@ -385,7 +382,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		// because the remote worker may restart, retry to put chunk.
 		err = c.putEmptyChunk(ctx)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 }
