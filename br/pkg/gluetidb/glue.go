@@ -55,6 +55,10 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
+func WrapSession(se sessiontypes.Session) glue.Session {
+	return &tidbSession{se: se}
+}
+
 type tidbSession struct {
 	se sessiontypes.Session
 }

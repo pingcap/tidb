@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -137,6 +138,8 @@ type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
+
+	RestoreUUID uuid.UUID `json:"restore-uuid"`
 }
 
 func LoadCheckpointMetadataForSnapshotRestore(
