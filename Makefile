@@ -209,6 +209,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
+.PHONY: pgo-file
+pgo-file:
+	go tool pprof -proto build/profile/*.proto > default.pgo
+	@echo "Merge profile files from build/profile folder to produce default.pgo file"
+
 .PHONY: server_debug
 server_debug:
 ifeq ($(TARGET), "")
