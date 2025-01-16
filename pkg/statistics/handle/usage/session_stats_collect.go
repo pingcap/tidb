@@ -104,12 +104,48 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			if !s.needDumpStatsDelta(is, dumpAll, id, item, currentTime) {
 				continue
 			}
+<<<<<<< HEAD
 			updated, err := s.dumpTableStatCountToKV(is, id, item)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if updated {
 				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+=======
+			if time.Since(batchStart) > tooSlowThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Warn("Collecting batch updates is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(batchStart)))
+			}
+
+			if len(batchUpdates) == 0 {
+				return nil
+			}
+
+			// Process all updates in the batch with a single transaction.
+			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
+			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			statsVersion = startTs
+			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
+			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
+			// For example, dumpStatsDeltaToKV may sort the array.
+			batchUpdates = updated
+			intest.AssertFunc(
+				func() bool {
+					return slices.IsSortedFunc(batchUpdates, func(i, j *storage.DeltaUpdate) int {
+						return cmp.Compare(i.TableID, j.TableID)
+					})
+				},
+				"batchUpdates should be sorted by table ID",
+			)
+
+			// Update deltaMap after the batch is successfully dumped.
+			for _, update := range batchUpdates {
+				delete(deltaMap, update.TableID)
+>>>>>>> 803f9285b99 (statistics: enhance dumpStatsDeltaToKV to return updated batch updates and ensure proper sorting (#58929))
 			}
 			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
 				delete(deltaMap, id)
@@ -157,10 +193,67 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 		if tbl != nil {
 			tidAndPid = append(tidAndPid, tbl.Meta().ID)
 		}
+<<<<<<< HEAD
 		tidAndPid = append(tidAndPid, physicalTableID)
 		lockedTables, err := s.statsHandle.GetLockedTables(tidAndPid...)
 		if err != nil {
 			return err
+=======
+	}
+
+	return nil
+}
+
+// dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.
+// Note: The `batchUpdates` parameter may be modified during the execution of this function.
+//
+// 1. Handles partitioned tables:
+//   - For partitioned tables, the function ensures that the global statistics are updated appropriately
+//     in addition to the individual partition statistics.
+//
+// 2. Stashes lock information:
+//   - Records lock information for each table or partition.
+func (s *statsUsageImpl) dumpStatsDeltaToKV(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	updates []*storage.DeltaUpdate,
+) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
+	if len(updates) == 0 {
+		return 0, nil, nil
+	}
+	beforeLen := len(updates)
+	statsVersion, err = utilstats.GetStartTS(sctx)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Collect all table IDs that need lock checking.
+	allTableIDs := make([]int64, 0, len(updates))
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+		}
+		// Add psychical table ID.
+		allTableIDs = append(allTableIDs, update.TableID)
+		// Add parent table ID if it's a partition table.
+		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
+			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		}
+	}
+
+	// Batch get lock status for all tables.
+	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Prepare batch updates
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+>>>>>>> 803f9285b99 (statistics: enhance dumpStatsDeltaToKV to return updated batch updates and ensure proper sorting (#58929))
 		}
 
 		var affectedRows uint64
@@ -217,10 +310,21 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
 
+<<<<<<< HEAD
 		updated = affectedRows > 0
 		return nil
 	}, utilstats.FlagWrapTxn)
 	return
+=======
+	// Batch update stats meta.
+	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Because we may sort the updates, we need to return the updated slice.
+	// Otherwise the caller may use the original slice and get wrong results.
+	return statsVersion, updates, nil
+>>>>>>> 803f9285b99 (statistics: enhance dumpStatsDeltaToKV to return updated batch updates and ensure proper sorting (#58929))
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
