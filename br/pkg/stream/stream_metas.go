@@ -705,6 +705,11 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = t.unmarshalContent(b)
+		if err != nil {
+			return err
+		}
+
 		if t.SeqNum == baseMigrationSN {
 			// NOTE: the legacy truncating isn't implemented by appending a migration.
 			// We load their checkpoint here to be compatible with them.
@@ -715,7 +720,7 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 			}
 			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
 		}
-		return t.Content.Unmarshal(b)
+		return nil
 	})
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
