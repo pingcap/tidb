@@ -485,11 +485,6 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-func (p *LogicalJoin) IsDual() bool {
-	fmt.Println("here")
-	return false
-}
-
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
 
 // RecursiveDeriveStats inherits the BaseLogicalPlan.LogicalPlan.<10th> implementation.
@@ -1872,27 +1867,6 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	}
 	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
-	}
-	return nil
-}
-
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
-	if len(conds) != 1 {
-		return nil
-	}
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
 	}
 	return nil
 }
