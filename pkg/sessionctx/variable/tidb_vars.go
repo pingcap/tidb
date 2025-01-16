@@ -1218,7 +1218,7 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// This variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
 	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
 )
@@ -1337,7 +1337,7 @@ const (
 	DefTiDBHashAggPartialConcurrency        = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency          = ConcurrencyUnset
 	DefTiDBWindowConcurrency                = ConcurrencyUnset
-	DefTiDBMergeJoinConcurrency             = 1 // disable optimization by default
+	DefTiDBMergeJoinConcurrency             = 1        // disable optimization by default
 	DefTiDBStreamAggConcurrency             = 1
 	DefTiDBForcePriority                    = mysql.NoPriority
 	DefEnableWindowFunction                 = true
@@ -1348,23 +1348,23 @@ const (
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
-	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
-	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
+	DefTiDBExpensiveQueryTimeThreshold      = 60       // 60s
+	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10  // 10 minutes
 	DefTiDBScatterRegion                    = ScatterOff
 	DefTiDBWaitSplitRegionFinish            = true
-	DefWaitSplitRegionTimeout               = 300 // 300s
+	DefWaitSplitRegionTimeout               = 300      // 300s
 	DefTiDBEnableNoopFuncs                  = Off
 	DefTiDBEnableNoopVariables              = true
 	DefTiDBAllowRemoveAutoInc               = false
 	DefTiDBUsePlanBaselines                 = true
 	DefTiDBEvolvePlanBaselines              = false
-	DefTiDBEvolvePlanTaskMaxTime            = 600 // 600s
+	DefTiDBEvolvePlanTaskMaxTime            = 600      // 600s
 	DefTiDBEvolvePlanTaskStartTime          = "00:00 +0000"
 	DefTiDBEvolvePlanTaskEndTime            = "23:59 +0000"
-	DefInnodbLockWaitTimeout                = 50 // 50s
+	DefInnodbLockWaitTimeout                = 50       // 50s
 	DefTiDBStoreLimit                       = 0
-	DefTiDBMetricSchemaStep                 = 60 // 60s
-	DefTiDBMetricSchemaRangeDuration        = 60 // 60s
+	DefTiDBMetricSchemaStep                 = 60       // 60s
+	DefTiDBMetricSchemaRangeDuration        = 60       // 60s
 	DefTiDBFoundInPlanCache                 = false
 	DefTiDBFoundInBinding                   = false
 	DefTiDBEnableCollectExecutionInfo       = true
