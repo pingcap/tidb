@@ -170,7 +170,7 @@ func (*BackfillingSchedulerExt) IsRetryableErr(error) bool {
 }
 
 // ModifyMeta implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+func (*BackfillingSchedulerExt) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
 	return oldMeta, nil
 }
 

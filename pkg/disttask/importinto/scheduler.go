@@ -421,7 +421,7 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 }
 
 // ModifyMeta implements scheduler.Extension interface.
-func (*ImportSchedulerExt) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+func (*ImportSchedulerExt) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
 	return oldMeta, nil
 }
 
