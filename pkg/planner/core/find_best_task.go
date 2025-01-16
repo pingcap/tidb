@@ -1441,6 +1441,10 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
+			// prefer tikv, while current table path is tiflash, skip it.
+			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
+				continue
+			}
 			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
