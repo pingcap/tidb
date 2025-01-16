@@ -82,6 +82,9 @@ func (p *pitrCollectorT) Reopen() {
 	}
 	p.success.Store(false)
 	p.coll = newColl
+
+	p.coll.resetCommitting()
+	p.coll.goPersister()
 }
 
 func (p pitrCollectorT) RequireCopied(extBk backuppb.IngestedSSTs, files ...string) {
@@ -237,6 +240,7 @@ func TestReopen(t *testing.T) {
 	coll.RequireRewrite(e, remap(2, 20))
 	require.False(t, e.Finished, "%v", e)
 	require.Equal(t, coll.coll.restoreUUID[:], e.BackupUuid)
+	coll.coll.writerRoutine.close()
 
 	coll.Reopen()
 	require.NoError(t, coll.RestoreAFile(batch3)())
