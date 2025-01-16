@@ -271,7 +271,7 @@ func (e *memtableRetriever) recordMemoryConsume(data []types.Datum) {
 	e.accMemPerBatch += size
 	e.accMemRecordCnt++
 	if e.accMemRecordCnt >= 1024 {
-		e.memTracker.Consume(int64(e.accMemPerBatch))
+		e.memTracker.Consume(e.accMemPerBatch)
 		e.accMemPerBatch = 0
 		e.accMemRecordCnt = 0
 	}
