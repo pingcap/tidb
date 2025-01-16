@@ -48,7 +48,7 @@ func (do *Domain) initDomainSysVars() {
 
 	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
 
-	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = do.changePDMetadataCircuitBreakerErrorRateThresholdPct
+	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = changePDMetadataCircuitBreakerErrorRateThresholdPct
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -155,7 +155,7 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	return nil
 }
 
-func (do *Domain) changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
+func changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
 	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
 		config.ErrorRateThresholdPct = errorRatePct
 	})
