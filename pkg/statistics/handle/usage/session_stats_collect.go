@@ -166,12 +166,16 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 
 			// Process all updates in the batch with a single transaction.
-			// Note: batchUpdates may be modified in dumpStatsDeltaToKV.
-			startTs, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
+			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			statsVersion = startTs
+			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
+			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
+			// For example, dumpStatsDeltaToKV may sort the array.
+			batchUpdates = updated
 			intest.AssertFunc(
 				func() bool {
 					return slices.IsSortedFunc(batchUpdates, func(i, j *storage.DeltaUpdate) int {
@@ -183,7 +187,6 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 			// Update deltaMap after the batch is successfully dumped.
 			for _, update := range batchUpdates {
-				UpdateTableDeltaMap(deltaMap, update.TableID, -update.Delta.Delta, -update.Delta.Count)
 				delete(deltaMap, update.TableID)
 			}
 
@@ -234,14 +237,14 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	is infoschema.InfoSchema,
 	sctx sessionctx.Context,
 	updates []*storage.DeltaUpdate,
-) (statsVersion uint64, err error) {
+) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
 	if len(updates) == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 	beforeLen := len(updates)
 	statsVersion, err = utilstats.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 
 	// Collect all table IDs that need lock checking.
@@ -262,7 +265,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	// Batch get lock status for all tables.
 	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 
 	// Prepare batch updates
@@ -320,10 +323,12 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 
 	// Batch update stats meta.
 	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 
-	return statsVersion, nil
+	// Because we may sort the updates, we need to return the updated slice.
+	// Otherwise the caller may use the original slice and get wrong results.
+	return statsVersion, updates, nil
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
