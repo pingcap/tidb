@@ -108,14 +108,8 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tidwall/btree v1.7.0
 	github.com/tikv/client-go/v2 v2.0.8-0.20250113074216-d66e460ff577
 	github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31
-=======
-	github.com/tikv/client-go/v2 v2.0.8-0.20241223070848-fd950fcf9fcc
-	github.com/tikv/pd/client v0.0.0-20241220053006-461b86adc78d
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

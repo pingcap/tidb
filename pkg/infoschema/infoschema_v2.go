@@ -98,21 +98,13 @@ type Data struct {
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
-<<<<<<< HEAD
-	byName *btree.BTreeG[tableItem]
-=======
-	byName atomic.Pointer[btree.BTreeG[*tableItem]]
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+	byName atomic.Pointer[btree.BTreeG[tableItem]]
 
 	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
 	// This mapping MUST be synced with byName.
-<<<<<<< HEAD
-	byID *btree.BTreeG[tableItem]
-=======
-	byID atomic.Pointer[btree.BTreeG[*tableItem]]
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+	byID atomic.Pointer[btree.BTreeG[tableItem]]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
@@ -209,20 +201,10 @@ const btreeDegree = 16
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-<<<<<<< HEAD
-		byID:              btree.NewBTreeG[tableItem](compareByID),
-		byName:            btree.NewBTreeG[tableItem](compareByName),
-		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
-		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
-		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
-		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
-		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
-=======
 		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 	}
-	ret.byID.Store(btree.NewG[*tableItem](btreeDegree, compareByID))
-	ret.byName.Store(btree.NewG[*tableItem](btreeDegree, compareByName))
+	ret.byID.Store(btree.NewG[tableItem](btreeDegree, compareByID))
+	ret.byName.Store(btree.NewG[tableItem](btreeDegree, compareByName))
 	ret.schemaMap.Store(btree.NewG[schemaItem](btreeDegree, compareSchemaItem))
 	ret.schemaID2Name.Store(btree.NewG[schemaIDName](btreeDegree, compareSchemaByID))
 	ret.pid2tid.Store(btree.NewG[partitionItem](btreeDegree, comparePartitionItem))
@@ -242,13 +224,8 @@ func (isd *Data) SetCacheCapacity(capacity uint64) {
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
-<<<<<<< HEAD
-	isd.byID.Set(item)
-	isd.byName.Set(item)
-=======
-	btreeSet(&isd.byID, &item)
-	btreeSet(&isd.byName, &item)
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+	btreeSet(&isd.byID, item)
+	btreeSet(&isd.byName, item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
@@ -278,15 +255,9 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) remove(item tableItem) {
 	item.tomb = true
-<<<<<<< HEAD
-	isd.byID.Set(item)
-	isd.byName.Set(item)
-	isd.tableInfoResident.Set(tableInfoItem{
-=======
-	btreeSet(&isd.byID, &item)
-	btreeSet(&isd.byName, &item)
+	btreeSet(&isd.byID, item)
+	btreeSet(&isd.byName, item)
 	btreeSet(&isd.tableInfoResident, tableInfoItem{
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 		dbName:        item.dbName,
 		tableID:       item.tableID,
 		schemaVersion: item.schemaVersion,
@@ -315,12 +286,8 @@ func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetPID2TIDBeforeFullLoad(&isd.pid2tid, schemaVersion)
 }
 
-<<<<<<< HEAD
-func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
-=======
-func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], schemaVersion int64) {
+func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[tableItem]], schemaVersion int64) {
 	bt := ptr.Load()
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 	pivot, ok := bt.Max()
 	if !ok {
 		return
@@ -333,11 +300,7 @@ func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sche
 	items := make([]tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-<<<<<<< HEAD
-		bt.Descend(pivot, func(item tableItem) bool {
-=======
-		bt.DescendLessOrEqual(pivot, func(item *tableItem) bool {
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+		bt.DescendLessOrEqual(pivot, func(item tableItem) bool {
 			if pivot.tableID == item.tableID {
 				return true // skip MVCC version
 			}
@@ -349,11 +312,7 @@ func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sche
 			break
 		}
 		for _, item := range items {
-<<<<<<< HEAD
-			bt.Set(tableItem{
-=======
-			btreeSet(ptr, &tableItem{
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+			btreeSet(ptr, tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -366,12 +325,8 @@ func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sche
 	}
 }
 
-<<<<<<< HEAD
-func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
-=======
-func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], schemaVersion int64) {
+func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[tableItem]], schemaVersion int64) {
 	bt := ptr.Load()
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 	pivot, ok := bt.Max()
 	if !ok {
 		return
@@ -384,11 +339,7 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 	items := make([]tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-<<<<<<< HEAD
-		bt.Descend(pivot, func(item tableItem) bool {
-=======
-		bt.DescendLessOrEqual(pivot, func(item *tableItem) bool {
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+		bt.DescendLessOrEqual(pivot, func(item tableItem) bool {
 			if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
 				return true // skip MVCC version
 			}
@@ -400,11 +351,7 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 			break
 		}
 		for _, item := range items {
-<<<<<<< HEAD
-			bt.Set(tableItem{
-=======
-			btreeSet(ptr, &tableItem{
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+			btreeSet(ptr, tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -631,13 +578,8 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 	var ok bool
 	var target tableItem
 	// Iterate through the btree, find the query item whose schema version is the largest one (latest).
-<<<<<<< HEAD
-	bt.Descend(end, func(item tableItem) bool {
+	bt.DescendLessOrEqual(end, func(item tableItem) bool {
 		if !matchFn(&end, &item) {
-=======
-	bt.DescendLessOrEqual(&end, func(item *tableItem) bool {
-		if !matchFn(&end, item) {
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 			return false
 		}
 		if item.schemaVersion > schemaVersion {
@@ -758,11 +700,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 		return
 	}
 	var pivot *tableItem
-<<<<<<< HEAD
-	is.byName.Descend(maxv, func(item tableItem) bool {
-=======
-	is.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+	is.byName.Load().DescendLessOrEqual(maxv, func(item tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -862,12 +800,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 	var h tableByNameHelper
 	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
-<<<<<<< HEAD
-	is.byName.Descend(h.end, h.onItem)
-=======
-	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
-
+	is.byName.Load().DescendLessOrEqual(h.end, h.onItem)
 	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
@@ -994,13 +927,8 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmode
 
 	// Ascend is much more difficult than Descend.
 	// So the data is taken out first and then dedup in Descend order.
-<<<<<<< HEAD
 	var tableItems []tableItem
-	is.byName.Ascend(tableItem{dbName: schema}, func(item tableItem) bool {
-=======
-	var tableItems []*tableItem
-	is.byName.Load().AscendGreaterOrEqual(&tableItem{dbName: schema}, func(item *tableItem) bool {
->>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
+	is.byName.Load().AscendGreaterOrEqual(tableItem{dbName: schema}, func(item tableItem) bool {
 		if item.dbName.L != schema.L {
 			return false
 		}
