@@ -7,9 +7,9 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"go.uber.org/zap"
 )
 
@@ -23,10 +23,10 @@ type CompactedFileSplitStrategy struct {
 	checkpointFileProgressFn func(uint64, uint64)
 }
 
-var _ split.SplitStrategy[*backuppb.LogFileSubcompaction] = &CompactedFileSplitStrategy{}
+var _ split.SplitStrategy[SSTs] = &CompactedFileSplitStrategy{}
 
 func NewCompactedFileSplitStrategy(
-	rules map[int64]*restoreutils.RewriteRules,
+	rules map[int64]*utils.RewriteRules,
 	checkpointsSet map[string]struct{},
 	updateStatsFn func(uint64, uint64),
 ) *CompactedFileSplitStrategy {
@@ -37,19 +37,50 @@ func NewCompactedFileSplitStrategy(
 	}
 }
 
-func (cs *CompactedFileSplitStrategy) Accumulate(subCompaction *backuppb.LogFileSubcompaction) {
-	splitHelper, exist := cs.TableSplitter[subCompaction.Meta.TableId]
-	if !exist {
-		splitHelper = split.NewSplitHelper()
-		cs.TableSplitter[subCompaction.Meta.TableId] = splitHelper
+type sstIdentity struct {
+	EffectiveID     int64
+	RewriteBoundary *utils.RewriteRules
+}
+
+func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
+	r, ok := ssts.(RewrittenSSTs)
+	if !ok || r.RewrittenTo() == ssts.TableID() {
+		return sstIdentity{
+			EffectiveID:     ssts.TableID(),
+			RewriteBoundary: nil,
+		}
 	}
 
-	for _, f := range subCompaction.SstOutputs {
-		startKey := codec.EncodeBytes(nil, f.StartKey)
-		endKey := codec.EncodeBytes(nil, f.EndKey)
+	rule := utils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), 0, map[int64]int64{}, false)
+
+	return sstIdentity{
+		EffectiveID:     r.RewrittenTo(),
+		RewriteBoundary: rule,
+	}
+}
+
+func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
+	identity := cs.inspect(ssts)
+
+	splitHelper, exist := cs.TableSplitter[identity.EffectiveID]
+	if !exist {
+		splitHelper = split.NewSplitHelper()
+		log.Info("Initialized splitter for table.",
+			zap.Int64("table-id", ssts.TableID()), zap.Int64("effective-id", identity.EffectiveID), zap.Stringer("rewrite-boundary", identity.RewriteBoundary))
+		cs.TableSplitter[identity.EffectiveID] = splitHelper
+	}
+
+	for _, f := range ssts.GetSSTs() {
+		startKey, endKey, err := utils.GetRewriteRawKeys(f, identity.RewriteBoundary)
+		if err != nil {
+			log.Panic("[unreachable] the rewrite rule doesn't match the SST file, this shouldn't happen...",
+				logutil.ShortError(err), zap.Stringer("rule", identity.RewriteBoundary), zap.Int64("effective-id", identity.EffectiveID),
+				zap.Stringer("file", f),
+			)
+		}
 		cs.AccumulateCount += 1
 		if f.TotalKvs == 0 || f.Size_ == 0 {
-			log.Error("No key-value pairs in subcompaction", zap.String("name", f.Name))
+			log.Warn("No key-value pairs in sst files", zap.String("name", f.Name))
 			continue
 		}
 		// The number of MVCC entries in the compacted SST files can be excessive.
@@ -82,14 +113,38 @@ func (cs *CompactedFileSplitStrategy) ShouldSplit() bool {
 	return cs.AccumulateCount > (4096 / impactFactor)
 }
 
-func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction *backuppb.LogFileSubcompaction) bool {
-	_, exist := cs.Rules[subCompaction.Meta.TableId]
-	if !exist {
-		log.Info("skip for no rule files", zap.Int64("tableID", subCompaction.Meta.TableId))
+func hasRule[T any](ssts SSTs, rules map[int64]T) bool {
+	if r, ok := ssts.(RewrittenSSTs); ok {
+		_, exist := rules[r.RewrittenTo()]
+		// If the SST has been rewritten (logically has another table ID),
+		// don't check table ID in its physical file, or we may mistakenly match it
+		// with another table that has the same ID.
+		//
+		// An example, if there are tables:
+		//
+		// - Foo.ID = 1  (Backup Data)
+		// - Foo.ID = 10 (Upstream after Rewriting)
+		// - Bar.ID = 1  (Upstream Natively)
+		//
+		// If we treat `Foo` in the backup data as if it had table ID `1`,
+		// the restore progress may match it with `Bar`.
+		return exist
+	}
+
+	if _, exist := rules[ssts.TableID()]; exist {
 		return true
 	}
-	sstOutputs := make([]*backuppb.File, 0, len(subCompaction.SstOutputs))
-	for _, sst := range subCompaction.SstOutputs {
+
+	return false
+}
+
+func (cs *CompactedFileSplitStrategy) ShouldSkip(ssts SSTs) bool {
+	if !hasRule(ssts, cs.Rules) {
+		log.Warn("skip for no rule files", zap.Int64("tableID", ssts.TableID()), zap.Any("ssts", ssts))
+		return true
+	}
+	sstOutputs := make([]*backuppb.File, 0, len(ssts.GetSSTs()))
+	for _, sst := range ssts.GetSSTs() {
 		if _, ok := cs.checkpointSets[sst.Name]; !ok {
 			sstOutputs = append(sstOutputs, sst)
 		} else {
@@ -100,12 +155,15 @@ func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction *backuppb.LogFile
 		}
 	}
 	if len(sstOutputs) == 0 {
-		log.Info("all files in sub compaction skipped")
+		log.Info("all files in SST set skipped", zap.Stringer("ssts", ssts))
 		return true
 	}
-	if len(sstOutputs) != len(subCompaction.SstOutputs) {
-		log.Info("partial files in sub compaction skipped due to checkpoint")
-		subCompaction.SstOutputs = sstOutputs
+	if len(sstOutputs) != len(ssts.GetSSTs()) {
+		log.Info(
+			"partial files in SST set skipped due to checkpoint",
+			zap.Stringer("ssts", ssts), zap.Int("origin", len(ssts.GetSSTs())), zap.Int("output", len(sstOutputs)),
+		)
+		ssts.SetSSTs(sstOutputs)
 		return false
 	}
 	return false
