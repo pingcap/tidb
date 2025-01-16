@@ -104,6 +104,7 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+	defaultRemoteBackendChunkSize    = 8 * 1024 * 104
 
 	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
@@ -1126,7 +1127,7 @@ type TikvImporter struct {
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 
-	ChunkBatchSize  int    `toml:"chunk-batch-size" json:"chunk-batch-size"`
+	ChunkSize       int    `toml:"chunk-size" json:"chunk-size"`
 	ChunkCacheDir   string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
 	ChunkCacheInMem bool   `toml:"chunk-cache-in-mem" json:"chunk-cache-in-mem"`
 }
@@ -1551,6 +1552,7 @@ func NewConfig() *Config {
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
+			ChunkSize:               defaultRemoteBackendChunkSize,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

@@ -35,7 +35,7 @@ const (
 	maxDuplicateBatchSize = 4 << 20
 	taskExitsMsg          = "task exists"
 
-	// The format of load data task id: ${keyspaceID}-${taskID}-${tableID}-${engineID}
+	// The format of load data task id: ${keyspaceID}-${importTaskID}-${tableID}-${engineID}
 	loadDatatTaskIDFormat = "%d-%d-%d-%d"
 
 	sleepDuration = 3 * time.Second
@@ -44,8 +44,8 @@ const (
 	updateFlushedChunkDuration = 10 * time.Second
 )
 
-func genLoadDataTaskID(keyspaceID uint32, taskID int64, cfg *backend.EngineConfig) string {
-	return fmt.Sprintf(loadDatatTaskIDFormat, keyspaceID, taskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
+func genLoadDataTaskID(keyspaceID uint32, importTaskID int64, cfg *backend.EngineConfig) string {
+	return fmt.Sprintf(loadDatatTaskIDFormat, keyspaceID, importTaskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
 }
 
 func retryableHTTPStatusCode(statusCode int) bool {

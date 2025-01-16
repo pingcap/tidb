@@ -260,7 +260,8 @@ func NewBackend(
 		keyAdapter:    keyAdapter,
 		localStoreDir: localFile,
 
-		taskID:            cfg.TaskID,
+		importTaskID:      cfg.TaskID,
+		chunkSize:         cfg.ChunkSize,
 		chunkCacheDir:     cfg.ChunkCacheDir,
 		chunkCacheInMem:   cfg.ChunkCacheInMem,
 		checkpointEnabled: cfg.CheckpointEnabled,
@@ -282,6 +283,7 @@ type BackendConfig struct {
 	RemoteWorkerAddr    string
 	KeyspaceName        string
 	SortedKVDir         string
+	ChunkSize           int
 	ChunkCacheDir       string
 	CheckpointEnabled   bool
 	DuplicateResolution config.DuplicateResolutionAlgorithm
@@ -329,7 +331,8 @@ type Backend struct {
 	tikvCli     *tikvclient.KVStore
 	keyAdapter  common.KeyAdapter
 
-	taskID            int64
+	importTaskID      int64
+	chunkSize         int
 	dupeDetectEnabled bool
 	reportErrOnDup    bool
 	checkpointEnabled bool
@@ -401,7 +404,7 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 	}
 	ts := oracle.ComposeTS(physical, logical)
 
-	loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.taskID, cfg)
+	loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.importTaskID, cfg)
 	e, _ := b.engines.LoadOrStore(engineUUID, &engine{
 		ctx:            ctx,
 		logger:         log.With(zap.String("loadDataTaskID", loadDataTaskID)),
@@ -488,7 +491,7 @@ func (b *Backend) loadDataInit(ctx context.Context, engine *engine, dataSize int
 func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	engine, err := b.getEngine(engineUUID)
 	if err != nil {
-		loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.taskID, cfg)
+		loadDataTaskID := genLoadDataTaskID(b.keyspaceID, b.importTaskID, cfg)
 		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
 			return errors.Trace(err)
@@ -874,7 +877,7 @@ func (w *writer) AppendRows(
 		w.buf = append(w.buf, lenBuf[:2]...)
 		w.buf = append(w.buf, pair.RowID...)
 	}
-	if len(w.buf) > batchSize {
+	if len(w.buf) > w.e.backend.chunkSize {
 		return w.addChunk(ctx)
 	}
 	return nil
