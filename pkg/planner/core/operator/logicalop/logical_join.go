@@ -1871,8 +1871,9 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 
 // Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
 func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
+	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range conds {
-		if constraint.IsConstFalse(cond) {
+		if constraint.IsConstFalse(exprCtx, cond) {
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 			dual.SetSchema(p.Schema())
 			return dual
