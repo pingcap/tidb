@@ -164,9 +164,14 @@ func (*BackfillingSchedulerExt) GetEligibleInstances(_ context.Context, _ *proto
 	return nil, nil
 }
 
-// IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
+// IsRetryableErr implements scheduler.Extension interface.
 func (*BackfillingSchedulerExt) IsRetryableErr(error) bool {
 	return true
+}
+
+// ModifyMeta implements scheduler.Extension interface.
+func (*BackfillingSchedulerExt) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
 }
 
 // LitBackfillScheduler wraps BaseScheduler.

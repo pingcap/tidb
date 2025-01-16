@@ -420,6 +420,11 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 	}
 }
 
+// ModifyMeta implements scheduler.Extension interface.
+func (*ImportSchedulerExt) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
+}
+
 type importScheduler struct {
 	*scheduler.BaseScheduler
 	storeWithPD kv.StorageWithPD
