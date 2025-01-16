@@ -42,11 +42,12 @@ func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
 }
 
 // RecursiveDeriveStats implements LogicalPlan interface.
-func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, bool, error) {
 	if mj.StatsInfo() == nil {
 		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
+		return mj.statsMap[mj.involvedNodeSet], true, nil
 	}
-	return mj.statsMap[mj.involvedNodeSet], nil
+	return mj.statsMap[mj.involvedNodeSet], false, nil
 }
 
 func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
