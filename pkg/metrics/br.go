@@ -44,7 +44,7 @@ func InitBRMetrics() {
 		Subsystem: "br",
 		Name:      "restore_import_file_seconds",
 
-		Help: "The time cost for importing a file. (including the time costed in queuing)",
+		Help: "The time cost for importing a file. (including the time cost in queuing)",
 
 		Buckets: prometheus.ExponentialBuckets(0.01, 4, 14),
 	})

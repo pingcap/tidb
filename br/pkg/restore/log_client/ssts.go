@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	_ RewrittenSSTs = &AddedSSTs{}
+	_ RewrittenSSTs = &CopiedSST{}
 )
 
 // RewrittenSSTs is an extension to the `SSTs` that needs extra key rewriting.
@@ -67,18 +67,18 @@ func (s *CompactedSSTs) SetSSTs(files []*backuppb.File) {
 	s.SstOutputs = files
 }
 
-type AddedSSTs struct {
+type CopiedSST struct {
 	File      *backuppb.File
 	Rewritten backuppb.RewrittenTableID
 
 	cachedTableID atomic.Int64
 }
 
-func (s *AddedSSTs) String() string {
+func (s *CopiedSST) String() string {
 	return fmt.Sprintf("AddedSSTs: %s", s.File)
 }
 
-func (s *AddedSSTs) TableID() int64 {
+func (s *CopiedSST) TableID() int64 {
 	cached := s.cachedTableID.Load()
 	if cached == 0 {
 		id := tablecodec.DecodeTableID(s.File.StartKey)
@@ -99,14 +99,14 @@ func (s *AddedSSTs) TableID() int64 {
 	return cached
 }
 
-func (s *AddedSSTs) GetSSTs() []*backuppb.File {
+func (s *CopiedSST) GetSSTs() []*backuppb.File {
 	if s.File == nil {
 		return nil
 	}
 	return []*backuppb.File{s.File}
 }
 
-func (s *AddedSSTs) SetSSTs(fs []*backuppb.File) {
+func (s *CopiedSST) SetSSTs(fs []*backuppb.File) {
 	if len(fs) == 0 {
 		s.File = nil
 	}
@@ -116,6 +116,9 @@ func (s *AddedSSTs) SetSSTs(fs []*backuppb.File) {
 	log.Panic("Too many files passed to AddedSSTs.SetSSTs.", zap.Any("input", fs))
 }
 
-func (s *AddedSSTs) RewrittenTo() int64 {
-	return s.Rewritten.Upstream
+func (s *CopiedSST) RewrittenTo() int64 {
+	if s.Rewritten.Upstream > 0 {
+		return s.Rewritten.Upstream
+	}
+	return s.TableID()
 }

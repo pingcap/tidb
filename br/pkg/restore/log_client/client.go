@@ -273,7 +273,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
 	if r, ok := sst.(RewrittenSSTs); ok {
 		rewritten := r.RewrittenTo()
-		if rewritten > 0 && rewritten != sst.TableID() {
+		if rewritten != sst.TableID() {
 			rewriteRules := rules.Clone()
 			if !rewriteRules.RewriteSourceTableID(rewritten, sst.TableID()) {
 				return nil, errors.Annotatef(

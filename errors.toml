@@ -58,7 +58,7 @@ invalid restore range
 
 ["BR:Common:ErrMigrationNotFound"]
 error = '''
-no migrtion found
+no migration found
 '''
 
 ["BR:Common:ErrMigrationVersionNotSupported"]

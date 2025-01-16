@@ -44,7 +44,7 @@ type sstIdentity struct {
 
 func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
 	r, ok := ssts.(RewrittenSSTs)
-	if !ok {
+	if !ok || r.RewrittenTo() == ssts.TableID() {
 		return sstIdentity{
 			EffectiveID:     ssts.TableID(),
 			RewriteBoundary: nil,

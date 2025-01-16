@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func (tk TestKitGlue) OwnsStorage() bool {
 }
 
 func (tk TestKitGlue) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
-	return &glue.CounterProgress{}
+	return &CounterProgress{}
 }
 
 // Record records some information useful for log-less summary.
@@ -101,6 +102,25 @@ func (tk TestKitGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Se
 // GetClient returns the client type of the glue
 func (tk TestKitGlue) GetClient() glue.GlueClient {
 	return glue.ClientSql
+}
+
+type CounterProgress struct {
+	Counter atomic.Int64
+}
+
+func (c *CounterProgress) Inc() {
+	c.Counter.Add(1)
+}
+
+func (c *CounterProgress) IncBy(cnt int64) {
+	c.Counter.Add(cnt)
+}
+
+func (c *CounterProgress) GetCurrent() int64 {
+	return c.Counter.Load()
+}
+
+func (c *CounterProgress) Close() {
 }
 
 type LogBackupKit struct {

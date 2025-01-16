@@ -140,6 +140,6 @@ func (w *WithMigrations) SetStartTS(ts uint64) {
 	w.startTS = ts
 }
 
-func (w WithMigrations) CompactionDirs() []string {
+func (w *WithMigrations) CompactionDirs() []string {
 	return w.compactionDirs
 }

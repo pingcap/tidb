@@ -120,23 +120,45 @@ func (c *pitrCollector) goPersister() {
 	}
 }
 
+// pitrCollector controls the process of copying restored SSTs to a log backup storage.
+//
+// log backup cannot back `Ingest`ed SSTs directly. As a workaround, ingested SSTs will
+// be copied to the log backup storage when restoring. Then when doing PiTR, those SSTs
+// can be ingested.
+//
+// This provides two hooks to the `Importer` and those will be called syncrhonously.
+// - `onBatch`: this starts the upload process of a batch of files, returns a closure that
+// .            waits unfinished upload process done.
+// - `close`: flush all pending metadata and commit all SSTs to the log backup storage so
+// .          they are visible for a PiTR.
+// The two hooks are goroutine safe.
 type pitrCollector struct {
 	// Immutable state.
-	taskStorage    storage.ExternalStorage
+
+	// taskStorage is the log backup storage.
+	taskStorage storage.ExternalStorage
+	// restoreStorage is where the running restoration from.
 	restoreStorage storage.ExternalStorage
-	name           string
-	enabled        bool
-	restoreUUID    uuid.UUID
+	// name is a human-friendly identity to this restoration.
+	// When restart from a checkpoint, a new name will be generated.
+	name string
+	// enabled indicites whether the pitrCollector needs to work.
+	enabled bool
+	// restoreUUID is the identity of this restoration.
+	// This will be kept among restarting from checkpoints.
+	restoreUUID uuid.UUID
 
 	// Mutable state.
-	extraBackupMeta     ingestedSSTsMeta
-	extraBackupMetaLock sync.Mutex
+	ingestedSSTMeta     ingestedSSTsMeta
+	ingestedSSTMetaLock sync.Mutex
 	putMigOnce          sync.Once
-
-	writerRoutine persisterHandle
+	writerRoutine       persisterHandle
 
 	// Delegates.
-	tso            func(ctx context.Context) (uint64, error)
+
+	// tso fetches a recent timestamp oracle from somewhere.
+	tso func(ctx context.Context) (uint64, error)
+	// restoreSuccess returns whether the restore was fully done.
 	restoreSuccess func() bool
 }
 
@@ -149,8 +171,8 @@ type ingestedSSTsMeta struct {
 	rewrites map[int64]int64
 }
 
-// genMsg generates the protocol buffer message to persist.
-func (c *ingestedSSTsMeta) genMsg() *pb.IngestedSSTs {
+// toProtoMessage generates the protocol buffer message to persist.
+func (c *ingestedSSTsMeta) toProtoMessage() *pb.IngestedSSTs {
 	msg := util.ProtoV1Clone(&c.msg)
 	for old, new := range c.rewrites {
 		msg.RewrittenTables = append(msg.RewrittenTables, &pb.RewrittenTableID{AncestorUpstream: old, Upstream: new})
@@ -257,9 +279,9 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 }
 
 func (c *pitrCollector) doWithMetaLock(f func()) {
-	c.extraBackupMetaLock.Lock()
+	c.ingestedSSTMetaLock.Lock()
 	f()
-	c.extraBackupMetaLock.Unlock()
+	c.ingestedSSTMetaLock.Unlock()
 }
 
 // outputPath constructs the path by a relative path for outputting.
@@ -305,7 +327,7 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	log.Info("Copy SST to log backup storage success.", zap.String("file", f.Name), zap.Stringer("takes", time.Since(copyStart)))
 
 	f.Name = out
-	c.doWithMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
+	c.doWithMetaLock(func() { c.ingestedSSTMeta.msg.Files = append(c.ingestedSSTMeta.msg.Files, f) })
 
 	metrics.RestoreUploadSSTForPiTRSeconds.Observe(time.Since(begin).Seconds())
 	return nil
@@ -318,7 +340,7 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 	}
 	var err error
 	c.doWithMetaLock(func() {
-		if oldVal, ok := c.extraBackupMeta.rewrites[oldID]; ok && oldVal != newID {
+		if oldVal, ok := c.ingestedSSTMeta.rewrites[oldID]; ok && oldVal != newID {
 			err = errors.Annotatef(
 				berrors.ErrInvalidArgument,
 				"pitr coll rewrite rule conflict: we had %v -> %v, but you want rewrite to %v",
@@ -328,7 +350,7 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 			)
 			return
 		}
-		c.extraBackupMeta.rewrites[oldID] = newID
+		c.ingestedSSTMeta.rewrites[oldID] = newID
 	})
 	return err
 }
@@ -343,7 +365,7 @@ func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error
 	var bs []byte
 	begin := time.Now()
 	c.doWithMetaLock(func() {
-		msg := c.extraBackupMeta.genMsg()
+		msg := c.ingestedSSTMeta.toProtoMessage()
 		// Here, after generating a snapshot of the current message then we can continue.
 		// This requires only a single active writer at anytime.
 		// (i.e. concurrent call to `doPersistExtraBackupMeta` may cause data race.)
@@ -409,22 +431,22 @@ func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
 }
 
 func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
-	c.extraBackupMeta.msg.Finished = true
+	c.ingestedSSTMeta.msg.Finished = true
 	ts, err := c.tso(ctx)
 	if err != nil {
 		return 0, err
 	}
-	c.extraBackupMeta.msg.AsIfTs = ts
+	c.ingestedSSTMeta.msg.AsIfTs = ts
 	return ts, c.persistExtraBackupMeta(ctx)
 }
 
 func (c *pitrCollector) resetCommitting() {
-	c.extraBackupMeta = ingestedSSTsMeta{
+	c.ingestedSSTMeta = ingestedSSTsMeta{
 		rewrites: map[int64]int64{},
 	}
-	c.extraBackupMeta.msg.FilesPrefixHint = c.sstPath("")
-	c.extraBackupMeta.msg.Finished = false
-	c.extraBackupMeta.msg.BackupUuid = c.restoreUUID[:]
+	c.ingestedSSTMeta.msg.FilesPrefixHint = c.sstPath("")
+	c.ingestedSSTMeta.msg.Finished = false
+	c.ingestedSSTMeta.msg.BackupUuid = c.restoreUUID[:]
 }
 
 // PiTRCollDep is the dependencies of a PiTR collector.

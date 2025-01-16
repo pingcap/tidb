@@ -385,7 +385,7 @@ func (rc *LogFileManager) GetIngestedSSTs(ctx context.Context) iter.TryNextor[SS
 			remap[r.AncestorUpstream] = r.Upstream
 		}
 		return iter.TryMap(iter.FromSlice(c.Files), func(f *backuppb.File) (SSTs, error) {
-			sst := &AddedSSTs{File: f}
+			sst := &CopiedSST{File: f}
 			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
 				sst.Rewritten = backuppb.RewrittenTableID{
 					AncestorUpstream: sst.TableID(),

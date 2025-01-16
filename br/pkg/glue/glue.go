@@ -4,7 +4,6 @@ package glue
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -82,23 +81,4 @@ type Progress interface {
 	// Close marks the progress as 100% complete and that Inc() can no longer be
 	// called.
 	Close()
-}
-
-type CounterProgress struct {
-	Counter atomic.Int64
-}
-
-func (c *CounterProgress) Inc() {
-	c.Counter.Add(1)
-}
-
-func (c *CounterProgress) IncBy(cnt int64) {
-	c.Counter.Add(cnt)
-}
-
-func (c *CounterProgress) GetCurrent() int64 {
-	return c.Counter.Load()
-}
-
-func (c *CounterProgress) Close() {
 }
