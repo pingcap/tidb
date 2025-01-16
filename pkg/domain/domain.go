@@ -2653,8 +2653,8 @@ func (do *Domain) updateStatsWorker() {
 }
 
 func (do *Domain) deltaUpdateTickerWorker() {
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
-	logutil.BgLogger().Info("updateStatsWorker started.")
+	defer util.Recover(metrics.LabelDomain, "deltaUpdateTickerWorker", nil, false)
+	logutil.BgLogger().Info("deltaUpdateTickerWorker started.")
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
