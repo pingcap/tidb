@@ -126,6 +126,8 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		return tsoCnt.Add(1), nil
 	}
 	coll.restoreSuccess = restoreSuccess.Load
+	coll.goPersister()
+	coll.resetCommitting()
 
 	return pitrCollectorT{
 		t:       t,
@@ -260,4 +262,6 @@ func TestConflict(t *testing.T) {
 	// NOTE: An error here is also acceptable.
 	require.NoError(t, err)
 	require.Error(t, cb())
+
+	coll.Done()
 }
