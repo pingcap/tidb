@@ -104,9 +104,15 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20241212025239-0dc41295f929
 	github.com/tikv/pd/client v0.0.0-20240724132535-fcb34c90790c
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20241225040645-f2266d6bf259
+	github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de
+	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
+>>>>>>> 510d0037b18 (*: upgrade pd client to make sure tso client initiate successfully (#58752))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
