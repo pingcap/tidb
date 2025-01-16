@@ -56,6 +56,19 @@ error = '''
 invalid restore range
 '''
 
+<<<<<<< HEAD
+=======
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables

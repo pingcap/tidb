@@ -95,3 +95,22 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
 }
+<<<<<<< HEAD
+=======
+
+func (w *WithMigrations) AddIngestedSSTs(extPath string) {
+	w.fullBackups = append(w.fullBackups, extPath)
+}
+
+func (w *WithMigrations) SetRestoredTS(ts uint64) {
+	w.restoredTS = ts
+}
+
+func (w *WithMigrations) SetStartTS(ts uint64) {
+	w.startTS = ts
+}
+
+func (w *WithMigrations) CompactionDirs() []string {
+	return w.compactionDirs
+}
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))

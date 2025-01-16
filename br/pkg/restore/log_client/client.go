@@ -25,8 +25,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/encryption"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -81,6 +84,14 @@ const maxSplitKeysOnce = 10240
 const rawKVBatchCount = 64
 
 type LogClient struct {
+<<<<<<< HEAD
+=======
+	*LogFileManager
+
+	logRestoreManager *LogRestoreManager
+	sstRestoreManager *SstRestoreManager
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 	cipher        *backuppb.CipherInfo
 	pdClient      pd.Client
 	pdHTTPClient  pdhttp.Client
@@ -112,6 +123,22 @@ type LogClient struct {
 
 	// checkpoint information for log restore
 	useCheckpoint bool
+
+	logFilesStat logFilesStatistic
+	restoreStat  restoreStatistics
+}
+
+type restoreStatistics struct {
+	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
+	restoreSSTKVSize uint64
+	// restoreSSTKVCount is the total number of KV pairs restored from SST files.
+	restoreSSTKVCount uint64
+	// restoreSSTPhySize is the total size of SST files after encoding to SST files.
+	// this may be smaller than kv length due to compression or common prefix optimization.
+	restoreSSTPhySize uint64
+	// restoreSSTTakes is the total time taken for restoring SST files.
+	// the unit is nanoseconds, hence it can be converted between `time.Duration` directly.
+	restoreSSTTakes uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -149,6 +176,127 @@ func (rc *LogClient) Close() {
 	log.Info("Restore client closed")
 }
 
+<<<<<<< HEAD
+=======
+func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+	if r, ok := sst.(RewrittenSSTs); ok {
+		rewritten := r.RewrittenTo()
+		if rewritten != sst.TableID() {
+			rewriteRules := rules.Clone()
+			if !rewriteRules.RewriteSourceTableID(rewritten, sst.TableID()) {
+				return nil, errors.Annotatef(
+					berrors.ErrUnknown,
+					"table rewritten from a table id (%d) to (%d) which doesn't exist in the stream",
+					rewritten,
+					sst.TableID(),
+				)
+			}
+			log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", sst.TableID()), zap.Int64("rewritten_to", rewritten))
+			return rewriteRules, nil
+		}
+	}
+	return rules, nil
+}
+
+func (rc *LogClient) RestoreSSTFiles(
+	ctx context.Context,
+	compactionsIter iter.TryNextor[SSTs],
+	rules map[int64]*restoreutils.RewriteRules,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(int64),
+) error {
+	begin := time.Now()
+	backupFileSets := make([]restore.BackupFileSet, 0, 8)
+	// Collect all items from the iterator in advance to avoid blocking during restoration.
+	// This approach ensures that we have all necessary data ready for processing,
+	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	start := time.Now()
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+		i := r.Item
+
+		tid := i.TableID()
+		if r, ok := i.(RewrittenSSTs); ok {
+			tid = r.RewrittenTo()
+		}
+		rewriteRules, ok := rules[tid]
+		if !ok {
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
+			continue
+		}
+		newRules, err := rewriteRulesFor(i, rewriteRules)
+		if err != nil {
+			return err
+		}
+
+		set := restore.BackupFileSet{
+			TableID:      i.TableID(),
+			SSTFiles:     i.GetSSTs(),
+			RewriteRules: newRules,
+		}
+		backupFileSets = append(backupFileSets, set)
+	}
+	if len(backupFileSets) == 0 {
+		log.Info("[Compacted SST Restore] No SST files found for restoration.")
+		return nil
+	}
+	err := importModeSwitcher.GoSwitchToImportMode(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+		if switchErr != nil {
+			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+		}
+	}()
+
+	log.Info("[Compacted SST Restore] Start to restore SST files",
+		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
+	start = time.Now()
+	defer func() {
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
+	}()
+
+	// To optimize performance and minimize cross-region downloads,
+	// we are currently opting for a single restore approach instead of batch restoration.
+	// This decision is similar to the handling of raw and txn restores,
+	// where batch processing may lead to increased complexity and potential inefficiencies.
+	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
+	// while maintaining optimal performance and resource utilization.
+	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = rc.sstRestoreManager.restorer.WaitUntilFinish()
+
+	for _, files := range backupFileSets {
+		for _, f := range files.SSTFiles {
+			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVCount, f.TotalKvs)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVSize, f.TotalBytes)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTPhySize, f.Size_)
+		}
+	}
+	atomic.AddUint64(&rc.restoreStat.restoreSSTTakes, uint64(time.Since(begin)))
+	return err
+}
+
+func (rc *LogClient) RestoreSSTStatisticFields(pushTo *[]zapcore.Field) {
+	takes := time.Duration(rc.restoreStat.restoreSSTTakes)
+	fields := []zapcore.Field{
+		zap.Uint64("restore-sst-kv-count", rc.restoreStat.restoreSSTKVCount),
+		zap.Uint64("restore-sst-kv-size", rc.restoreStat.restoreSSTKVSize),
+		zap.Uint64("restore-sst-physical-size (after compression)", rc.restoreStat.restoreSSTPhySize),
+		zap.Duration("restore-sst-total-take", takes),
+		zap.String("average-speed (sst)", units.HumanSize(float64(rc.restoreStat.restoreSSTKVSize)/takes.Seconds())+"/s"),
+	}
+	*pushTo = append(*pushTo, fields...)
+}
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 func (rc *LogClient) SetRawKVBatchClient(
 	ctx context.Context,
 	pdAddrs []string,
@@ -299,6 +447,34 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
+<<<<<<< HEAD
+=======
+type LockedMigrations struct {
+	Migs     []*backuppb.Migration
+	ReadLock storage.RemoteLock
+}
+
+func (rc *LogClient) GetMigrations(ctx context.Context) (*LockedMigrations, error) {
+	ext := stream.MigrationExtension(rc.storage)
+	migs, err := ext.Load(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ms := migs.ListAll()
+	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	if err != nil {
+		return nil, err
+	}
+
+	lms := &LockedMigrations{
+		Migs:     ms,
+		ReadLock: readLock,
+	}
+	return lms, nil
+}
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
 	encryptionManager *encryption.Manager) error {
 	init := LogFileManagerInit{
@@ -314,6 +490,8 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 	if err != nil {
 		return err
 	}
+	rc.logFilesStat = logFilesStatistic{}
+	rc.LogFileManager.Stats = &rc.logFilesStat
 	return nil
 }
 
@@ -1247,8 +1425,46 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*restoreutils.RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
 	se, err := g.CreateSession(store)
+=======
+// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
+func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
+	ctx context.Context,
+	compactedIter iter.TryNextor[SSTs],
+	rules map[int64]*restoreutils.RewriteRules,
+	checkpointSets map[string]struct{},
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (iter.TryNextor[SSTs], error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	wrapper := restore.PipelineRestorerWrapper[SSTs]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
+	}
+	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
+	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
+}
+
+// WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules.
+func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
+	ctx context.Context,
+	logIter LogIter,
+	execCtx sqlexec.RestrictedSQLExecutor,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (LogIter, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
+	}
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

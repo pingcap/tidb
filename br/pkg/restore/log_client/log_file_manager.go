@@ -9,6 +9,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+<<<<<<< HEAD
+=======
+	"sync/atomic"
+	"time"
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -61,6 +66,12 @@ type streamMetadataHelper interface {
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
 }
 
+type logFilesStatistic struct {
+	NumEntries int64
+	NumFiles   uint64
+	Size       uint64
+}
+
 // LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
 type LogFileManager struct {
@@ -79,6 +90,10 @@ type LogFileManager struct {
 	helper  streamMetadataHelper
 
 	metadataDownloadBatchSize uint
+
+	// The output channel for statistics.
+	// This will be collected when reading the metadata.
+	Stats *logFilesStatistic
 }
 
 // LogFileManagerInit is the config needed for initializing the log file manager.
@@ -277,6 +292,18 @@ func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, coun
 	return rc.collectDDLFilesAndPrepareCache(ctx, mg)
 }
 
+type loadDMLFilesConfig struct {
+	Statistic *logFilesStatistic
+}
+
+type loadDMLFilesOption func(*loadDMLFilesConfig)
+
+func lDOptWithStatistics(s *logFilesStatistic) loadDMLFilesOption {
+	return func(c *loadDMLFilesConfig) {
+		c.Statistic = s
+	}
+}
+
 // LoadDMLFiles loads all DML files needs to be restored in the restoration.
 // This function returns a stream, because there are usually many DML files need to be restored.
 func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
@@ -297,7 +324,20 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 				if m.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
+<<<<<<< HEAD
 				return !d.IsMeta || rc.ShouldFilterOut(d)
+=======
+				if rc.ShouldFilterOut(d) {
+					return true
+				}
+				// count the progress
+				if rc.Stats != nil {
+					atomic.AddInt64(&rc.Stats.NumEntries, d.NumberOfEntries)
+					atomic.AddUint64(&rc.Stats.NumFiles, 1)
+					atomic.AddUint64(&rc.Stats.Size, d.Length)
+				}
+				return !d.IsMeta
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 			})
 			return DDLMetaGroup{
 				Path: g.Path,
@@ -308,6 +348,49 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 	})
 }
 
+<<<<<<< HEAD
+=======
+// Fetch compactions that may contain file less than the TS.
+func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
+		return &CompactedSSTs{c}
+	})
+}
+
+func (rc *LogFileManager) GetIngestedSSTs(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.FlatMap(rc.withMigrations.IngestedSSTs(ctx, rc.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
+		remap := map[int64]int64{}
+		for _, r := range c.RewrittenTables {
+			remap[r.AncestorUpstream] = r.Upstream
+		}
+		return iter.TryMap(iter.FromSlice(c.Files), func(f *backuppb.File) (SSTs, error) {
+			sst := &CopiedSST{File: f}
+			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
+				sst.Rewritten = backuppb.RewrittenTableID{
+					AncestorUpstream: sst.TableID(),
+					Upstream:         id,
+				}
+			}
+			return sst, nil
+		})
+	})
+}
+
+func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
+	count := int64(0)
+	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetIngestedSSTs(ctx))
+	for err, ssts := range iter.AsSeq(ctx, ssts) {
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		for _, sst := range ssts.GetSSTs() {
+			count += int64(sst.TotalKvs)
+		}
+	}
+	return count, nil
+}
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 // the kv entry with ts, the ts is decoded from entry.
 type KvEntryWithTS struct {
 	E  kv.Entry

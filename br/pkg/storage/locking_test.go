@@ -59,3 +59,94 @@ func TestConflictLock(t *testing.T) {
 	require.NoError(t, err)
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
 }
+<<<<<<< HEAD
+=======
+
+func TestRWLock(t *testing.T) {
+	ctx := context.Background()
+	strg, path := createMockStorage(t)
+	lock, err := storage.TryLockRemoteRead(ctx, strg, "test.lock", "I wanna read it!")
+	require.NoError(t, err)
+	lock2, err := storage.TryLockRemoteRead(ctx, strg, "test.lock", "I wanna read it too!")
+	require.NoError(t, err)
+	_, err = storage.TryLockRemoteWrite(ctx, strg, "test.lock", "I wanna write it, you get out!")
+	require.Error(t, err)
+	require.NoError(t, lock.Unlock(ctx))
+	require.NoError(t, lock2.Unlock(ctx))
+	l, err := storage.TryLockRemoteWrite(ctx, strg, "test.lock", "Can I have a write lock?")
+	require.NoError(t, err)
+	requireFileExists(t, filepath.Join(path, "test.lock.WRIT"))
+	require.NoError(t, l.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(path, "test.lock.WRIT"))
+}
+
+func TestConcurrentLock(t *testing.T) {
+	ctx := context.Background()
+	strg, path := createMockStorage(t)
+
+	errChA := make(chan error, 1)
+	errChB := make(chan error, 1)
+
+	waitRecvTwice := func(ch chan<- struct{}) func() {
+		return func() {
+			ch <- struct{}{}
+			ch <- struct{}{}
+		}
+	}
+
+	asyncOnceFunc := func(f func()) func() {
+		run := new(atomic.Bool)
+		return func() {
+			if run.CompareAndSwap(false, true) {
+				f()
+			}
+		}
+	}
+	chA := make(chan struct{})
+	onceA := asyncOnceFunc(waitRecvTwice(chA))
+	chB := make(chan struct{})
+	onceB := asyncOnceFunc(waitRecvTwice(chB))
+
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1", onceA))
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2", onceB))
+
+	go func() {
+		_, err := storage.TryLockRemote(ctx, strg, "test.lock", "I wanna read it, but I hesitated before send my intention!")
+		errChA <- err
+	}()
+
+	go func() {
+		_, err := storage.TryLockRemote(ctx, strg, "test.lock", "I wanna read it too, but I hesitated before committing!")
+		errChB <- err
+	}()
+
+	<-chA
+	<-chB
+
+	<-chB
+	<-chA
+
+	// There is exactly one error.
+	errA := <-errChA
+	errB := <-errChB
+	if errA == nil {
+		require.Error(t, errB)
+	} else {
+		require.NoError(t, errB, "%s", errA)
+	}
+
+	requireFileExists(t, filepath.Join(path, "test.lock"))
+}
+
+func TestUnlockOnCleanUp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	strg, pth := createMockStorage(t)
+	lock, err := storage.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
+	require.NoError(t, err)
+	requireFileExists(t, filepath.Join(pth, "test.lock"))
+
+	cancel()
+	lock.UnlockOnCleanUp(ctx)
+	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+}
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))

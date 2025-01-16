@@ -14,6 +14,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+<<<<<<< HEAD
+=======
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 	"go.uber.org/zap"
 )
 
@@ -257,6 +262,19 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (*LocalStorage) Close() {}
+
+func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	sl, ok := e.(*LocalStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)
+	}
+	from := filepath.Join(sl.base, spec.From)
+	to := filepath.Join(l.base, spec.To)
+	if err := mkdirAll(filepath.Dir(to)); err != nil {
+		return errors.Trace(err)
+	}
+	return os.Link(from, to)
+}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)

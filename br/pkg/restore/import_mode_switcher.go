@@ -116,7 +116,31 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 // switchToImportMode switch tikv cluster to import mode.
 func (switcher *ImportModeSwitcher) switchToImportMode(
 	ctx context.Context,
+<<<<<<< HEAD
 ) {
+=======
+) error {
+	switcher.mu.Lock()
+	defer switcher.mu.Unlock()
+
+	if switcher.cancel != nil {
+		log.Info("TiKV is already in import mode")
+		return nil
+	}
+
+	// Create a new context for the goroutine
+	ctx, cancel := context.WithCancel(ctx)
+	switcher.cancel = cancel
+
+	// [important!] switch tikv mode into import at the beginning
+	log.Info("switch to import mode at beginning")
+	err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
+	if err != nil {
+		log.Warn("switch to import mode failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	switcher.wg.Add(1)
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 	// tikv automatically switch to normal mode in every 10 minutes
 	// so we need ping tikv in less than 10 minute
 	go func() {

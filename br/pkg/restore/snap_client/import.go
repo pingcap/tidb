@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -136,6 +137,12 @@ type SnapFileImporter struct {
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
 
+<<<<<<< HEAD
+=======
+	closeCallbacks        []func(*SnapFileImporter) error
+	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) (afterIngest func() error, err error)
+
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 	concurrencyPerStore uint
 
 	kvMode      KvMode
@@ -309,6 +316,18 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) error {
+	delayCbs := []func() error{}
+	for i, cb := range importer.beforeIngestCallbacks {
+		d, err := cb(ctx, backupFileSets)
+		if err != nil {
+			return errors.Annotatef(err, "failed to executing the callback #%d", i)
+		}
+		if d != nil {
+			delayCbs = append(delayCbs, d)
+		}
+	}
+
+	importBegin := time.Now()
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(filesGroup)
 	if err != nil {
@@ -323,7 +342,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 			return errors.Trace(errScanRegion)
 		}
 
-		log.Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
+		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)))
 		start := time.Now()
 		// Try to download and ingest the file in every region
 		for _, regionInfo := range regionInfos {
@@ -331,18 +350,18 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 			// Try to download file.
 			downloadMetas, errDownload := importer.download(ctx, info, filesGroup, cipher, apiVersion)
 			if errDownload != nil {
-				log.Warn("download file failed, retry later",
+				logutil.CL(ctx).Warn("download file failed, retry later",
 					logutil.Region(info.Region),
 					logutil.Key("startKey", startKey),
 					logutil.Key("endKey", endKey),
 					logutil.ShortError(errDownload))
 				return errors.Trace(errDownload)
 			}
-			log.Debug("download file done", zap.Stringer("take", time.Since(start)),
+			logutil.CL(ctx).Debug("download file done", zap.Stringer("take", time.Since(start)),
 				logutil.Key("start", startKey), logutil.Key("end", endKey))
 			start = time.Now()
 			if errIngest := importer.ingest(ctx, info, downloadMetas); errIngest != nil {
-				log.Warn("ingest file failed, retry later",
+				logutil.CL(ctx).Warn("ingest file failed, retry later",
 					logutil.Key("start", startKey),
 					logutil.Key("end", endKey),
 					logutil.SSTMetas(downloadMetas),
@@ -350,16 +369,32 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 					zap.Error(errIngest))
 				return errors.Trace(errIngest)
 			}
-			log.Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
+			logutil.CL(ctx).Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
 		}
 		return nil
 	}, utils.NewImportSSTBackoffer())
 	if err != nil {
+<<<<<<< HEAD
 		log.Error("import sst file failed after retry, stop the whole progress", zapFilesGroup(filesGroup), zap.Error(err))
 		return errors.Trace(err)
 	}
 	for _, files := range filesGroup {
 		for _, f := range files.Files {
+=======
+		logutil.CL(ctx).Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
+		return errors.Trace(err)
+	}
+	metrics.RestoreImportFileSeconds.Observe(time.Since(importBegin).Seconds())
+
+	for i, cb := range delayCbs {
+		if err := cb(); err != nil {
+			return errors.Annotatef(err, "failed to execute the delaied callback #%d", i)
+		}
+	}
+
+	for _, files := range backupFileSets {
+		for _, f := range files.SSTFiles {
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
 		}
@@ -393,7 +428,7 @@ func getSSTMetaFromFile(
 	}
 
 	// Get the column family of the file by the file name.
-	var cfName string
+	cfName := file.GetCf()
 	if strings.Contains(file.GetName(), restoreutils.DefaultCFName) {
 		cfName = restoreutils.DefaultCFName
 	} else if strings.Contains(file.GetName(), restoreutils.WriteCFName) {
@@ -468,15 +503,19 @@ func (importer *SnapFileImporter) download(
 
 		failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
 			msg := val.(string)
-			log.Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
+			logutil.CL(ctx).Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
 			e = errors.Annotate(e, msg)
 		})
 		failpoint.Inject("restore-gRPC-error", func(_ failpoint.Value) {
-			log.Warn("the connection to TiKV has been cut by a neko, meow :3")
+			logutil.CL(ctx).Warn("the connection to TiKV has been cut by a neko, meow :3")
 			e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 		})
 		if isDecryptSstErr(e) {
+<<<<<<< HEAD
 			log.Info("fail to decrypt when download sst, try again with no-crypt", zapFilesGroup(filesGroup))
+=======
+			logutil.CL(ctx).Info("fail to decrypt when download sst, try again with no-crypt")
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
 			if importer.kvMode == Raw || importer.kvMode == Txn {
 				downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, nil, apiVersion)
 			} else {
@@ -777,7 +816,7 @@ func (importer *SnapFileImporter) ingest(
 						break
 					}
 					// do not get region info, wait a second and GetRegion() again.
-					log.Warn("ingest get region by key return nil", logutil.Region(info.Region),
+					logutil.CL(ctx).Warn("ingest get region by key return nil", logutil.Region(info.Region),
 						logutil.SSTMetas(downloadMetas),
 					)
 					time.Sleep(time.Second)
@@ -787,7 +826,7 @@ func (importer *SnapFileImporter) ingest(
 			if !split.CheckRegionEpoch(newInfo, info) {
 				return errors.Trace(berrors.ErrKVEpochNotMatch)
 			}
-			log.Debug("ingest sst returns not leader error, retry it",
+			logutil.CL(ctx).Debug("ingest sst returns not leader error, retry it",
 				logutil.SSTMetas(downloadMetas),
 				logutil.Region(info.Region),
 				zap.Stringer("newLeader", newInfo.Leader))
@@ -830,7 +869,7 @@ func (importer *SnapFileImporter) ingestSSTs(
 		Context: reqCtx,
 		Ssts:    sstMetas,
 	}
-	log.Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
+	logutil.CL(ctx).Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
 	resp, err := importer.importClient.MultiIngest(ctx, leader.GetStoreId(), req)
 	return resp, errors.Trace(err)
 }

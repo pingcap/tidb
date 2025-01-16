@@ -36,8 +36,10 @@ go_library(
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
+        "@com_github_google_uuid//:uuid",
         "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -64,7 +66,11 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 44,
+=======
+    shard_count = 48,
+>>>>>>> c9215ec93ce (br: copy full backup to pitr storage (#57716))
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
@@ -80,6 +86,7 @@ go_test(
         "//pkg/util/intest",
         "//pkg/util/table-filter",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
