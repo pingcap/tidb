@@ -1395,3 +1395,23 @@ func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
 	err := statstestutil.HandleDDLEventWithTxn(h, event)
 	require.NoError(t, err)
 }
+
+func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	// Insert some data.
+	testKit.MustExec("insert into t values (1, 2), (2, 3), (3, 4)")
+	testKit.MustExec("analyze table t")
+	// Add column.
+	testKit.MustExec("alter table t add column c10 int")
+	// Insert some data.
+	testKit.MustExec("insert into t values (4, 5, 6)")
+	// Analyze table to force create the histogram meta record.
+	testKit.MustExec("analyze table t")
+	// Find the add column event.
+	event := findEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
+	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
+	require.NoError(t, err)
+}
