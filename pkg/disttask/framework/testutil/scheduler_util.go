@@ -101,7 +101,7 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(odlMeta []byte, modifies []proto.Modification) ([]byte, error) {
+		func(_ []byte, modifies []proto.Modification) ([]byte, error) {
 			var sb strings.Builder
 			for i, m := range modifies {
 				if i > 0 {
