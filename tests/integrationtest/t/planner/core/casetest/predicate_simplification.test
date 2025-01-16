@@ -283,13 +283,15 @@ SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 
 # end of test for https://github.com/pingcap/tidb/issues/58171
 
-# Test removing redundant values in OR list
+# Test removing redundant branches from OR list
 drop table if exists t1;
 create table t1 (a int, b decimal(65,30));
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
 explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
 explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
+explain format=brief select * from t1 where (@a:=@a+1) or (@a:=@a+1);
 
 drop table if exists t2;
 create table t2 (a datetime(6), b timestamp(6), index ia(a), index iab(a,b));

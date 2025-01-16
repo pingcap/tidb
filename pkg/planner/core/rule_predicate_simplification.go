@@ -447,17 +447,24 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 
 	for _, orItem := range orList {
 		_, tp := FindPredicateType(sctx, orItem)
+		// 1. If it's an AND predicate, we recursively call removeRedundantORBranch() on it.
 		if tp == andPredicate {
 			andFunc := orItem.(*expression.ScalarFunction)
 			andList := expression.SplitCNFItems(andFunc)
 			removeRedundantORBranch(sctx, andList)
 			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
 		} else {
+			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
 			hashCode := string(orItem.HashCode())
+			// 2-1. If it's not a duplicate, we need to keep this predicate.
 			if _, ok := dedupMap[hashCode]; !ok {
 				dedupMap[hashCode] = struct{}{}
 				newORList = append(newORList, orItem)
+			} else if expression.IsMutableEffectsExpr(orItem) {
+				// 2-2. If it's a duplicate, but it's nondeterministic or has side effects, we also need to keep it.
+				newORList = append(newORList, orItem)
 			}
+			// 2-3. Otherwise, we remove it.
 		}
 	}
 	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)

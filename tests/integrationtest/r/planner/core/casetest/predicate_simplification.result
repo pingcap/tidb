@@ -593,6 +593,16 @@ id	estRows	task	access object	operator info
 TableReader	10.03	root		data:Selection
 └─Selection	10.03	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(mul(rand(), 10), 1), eq(mul(rand(), 10), 1))
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select * from t1 where (@a:=@a+1) or (@a:=@a+1);
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(istrue_with_null(setvar("a", plus(cast(getvar("a"), double BINARY), 1))), istrue_with_null(setvar("a", plus(getvar("a"), 1))))
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t2;
 create table t2 (a datetime(6), b timestamp(6), index ia(a), index iab(a,b));
 explain format=brief select * from t2 where a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00';
