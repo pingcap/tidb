@@ -97,6 +97,7 @@ func (ga *globalArenaPool) adjustGCPercent() {
 		percent = max(percent, 5)
 
 		old := debug.SetGCPercent(percent)
+		//nolint: all_revive,revive
 		runtime.GC()
 		log.L().Debug("set gc percentage",
 			zap.Int("old", old),

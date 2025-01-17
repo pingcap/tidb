@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"strings"
 	"sync/atomic"
@@ -363,17 +364,19 @@ type ParquetParser struct {
 	logger  log.Logger
 }
 
-// GetMemoryUage estimate the memory usage for this file.
-func (pp *ParquetParser) GetMemoryUsage() (int, int) {
+// GetMemoryUsage estimate the memory usage for this file.
+func (pp *ParquetParser) GetMemoryUsage() (memoryUsageStream, memoryUsageNonStream int) {
 	// Initialize column reader
 	if pp.dumpers[0].reader == nil {
-		pp.ReadRow()
+		if err := pp.ReadRow(); err != nil {
+			return math.MaxInt, math.MaxInt
+		}
 	}
 
 	// All the columns share the same data page size,
 	// so we only need to read one column chunk.
 	dumper := pp.dumpers[0]
-	for true {
+	for {
 		read := dumper.readNextBatch(defaultBatchSize)
 		if read == 0 {
 			break
@@ -447,7 +450,7 @@ func (pp *ParquetParser) setUint32Data(readNum, col, offset int) {
 func (pp *ParquetParser) setInt64Data(readNum, col, offset int) {
 	buf, _ := pp.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
-		pp.rows[offset+i][col].SetInt64(int64(buf[i]))
+		pp.rows[offset+i][col].SetInt64(buf[i])
 	}
 }
 
@@ -975,7 +978,9 @@ func NewParquetParser(
 		alloc:       allocator,
 		logger:      log.FromContext(ctx),
 	}
-	parser.Init()
+	if err := parser.Init(); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return parser, nil
 }
@@ -989,9 +994,9 @@ func (sa *sampleAllocator) Allocate(size int) []byte {
 	return make([]byte, size)
 }
 
-func (sa *sampleAllocator) Free(buf []byte) {}
+func (_ *sampleAllocator) Free(_ []byte) {}
 
-func (sa *sampleAllocator) Reallocate(size int, buf []byte) []byte {
+func (sa *sampleAllocator) Reallocate(size int, _ []byte) []byte {
 	sa.allocated = append(sa.allocated, size)
 	return make([]byte, size)
 }

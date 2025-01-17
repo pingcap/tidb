@@ -109,7 +109,7 @@ func NewTableImporter(
 	logger log.Logger,
 ) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocatorsWithBase(tableInfo.Core.SepAutoInc(), cp.AutoRandBase, cp.AutoIncrBase, cp.AutoRowIDBase)
-	tbl, err := tables.TableLightningFromMeta(idAlloc, tableInfo.Core)
+	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}

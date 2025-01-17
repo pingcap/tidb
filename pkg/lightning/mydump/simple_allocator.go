@@ -16,13 +16,17 @@ package mydump
 
 import (
 	"math"
+
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 const (
-	alignSize = 64 << 10
-	metaSize  = 64
-	invalid   = math.MaxInt32
+	metaSize = 64
+	invalid  = math.MaxInt32
 )
+
+// This value will be modifed in test
+var alignSize = 64 << 10
 
 func simpleGetAllocationSize(size int) int {
 	return roundUp(size+metaSize, alignSize) * 2
@@ -185,6 +189,10 @@ func (sa *simpleAllocator) freeAll() {
 }
 
 func (sa *simpleAllocator) sanityCheck() {
+	if !intest.InTest {
+		return
+	}
+
 	mem := sa.alloc
 	for offset := sa.firstFree; offset != invalid; {
 		_, next, blkSize := sa.getBlk(offset)

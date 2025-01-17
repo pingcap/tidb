@@ -350,7 +350,6 @@ func (b *buddyAllocator) initFreePair(l, bi int) (free int) {
 		} else {
 			b.bufInfo[l].push(blkAddr(l, bi))
 		}
-
 	}
 	return
 }
