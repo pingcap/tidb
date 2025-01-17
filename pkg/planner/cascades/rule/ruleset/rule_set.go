@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
 )
 
+// DefaultRuleSet is default set of a series of rules.
 var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
 	pattern.OperandApply: {
 		decorrelateapply.NewXFDeCorrelateApply(),
