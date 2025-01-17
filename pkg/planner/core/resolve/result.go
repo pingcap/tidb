@@ -16,7 +16,7 @@ package resolve
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // ResultField represents a result field which can be a column from a table,
@@ -28,13 +28,13 @@ import (
 // easily evaluated.
 type ResultField struct {
 	Column       *model.ColumnInfo
-	ColumnAsName pmodel.CIStr
+	ColumnAsName ast.CIStr
 	// EmptyOrgName indicates whether this field has an empty org_name. A field has an empty org name, if it's an
 	// expression. It's not sure whether it's safe to use empty string in `.Column.Name`, so a new field is added to
 	// indicate whether it's empty.
 	EmptyOrgName bool
 
 	Table       *model.TableInfo
-	TableAsName pmodel.CIStr
-	DBName      pmodel.CIStr
+	TableAsName ast.CIStr
+	DBName      ast.CIStr
 }

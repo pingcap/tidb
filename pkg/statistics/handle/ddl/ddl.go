@@ -21,9 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -48,7 +50,16 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
-	return h.sub.handle(ctx, sctx, s)
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
+	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
+	if err := h.sub.handle(ctx, sctx, s); err != nil {
+		statslogutil.StatsLogger().Warn(
+			"failed to handle DDL event",
+			zap.String("event", s.String()),
+			zap.Error(err),
+		)
+	}
+	return nil
 }
 
 // DDLEventCh returns ddl events channel in handle.

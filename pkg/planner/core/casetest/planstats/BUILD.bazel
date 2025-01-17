@@ -16,7 +16,7 @@ go_test(
         "//pkg/executor",
         "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",

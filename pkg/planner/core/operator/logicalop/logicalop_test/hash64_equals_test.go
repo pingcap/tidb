@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -444,13 +443,13 @@ func TestLogicalMemTableHash64Equals(t *testing.T) {
 	require.False(t, m1.Equals(m2))
 
 	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
-	m2.DBName = pmodel.NewCIStr("d1")
+	m2.DBName = ast.NewCIStr("d1")
 	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, m1.Equals(m2))
 
-	m2.DBName = pmodel.NewCIStr("")
+	m2.DBName = ast.NewCIStr("")
 	m2.TableInfo = &model.TableInfo{ID: 1}
 	hasher2.Reset()
 	m2.Hash64(hasher2)

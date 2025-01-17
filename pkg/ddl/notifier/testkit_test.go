@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -50,10 +50,10 @@ func TestPublishToTableStore(t *testing.T) {
 	ctx := context.Background()
 	s := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
 	changes := make([]*notifier.SchemaChange, 8)
@@ -108,23 +108,18 @@ func TestBasicPubSub(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2#special-char?in'name")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2#special-char?in'name")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -138,7 +133,6 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestDeliverOrderAndCleanup(t *testing.T) {
@@ -186,23 +180,18 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	n.RegisterHandler(3, h1)
 	n.RegisterHandler(4, h2)
 	n.RegisterHandler(9, h3)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -220,7 +209,6 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestPubSub(t *testing.T) {
@@ -352,17 +340,12 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 
@@ -383,7 +366,6 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	tk2.MustQuery("SELECT * FROM test.result").Check(testkit.Rows())
 
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestPaginatedList(t *testing.T) {
@@ -451,4 +433,59 @@ func TestPaginatedList(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return count.Load() == 8
 	}, 5*time.Second, 500*time.Millisecond)
+}
+
+func TestBeginTwice(t *testing.T) {
+	conf := new(log.Config)
+	logFilename := path.Join(t.TempDir(), "/testBeginTwice.log")
+	conf.File.Filename = logFilename
+	lg, p, e := log.InitLogger(conf)
+	require.NoError(t, e)
+	rs := log.ReplaceGlobals(lg, p)
+	defer rs()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
+	tk.MustExec(ddl.NotifierTableSQL)
+
+	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		5,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+	)
+
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+
+	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, testHandler)
+	n.OnBecomeOwner()
+
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	ctx := context.Background()
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+
+	// after handler processed the event, wait to ensure the record is deleted by DDL notifier
+	require.Eventually(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+
+	content, err := os.ReadFile(logFilename)
+	require.NoError(t, err)
+	require.NotContains(t, string(content), "context provider not set")
 }

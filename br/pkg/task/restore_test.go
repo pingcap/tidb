@@ -25,7 +25,7 @@ import (
 	utiltest "github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -71,10 +71,10 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 
 		tables[i] = &metautil.Table{
-			DB: &model.DBInfo{Name: pmodel.NewCIStr("test")},
+			DB: &model.DBInfo{Name: ast.NewCIStr("test")},
 			Info: &model.TableInfo{
 				ID:             int64(i),
-				Name:           pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name:           ast.NewCIStr("test" + strconv.Itoa(i)),
 				TiFlashReplica: tiflashReplica,
 			},
 		}
@@ -115,7 +115,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	tables := make([]*metautil.Table, 4)
@@ -126,10 +126,10 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -155,7 +155,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 		Query:      "",
 		BinlogInfo: &model.HistoryInfo{
 			TableInfo: &model.TableInfo{
-				Name:           pmodel.NewCIStr("test1"),
+				Name:           ast.NewCIStr("test1"),
 				IsCommonHandle: true,
 			},
 		},
@@ -283,9 +283,9 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoErrorf(t, err, "Finially flush backupmeta failed", err)
 	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
-	dbInfo, ok := infoSchema.SchemaByName(pmodel.NewCIStr("test_db"))
+	dbInfo, ok := infoSchema.SchemaByName(ast.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr("test_db"), pmodel.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("test_db"), ast.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -348,9 +348,9 @@ func TestFilterDDLJobsV2(t *testing.T) {
 
 	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
-	dbInfo, ok := infoSchema.SchemaByName(pmodel.NewCIStr("test_db"))
+	dbInfo, ok := infoSchema.SchemaByName(ast.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr("test_db"), pmodel.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("test_db"), ast.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,

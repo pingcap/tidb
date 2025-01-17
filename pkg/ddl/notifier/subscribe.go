@@ -231,12 +231,19 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 			}
 
 			if change.processedByFlag == n.handlersBitMap {
-				if err3 := n.store.DeleteAndCommit(
+				s3, err3 := n.sysSessionPool.Get()
+				if err3 != nil {
+					return errors.Trace(err3)
+				}
+				sess4Del := sess.NewSession(s3.(sessionctx.Context))
+				err3 = n.store.DeleteAndCommit(
 					ctx,
-					sess4List,
+					sess4Del,
 					change.ddlJobID,
 					int(change.subJobID),
-				); err3 != nil {
+				)
+				n.sysSessionPool.Put(s3)
+				if err3 != nil {
 					logutil.Logger(ctx).Error("Error deleting change",
 						zap.Int64("ddlJobID", change.ddlJobID),
 						zap.Int64("subJobID", change.subJobID),

@@ -50,8 +50,9 @@ func TestDeriveStats(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum uint64
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -72,7 +73,7 @@ func TestDeriveStats(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
-		mm := memo.NewMemo()
+		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
 		_, err = mm.Init(lp)
 		require.Nil(t, err)
 		// check the stats state in memo group.
@@ -117,6 +118,7 @@ func TestDeriveStats(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
 		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
@@ -142,8 +144,9 @@ func TestGroupNDVCols(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum uint64
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -163,7 +166,7 @@ func TestGroupNDVCols(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
-		mm := memo.NewMemo()
+		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
 		mm.Init(lp)
 		// check the stats state in memo group.
 		b := &bytes.Buffer{}
@@ -207,6 +210,7 @@ func TestGroupNDVCols(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
 		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
