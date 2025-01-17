@@ -1472,3 +1472,22 @@ func TestS3ReadFileRetryable(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
 }
+
+func TestS3ExpressEndpoint(t *testing.T) {
+	ctx := context.Background()
+	_, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:       "https://s3express-use1-az6.us-east-1.amazonaws.com",
+		Bucket:         "xxxxxxx-global-sort-test--use1-az6--x-s3",
+		Region:         "us-east-1",
+		ForcePathStyle: true,
+	}, &ExternalStorageOptions{})
+	require.NoError(t, err)
+	// if the endpoint is not S3 express, this function will fail because no network for auto adjust region.
+	_, err = NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:       "https://us-east-1.amazonaws.com",
+		Bucket:         "xxxxxxx-global-sort-test--use1-az6--x-s3",
+		Region:         "us-east-1",
+		ForcePathStyle: true,
+	}, &ExternalStorageOptions{})
+	require.Error(t, err)
+}
