@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
@@ -435,6 +436,10 @@ func (b *buddyAllocator) init(totalSize int) {
 }
 
 func (b *buddyAllocator) sanityCheck() {
+	if !intest.InTest {
+		return
+	}
+
 	free := 0
 	for _, binfo := range b.bufInfo {
 		blkSize := blkSize(binfo.l)
