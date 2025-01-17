@@ -226,6 +226,9 @@ type MultiTablesRestorer struct {
 	workerPool       *util.WorkerPool
 	fileImporter     BalancedFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+
+	fileCount int
+	start     time.Time
 }
 
 func NewMultiTablesRestorer(
@@ -254,21 +257,16 @@ func (m *MultiTablesRestorer) WaitUntilFinish() error {
 		log.Error("restore files failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	elapsed := time.Since(m.start)
+	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
+	summary.CollectDuration("restore files", elapsed)
+	summary.CollectSuccessUnit("files", m.fileCount, elapsed)
 	return nil
 }
 
-func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		if err == nil {
-			elapsed := time.Since(start)
-			log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
-			summary.CollectDuration("restore files", elapsed)
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
+func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+	m.start = time.Now()
+	m.fileCount = 0
 	if span := opentracing.SpanFromContext(m.ectx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -284,6 +282,9 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 			// breaking here directly is also a reasonable behavior.
 			break
 		}
+		for _, fileSet := range batchFileSet {
+			m.fileCount += len(fileSet.SSTFiles)
+		}
 		filesReplica := batchFileSet
 		m.fileImporter.PauseForBackpressure()
 		cx := logutil.ContextWithField(m.ectx, zap.Int("sn", i))
@@ -292,9 +293,6 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 			defer func() {
 				if restoreErr == nil {
 					logutil.CL(cx).Info("import files done", zap.Duration("take", time.Since(fileStart)))
-					for _, fileSet := range filesReplica {
-						fileCount += len(fileSet.SSTFiles)
-					}
 					onProgress(1)
 				}
 			}()
