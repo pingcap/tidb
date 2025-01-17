@@ -266,7 +266,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
+			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
