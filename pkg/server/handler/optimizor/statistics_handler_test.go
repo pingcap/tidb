@@ -33,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -151,7 +152,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("create database tidb")
 	tk.MustExec("use tidb")
 	tk.MustExec("create table test (a int, b varchar(20))")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
@@ -179,10 +180,10 @@ func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServ
 		}()
 		b, err := io.ReadAll(resp0.Body)
 		require.NoError(t, err)
-		jsonTable := &util2.JSONTable{}
+		jsonTable := &statsutil.JSONTable{}
 		err = json.Unmarshal(b, jsonTable)
 		require.NoError(t, err)
-		require.NotNil(t, jsonTable.Partitions[util2.TiDBGlobalStats])
+		require.NotNil(t, jsonTable.Partitions[statsutil.TiDBGlobalStats])
 		require.Len(t, jsonTable.Partitions, expectedLen)
 	}
 	check(false)

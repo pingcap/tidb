@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -623,7 +623,7 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
+func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
 		for _, hint := range bindData {

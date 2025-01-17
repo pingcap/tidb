@@ -526,6 +526,11 @@ error = '''
 check local storage resource error
 '''
 
+["Lightning:PreCheck:ErrCheckPDTiDBSameCluster"]
+error = '''
+check PD and TiDB in the same cluster error
+'''
+
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
 error = '''
 check table empty error
@@ -2929,6 +2934,11 @@ Too many connections
 ["server:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1053"]
+error = '''
+Server shutdown in progress
 '''
 
 ["server:1148"]

@@ -33,6 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -194,13 +197,27 @@ func (m *JobManager) TaskManager() *taskManager {
 }
 
 // UpdateHeartBeat is an exported version of updateHeartBeat for test
-func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
-	return m.updateHeartBeat(ctx, se, now)
+func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+func (m *JobManager) UpdateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	return m.updateHeartBeatForJob(ctx, se, now, job)
 }
 
 // ReportMetrics is an exported version of reportMetrics
 func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
+}
+
+// ID returns the id of JobManager
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
 }
 
 // CheckFinishedJob is an exported version of checkFinishedJob
@@ -664,4 +681,34 @@ func TestLocalJobs(t *testing.T) {
 	}
 	assert.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
+}
+
+func TestSplitCnt(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	require.Equal(t, 64, getScanSplitCnt(nil))
+	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
+
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
+	for i := uint64(1); i <= 128; i++ {
+		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
+		if i <= 64 {
+			require.Equal(t, 64, getScanSplitCnt(s))
+		} else {
+			require.Equal(t, int(i), getScanSplitCnt(s))
+		}
+	}
+}
+
+// SetTimeFormat sets the time format used by the test.
+// Some tests require a greater precision than the default time format. We don't change it globally to avoid potential compatibility issues.
+// Therefore, the format for most tests are also not changed, to make sure the tests can represent the real-world scenarios.
+func SetTimeFormat(format string) {
+	timeFormat = format
 }

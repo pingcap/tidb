@@ -1071,7 +1071,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName pmodel.CIStr, tbl *model.
 		}
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
 	return schema, names, nil
 }
 

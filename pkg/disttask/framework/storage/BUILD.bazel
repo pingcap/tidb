@@ -42,7 +42,7 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
@@ -53,6 +53,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

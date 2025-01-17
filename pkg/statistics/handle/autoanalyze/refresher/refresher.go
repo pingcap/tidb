@@ -261,6 +261,7 @@ func (*Refresher) OnBecomeOwner() {
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
 func (r *Refresher) OnRetireOwner() {
-	// Stop the worker and close the queue.
+	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
+	// To avoid blocking etcd leader re-election, we only close the priority queue.
 	r.jobs.Close()
 }

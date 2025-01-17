@@ -1378,7 +1378,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1

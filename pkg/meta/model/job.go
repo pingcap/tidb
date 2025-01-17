@@ -254,8 +254,6 @@ const (
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
 	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
@@ -735,8 +733,10 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropForeignKey, ActionDropTablePartition, ActionTruncateTablePartition:
+		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionTruncateTablePartition:
+		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
@@ -748,6 +748,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionFlashbackCluster:
 		if job.SchemaState == StateWriteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
 			return false
 		}
 	}
@@ -1185,6 +1191,21 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
 }
 
 func init() {

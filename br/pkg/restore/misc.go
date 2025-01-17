@@ -149,7 +149,7 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
 		}
 		return getTSErr
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	if err != nil {
 		log.Error("failed to get TS", zap.Error(err))

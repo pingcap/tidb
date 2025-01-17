@@ -75,6 +75,20 @@ func (mr *MockStepExecutorMockRecorder) GetResource() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetResource", reflect.TypeOf((*MockStepExecutor)(nil).GetResource))
 }
 
+// GetStep mocks base method.
+func (m *MockStepExecutor) GetStep() proto.Step {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetStep")
+	ret0, _ := ret[0].(proto.Step)
+	return ret0
+}
+
+// GetStep indicates an expected call of GetStep.
+func (mr *MockStepExecutorMockRecorder) GetStep() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStep", reflect.TypeOf((*MockStepExecutor)(nil).GetStep))
+}
+
 // Init mocks base method.
 func (m *MockStepExecutor) Init(arg0 context.Context) error {
 	m.ctrl.T.Helper()
@@ -87,20 +101,6 @@ func (m *MockStepExecutor) Init(arg0 context.Context) error {
 func (mr *MockStepExecutorMockRecorder) Init(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockStepExecutor)(nil).Init), arg0)
-}
-
-// OnFinished mocks base method.
-func (m *MockStepExecutor) OnFinished(arg0 context.Context, arg1 *proto.Subtask) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OnFinished", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// OnFinished indicates an expected call of OnFinished.
-func (mr *MockStepExecutorMockRecorder) OnFinished(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), arg0, arg1)
 }
 
 // RealtimeSummary mocks base method.
@@ -129,6 +129,32 @@ func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask)
 func (mr *MockStepExecutorMockRecorder) RunSubtask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSubtask", reflect.TypeOf((*MockStepExecutor)(nil).RunSubtask), arg0, arg1)
+}
+
+// SetResource mocks base method.
+func (m *MockStepExecutor) SetResource(arg0 *proto.StepResource) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetResource", arg0)
+}
+
+// SetResource indicates an expected call of SetResource.
+func (mr *MockStepExecutorMockRecorder) SetResource(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetResource", reflect.TypeOf((*MockStepExecutor)(nil).SetResource), arg0)
+}
+
+// TaskMetaModified mocks base method.
+func (m *MockStepExecutor) TaskMetaModified(arg0 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TaskMetaModified", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// TaskMetaModified indicates an expected call of TaskMetaModified.
+func (mr *MockStepExecutorMockRecorder) TaskMetaModified(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TaskMetaModified", reflect.TypeOf((*MockStepExecutor)(nil).TaskMetaModified), arg0)
 }
 
 // restricted mocks base method.

@@ -290,8 +290,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
@@ -496,7 +494,7 @@ type Update struct {
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"must-nil"`
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
 
 	// tblID2Table stores related tables' info of this Update statement.
 	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
@@ -694,6 +692,14 @@ type PlanReplayer struct {
 	Remove     bool
 	SQLDigest  string
 	PlanDigest string
+}
+
+// Traffic represents a traffic plan.
+type Traffic struct {
+	baseSchemaProducer
+	OpType  ast.TrafficOpType
+	Options []*ast.TrafficOption
+	Dir     string
 }
 
 // SplitRegion represents a split regions plan.

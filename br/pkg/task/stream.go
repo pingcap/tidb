@@ -64,17 +64,24 @@ import (
 )
 
 const (
-	flagYes              = "yes"
-	flagUntil            = "until"
-	flagStreamJSONOutput = "json"
-	flagStreamTaskName   = "task-name"
-	flagStreamStartTS    = "start-ts"
-	flagStreamEndTS      = "end-ts"
-	flagGCSafePointTTS   = "gc-ttl"
+	flagYes                = "yes"
+	flagCleanUpCompactions = "clean-up-compactions"
+	flagUntil              = "until"
+	flagStreamJSONOutput   = "json"
+	flagStreamTaskName     = "task-name"
+	flagStreamStartTS      = "start-ts"
+	flagStreamEndTS        = "end-ts"
+	flagGCSafePointTTS     = "gc-ttl"
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
 		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
+)
+
+const (
+	waitInfoSchemaReloadCheckInterval = 1 * time.Second
+	// a million tables should take a few minutes to load all DDL change, making 15 to make sure we don't exit early
+	waitInfoSchemaReloadTimeout = 15 * time.Minute
 )
 
 var (
@@ -119,9 +126,10 @@ type StreamConfig struct {
 	SafePointTTL int64 `json:"safe-point-ttl" toml:"safe-point-ttl"`
 
 	// Spec for the command `truncate`, we should truncate the until when?
-	Until      uint64 `json:"until" toml:"until"`
-	DryRun     bool   `json:"dry-run" toml:"dry-run"`
-	SkipPrompt bool   `json:"skip-prompt" toml:"skip-prompt"`
+	Until              uint64 `json:"until" toml:"until"`
+	DryRun             bool   `json:"dry-run" toml:"dry-run"`
+	SkipPrompt         bool   `json:"skip-prompt" toml:"skip-prompt"`
+	CleanUpCompactions bool   `json:"clean-up-compactions" toml:"clean-up-compactions"`
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
@@ -184,6 +192,7 @@ func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
 		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'.)")
 	flags.Bool(flagDryRun, false, "Run the command but don't really delete the files.")
 	flags.BoolP(flagYes, "y", false, "Skip all prompts and always execute the command.")
+	flags.Bool(flagCleanUpCompactions, false, "Clean up compaction files. Including the compacted log files and expired SST files.")
 }
 
 func (cfg *StreamConfig) ParseStreamStatusFromFlags(flags *pflag.FlagSet) error {
@@ -212,6 +221,9 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 		return errors.Trace(err)
 	}
 	if cfg.DryRun, err = flags.GetBool(flagDryRun); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.CleanUpCompactions, err = flags.GetBool(flagCleanUpCompactions); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1039,7 +1051,34 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	readMetaDone := console.ShowTask("Reading log backup metadata... ", glue.WithTimeCost())
+	if cfg.CleanUpCompactions {
+		est := stream.MigerationExtension(extStorage)
+		est.Hooks = stream.NewProgressBarHooks(console)
+		newSN := math.MaxInt
+		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+			console.Println("We are going to do the following: ")
+			tbl := console.CreateTable()
+			stream.AddMigrationToTable(m, tbl)
+			tbl.Print()
+			return console.PromptBool("Continue? ")
+		})
+		optAppend := stream.MMOptAppendPhantomMigration(backuppb.Migration{TruncatedTo: cfg.Until})
+		opts := []stream.MergeAndMigrateToOpt{optPrompt, optAppend, stream.MMOptAlwaysRunTruncate()}
+		var res stream.MergeAndMigratedTo
+		if cfg.DryRun {
+			est.DryRun(func(me stream.MigrationExt) {
+				res = me.MergeAndMigrateTo(ctx, newSN, opts...)
+			})
+		} else {
+			res = est.MergeAndMigrateTo(ctx, newSN, opts...)
+		}
+		if len(res.Warnings) > 0 {
+			glue.PrintList(console, "the following errors happened", res.Warnings, 10)
+		}
+		return nil
+	}
+
+	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := stream.StreamMetadataSet{
 		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
 		Helper:                    stream.NewMetadataHelper(),
@@ -1282,6 +1321,9 @@ func restoreStream(
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
+	restoreCfg := tweakLocalConfForRestore()
+	defer restoreCfg()
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
 			"restoreStream",
@@ -1380,21 +1422,31 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	// load the id maps only when the checkpoint mode is used and not the first execution
-	newTask := true
+	currentIdMapSaved := false
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
-		newTask = false
+		currentIdMapSaved = true
 	}
+
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get the schemas ID replace information.
 	// since targeted full backup storage, need to use the full backup cipher
-	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
-		IsNewTask:         newTask,
+	tableMappingManager, err := client.BuildTableMappingManager(ctx, &logclient.BuildTableMappingManagerConfig{
+		CurrentIdMapSaved: currentIdMapSaved,
 		TableFilter:       cfg.TableFilter,
-		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
-	}, &cfg.Config.CipherInfo)
+		CipherInfo:        &cfg.Config.CipherInfo,
+		Files:             ddlFiles,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DbReplaceMap, cfg.tiflashRecorder,
+		client.CurrentTS(), cfg.TableFilter, client.RecordDeleteRange)
 	schemasReplace.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -1413,14 +1465,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
-	if err != nil {
-		return err
-	}
+
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1491,6 +1540,21 @@ func restoreStream(
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
+	}
+
+	// failpoint to stop for a while after restoring kvs
+	// this is to mimic the scenario that restore takes long time and the lease in schemaInfo has expired and needs refresh
+	failpoint.Inject("post-restore-kv-pending", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep but not sure what's the better way right now
+			log.Info("sleep after restoring kv")
+			time.Sleep(2 * time.Second)
+		}
+	})
+
+	// make sure schema reload finishes before proceeding
+	if err = waitUntilSchemaReload(ctx, client); err != nil {
+		return errors.Trace(err)
 	}
 
 	if err = client.CleanUpKVFiles(ctx); err != nil {
@@ -1895,4 +1959,17 @@ func checkPiTRTaskInfo(
 	}
 
 	return checkInfo, nil
+}
+
+func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {
+	log.Info("waiting for schema info finishes reloading")
+	reloadStart := time.Now()
+	conditionFunc := func() bool {
+		return !client.GetDomain().IsLeaseExpired()
+	}
+	if err := utils.WaitUntil(ctx, conditionFunc, waitInfoSchemaReloadCheckInterval, waitInfoSchemaReloadTimeout); err != nil {
+		return errors.Annotate(err, "failed to wait until schema reload")
+	}
+	log.Info("reloading schema finished", zap.Duration("timeTaken", time.Since(reloadStart)))
+	return nil
 }

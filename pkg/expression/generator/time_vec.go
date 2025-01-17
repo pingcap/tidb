@@ -269,7 +269,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				{{ template "SetNull" . }}
 				continue
 			}
@@ -302,7 +301,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				{{ template "SetNull" . }}
 				continue
 			}

@@ -188,10 +188,13 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		}
 	}
+
+	txnLeastID := 1 // used to let update/delete id keep increasing in a txn to avoid deadlock.
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
-			id := rand.Intn(maxID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
 				prepStmt:   "prepare st from 'update prepared.sbtest set k=k+1 where id=?'",
@@ -199,7 +202,8 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 				execStmt:   "execute st using @id",
 			}
 		default: // update sbtest set c=? where id=?
-			id := rand.Intn(maxID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set c='%v' where id=%v", c, id),
@@ -222,7 +226,8 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 	genDelete := func() *testStmt {
-		id := rand.Intn(maxID)
+		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
 			prepStmt:   "prepare st from 'delete from prepared.sbtest where id=?'",
@@ -239,6 +244,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		if rand.Intn(15) == 0 { // start a new txn
 			stmts = append(stmts, &testStmt{normalStmt: "commit"})
 			stmts = append(stmts, &testStmt{normalStmt: "begin"})
+			txnLeastID = 1
 			continue
 		}
 		if len(stmts) < nInitialRecords {
@@ -267,7 +273,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	testWithWorkers(TKs, stmts)
 }
 
-func TestInstancePlanCacheIndexLookup(t *testing.T) {
+func TestInstancePlanCacheIndexJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -426,6 +432,42 @@ func TestInstancePlanCacheConcurrencyPointNoTxn(t *testing.T) {
 				a := rand.Intn(100)
 				tki.MustExec("set @a = ?", a)
 				tki.MustQuery("execute st using @a").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestInstancePlanCacheBatchPointMultiColIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a, b), unique key(c, d))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, i, i, i))
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tki := testkit.NewTestKit(t, store)
+			tki.MustExec(`use test`)
+			if rand.Intn(2) == 0 {
+				tki.MustExec(`prepare st from 'select a from t where (a, b) in ((?, ?), (?, ?))'`)
+			} else {
+				tki.MustExec(`prepare st from 'select a from t where (c, d) in ((?, ?), (?, ?))'`)
+			}
+			for k := 0; k < 100; k++ {
+				a1, a2 := rand.Intn(50), 50+rand.Intn(50)
+				tki.MustExec("set @a1 = ?, @a2 = ?", a1, a2)
+				v1, v2 := fmt.Sprintf("%v", a1), fmt.Sprintf("%v", a2)
+				if v1 > v2 {
+					v1, v2 = v2, v1
+				}
+				tki.MustQuery("execute st using @a1, @a1, @a2, @a2").Sort().Check(
+					testkit.Rows(v1, v2))
 			}
 		}()
 	}

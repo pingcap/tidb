@@ -154,6 +154,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
 		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+		job.ReorgMeta.GetMaxWriteSpeedOrDefault(),
 		job.RealStartTS,
 	)
 }
@@ -174,19 +175,17 @@ func hasUniqueIndex(job *model.Job) (bool, error) {
 
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d         *ddl
-	task      *proto.Task
-	taskTable taskexecutor.TaskTable
-	taskMeta  *BackfillTaskMeta
-	jobID     int64
+	d        *ddl
+	task     *proto.Task
+	taskMeta *BackfillTaskMeta
+	jobID    int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,
 		task:             task,
-		taskTable:        taskTable,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s

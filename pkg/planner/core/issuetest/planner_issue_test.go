@@ -134,3 +134,46 @@ func TestIssue53175(t *testing.T) {
 	tk.MustQuery(`select * from t group by null`)
 	tk.MustQuery(`select * from v`)
 }
+
+func TestIssues57583(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
+	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
+	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
+		"HashJoin_15 6393.60 root  semi join, left side:HashAgg_16, equal:[nulleq(test.t1.id, test.t1.id)]",
+		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
+		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"│ │   └─TableFullScan_31 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│ └─TableReader_30(Probe) 9990.00 root  data:Selection_29",
+		"│   └─Selection_29 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"│     └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─HashAgg_16(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+		"  └─HashJoin_17 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"    ├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"    │ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
+		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue58476(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t3 (id int PRIMARY KEY,c1 varchar(256),c2 varchar(256) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL,KEY (id));")
+	tk.MustExec("insert into t3(id, c1) values (50, 'c');")
+	tk.MustQuery("SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").Check(testkit.Rows())
+	tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").
+		Check(testkit.Rows(
+			`Projection 249.75 root  test.t3.id`,
+			`└─Selection 249.75 root  ge(test.t3.c2, "a"), le(test.t3.c2, "b")`,
+			`  └─Projection 9990.00 root  test.t3.id, test.t3.c2`,
+			`    └─IndexMerge 9990.00 root  type: union`,
+			`      ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t3, index:id(id) range:[-inf,100), keep order:false, stats:pseudo`,
+			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
+			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
