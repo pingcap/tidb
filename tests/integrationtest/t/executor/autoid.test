@@ -508,7 +508,6 @@ insert into issue52465 (k) values (11);
 select * from issue52465;
 drop table issue52465;
 
-
 # Test for issue https://github.com/pingcap/tidb/issues/58631
 drop table if exists issue58631;
 set tidb_enable_clustered_index=off;
