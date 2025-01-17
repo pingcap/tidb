@@ -94,6 +94,10 @@ type PipelineContext struct {
 
 // RestorePipeline does checksum, load stats and wait for tiflash to be ready.
 func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) (err error) {
+	start := time.Now()
+	defer func() {
+		summary.CollectDuration("restore pipeline", time.Since(start))
+	}()
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 	postHandleCh := afterTableRestoredCh(ctx, createdTables)
@@ -229,11 +233,6 @@ func (rc *SnapClient) GoValidateChecksum(
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
-		start := time.Now()
-		defer func() {
-			elapsed := time.Since(start)
-			summary.CollectSuccessUnit("table checksum", 1, elapsed)
-		}()
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
