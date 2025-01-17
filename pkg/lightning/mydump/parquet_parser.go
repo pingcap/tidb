@@ -994,7 +994,7 @@ func (sa *sampleAllocator) Allocate(size int) []byte {
 	return make([]byte, size)
 }
 
-func (_ *sampleAllocator) Free(_ []byte) {}
+func (*sampleAllocator) Free([]byte) {}
 
 func (sa *sampleAllocator) Reallocate(size int, _ []byte) []byte {
 	sa.allocated = append(sa.allocated, size)
@@ -1080,7 +1080,9 @@ func NewParquetParserWithMeta(
 		alloc:       allocator,
 		logger:      log.FromContext(ctx),
 	}
-	parser.Init()
+	if err := parser.Init(); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return parser, nil
 }
