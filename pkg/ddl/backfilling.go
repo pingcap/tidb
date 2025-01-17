@@ -699,7 +699,7 @@ func getActualEndKey(
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func sendTasks(
-	scheduler backfillScheduler,
+	exec backfillExecutor,
 	t table.PhysicalTable,
 	kvRanges []kv.KeyRange,
 	reorgInfo *reorgInfo,
@@ -708,7 +708,7 @@ func sendTasks(
 ) error {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc, bfWorkerTp)
 	for _, task := range batchTasks {
-		if err := scheduler.sendTask(task); err != nil {
+		if err := exec.sendTask(task); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -752,7 +752,7 @@ func makeupDecodeColMap(dbName pmodel.CIStr, t table.Table) (map[int64]decoder.C
 
 const backfillTaskChanSize = 128
 
-func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+func (dc *ddlCtx) addIndexWithLocalIngest(
 	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
@@ -1022,20 +1022,20 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 	})
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
-		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
+		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
 	}
 
 	jc := reorgInfo.NewJobContext()
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	scheduler, err := newTxnBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
+	exec, err := newTxnBackfillExecutor(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer scheduler.close(true)
+	defer exec.close(true)
 
-	err = scheduler.setupWorkers()
+	err = exec.setupWorkers()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1055,7 +1055,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			select {
 			case <-egCtx.Done():
 				return egCtx.Err()
-			case result, ok := <-scheduler.resultChan():
+			case result, ok := <-exec.resultChan():
 				if !ok {
 					logutil.DDLLogger().Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
@@ -1083,7 +1083,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
-				if cnt%(scheduler.currentWorkerSize()*4) == 0 {
+				if cnt%(exec.currentWorkerSize()*4) == 0 {
 					err2 := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
 					if err2 != nil {
 						logutil.DDLLogger().Warn("update reorg meta failed",
@@ -1112,12 +1112,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			}
 			logutil.DDLLogger().Info("start backfill workers to reorg record",
 				zap.Stringer("type", bfWorkerType),
-				zap.Int("workerCnt", scheduler.currentWorkerSize()),
+				zap.Int("workerCnt", exec.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),
 				zap.String("startKey", hex.EncodeToString(start)),
 				zap.String("endKey", hex.EncodeToString(end)))
 
-			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
+			err2 = sendTasks(exec, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
@@ -1128,8 +1128,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			}
 		}
 
-		scheduler.close(false)
-		close(doneCh)
+		exec.close(false)
 		return nil
 	})
 
@@ -1145,17 +1144,16 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			case <-doneCh:
 				break outer
 			case <-ticker.C:
-				reorgInfo.UpdateConfigFromSysTbl(ctx)
-				currentWorkerCnt := scheduler.currentWorkerSize()
+				currentWorkerCnt := exec.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 				if currentWorkerCnt != targetWorkerCnt {
-					err := scheduler.adjustWorkerSize()
+					err := exec.adjustWorkerSize()
 					if err != nil {
 						logutil.DDLLogger().Error("adjust ddl job config failed",
 							zap.Error(err))
 					} else {
 						logutil.DDLLogger().Info("adjust ddl job config success",
-							zap.Int("current worker count", scheduler.currentWorkerSize()))
+							zap.Int("current worker count", exec.currentWorkerSize()))
 					}
 				}
 				failpoint.InjectCall("checkReorgWorkerCnt", reorgInfo.Job)
