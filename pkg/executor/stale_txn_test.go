@@ -1426,6 +1426,7 @@ func TestStaleReadNoBackoff(t *testing.T) {
 
 	failStaleReadCtx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("fail-stale-read", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			tikvrpc.AttachContext(req, req.Context)
 			if getRequest, ok := req.Req.(*kvrpcpb.GetRequest); ok {
 				if ctx := getRequest.GetContext(); ctx != nil && ctx.StaleRead && !ctx.IsRetryRequest {
 					return &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{RegionError: &errorpb.Error{
