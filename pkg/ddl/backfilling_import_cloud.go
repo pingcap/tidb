@@ -37,38 +37,39 @@ import (
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
 	job           *model.Job
+	store         kv.Storage
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
-	bc            ingest.BackendCtx
 	cloudStoreURI string
 	metric        *lightningmetric.Common
+	backendCtx    ingest.BackendCtx
 }
 
 func newCloudImportExecutor(
 	ctx context.Context,
 	job *model.Job,
+	store kv.Storage,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func(context.Context, bool) (ingest.BackendCtx, error),
 	cloudStoreURI string,
-) (c *cloudImportExecutor, err error) {
-	c = &cloudImportExecutor{
+) (*cloudImportExecutor, error) {
+	return &cloudImportExecutor{
 		job:           job,
+		store:         store,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
 		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
-	}
-	ctx = lightningmetric.WithCommonMetric(ctx, c.metric)
-	c.bc, err = bcGetter(ctx, hasUniqueIndex(indexes))
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
+	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build()
+	if err != nil {
+		return err
+	}
+	m.backendCtx = bCtx
 	return nil
 }
 
@@ -79,8 +80,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-
-	local := m.bc.GetLocalBackend()
+	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -145,9 +145,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	metrics.UnregisterLightningCommonMetricsForDDL(m.job.ID, m.metric)
+	if m.backendCtx != nil {
+		m.backendCtx.Close()
+	}
 	return nil
 }
 

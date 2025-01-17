@@ -27,6 +27,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",
+        "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
@@ -35,7 +36,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
     ],
 )

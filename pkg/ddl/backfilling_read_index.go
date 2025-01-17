@@ -51,7 +51,6 @@ type readIndexExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	bc          ingest.BackendCtx
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
@@ -71,7 +70,6 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *ReorgContext,
-	bcGetter func(context.Context, bool) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
 ) (r *readIndexExecutor, err error) {
@@ -88,10 +86,6 @@ func newReadIndexExecutor(
 	if !r.isGlobalSort() {
 		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
-	}
-	r.bc, err = bcGetter(ctx, hasUniqueIndex(indexes))
-	if err != nil {
-		return nil, err
 	}
 	return r, nil
 }
@@ -139,7 +133,15 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return r.onFinished(ctx, subtask)
 	}
 
-	pipe, err := r.buildLocalStorePipeline(opCtx, sm, concurrency)
+	// TODO(tangenta): support checkpoint manager that interact with subtask table.
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
+		WithImportDistributedLock(r.d.etcdCli, sm.TS).
+		Build()
+	if err != nil {
+		return err
+	}
+	defer bCtx.Close()
+	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -147,13 +149,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
-		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
+		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
 		if err1 != nil {
 			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
 		}
 		return err
 	}
-	err = r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+	err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -166,13 +168,8 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	}
 }
 
-func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
+func (*readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
-	if !r.isGlobalSort() {
-		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
-	}
 	return nil
 }
 
@@ -250,6 +247,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 
 func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
+	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) (*operator.AsyncPipeline, error) {
@@ -269,7 +267,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		}
 		idxNames.WriteString(index.Name.O)
 	}
-	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
+	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
@@ -282,7 +280,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		opCtx,
 		d.store,
 		d.sessPool,
-		r.bc,
+		backendCtx,
 		engines,
 		r.job.ID,
 		tbl,
@@ -292,7 +290,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
-		nil,
 		rowCntListener,
 	)
 }
