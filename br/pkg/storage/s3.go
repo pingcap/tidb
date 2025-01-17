@@ -51,7 +51,10 @@ const (
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
 	s3ExternalIDOption   = "s3.external-id"
-	notFound             = "NotFound"
+
+	storageExpressOneZone = "express-one-zone"
+
+	notFound = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
 	// max number of retries when meets error
@@ -330,9 +333,6 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return newCred, nil
 }
 
-// see https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-express-APIs.html
-var s3ExpressEndpointRE = regexp.MustCompile(`s3express.*amazonaws\.com`)
-
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
@@ -351,19 +351,18 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	skipAutoDetectAWSRegion := false
+	if qs.StorageClass == storageExpressOneZone {
+		if qs.Endpoint == "" {
+			return nil, errors.Errorf("must specify endpoint for S3 Express One Zone storage class")
+		}
+		if qs.Region == "" {
+			return nil, errors.Errorf("must specify region for S3 Express One Zone storage class")
+		}
+		awsConfig.WithS3DisableContentMD5Validation(true).
+			WithS3ForcePathStyle(false)
+	}
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
-		if s3ExpressEndpointRE.MatchString(qs.Endpoint) {
-			log.Info("found S3 Express One Zone endpoint", zap.String("endpoint", qs.Endpoint))
-			if qs.Region == "" {
-				return nil, errors.Errorf("must specify region for S3 Express One Zone endpoint")
-			}
-			awsConfig.
-				WithS3DisableContentMD5Validation(true).
-				WithS3ForcePathStyle(false)
-			skipAutoDetectAWSRegion = true
-		}
 	}
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
@@ -416,7 +415,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	c := s3.New(ses, s3CliConfigs...)
 
 	var region string
-	if (len(qs.Provider) == 0 || qs.Provider == "aws") && !skipAutoDetectAWSRegion {
+	if (len(qs.Provider) == 0 || qs.Provider == "aws") && qs.StorageClass != storageExpressOneZone {
 		confCred := ses.Config.Credentials
 		setCredOpt := func(req *request.Request) {
 			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.

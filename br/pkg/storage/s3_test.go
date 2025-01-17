@@ -1480,11 +1480,12 @@ func TestS3ExpressEndpoint(t *testing.T) {
 		Bucket:         "xxxxxxx-global-sort-test--use1-az6--x-s3",
 		Region:         "us-east-1",
 		ForcePathStyle: true,
+		StorageClass:   "express-one-zone",
 	}, &ExternalStorageOptions{})
 	require.NoError(t, err)
-	// if the endpoint is not S3 express, this function will fail because no network for auto adjust region.
+	// if storage class is not S3 express, this function will fail because no network for auto adjust region.
 	_, err = NewS3Storage(ctx, &backuppb.S3{
-		Endpoint:       "https://us-east-1.amazonaws.com",
+		Endpoint:       "https://s3express-use1-az6.us-east-1.amazonaws.com",
 		Bucket:         "xxxxxxx-global-sort-test--use1-az6--x-s3",
 		Region:         "us-east-1",
 		ForcePathStyle: true,
