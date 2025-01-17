@@ -204,9 +204,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
-			if p.SCtx().GetSessionVars().EnableCascadesPlanner {
-				// left the transformation to cascades.
-			} else {
+			if !p.SCtx().GetSessionVars().EnableCascadesPlanner {
 				// If the inner plan is non-correlated, the apply will be simplified to join.
 				join := &apply.LogicalJoin
 				join.SetSelf(join)
