@@ -572,7 +572,7 @@ SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 count(*)
 1
 drop table if exists t1;
-create table t1 (a int, b decimal(65,30));
+create table t1 (a int, b decimal(65,30), c int);
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
 id	estRows	task	access object	operator info
 TableReader	30.00	root		data:Selection
@@ -592,6 +592,16 @@ explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 
 id	estRows	task	access object	operator info
 TableReader	10.03	root		data:Selection
 └─Selection	10.03	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+id	estRows	task	access object	operator info
+TableReader	0.04	root		data:Selection
+└─Selection	0.04	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), and(eq(planner__core__casetest__predicate_simplification.t1.c, 1), eq(planner__core__casetest__predicate_simplification.t1.b, 1)))), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
+id	estRows	task	access object	operator info
+TableReader	20.48	root		data:Selection
+└─Selection	20.48	cop[tikv]		lt(plus(planner__core__casetest__predicate_simplification.t1.c, 1), 10), or(eq(planner__core__casetest__predicate_simplification.t1.c, 10), and(gt(plus(planner__core__casetest__predicate_simplification.t1.b, 1), 10), or(lt(plus(planner__core__casetest__predicate_simplification.t1.a, 1), 5), eq(planner__core__casetest__predicate_simplification.t1.a, 20)))), or(or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), eq(planner__core__casetest__predicate_simplification.t1.a, 2)), or(eq(planner__core__casetest__predicate_simplification.t1.a, 5), eq(planner__core__casetest__predicate_simplification.t1.b, 5)))
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
 id	estRows	task	access object	operator info

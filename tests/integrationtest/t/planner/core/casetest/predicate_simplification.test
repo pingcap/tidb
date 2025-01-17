@@ -285,11 +285,13 @@ SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 
 # Test removing redundant branches from OR list
 drop table if exists t1;
-create table t1 (a int, b decimal(65,30));
+create table t1 (a int, b decimal(65,30), c int);
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
 explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
 explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
 explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format=brief select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format=brief select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
 explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
 explain format=brief select * from t1 where (@a:=@a+1) or (@a:=@a+1);
 
