@@ -39,7 +39,7 @@ import (
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -153,9 +153,9 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
 
 	sch := schManager.MockScheduler(task)
-	ext, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
-	ext.(*ddl.BackfillingSchedulerExt).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
@@ -262,7 +262,7 @@ func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
-	ext := &ddl.BackfillingSchedulerExt{}
+	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
@@ -270,7 +270,7 @@ func TestGetNextStep(t *testing.T) {
 		task.Step = nextStep
 	}
 	// 2. global sort mode
-	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
+	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
