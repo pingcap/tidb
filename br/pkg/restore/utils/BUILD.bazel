@@ -15,6 +15,7 @@ go_library(
         "//br/pkg/rtree",
         "//pkg/meta/model",
         "//pkg/tablecodec",
+        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/redact",
         "@com_github_pingcap_errors//:errors",
