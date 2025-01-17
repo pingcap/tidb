@@ -85,6 +85,9 @@ type BetweenExpr struct {
 
 // Restore implements Node interface.
 func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain("(")
+	}
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
 	}
@@ -99,6 +102,9 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" AND ")
 	if err := n.Right.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
+	}
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain(")")
 	}
 	return nil
 }
@@ -175,6 +181,8 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain("(")
 	}
+	originalFlags := ctx.Flags
+	ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
 	}
@@ -184,6 +192,7 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	if err := n.R.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")
 	}
+	ctx.Flags = originalFlags
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
 	}
