@@ -111,6 +111,7 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionAlterTableMode         ActionType = 74
 )
 
 // ActionMap is the map of DDL ActionType to string.

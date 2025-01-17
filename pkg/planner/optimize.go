@@ -474,6 +474,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return nil, nil, 0, err
 	}
 
+	if err := core.CheckTableMode(is, builder.GetVisitInfo()); err != nil {
+		return nil, nil, 0, err
+	}
+
 	names := p.OutputNames()
 
 	// Handle the non-logical plan statement.

@@ -247,6 +247,24 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
+func CheckTableMode(is infoschema.InfoSchema, vs []visitInfo) error {
+	for i := range vs {
+		tb, err := is.TableByName(context.Background(), ast.NewCIStr(vs[i].db), ast.NewCIStr(vs[i].table))
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if tb.Meta().TableMode == model.TableModeImport {
+			return infoschema.ErrTableModeImport.GenWithStackByArgs(tb.Meta().Name.O)
+		} else if tb.Meta().TableMode == model.TableModeRestore {
+			return infoschema.ErrTableModeRestore.GenWithStackByArgs(tb.Meta().Name.O)
+		}
+	}
+	return nil
+}
+
 func checkStableResultMode(sctx base.PlanContext) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
