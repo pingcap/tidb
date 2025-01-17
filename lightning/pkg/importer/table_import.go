@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,7 +30,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -53,12 +54,27 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var memLimit int               // memory limit for parquet reader
+var memLimiter *membuf.Limiter // memory limiter for parquet reader
+
+func setMemoryLimitForParquet(percent int) {
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		// Set limit to int max, which means no limiter
+		memTotal = math.MaxInt32
+	}
+	memLimit = int(memTotal) * min(percent, 90) / 100
+	memLimiter = membuf.NewLimiter(memLimit)
+	mydump.InitializeGlobalArena(memLimit)
+}
 
 // TableImporter is a helper struct to import a table.
 type TableImporter struct {
@@ -777,6 +793,42 @@ ChunkLoop:
 			setError(err)
 			break
 		}
+
+		var memoryUsage int
+		// Limit the concurrency of parquet reader using estimated memory usage.
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			arenaSize := mydump.GetArenaSize()
+
+			memQuota := memLimit / rc.cfg.App.RegionConcurrency / arenaSize * arenaSize
+			if memQuota > chunk.FileMeta.ParquetMeta.MemoryUsageFull {
+				memoryUsage = chunk.FileMeta.ParquetMeta.MemoryUsageFull
+				chunk.FileMeta.ParquetMeta.UseStreaming = false
+			} else {
+				memoryUsage = chunk.FileMeta.ParquetMeta.MemoryUsage
+				chunk.FileMeta.ParquetMeta.UseStreaming = true
+			}
+			chunk.FileMeta.ParquetMeta.UseSampleAllocator = false
+
+			// If memory usage is larger than memory limit, set memory usage
+			// to limit to block other file import.
+			if memoryUsage > memLimit {
+				tr.logger.Warn("Memory usage larger than limit",
+					zap.String("file", chunk.FileMeta.Path),
+					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+					zap.Bool("streaming mode", chunk.FileMeta.ParquetMeta.UseStreaming),
+				)
+				memoryUsage = memLimit
+			} else {
+				tr.logger.Info("Get memory limit",
+					zap.String("file", chunk.FileMeta.Path),
+					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+					zap.Bool("streaming mode", chunk.FileMeta.ParquetMeta.UseStreaming),
+				)
+			}
+		}
+
 		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
@@ -784,10 +836,9 @@ ChunkLoop:
 		}
 
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
+			memLimiter.Acquire(memoryUsage)
+			cr.memLimiter = memLimiter
+			cr.memoryUsage = memoryUsage
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()
@@ -1194,42 +1245,6 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
-}
-
-func getChunkCompressedSizeForParquet(
-	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
-	store storage.ExternalStorage,
-) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-	if err != nil {
-		_ = reader.Close()
-		return 0, errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer parser.Close()
-	err = parser.Reader.ReadFooter()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rowGroups := parser.Reader.Footer.GetRowGroups()
-	var maxRowGroupSize int64
-	for _, rowGroup := range rowGroups {
-		var rowGroupSize int64
-		columnChunks := rowGroup.GetColumns()
-		for _, columnChunk := range columnChunks {
-			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
-			rowGroupSize += columnChunkSize
-		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
-	}
-	return maxRowGroupSize, nil
 }
 
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {

@@ -546,6 +546,8 @@ func (rc *Controller) Close() {
 func (rc *Controller) Run(ctx context.Context) error {
 	failpoint.Inject("beforeRun", func() {})
 
+	setMemoryLimitForParquet(rc.cfg.App.MaxMemoryUsage)
+
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
@@ -1540,6 +1542,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		return err
 	default:
 	}
+
+	// All tables are read, we can free memory used for parquet.
+	logTask.Info("Read table done, free memory and call GC")
+	mydump.FreeMemory()
 
 	postProgress = func() error {
 		close(postProcessTaskChan)
