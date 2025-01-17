@@ -46,31 +46,56 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackfillingSchedulerExt is an extension of litBackfillScheduler, exported for test.
-type BackfillingSchedulerExt struct {
+// LitBackfillScheduler wraps BaseScheduler.
+type LitBackfillScheduler struct {
+	*scheduler.BaseScheduler
 	d          *ddl
 	GlobalSort bool
 }
 
-// NewBackfillingSchedulerExt creates a new backfillingSchedulerExt, only used for test now.
-func NewBackfillingSchedulerExt(d DDL) (scheduler.Extension, error) {
+var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
+
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+	sch := LitBackfillScheduler{
+		d:             d,
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+	}
+	return &sch
+}
+
+// NewBackfillingSchedulerForTest creates a new backfillingSchedulerExt, only used for test now.
+func NewBackfillingSchedulerForTest(d DDL) (scheduler.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &BackfillingSchedulerExt{
+	return &LitBackfillScheduler{
 		d: ddl,
 	}, nil
 }
 
-var _ scheduler.Extension = (*BackfillingSchedulerExt)(nil)
+// Init implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Init() (err error) {
+	taskMeta := &BackfillTaskMeta{}
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	sch.GlobalSort = len(taskMeta.CloudStorageURI) > 0
+	sch.BaseScheduler.Extension = sch
+	return sch.BaseScheduler.Init()
+}
+
+// Close implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Close() {
+	sch.BaseScheduler.Close()
+}
 
 // OnTick implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
+func (*LitBackfillScheduler) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextSubtasksBatch generate batch of next step's plan.
-func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
+func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
@@ -129,7 +154,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
+func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.BackfillStepReadIndex
@@ -155,49 +180,18 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
+func (*LitBackfillScheduler) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
+func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
 	return nil, nil
 }
 
 // IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
-func (*BackfillingSchedulerExt) IsRetryableErr(error) bool {
+func (*LitBackfillScheduler) IsRetryableErr(error) bool {
 	return true
-}
-
-// LitBackfillScheduler wraps BaseScheduler.
-type LitBackfillScheduler struct {
-	*scheduler.BaseScheduler
-	d *ddl
-}
-
-func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-	sch := LitBackfillScheduler{
-		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
-	}
-	return &sch
-}
-
-// Init implements BaseScheduler interface.
-func (sch *LitBackfillScheduler) Init() (err error) {
-	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
-		return errors.Annotate(err, "unmarshal task meta failed")
-	}
-	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
-		d:          sch.d,
-		GlobalSort: len(taskMeta.CloudStorageURI) > 0}
-	return sch.BaseScheduler.Init()
-}
-
-// Close implements BaseScheduler interface.
-func (sch *LitBackfillScheduler) Close() {
-	sch.BaseScheduler.Close()
 }
 
 func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
