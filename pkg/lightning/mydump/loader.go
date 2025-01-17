@@ -922,7 +922,7 @@ func SampleParquetFileProperty(
 	}
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
-	memoryUsage, memoryUsageFull = parser.GetMemoryUage()
+	memoryUsage, memoryUsageFull = parser.GetMemoryUsage()
 
 	return avgRowSize, memoryUsage, memoryUsageFull, nil
 }

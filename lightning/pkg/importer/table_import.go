@@ -73,7 +73,7 @@ func setMemoryLimitForParquet(percent int) {
 	}
 	memLimit = int(memTotal) * min(percent, 90) / 100
 	memLimiter = membuf.NewLimiter(memLimit)
-	mydump.SetMaxMemoryUsage(memLimit)
+	mydump.InitializeGlobalArena(memLimit)
 }
 
 // TableImporter is a helper struct to import a table.
@@ -109,7 +109,7 @@ func NewTableImporter(
 	logger log.Logger,
 ) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocatorsWithBase(tableInfo.Core.SepAutoInc(), cp.AutoRandBase, cp.AutoIncrBase, cp.AutoRowIDBase)
-	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
+	tbl, err := tables.TableLightningFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
@@ -800,13 +800,11 @@ ChunkLoop:
 			arenaSize := mydump.GetArenaSize()
 
 			memQuota := memLimit / rc.cfg.App.RegionConcurrency / arenaSize * arenaSize
-			memoryUsageFull := (chunk.FileMeta.ParquetMeta.MemoryUsageFull + arenaSize - 1) / arenaSize * arenaSize
-			if memQuota > memoryUsageFull {
-				memoryUsage = memoryUsageFull
+			if memQuota > chunk.FileMeta.ParquetMeta.MemoryUsageFull {
+				memoryUsage = chunk.FileMeta.ParquetMeta.MemoryUsageFull
 				chunk.FileMeta.ParquetMeta.UseStreaming = false
 			} else {
 				memoryUsage = chunk.FileMeta.ParquetMeta.MemoryUsage
-				memoryUsage = (memoryUsage + arenaSize - 1) / arenaSize * arenaSize
 				chunk.FileMeta.ParquetMeta.UseStreaming = true
 			}
 			chunk.FileMeta.ParquetMeta.UseSampleAllocator = false

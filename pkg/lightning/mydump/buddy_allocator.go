@@ -18,7 +18,21 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
+
+const leafSize = 256 << 10 // The smallest block size is 256KB
+
+func buddyGetAllocationSize(size int) int {
+	return int(mathutil.NextPowerOfTwo(int64(size)))
+}
+
+func getBuddyAllocator(size int) arena {
+	a := &buddyAllocator{}
+	a.init(size)
+	return a
+}
 
 func roundUp(n, sz int) int {
 	return (n + sz - 1) / sz * sz
@@ -193,7 +207,7 @@ func (b *buddyAllocator) allocate(nbytes int) []byte {
 
 	buf := b.buffer[offset : offset+nbytes]
 	b.allocatedBytes.Add(int64(blkSize(l)))
-	addr := unsafeGetblkAddr(buf)
+	addr := addressOf(buf)
 	if off, ok := b.allocatedBuf[addr]; ok {
 		fmt.Println("duplicated allocation", addr, offset, off)
 		panic("duplicated allocation")
@@ -213,7 +227,7 @@ func (b *buddyAllocator) free(bs []byte) {
 		bs = bs[:1]
 	}
 
-	addr := unsafeGetblkAddr(bs)
+	addr := addressOf(bs)
 	offset, ok := b.allocatedBuf[addr]
 	if !ok {
 		return

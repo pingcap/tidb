@@ -239,6 +239,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 	}
 
 	if common.TableHasAutoRowID(kvcodec.table.Meta()) {
+		var value types.Datum
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {

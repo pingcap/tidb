@@ -364,7 +364,7 @@ type ParquetParser struct {
 }
 
 // GetMemoryUage estimate the memory usage for this file.
-func (pp *ParquetParser) GetMemoryUage() (int, int) {
+func (pp *ParquetParser) GetMemoryUsage() (int, int) {
 	// Initialize column reader
 	if pp.dumpers[0].reader == nil {
 		pp.ReadRow()
@@ -386,44 +386,47 @@ func (pp *ParquetParser) GetMemoryUage() (int, int) {
 	}
 	bufSizes := alloc.allocated
 
-	// We have collected all the allocation for one column chunk.
-	// The allocation order are:
-	// read buffer, decompressed dict buffer, compressed buffer, decompressed data page buffer, compressed data page buffer...
-	// and compressed buffer is released after decompression.
-	// So we estimate the memory usage as:
-	// (roundToPower2(decompressed dict buffer) + roundToPower2(decompressed data page buffer) + roundToPower2(read buffer) + roundToPower2(parquet read buffer)) * num_cols
+	/*
+	 * We have collected all the allocations, and the allocation order are:
+	 * read buffer(repeat n times), decompressed dict buffer, compressed buffer, decompressed data page buffer, compressed data page buffer, ...
+	 * since the compressed buffer is released after decompression, we estimate the memory usage as:
+	 * (AllocSize(decompressed dict buffer) + AllocSize(decompressed data page buffer) + AllocSize(read buffer) + AllocSize(parquet read buffer)) * num_cols
+	 */
 
+	numColumns := len(pp.columnNames)
 	dictUsage := 0
 	dataPageUsage := 0
-	readBufferUsage := roundToPower2(bufSizes[0]) + roundToPower2(defaultBufSize)
+	readBufferUsageStream := (AllocSize(bufSizes[0]) + AllocSize(defaultBufSize)) * numColumns
 
-	readBufferUsageTotal := 0
+	readBufferUsageNonStream := 0
 	meta := pp.readers[0].MetaData()
 	for _, rg := range meta.RowGroups {
 		currUsage := 0
 		for _, c := range rg.Columns {
-			currUsage += roundToPower2(int(c.MetaData.GetTotalCompressedSize()))
+			currUsage += AllocSize(int(c.MetaData.GetTotalCompressedSize()))
 		}
-		readBufferUsageTotal = max(readBufferUsageTotal, currUsage)
+		readBufferUsageNonStream = max(readBufferUsageNonStream, currUsage)
 	}
-	readBufferUsageTotal += roundToPower2(defaultBufSize) * len(pp.columnNames)
+	readBufferUsageNonStream += AllocSize(defaultBufSize) * len(pp.columnNames)
 
-	if len(bufSizes) == 3 {
-		dataPageUsage = roundToPower2(bufSizes[1])
-	} else {
-		dictUsage = roundToPower2(bufSizes[1])
-		for i := 3; i < len(bufSizes); i += 2 {
-			dataPageUsage = max(bufSizes[i], dataPageUsage)
-		}
-		dataPageUsage = roundToPower2(dataPageUsage)
+	for i := numColumns; i < 5*numColumns; i += 4 {
+		dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
+		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
 	}
-	return (dataPageUsage + dictUsage + readBufferUsage) * len(pp.columnNames), (dataPageUsage+dictUsage)*len(pp.columnNames) + readBufferUsageTotal
+	for i := 5 * numColumns; i < len(bufSizes); i += 2 {
+		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+	}
+
+	pageUsage := (dataPageUsage + dictUsage) * numColumns
+
+	return roundUp(pageUsage+readBufferUsageStream, defaultArenaSize),
+		roundUp(pageUsage+readBufferUsageNonStream, defaultArenaSize)
 }
 
 func (pp *ParquetParser) setStringData(readNum, col, offset int) {
 	buf, _ := pp.dumpers[col].valueBuffer.([]parquet.ByteArray)
 	for i := 0; i < readNum; i++ {
-		pp.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
+		pp.rows[offset+i][col].SetBytesAsString(buf[i], "utf8mb4_bin", uint32(len(buf[i])))
 	}
 }
 
@@ -764,6 +767,10 @@ func (pp *ParquetParser) Close() error {
 			return errors.Trace(err)
 		}
 	}
+
+	if a, ok := pp.alloc.(interface{ Close() }); ok {
+		a.Close()
+	}
 	return nil
 }
 
@@ -987,17 +994,6 @@ func (sa *sampleAllocator) Free(buf []byte) {}
 func (sa *sampleAllocator) Reallocate(size int, buf []byte) []byte {
 	sa.allocated = append(sa.allocated, size)
 	return make([]byte, size)
-}
-
-func roundToPower2(n int) int {
-	v := uint(n)
-	v--
-	v |= v >> 1
-	v |= v >> 2
-	v |= v >> 4
-	v |= v >> 8
-	v |= v >> 16
-	return max(int(v+1), 256<<10)
 }
 
 // NewParquetParserWithMeta generates a parquet parser.

@@ -29,25 +29,47 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
+
+/*
+ * There are two usage modes for the memory allocation:
+ * 1. Call `GetDefaultAllocator` directly to get an allocator.
+ * 2. Call `InitializeGlobalArena` to initialize the global arena pool,
+ *    so the arena allocated in this node can be reused by subsequent allocation.
+ *    User should remember to call `FreeMemory` after the execution is completed.
+ */
 
 var (
 	maxArenaCount    = 0         // maximum arena count
-	arenaDefaultSize = 512 << 20 // size of each arena
-	leafSize         = 256 << 10 // The smallest block size is 256KB
+	defaultArenaSize = 256 << 20 // size of each arena
+
+	// AllocSize returns actual allocated size in arena
+	AllocSize func(int) int
+
+	// GetArena creates a new arena
+	GetArena func(int) arena
 )
 
-// SetMaxMemoryUsage set the memory used by parquet reader.
-func SetMaxMemoryUsage(size int) {
-	maxArenaCount = size / arenaDefaultSize
+func init() {
+	AllocSize = simpleGetAllocationSize
+	GetArena = getSimpleAllocator
+}
+
+// Get the address of a buffer, return 0 if the buffer is nil
+func addressOf(buf []byte) uintptr {
+	if buf == nil || cap(buf) == 0 {
+		return 0
+	}
+	buf = buf[:1]
+	return uintptr(unsafe.Pointer(&buf[0]))
 }
 
 // GetArenaSize return the default arena size
 func GetArenaSize() int {
-	return arenaDefaultSize
+	return defaultArenaSize
 }
 
+// arena is the interface of single allocator
 type arena interface {
 	allocate(size int) []byte
 	free(bs []byte)
@@ -56,62 +78,21 @@ type arena interface {
 	freeAll()
 }
 
-// Convert slice to an uintptr. This value is used as key in map.
-func unsafeGetblkAddr(slice []byte) uintptr {
-	return uintptr(unsafe.Pointer(&slice[0]))
-}
-
-var (
-	arenas    []atomic.Value
-	numArenas atomic.Int32
+type globalArenaPool struct {
+	arenas    chan arena
+	allocated int
 	lock      sync.Mutex
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	allocatedOutside    atomic.Int64
-	allocatedOutsideNum atomic.Int64
-)
-
-func initArenas() {
-	arenas = make([]atomic.Value, maxArenaCount)
-	initNum := min(8, maxArenaCount)
-	for i := 0; i < initNum; i++ {
-		a := &buddyAllocator{}
-		a.init(arenaDefaultSize)
-		arenas[i].Store(a)
-	}
-	numArenas.Store(int32(initNum))
-
-	ctx, cancel = context.WithCancel(context.Background())
-	go getStatus()
 }
 
-func freeArenas() {
-	cancel()
-	for i := 0; i < len(arenas); i++ {
-		if v := arenas[i].Load(); v != nil {
-			a := v.(arena)
-			a.freeAll()
-			a.reset()
-			a = nil
-			// store an empty buddyAllocator to release the memory
-			arenas[i].Store(&buddyAllocator{})
-		}
-	}
-	numArenas.Store(0)
-	arenas = nil
-}
-
-func adjustGCPercent() {
+func (ga *globalArenaPool) adjustGCPercent() {
 	gogc := os.Getenv("GOGC")
 	memTotal, err := tidbmemory.MemTotal()
 	if gogc == "" && err == nil {
-		if numArenas.Load() == 0 {
+		if ga.allocated == 0 {
 			debug.SetGCPercent(100)
 			return
 		}
-		percent := int(memTotal)*90/(int(numArenas.Load())*arenaDefaultSize) - 100
+		percent := int(memTotal)*90/(ga.allocated*defaultArenaSize) - 100
 		percent = min(percent, 100) / 10 * 10
 		percent = max(percent, 5)
 
@@ -121,101 +102,138 @@ func adjustGCPercent() {
 			zap.Int("old", old),
 			zap.Int("new", percent),
 			zap.Int("total memory", int(memTotal)),
-			zap.Int("allocated memory", int(numArenas.Load())*arenaDefaultSize),
+			zap.Int("allocated memory", ga.allocated*defaultArenaSize),
 		)
 	}
 }
 
-type defaultAllocator struct {
-	allocatedBuf sync.Map
-}
-
-func (alloc *defaultAllocator) Init(_ int) {
-
-}
-
-func getStatus() {
-	tick := time.NewTicker(2 * time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-tick.C:
-			l := int(numArenas.Load())
-			var totalAllocated int64
-			for i := 0; i < l; i++ {
-				if a := arenas[i].Load().(arena); a != nil {
-					totalAllocated += a.allocated()
-				}
-			}
-
-			fmt.Printf("[buddyAllocator] Inside the allocator: %d MiB, outside the allocator: %d MiB(%d blocks)\n",
-				int(totalAllocated)/1024/1024,
-				int(allocatedOutsideNum.Load()),
-				int(allocatedOutside.Load())/1024/1024,
-			)
-		case <-ctx.Done():
-			return
-		}
+func (ga *globalArenaPool) get() arena {
+	// First try to get cached arena
+	select {
+	case a := <-ga.arenas:
+		return a
+	default:
 	}
+
+	ga.lock.Lock()
+	defer ga.lock.Unlock()
+
+	// Create a new one and return
+	if ga.allocated < maxArenaCount {
+		ga.allocated++
+		bd := GetArena(defaultArenaSize)
+		ga.adjustGCPercent()
+		return bd
+	}
+
+	// We can't create new arena, return nil
+	return nil
+}
+
+func (ga *globalArenaPool) put(a arena) {
+	ga.lock.Lock()
+	defer ga.lock.Unlock()
+
+	// discard it if necessary
+	if ga.allocated > maxArenaCount {
+		a.freeAll()
+		a.reset()
+		ga.adjustGCPercent()
+		return
+	}
+
+	ga.arenas <- a
+}
+
+func (ga *globalArenaPool) free() {
+	ga.lock.Lock()
+	defer ga.lock.Unlock()
+
+	ga.allocated = 0
+	for len(ga.arenas) > 0 {
+		a := <-ga.arenas
+		a.freeAll()
+		a.reset()
+	}
+	ga.adjustGCPercent()
+}
+
+var globalPool *globalArenaPool
+
+type defaultAllocator struct {
+	arenas       []arena
+	allocatedBuf map[uintptr]int
+
+	allocatedOutside    atomic.Int64
+	allocatedOutsideNum atomic.Int64
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func (alloc *defaultAllocator) init() {
+	alloc.allocatedBuf = make(map[uintptr]int, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	alloc.wg.Add(1)
+	go func() {
+		defer alloc.wg.Done()
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+
+				num := 0
+				for _, a := range alloc.arenas {
+					num += int(a.allocated())
+				}
+
+				fmt.Printf("[Allocator] num arenas = %d, num blocks = %d, outside the allocator: %d MiB(%d blocks)\n",
+					len(alloc.arenas), num,
+					int(alloc.allocatedOutsideNum.Load()),
+					int(alloc.allocatedOutside.Load())/1024/1024,
+				)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	alloc.cancel = cancel
 }
 
 func (alloc *defaultAllocator) Allocate(size int) []byte {
-START:
-	// start from a random arena to avoid contention
-	l := int(numArenas.Load())
-	idx := rand.Intn(l)
-	for i := 0; i < l; i++ {
-		a := arenas[idx].Load().(arena)
+	for i, a := range alloc.arenas {
 		if buf := a.allocate(size); buf != nil {
-			alloc.allocatedBuf.Store(unsafeGetblkAddr(buf), idx)
+			alloc.allocatedBuf[addressOf(buf)] = i
 			return buf
 		}
-		idx = (idx + 1) % l
 	}
 
-	// Can't create new arena, use make to allocate memory
-	if l == maxArenaCount {
-		allocatedOutside.Add(int64(size))
-		allocatedOutsideNum.Add(1)
-		return make([]byte, size)
-	}
-
-	// Create some new arenas, if someone else has created the arena, just use it.
-	lock.Lock()
-	defer lock.Unlock()
-	for i := 0; i < min(maxArenaCount-l, 2); i++ {
-		if arenas[l+i].Load() == nil {
-			a := &buddyAllocator{}
-			a.init(arenaDefaultSize)
-			arenas[l+i].Store(a)
-			numArenas.Add(1)
+	// If global pool is initialized, get arena from the pool.
+	// Otherwise, we just create a new one.
+	var na arena
+	if globalPool != nil {
+		if na = globalPool.get(); na == nil {
+			return make([]byte, size)
 		}
-	}
-	adjustGCPercent()
-
-	idx = int(numArenas.Load()) - 1
-	a := arenas[idx].Load().(arena)
-	if buf := a.allocate(size); buf != nil {
-		alloc.allocatedBuf.Store(unsafeGetblkAddr(buf), idx)
-		return buf
+	} else {
+		na = GetArena(defaultArenaSize)
 	}
 
-	// This should rarely happen, goto START to try again
-	goto START
+	buf := na.allocate(size)
+	alloc.allocatedBuf[addressOf(buf)] = len(alloc.arenas)
+	alloc.arenas = append(alloc.arenas, na)
+	return buf
 }
 
 func (alloc *defaultAllocator) Free(buf []byte) {
-	if buf == nil || cap(buf) == 0 {
-		return
+	addr := addressOf(buf[:1])
+	if arenaID, ok := alloc.allocatedBuf[addr]; ok {
+		alloc.arenas[arenaID].free(buf)
+		delete(alloc.allocatedBuf, addr)
 	}
-	addr := unsafeGetblkAddr(buf[:1])
-	arenaID, ok := alloc.allocatedBuf.Load(addr)
-	if !ok {
-		return
-	}
-
-	arenas[arenaID.(int)].Load().(arena).free(buf)
-	alloc.allocatedBuf.Delete(addr)
 }
 
 func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
@@ -223,17 +241,40 @@ func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
 	return alloc.Allocate(size)
 }
 
-var once sync.Once
+func (alloc *defaultAllocator) Close() {
+	alloc.cancel()
+	alloc.wg.Wait()
+
+	// If global pool is initialized, return allocated arena to the pool.
+	if globalPool != nil {
+		for _, a := range alloc.arenas {
+			a.freeAll()
+			a.reset()
+			globalPool.put(a)
+		}
+	}
+
+	alloc.arenas = nil
+}
 
 // GetDefaultAllocator get a default allocator
 func GetDefaultAllocator() memory.Allocator {
-	once.Do(func() {
-		initArenas()
-	})
-	return &defaultAllocator{}
+	a := &defaultAllocator{}
+	a.init()
+	return a
+}
+
+// InitializeGlobalArena initialize a global arena pool.
+// If you call this function, remember to call FreeMemory.
+func InitializeGlobalArena(size int) {
+	maxArenaCount = size / defaultArenaSize
+	globalPool = &globalArenaPool{}
+	globalPool.arenas = make(chan arena, maxArenaCount)
 }
 
 // FreeMemory free all the memory allocated for arenas.
 func FreeMemory() {
-	freeArenas()
+	if globalPool != nil {
+		globalPool.free()
+	}
 }
