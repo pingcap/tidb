@@ -16,7 +16,6 @@ package constraint
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
@@ -44,17 +43,19 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 
 // IsConstFalse is used to check whether the expression is a constant false expression.
 func IsConstFalse(ctx expression.BuildContext, expr expression.Expression) bool {
-	return false
-	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
-		ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
-	}
-	if e, ok := expr.(*expression.ScalarFunction); ok {
-		switch e.FuncName.L {
-		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
-			if constExpr, ok := e.GetArgs()[1].(*expression.Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
-				return true
+	/*
+		if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
+			ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
+		}
+		if e, ok := expr.(*expression.ScalarFunction); ok {
+			switch e.FuncName.L {
+			case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+				if constExpr, ok := e.GetArgs()[1].(*expression.Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+					return true
+				}
 			}
 		}
-	}
+		return false
+	*/
 	return false
 }
