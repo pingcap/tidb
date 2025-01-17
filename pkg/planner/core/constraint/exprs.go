@@ -44,6 +44,7 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 
 // IsConstFalse is used to check whether the expression is a constant false expression.
 func IsConstFalse(ctx expression.BuildContext, expr expression.Expression) bool {
+	return false
 	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
 		ctx.SetSkipPlanCache("some parameters may be overwritten when constant propagation")
 	}

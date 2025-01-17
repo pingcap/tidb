@@ -159,6 +159,26 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 	return expr, isDeferredConst
 }
 
+// isConstFalse is used to check whether the expression is a constant false expression.
+func isConstFalse(expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			args := e.GetArgs()
+			if len(args) != 2 {
+				return false
+			}
+			if _, ok := args[1].(*Column); !ok {
+				return false
+			}
+			if constExpr, ok := args[1].(*Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
@@ -171,6 +191,9 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 			return function(ctx, x)
+		}
+		if isConstFalse(expr) {
+			return NewZero(), false
 		}
 
 		args := x.GetArgs()
