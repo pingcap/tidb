@@ -19,6 +19,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 )
 
@@ -133,7 +134,11 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 	//         log file [ ..  ..  ..  .. ]
 	//
 	for _, compaction := range mig.Compactions {
-		if compaction.CompactionUntilTs < builder.shiftStartTS || compaction.CompactionFromTs > builder.restoredTS {
+		// Some old compaction may not contain input min / max ts.
+		// In that case, we should never filter it out.
+		rangeValid := compaction.InputMinTs != 0 && compaction.InputMaxTs != 0
+		outOfRange := compaction.InputMaxTs < builder.shiftStartTS || compaction.InputMinTs > builder.restoredTS
+		if rangeValid && outOfRange {
 			return true
 		}
 	}
@@ -144,6 +149,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
 	compactionDirs := make([]string, 0, 8)
+	fullBackups := make([]string, 0, 8)
 
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
@@ -155,10 +161,15 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 		for _, c := range mig.Compactions {
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
+
+		fullBackups = append(fullBackups, mig.IngestedSstPaths...)
 	}
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
 		compactionDirs: compactionDirs,
+		fullBackups:    fullBackups,
+		restoredTS:     builder.restoredTS,
+		startTS:        builder.startTS,
 	}
 	return withMigrations
 }
@@ -210,6 +221,9 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 type WithMigrations struct {
 	skipmap        metaSkipMap
 	compactionDirs []string
+	fullBackups    []string
+	restoredTS     uint64
+	startTS        uint64
 }
 
 func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -236,5 +250,20 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.
 		return Subcompactions(ctx, name, s)
+	})
+}
+
+func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
+	filteredOut := iter.FilterOut(stream.LoadIngestedSSTs(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
+		gts := ebk.GroupTS()
+		// Note: if a backup happens during restoring, though its `backupts` is less than the ingested ssts' groupts,
+		// it is still possible that it backed the restored stuffs up.
+		// When combining with PiTR, those contents may be restored twice. But it seems harmless for now.
+		return !ebk.GroupFinished() || gts < wm.startTS || gts > wm.restoredTS
+	})
+	return iter.FlatMap(filteredOut, func(ebk stream.IngestedSSTsGroup) iter.TryNextor[*backuppb.IngestedSSTs] {
+		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedIngestedSSTs) *backuppb.IngestedSSTs {
+			return p.IngestedSSTs
+		})
 	})
 }

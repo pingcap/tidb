@@ -15,10 +15,7 @@
 package join
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -369,100 +365,4 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 type probeChkResource struct {
 	chk  *chunk.Chunk
 	dest chan<- *chunk.Chunk
-}
-
-type hashJoinRuntimeStats struct {
-	fetchAndBuildStartTime time.Time
-	fetchAndBuildHashTable time.Duration
-	hashStat               hashStatistic
-	fetchAndProbe          int64
-	probe                  int64
-	concurrent             int
-	maxFetchAndProbe       int64
-}
-
-func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
-	for {
-		value := atomic.LoadInt64(&e.maxFetchAndProbe)
-		if t <= value {
-			return
-		}
-		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
-			return
-		}
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (*hashJoinRuntimeStats) Tp() int {
-	return execdetails.TpHashJoinRuntimeStats
-}
-
-func (e *hashJoinRuntimeStats) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0, 128))
-	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
-		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable - e.hashStat.buildTableElapse))
-		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
-		buf.WriteString("}")
-	}
-	if e.probe > 0 {
-		buf.WriteString(", probe:{concurrency:")
-		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
-		buf.WriteString(", max:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
-		buf.WriteString(", probe:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
-		// fetch time is the time wait fetch result from its child executor,
-		// wait time is the time wait its parent executor to fetch the joined result
-		buf.WriteString(", fetch and wait:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
-		if e.hashStat.probeCollision > 0 {
-			buf.WriteString(", probe_collision:")
-			buf.WriteString(strconv.FormatInt(e.hashStat.probeCollision, 10))
-		}
-		buf.WriteString("}")
-	}
-	return buf.String()
-}
-
-func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
-	return &hashJoinRuntimeStats{
-		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
-		hashStat:               e.hashStat,
-		fetchAndProbe:          e.fetchAndProbe,
-		probe:                  e.probe,
-		concurrent:             e.concurrent,
-		maxFetchAndProbe:       e.maxFetchAndProbe,
-	}
-}
-
-func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
-	tmp, ok := rs.(*hashJoinRuntimeStats)
-	if !ok {
-		return
-	}
-	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
-	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
-	e.hashStat.probeCollision += tmp.hashStat.probeCollision
-	e.fetchAndProbe += tmp.fetchAndProbe
-	e.probe += tmp.probe
-	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
-		e.maxFetchAndProbe = tmp.maxFetchAndProbe
-	}
-}
-
-type hashStatistic struct {
-	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
-	probeCollision   int64
-	buildTableElapse time.Duration
-}
-
-func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }

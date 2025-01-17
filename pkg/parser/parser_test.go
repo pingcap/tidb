@@ -473,7 +473,7 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
-		{"recommend index show", true, "RECOMMEND INDEX SHOW"},
+		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
 		{"recommend index set A = 1", true, "RECOMMEND INDEX SET A = 1"},

@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.23.4
+go 1.23.5
 
 require (
 	cloud.google.com/go/kms v1.15.7
@@ -50,7 +50,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20241223200906-057b0627d9b9
-	github.com/golangci/golangci-lint v1.63.3
+	github.com/golangci/golangci-lint v1.63.4
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.6.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -87,7 +87,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20241120071417-b5b7843d9037
+	github.com/pingcap/kvproto v0.0.0-20250108041715-3b77f2c65c63
 	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -109,7 +109,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.3.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20241225040645-f2266d6bf259
+	github.com/tikv/client-go/v2 v2.0.8-0.20250107062519-2eba2f614b38
 	github.com/tikv/pd/client v0.0.0-20250107032658-5c4ab57d68de
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
 	github.com/twmb/murmur3 v1.1.6
@@ -132,14 +132,14 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.33.0
+	golang.org/x/net v0.34.0
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sync v0.10.0
-	golang.org/x/sys v0.28.0
-	golang.org/x/term v0.27.0
+	golang.org/x/sys v0.29.0
+	golang.org/x/term v0.28.0
 	golang.org/x/text v0.21.0
 	golang.org/x/time v0.7.0
-	golang.org/x/tools v0.28.0
+	golang.org/x/tools v0.29.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
@@ -301,7 +301,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/crypto v0.32.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20241108190413-2d47ceb2692f // indirect
 	golang.org/x/mod v0.22.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect

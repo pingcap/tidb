@@ -77,7 +77,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdHttp "github.com/tikv/pd/client/http"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -285,6 +284,11 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	}
 
 	switch col.GetType() {
+	case mysql.TypeTiDBVectorFloat32:
+		// Vector Index does not actually create KV index, so it has length of 0.
+		// however 0 may cause some issues in other calculations, so we use 1 here.
+		// 1 is also minimal enough anyway.
+		return 1, nil
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
@@ -1110,9 +1114,6 @@ SwitchIndexState:
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
 		logutil.DDLLogger().Info("run add index job done",
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
@@ -1285,14 +1286,12 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-		if err != nil {
+		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
+			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 			return model.ReorgTypeNone, err
 		}
-		if available {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
-		}
+		job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+		return model.ReorgTypeLitMerge, nil
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
@@ -1391,9 +1390,6 @@ func doReorgWorkForCreateIndex(
 			zap.String("index", allIndexInfos[0].Name.O))
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateMerging
-		}
-		if reorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
@@ -2399,9 +2395,7 @@ func (w *worker) addTableIndex(
 			if err != nil {
 				return err
 			}
-			//nolint:forcetypeassert
-			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
+			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
 	}
 
@@ -2444,15 +2438,8 @@ func (w *worker) addTableIndex(
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, discovery sd.ServiceDiscovery) error {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
 	var bc ingest.BackendCtx
-	var err error
-	defer func() {
-		if bc != nil {
-			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
-		}
-	}()
-
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
@@ -2461,11 +2448,14 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS)
+				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+					ForDuplicateCheck().
+					Build()
 				if err != nil {
 					return err
 				}
+				//nolint:revive,all_revive
+				defer bc.Close()
 			}
 			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			if err != nil {
@@ -2930,6 +2920,9 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
+		if index.Meta().IsTiFlashLocalIndex() {
+			continue
+		}
 		if index.Meta().Global {
 			indexes = append(indexes, index)
 		}

@@ -61,6 +61,7 @@ go_test(
         "del_test.go",
         "job_manager_integration_test.go",
         "job_manager_test.go",
+        "scan_integration_test.go",
         "scan_test.go",
         "session_integration_test.go",
         "session_test.go",
