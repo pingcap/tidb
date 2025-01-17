@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:ddl/column_change_test.go
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
@@ -36,6 +37,21 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+=======
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,10 +64,14 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
 
+<<<<<<< HEAD:ddl/column_change_test.go
 	d := dom.DDL()
 	tc := &callback.TestDDLCallback{Do: dom}
 
 	ct := testNewContext(store)
+=======
+	ct := testNewContext(t, store)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	// set up hook
 	var (
 		deleteOnlyTable table.Table
@@ -129,8 +149,14 @@ func TestColumnAdd(t *testing.T) {
 			} else {
 				return
 			}
+<<<<<<< HEAD:ddl/column_change_test.go
 			sess := testNewContext(store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
+=======
+			first = false
+			sess := testNewContext(t, store)
+			txn, err := newTxn(sess)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess, types.MakeDatums(10, 10))
 			require.NoError(t, err)
@@ -225,7 +251,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/column_change_test.go
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -263,7 +297,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/column_change_test.go
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -280,7 +322,15 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/column_change_test.go
 	err = sessiontxn.NewTxn(context.Background(), ctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = newTxn(ctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -310,7 +360,15 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/column_change_test.go
 	err = sessiontxn.NewTxn(ctx, sctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = newTxn(sctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -327,7 +385,15 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/column_change_test.go
 	err = sessiontxn.NewTxn(ctx, sctx)
+=======
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = newTxn(sctx)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/column_change_test.go
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -433,10 +499,8 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(store kv.Storage) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = store
-	return ctx
+func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
+	return testkit.NewSession(t, store)
 }
 
 func TestIssue40150(t *testing.T) {
