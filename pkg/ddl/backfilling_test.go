@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -62,17 +63,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
-	originMgr := ingest.LitBackCtxMgr
-	originInit := ingest.LitInitialized
-	defer func() {
-		ingest.LitBackCtxMgr = originMgr
-		ingest.LitInitialized = originInit
-	}()
-	mockMgr := ingest.NewMockBackendCtxMgr(
-		func() sessionctx.Context {
-			return nil
-		})
-	ingest.LitBackCtxMgr = mockMgr
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -95,6 +87,7 @@ func TestPickBackfillType(t *testing.T) {
 	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
+	ingest.LitInitialized = false
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

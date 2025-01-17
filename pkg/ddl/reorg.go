@@ -612,7 +612,7 @@ func (r *reorgInfo) NewJobContext() *ReorgContext {
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
-		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+		isEnabled = r.ReorgMeta != nil && r.ReorgMeta.IsFastReorg
 	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
