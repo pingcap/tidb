@@ -15,7 +15,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	pconfig "github.com/pingcap/tidb/br/pkg/config"
@@ -38,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -274,6 +278,10 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+}
+
+func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
+	return cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -665,6 +673,12 @@ func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	return cfg
 }
 
+func printRestoreMetrics() {
+	log.Info("Metric: import_file_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreImportFileSeconds)))
+	log.Info("Metric: upload_sst_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTForPiTRSeconds)))
+	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
@@ -676,7 +690,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
+	if err := checkConflictingLogBackup(c, cfg, etcdCLI); err != nil {
 		return errors.Annotate(err, "failed to check task exists")
 	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
@@ -697,6 +711,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	defer printRestoreMetrics()
 
 	var restoreError error
 	if IsStreamRestore(cmdName) {
@@ -786,14 +802,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// Init DB connection sessions
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	if cfg.CheckRequirements {
 		err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient())
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
@@ -931,6 +948,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			log.Info("wait for flush checkpoint...")
 			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
+	}
+
+	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
+		PDCli:   mgr.GetPDClient(),
+		EtcdCli: mgr.GetDomain().GetEtcdClient(),
+		Storage: util.ProtoV1Clone(u),
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -1159,6 +1185,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)
+	if err != nil {
+		return err
 	}
 
 	schedulersRemovable = true
