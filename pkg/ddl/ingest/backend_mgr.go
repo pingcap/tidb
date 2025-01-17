@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -63,6 +64,7 @@ type BackendCtxBuilder struct {
 
 	sessPool   *sess.Pool
 	physicalID int64
+	checkDup   bool
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -82,6 +84,13 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	return b
 }
 
+// ForDuplicateCheck marks this backend context is only used for duplicate check.
+// TODO(tangenta): remove this after we don't rely on the backend to do duplicate check.
+func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
+	b.checkDup = true
+	return b
+}
+
 // BackendCounterForTest is only used in test.
 var BackendCounterForTest = atomic.Int64{}
 
@@ -92,7 +101,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID))
+	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID, b.checkDup))
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex)
 	intest.Assert(job.ReorgMeta != nil)
@@ -117,8 +126,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
-		localStoreDir := filepath.Join(sortPath, encodeBackendTag(job.ID))
-		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, localStoreDir, pdCli)
+		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
 		if err != nil {
 			logutil.Logger(ctx).Warn("create checkpoint manager failed",
 				zap.Int64("jobID", job.ID),
@@ -225,7 +233,10 @@ func newBackendContext(
 
 // encodeBackendTag encodes the job ID to backend tag.
 // The backend tag is also used as the file name of the local index data files.
-func encodeBackendTag(jobID int64) string {
+func encodeBackendTag(jobID int64, checkDup bool) string {
+	if checkDup {
+		return fmt.Sprintf("%d-dup", jobID)
+	}
 	return strconv.FormatInt(jobID, 10)
 }
 
