@@ -54,13 +54,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -136,6 +139,18 @@ type StreamConfig struct {
 
 	// Spec for the command `advancer`.
 	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+}
+
+func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	flagsDef(fs)
+	DefineCommonFlags(fs)
+	cfg := StreamConfig{}
+	err := cfg.ParseFromFlags(fs)
+	if err != nil {
+		log.Panic("failed to parse backup flags to config", zap.Error(err))
+	}
+	return cfg
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -1090,13 +1105,13 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.CleanUpCompactions {
-		est := stream.MigerationExtension(extStorage)
+		est := stream.MigrationExtension(extStorage)
 		est.Hooks = stream.NewProgressBarHooks(console)
 		newSN := math.MaxInt
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			console.Println("We are going to do the following: ")
 			tbl := console.CreateTable()
-			stream.AddMigrationToTable(m, tbl)
+			est.AddMigrationToTable(ctx, m, tbl)
 			tbl.Print()
 			return console.PromptBool("Continue? ")
 		})
@@ -1190,9 +1205,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
-// checkTaskExists checks whether there is a log backup task running.
+// checkConflictingLogBackup checks whether there is a log backup task running.
 // If so, return an error.
-func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
+func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
 	if err := checkConfigForStatus(cfg.PD); err != nil {
 		return err
 	}
@@ -1203,12 +1218,34 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	if err != nil {
 		return err
 	}
-	if len(tasks) > 0 {
-		return errors.Errorf("log backup task is running: %s, "+
-			"please stop the task before restore, and after PITR operation finished, "+
-			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	for _, task := range tasks {
+		if err := checkTaskCompat(cfg, task); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
+	baseErr := errors.Errorf("log backup task is running: %s, and isn't compatible with your restore."+
+		"You may check the extra information to get rid of this. If that doesn't work, you may "+
+		"stop the task before restore, and after the restore operation finished, "+
+		"create log-backup task again and create a full backup on this cluster.", task.Info.Name)
+	if len(cfg.FullBackupStorage) > 0 {
+		return errors.Annotate(baseErr, "you want to do point in time restore, which isn't compatible with an enabled log backup task yet")
+	}
+	if !cfg.UserFiltered() {
+		return errors.Annotate(baseErr,
+			"you want to restore a whole cluster, you may use `-f` or `restore table|database` to "+
+				"specify the tables to restore to continue")
+	}
+	if cfg.LocalEncryptionEnabled() {
+		return errors.Annotate(baseErr, "the data you want to restore is encrypted, they cannot be copied to the log storage")
+	}
+	if task.Info.GetSecurityConfig().GetEncryption() != nil {
+		return errors.Annotate(baseErr, "the running log backup task is encrypted, the data copied to the log storage cannot work")
+	}
 	return nil
 }
 
@@ -1332,6 +1369,7 @@ func restoreStream(
 		checkpointTotalKVCount uint64
 		checkpointTotalSize    uint64
 		currentTS              uint64
+		extraFields            []zapcore.Field
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1340,18 +1378,20 @@ func restoreStream(
 			summary.Log("restore log failed summary", zap.Error(err))
 		} else {
 			totalDureTime := time.Since(startTime)
-			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("source-start-point", cfg.StartTS),
-				zap.Uint64("source-end-point", cfg.RestoreTS),
-				zap.Uint64("target-end-point", currentTS),
-				zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
-				zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
-				zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
-				zap.Uint64("total-kv-count", totalKVCount),
-				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
-				zap.String("total-size", units.HumanSize(float64(totalSize))),
-				zap.String("skipped-size-by-checkpoint", units.HumanSize(float64(checkpointTotalSize))),
-				zap.String("average-speed", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s"),
+			summary.Log("restore log success summary",
+				append([]zapcore.Field{zap.Duration("total-take", totalDureTime),
+					zap.Uint64("source-start-point", cfg.StartTS),
+					zap.Uint64("source-end-point", cfg.RestoreTS),
+					zap.Uint64("target-end-point", currentTS),
+					zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+					zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+					zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
+					zap.Uint64("total-kv-count", totalKVCount),
+					zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
+					zap.String("total-size", units.HumanSize(float64(totalSize))),
+					zap.String("skipped-size-by-checkpoint", units.HumanSize(float64(checkpointTotalSize))),
+					zap.String("average-speed (log)", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s")},
+					extraFields...)...,
 			)
 		}
 	}()
@@ -1376,6 +1416,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to create restore client")
 	}
 	defer client.Close(ctx)
+	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	if taskInfo != nil && taskInfo.Metadata != nil {
 		// reuse the task's rewrite ts
@@ -1452,7 +1493,8 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.BuildMigrations(migs)
+	client.BuildMigrations(migs.Migs)
+	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1524,7 +1566,10 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
+	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
+	if err != nil {
+		return err
+	}
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1534,7 +1579,12 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
-	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", logclient.TotalEntryCount, !cfg.LogProgress)
+	addedSSTsIter := client.LogFileManager.GetIngestedSSTs(ctx)
+	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
+	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
+
+	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
+	pd := g.StartProgress(ctx, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
@@ -1547,14 +1597,14 @@ func restoreStream(
 			p.IncBy(int64(kvCount))
 		}
 		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
-			ctx, compactionIter, rewriteRules, sstCheckpointSets,
+			ctx, sstsIter, rewriteRules, sstCheckpointSets,
 			updateStatsWithCheckpoint, splitSize, splitKeys,
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreCompactedSstFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1997,6 +2047,15 @@ func checkPiTRTaskInfo(
 	}
 
 	return checkInfo, nil
+}
+
+func cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	err := f(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(*errOut, err)
+	}
 }
 
 func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {
