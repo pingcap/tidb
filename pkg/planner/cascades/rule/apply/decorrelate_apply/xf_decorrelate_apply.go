@@ -51,8 +51,8 @@ func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.Logic
 	outerPlanGE := applyGE.Children()[0]
 	innerPlanGE := applyGE.Children()[1]
 	// don't modify the apply op's CorCols in-place, which will change the hash64, apply should be re-inserted into the group otherwise.
-	CorCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlanGE.GetWrappedLogicalPlan(), outerPlanGE.GetWrappedLogicalPlan().Schema())
-	if len(CorCols) == 0 {
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlanGE.GetWrappedLogicalPlan(), outerPlanGE.GetWrappedLogicalPlan().Schema())
+	if len(corCols) == 0 {
 		// If the inner plan is non-correlated, this apply will be simplified to join.
 		clonedJoin := apply.LogicalJoin
 		clonedJoin.SetSelf(&clonedJoin)
