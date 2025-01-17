@@ -43,8 +43,14 @@ go_library(
 go_test(
     name = "runaway_test",
     timeout = "short",
-    srcs = ["record_test.go"],
+    srcs = [
+        "checker_test.go",
+        "record_test.go",
+    ],
     embed = [":runaway"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//assert"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//util",
+    ],
 )
