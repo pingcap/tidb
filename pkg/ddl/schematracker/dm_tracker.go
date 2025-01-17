@@ -1119,7 +1119,7 @@ func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpIn
 }
 
 // AlterTableMode implements the DDL interface, it's no-op in DM's case.
-func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *ast.AlterTableModeStmt) error {
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
 	return nil
 }
 

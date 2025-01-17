@@ -398,8 +398,9 @@ func (d *Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.Tabl
 	return d.realExecutor.UnlockTables(ctx, lockedTables)
 }
 
-func (d *Checker) AlterTableMode(ctx sessionctx.Context, stmt *ast.AlterTableModeStmt) error {
-	return d.realExecutor.AlterTableMode(ctx, stmt)
+// AlterTableMode implements the DDL interface.
+func (d *Checker) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	return d.realExecutor.AlterTableMode(ctx, args)
 }
 
 // CleanupTableLock implements the DDL interface.

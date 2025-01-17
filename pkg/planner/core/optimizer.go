@@ -247,6 +247,7 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
+// CheckTableMode checks if the table is accessible by table mode.
 func CheckTableMode(is infoschema.InfoSchema, vs []visitInfo) error {
 	for i := range vs {
 		tb, err := is.TableByName(context.Background(), ast.NewCIStr(vs[i].db), ast.NewCIStr(vs[i].table))
