@@ -93,12 +93,12 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 	logger.Info("on next subtasks batch")
-
+	storeWithPD := sch.d.store.(kv.StorageWithPD)
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
+			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
@@ -116,7 +116,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				sch.d.store.(kv.StorageWithPD),
+				storeWithPD,
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -212,7 +212,11 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
+func generatePartitionPlan(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	tblInfo *model.TableInfo,
+) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -221,8 +225,14 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
+		// It should be different for each subtask to determine if there are duplicate entries.
+		importTS, err := allocNewTS(ctx, store)
+		if err != nil {
+			return nil, err
+		}
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
+			TS:              importTS,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -297,6 +307,11 @@ func generateNonPartitionPlan(
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			// It should be different for each subtask to determine if there are duplicate entries.
+			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
+			if err != nil {
+				return true, nil
+			}
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
 				end = len(recordRegionMetas)
@@ -305,6 +320,7 @@ func generateNonPartitionPlan(
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
 				RowEnd:   batch[len(batch)-1].EndKey(),
+				TS:       importTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -409,6 +425,16 @@ func generateGlobalSortIngestPlan(
 	return metaArr, nil
 }
 
+func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	pdCli := store.GetPDClient()
+	p, l, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ts := oracle.ComposeTS(p, l)
+	return ts, nil
+}
+
 func splitSubtaskMetaForOneKVMetaGroup(
 	ctx context.Context,
 	store kv.StorageWithPD,
@@ -422,15 +448,13 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	pdCli := store.GetPDClient()
-	p, l, err := pdCli.GetTS(ctx)
+	importTS, err := allocNewTS(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	ts := oracle.ComposeTS(p, l)
 	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
 		i := val.(int)
-		ts = uint64(i)
+		importTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
@@ -482,7 +506,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			StatFiles:      statFiles,
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
-			TS:             ts,
+			TS:             importTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
