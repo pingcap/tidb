@@ -20,10 +20,10 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -65,6 +65,7 @@ func removeExtensionFunc(name string) {
 
 type extensionFuncClass struct {
 	baseFunctionClass
+	expropt.PrivilegeCheckerPropReader
 	funcDef extension.FunctionDef
 	flen    int
 }
@@ -96,7 +97,12 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 }
 
 func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.checkPrivileges(ctx); err != nil {
+	checker, err := c.GetPrivilegeChecker(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkPrivileges(checker, &c.funcDef); err != nil {
 		return nil, err
 	}
 
@@ -107,13 +113,18 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
+
+	// Though currently, `getFunction` does not require too much information that makes it safe to be cached,
+	// we still skip the plan cache for extension functions because there are no strong requirements to do it.
+	// Skipping the plan cache can make the behavior simple.
+	ctx.SetSkipPlanCache("extension function should not be cached")
 	bf.tp.SetFlen(c.flen)
-	sig := &extensionFuncSig{bf, c.funcDef}
+	sig := &extensionFuncSig{baseBuiltinFunc: bf, FunctionDef: c.funcDef}
 	return sig, nil
 }
 
-func (c *extensionFuncClass) checkPrivileges(ctx BuildContext) error {
-	fn := c.funcDef.RequireDynamicPrivileges
+func checkPrivileges(privChecker expropt.PrivilegeChecker, fnDef *extension.FunctionDef) error {
+	fn := fnDef.RequireDynamicPrivileges
 	if fn == nil {
 		return nil
 	}
@@ -124,11 +135,8 @@ func (c *extensionFuncClass) checkPrivileges(ctx BuildContext) error {
 		return nil
 	}
 
-	manager := privilege.GetPrivilegeManager(ctx)
-	activeRoles := ctx.GetSessionVars().ActiveRoles
-
 	for _, priv := range privs {
-		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
+		if !privChecker.RequestDynamicVerification(priv, false) {
 			msg := priv
 			if !semEnabled {
 				msg = "SUPER or " + msg
@@ -144,6 +152,9 @@ var _ extension.FunctionContext = extensionFnContext{}
 
 type extensionFuncSig struct {
 	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+	expropt.PrivilegeCheckerPropReader
+
 	extension.FunctionDef
 }
 
@@ -154,17 +165,50 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *extensionFuncSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.PrivilegeCheckerPropReader.RequiredOptionalEvalProps()
+}
+
 func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	checker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	if err := checkPrivileges(checker, &b.FunctionDef); err != nil {
+		return "", true, err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
 	if b.EvalTp == types.ETString {
-		fnCtx := newExtensionFnContext(ctx, b)
+		fnCtx := newExtensionFnContext(ctx, vars, b)
 		return b.EvalStringFunc(fnCtx, row)
 	}
 	return b.baseBuiltinFunc.evalString(ctx, row)
 }
 
 func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	checker, err := b.GetPrivilegeChecker(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
+	if err := checkPrivileges(checker, &b.FunctionDef); err != nil {
+		return 0, true, err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
 	if b.EvalTp == types.ETInt {
-		fnCtx := newExtensionFnContext(ctx, b)
+		fnCtx := newExtensionFnContext(ctx, vars, b)
 		return b.EvalIntFunc(fnCtx, row)
 	}
 	return b.baseBuiltinFunc.evalInt(ctx, row)
@@ -172,12 +216,13 @@ func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 
 type extensionFnContext struct {
 	context.Context
-	ctx EvalContext
-	sig *extensionFuncSig
+	ctx  EvalContext
+	vars *variable.SessionVars
+	sig  *extensionFuncSig
 }
 
-func newExtensionFnContext(ctx EvalContext, sig *extensionFuncSig) extensionFnContext {
-	return extensionFnContext{Context: context.TODO(), ctx: ctx, sig: sig}
+func newExtensionFnContext(ctx EvalContext, vars *variable.SessionVars, sig *extensionFuncSig) extensionFnContext {
+	return extensionFnContext{Context: context.TODO(), ctx: ctx, vars: vars, sig: sig}
 }
 
 func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
@@ -198,19 +243,19 @@ func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 }
 
 func (b extensionFnContext) ConnectionInfo() *variable.ConnectionInfo {
-	return b.ctx.GetSessionVars().ConnectionInfo
+	return b.vars.ConnectionInfo
 }
 
 func (b extensionFnContext) User() *auth.UserIdentity {
-	return b.ctx.GetSessionVars().User
+	return b.vars.User
 }
 
 func (b extensionFnContext) ActiveRoles() []*auth.RoleIdentity {
-	return b.ctx.GetSessionVars().ActiveRoles
+	return b.vars.ActiveRoles
 }
 
 func (b extensionFnContext) CurrentDB() string {
-	return b.ctx.GetSessionVars().CurrentDB
+	return b.ctx.CurrentDB()
 }
 
 func init() {

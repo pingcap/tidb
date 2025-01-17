@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -301,13 +301,6 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 
 	// Here it is required that ExtraPhysTblID is last
 	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
-		e.idxScanCtx.columnLen--
-		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
-	}
-
-	// Here it is required that ExtraPidColID
-	// is after all other columns except ExtraPhysTblID
-	if lastColumn.GetColumnId() == model.ExtraPidColID {
 		e.idxScanCtx.columnLen--
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
@@ -787,7 +780,7 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 	gotRow = true
 	for _, expr := range e.selectionCtx.conditions {
 		wc := e.sctx.GetSessionVars().StmtCtx.WarningCount()
-		d, err := expr.Eval(e.sctx.GetExprCtx(), row)
+		d, err := expr.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -932,7 +925,9 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	}
 	// Add ExtraPhysTblID if requested
 	// Assumes it is always last!
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
+	// The following if statement is to fill in the tid when we needed it.
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
 		tblID := tablecodec.DecodeTableID(key)
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
@@ -1026,7 +1021,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	ctx := e.topNCtx
 	row := e.scanCtx.chk.GetRow(0)
 	for i, expr := range ctx.orderByExprs {
-		d, err := expr.Eval(e.sctx.GetExprCtx(), row)
+		d, err := expr.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1124,7 +1119,7 @@ func (e *hashAggProcessor) getGroupKey(row chunk.Row) ([]byte, error) {
 	sc := e.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(e.sctx.GetExprCtx(), row)
+		v, err := item.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1143,7 +1138,7 @@ func (e *hashAggProcessor) getContexts(groupKey []byte) []*aggregation.AggEvalua
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx.GetExprCtx()))
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx.GetExprCtx().GetEvalCtx()))
 		}
 		e.aggCtxsMap[string(groupKey)] = aggCtxs
 	}
@@ -1185,7 +1180,7 @@ func safeCopy(b []byte) []byte {
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
-	if isResolved(startTS, resolved) {
+	if isResolved(lock.StartTS, resolved) {
 		return nil
 	}
 	lockVisible := lock.StartTS < startTS

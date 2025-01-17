@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -45,20 +44,19 @@ func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 }
 
 func TestHashGroupKeyCollation(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
 
 	tp.SetCollate("utf8_general_ci")
 	buf1 := make([][]byte, n)
 	buf2 := make([][]byte, n)
-	buf1, err := HashGroupKey(sc.TimeZone(), n, chk1.Column(0), buf1, tp)
+	buf1, err := HashGroupKey(time.Local, n, chk1.Column(0), buf1, tp)
 	require.NoError(t, err)
 
-	buf2, err = HashGroupKey(sc.TimeZone(), n, chk2.Column(0), buf2, tp)
+	buf2, err = HashGroupKey(time.Local, n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
 			require.Equal(t, buf2[i][j], buf1[i][j])
@@ -68,12 +66,12 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	tp.SetCollate("utf8_unicode_ci")
 	buf1 = make([][]byte, n)
 	buf2 = make([][]byte, n)
-	buf1, err = HashGroupKey(sc.TimeZone(), n, chk1.Column(0), buf1, tp)
+	buf1, err = HashGroupKey(time.Local, n, chk1.Column(0), buf1, tp)
 	require.NoError(t, err)
-	buf2, err = HashGroupKey(sc.TimeZone(), n, chk2.Column(0), buf2, tp)
+	buf2, err = HashGroupKey(time.Local, n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
 			require.Equal(t, buf2[i][j], buf1[i][j])
@@ -82,7 +80,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 }
 
 func TestHashChunkRowCollation(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
 	tp := types.NewFieldType(mysql.TypeString)
 	tps := []*types.FieldType{tp}
 	n, chk1, chk2 := prepareCollationData()
@@ -90,33 +88,33 @@ func TestHashChunkRowCollation(t *testing.T) {
 	buf := make([]byte, 1)
 
 	tp.SetCollate("binary")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h2, chk2.GetRow(i), tps, cols, buf))
 		require.NotEqual(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
 	}
 
 	tp.SetCollate("utf8_general_ci")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h2, chk2.GetRow(i), tps, cols, buf))
 		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
 	}
 
 	tp.SetCollate("utf8_unicode_ci")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(typeCtx, h2, chk2.GetRow(i), tps, cols, buf))
 		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
@@ -124,7 +122,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 }
 
 func TestHashChunkColumnsCollation(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
 	buf := make([]byte, 1)
@@ -133,26 +131,26 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 	tp.SetCollate("binary")
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NotEqual(t, h2s[i].Sum64(), h1s[i].Sum64())
 		h1s[i].Reset()
 		h2s[i].Reset()
 	}
 
 	tp.SetCollate("utf8_general_ci")
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
-	for i := 0; i < n; i++ {
+	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
+	for i := range n {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 
 	tp.SetCollate("utf8_unicode_ci")
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
-	for i := 0; i < n; i++ {
+	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
+	for i := range n {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 }

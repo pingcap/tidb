@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -75,7 +76,7 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.*num_rpc:1, total_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
 			buf.String())
 	}
@@ -352,6 +353,7 @@ func TestIssue28259(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_opt_projection_push_down=0`)
 
 	// test for indexRange
 	tk.MustExec("use test")
@@ -379,15 +381,15 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
 	require.Len(t, res.Rows(), 2)
@@ -494,7 +496,8 @@ func TestIssue28259(t *testing.T) {
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// Plan cache skipped due to OR simplification
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
@@ -707,8 +710,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("prepare stmt from 'SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
-	// The plan contains the generated column, so it can not be cached.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
@@ -848,4 +850,25 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
+}
+
+func TestIssue55669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, primary key (a,b), key (b)) partition by range (b) (partition p0 values less than (1000000), partition pMax values less than (maxvalue))")
+	tk.MustQuery("select a,b from t where b between 1 and 10")
+	tkRootProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	ok := false
+	for i := range rs {
+		if strings.HasSuffix(rs[i][4].(string), "partition:p0") {
+			ok = true
+		}
+	}
+	require.True(t, ok)
 }

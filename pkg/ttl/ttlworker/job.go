@@ -20,13 +20,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-const updateJobCurrentStatusTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_status = %? WHERE table_id = %? AND current_job_status = %? AND current_job_id = %?"
 const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET last_job_id = current_job_id,
 		last_job_start_time = current_job_start_time,
@@ -66,10 +65,6 @@ const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	    error_delete_rows = %?,
 	    status = %?
 	WHERE job_id = %?`
-
-func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []any) {
-	return updateJobCurrentStatusTemplate, []any{string(newStatus), tableID, string(oldStatus), jobID}
-}
 
 func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
 	return finishJobTemplate, []any{finishTime.Format(timeFormat), summary, tableID, jobID}
@@ -126,7 +121,9 @@ type ttlJob struct {
 }
 
 // finish turns current job into last job, and update the error message and statistics summary
-func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) {
+func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
+
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
@@ -148,10 +145,9 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		return nil
-	}, session.TxnModeOptimistic)
+		failpoint.InjectCall("ttl-finish", &err)
+		return err
+	}, session.TxnModePessimistic)
 
-	if err != nil {
-		logutil.BgLogger().Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id))
-	}
+	return err
 }

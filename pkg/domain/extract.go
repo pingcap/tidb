@@ -32,12 +32,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -76,10 +75,10 @@ type ExtractHandle struct {
 	worker *extractWorker
 }
 
-// NewExtractHandler new extract handler
-func NewExtractHandler(sctxs []sessionctx.Context) *ExtractHandle {
+// newExtractHandler new extract handler
+func newExtractHandler(ctx context.Context, sctxs []sessionctx.Context) *ExtractHandle {
 	h := &ExtractHandle{}
-	h.worker = newExtractWorker(sctxs[0], false)
+	h.worker = newExtractWorker(ctx, sctxs[0], false)
 	return h
 }
 
@@ -122,8 +121,13 @@ func NewExtractPlanTask(begin, end time.Time) *ExtractTask {
 	}
 }
 
-func newExtractWorker(sctx sessionctx.Context, isBackgroundWorker bool) *extractWorker {
+func newExtractWorker(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	isBackgroundWorker bool,
+) *extractWorker {
 	return &extractWorker{
+		ctx:                ctx,
 		sctx:               sctx,
 		isBackgroundWorker: isBackgroundWorker,
 	}
@@ -156,7 +160,7 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, error) {
 	w.Lock()
 	defer w.Unlock()
-	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := w.sctx.GetRestrictedSQLExecutor()
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sourceTable := "STATEMENTS_SUMMARY_HISTORY"
 	if !task.UseHistoryView {
@@ -208,11 +212,11 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
 			return false, nil
 		}
-		exists := is.TableExists(model.NewCIStr(dbName), model.NewCIStr(tblName))
+		exists := is.TableExists(ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 		if !exists {
 			return false, nil
 		}
-		t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+		t, err := is.TableByName(w.ctx, ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 		if err != nil {
 			return false, err
 		}
@@ -263,15 +267,15 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	is := GetDomain(w.sctx).InfoSchema()
 	tne := &tableNameExtractor{
 		ctx:      ctx,
-		executor: w.sctx.(sqlexec.RestrictedSQLExecutor),
+		executor: w.sctx.GetRestrictedSQLExecutor(),
 		is:       is,
-		curDB:    model.NewCIStr(""),
+		curDB:    ast.NewCIStr(""),
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
 	for v := range p.tables {
 		if v.IsView {
-			v, err := is.TableByName(model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
+			v, err := is.TableByName(w.ctx, ast.NewCIStr(v.DBName), ast.NewCIStr(v.TableName))
 			if err != nil {
 				return err
 			}
@@ -286,7 +290,10 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	if tne.err != nil {
 		return tne.err
 	}
-	r := tne.getTablesAndViews()
+	r, err := tne.getTablesAndViews()
+	if err != nil {
+		return err
+	}
 	for t := range r {
 		p.tables[t] = struct{}{}
 	}
@@ -294,7 +301,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 }
 
 func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (string, error) {
-	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := w.sctx.GetRestrictedSQLExecutor()
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT tidb_decode_binary_plan('%s')", bPlan))
 	if err != nil {

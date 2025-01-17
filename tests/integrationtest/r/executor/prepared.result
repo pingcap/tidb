@@ -270,7 +270,7 @@ COL1	COL2	COL3	COL1	COL2	COL3
 1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_prepared_plan_cache=default;
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;

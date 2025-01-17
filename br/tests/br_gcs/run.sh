@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable encryption as not working with brv4.0.8
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
@@ -37,11 +43,11 @@ while ! curl -o /dev/null -v -s "http://$GCS_HOST:$GCS_PORT/"; do
 done
 
 # start oauth server
-bin/oauth &
+bin/fake-oauth &
 
 stop_gcs() {
     killall -9 fake-gcs-server || true
-    killall -9 oauth || true
+    killall -9 fake-oauth || true
 }
 trap stop_gcs EXIT
 

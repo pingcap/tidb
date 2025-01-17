@@ -26,11 +26,11 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -61,8 +61,11 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.prepareAndUseDB("gsort_basic")
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
@@ -77,7 +80,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -98,18 +101,17 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	s.tk.MustExec("truncate table t")
-	result = s.tk.MustQuery(importSQL).Rows()
+	result = s.tk.MustQuery(importSQL + `, __force_merge_step`).Rows()
 	s.Len(result, 1)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// failed task, should clean up all sorted data too.
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + ", detached").Rows()
 	s.Len(result, 1)
@@ -121,7 +123,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -150,7 +152,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	// 1 subtask, encoding 10 files using 4 threads.
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
-		with thread=4, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 }

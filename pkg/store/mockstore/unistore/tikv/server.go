@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -193,6 +194,18 @@ func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpc
 
 // KvPessimisticLock implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
+	failpoint.Inject("pessimisticLockReturnWriteConflict", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Millisecond * 100)
+			err := &kverrors.ErrConflict{
+				StartTS:          req.GetForUpdateTs(),
+				ConflictTS:       req.GetForUpdateTs() + 1,
+				ConflictCommitTS: req.GetForUpdateTs() + 2,
+			}
+			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
+		}
+	})
+
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {
 		return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
@@ -380,6 +393,38 @@ func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*k
 		resp.Error, resp.RegionError = convertToPBError(err)
 	}
 	return resp, nil
+}
+
+// KvFlush implements the tikvpb.TikvServer interface.
+func (svr *Server) KvFlush(ctx context.Context, req *kvrpcpb.FlushRequest) (*kvrpcpb.FlushResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvFlush")
+	if err != nil {
+		return &kvrpcpb.FlushResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.FlushResponse{RegionError: reqCtx.regErr}, nil
+	}
+	err = svr.mvccStore.Flush(reqCtx, req)
+	resp := &kvrpcpb.FlushResponse{}
+	resp.Errors, resp.RegionError = convertToPBErrors(err)
+	return resp, nil
+}
+
+// KvBufferBatchGet implements the tikvpb.TikvServer interface.
+func (svr *Server) KvBufferBatchGet(ctx context.Context, req *kvrpcpb.BufferBatchGetRequest) (*kvrpcpb.BufferBatchGetResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvBufferBatchGet")
+	if err != nil {
+		return &kvrpcpb.BufferBatchGetResponse{Pairs: []*kvrpcpb.KvPair{{Error: convertToKeyError(err)}}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.BufferBatchGetResponse{RegionError: reqCtx.regErr}, nil
+	}
+	pairs := svr.mvccStore.ReadBufferFromLock(req.GetVersion(), req.Keys...)
+	return &kvrpcpb.BufferBatchGetResponse{
+		Pairs: pairs,
+	}, nil
 }
 
 // RawGetKeyTTL implements the tikvpb.TikvServer interface.

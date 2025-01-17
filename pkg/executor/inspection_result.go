@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type (
@@ -59,7 +59,7 @@ type (
 
 	inspectionFilter struct {
 		set       set.StringSet
-		timeRange plannercore.QueryTimeRange
+		timeRange plannerutil.QueryTimeRange
 	}
 
 	inspectionRule interface {
@@ -109,7 +109,7 @@ type inspectionResultRetriever struct {
 	dummyCloser
 	retrieved               bool
 	extractor               *plannercore.InspectionResultTableExtractor
-	timeRange               plannercore.QueryTimeRange
+	timeRange               plannerutil.QueryTimeRange
 	instanceToStatusAddress map[string]string
 	statusToInstanceAddress map[string]string
 }
@@ -143,7 +143,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.instanceToStatusAddress = make(map[string]string)
 		e.statusToInstanceAddress = make(map[string]string)
 		var rows []chunk.Row
-		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		exec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,status_address from information_schema.cluster_info;")
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
@@ -252,7 +252,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"storage.data-dir",
 		"storage.block-cache.capacity",
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
@@ -335,7 +335,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 	var results []inspectionResult
 	var rows []chunk.Row
 	sql := new(strings.Builder)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, cas := range cases {
 		if !filter.enable(cas.key) {
 			continue
@@ -371,7 +371,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 	if !filter.enable(item) {
 		return nil
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
@@ -452,7 +452,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 }
 
 func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	// check the configuration consistent
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
 	if err != nil {
@@ -491,7 +491,7 @@ func (nodeLoadInspection) inspect(ctx context.Context, sctx sessionctx.Context, 
 
 type inspectVirtualMemUsage struct{}
 
-func (inspectVirtualMemUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectVirtualMemUsage) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, max(value) as max_usage from metrics_schema.node_memory_usage %s group by instance having max_usage >= 70", timeRange.Condition())
 	return sql
 }
@@ -514,7 +514,7 @@ func (inspectVirtualMemUsage) getItem() string {
 
 type inspectSwapMemoryUsed struct{}
 
-func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectSwapMemoryUsed) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
 	return sql
 }
@@ -536,7 +536,7 @@ func (inspectSwapMemoryUsed) getItem() string {
 
 type inspectDiskUsage struct{}
 
-func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectDiskUsage) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
 	return sql
 }
@@ -562,7 +562,7 @@ type inspectCPULoad struct {
 	tbl  string
 }
 
-func (i inspectCPULoad) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (i inspectCPULoad) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf(`select t1.instance, t1.max_load , 0.7*t2.cpu_count from
 			(select instance,max(value) as max_load  from metrics_schema.%[1]s %[2]s group by instance) as t1 join
 			(select instance,max(value) as cpu_count from metrics_schema.node_virtual_cpus %[2]s group by instance) as t2
@@ -608,7 +608,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	for _, rule := range rules {
 		if filter.enable(rule.item) {
@@ -666,7 +666,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		return nil
 	}
 	condition := filter.timeRange.Condition()
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	fmt.Fprintf(sql, `select t1.job,t1.instance, t2.min_time from
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
@@ -811,7 +811,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	for _, rule := range rules {
 		if !filter.enable(rule.item) {
@@ -981,7 +981,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
 	sql := new(strings.Builder)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, rule := range rules {
 		if !filter.enable(rule.item) {
 			continue
@@ -1040,7 +1040,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 }
 
 type ruleChecker interface {
-	genSQL(timeRange plannercore.QueryTimeRange) string
+	genSQL(timeRange plannerutil.QueryTimeRange) string
 	genResult(sql string, row chunk.Row) inspectionResult
 	getItem() string
 }
@@ -1051,10 +1051,10 @@ type compareStoreStatus struct {
 	threshold float64
 }
 
-func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (c compareStoreStatus) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
-		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
-		timeRange.To.Format(plannercore.MetricTableTimeFormat))
+		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannerutil.MetricTableTimeFormat),
+		timeRange.To.Format(plannerutil.MetricTableTimeFormat))
 	return fmt.Sprintf(`
 		SELECT t1.address,
         	max(t1.value),
@@ -1098,7 +1098,7 @@ func (c compareStoreStatus) getItem() string {
 
 type checkRegionHealth struct{}
 
-func (checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (checkRegionHealth) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := timeRange.Condition()
 	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
 		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
@@ -1126,7 +1126,7 @@ func (checkRegionHealth) getItem() string {
 
 type checkStoreRegionTooMuch struct{}
 
-func (checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (checkStoreRegionTooMuch) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := timeRange.Condition()
 	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
 }
@@ -1175,7 +1175,7 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 
 func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, rules []ruleChecker) []inspectionResult {
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, rule := range rules {
 		if !filter.enable(rule.getItem()) {
 			continue
@@ -1198,7 +1198,7 @@ func (thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx s
 	threshold := 50.0
 	sql := new(strings.Builder)
 	fmt.Fprintf(sql, `select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {

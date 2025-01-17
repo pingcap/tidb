@@ -15,15 +15,18 @@
 package expression
 
 import (
-	goJSON "encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -38,6 +41,7 @@ const (
 	scalarFunctionFlag byte = 3
 	parameterFlag      byte = 4
 	ScalarSubQFlag     byte = 5
+	correlatedColumn   byte = 6
 )
 
 // EvalSimpleAst evaluates a simple ast expression directly.
@@ -52,7 +56,7 @@ type BuildOptions struct {
 	// InputNames is the input names for expression to build
 	InputNames types.NameSlice
 	// SourceTableDB is the database that the source table located
-	SourceTableDB model.CIStr
+	SourceTableDB ast.CIStr
 	// SourceTable is used to provide some extra column info.
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
@@ -68,7 +72,7 @@ type BuildOption func(*BuildOptions)
 // When this option is specified, it will use the table meta to resolve column names.
 func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
-		options.SourceTableDB = model.NewCIStr(db)
+		options.SourceTableDB = ast.NewCIStr(db)
 		options.SourceTable = tblInfo
 	}
 }
@@ -100,11 +104,10 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 // This function is used to build some "simple" expressions with limited context.
 // The below expressions are not supported:
 //   - Subquery
-//   - Param marker (e.g. `?`)
-//   - Variable (e.g. `@a`)
+//   - System Variables (e.g. `@tidb_enable_async_commit`)
 //   - Window functions
 //   - Aggregate functions
-//   - Other special functions such as `GROUPING`
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
 //
 // If you want to build a more complex expression, you should use `EvalAstExprWithPlanCtx` or `RewriteAstExprWithPlanCtx`
 // in `github.com/pingcap/tidb/pkg/planner/util`. They are more powerful but need planner context to build expressions.
@@ -135,6 +138,9 @@ type VecExpr interface {
 
 	// VecEvalJSON evaluates this expression in a vectorized manner.
 	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalBool evaluates this expression in a vectorized manner.
+	VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // TraverseAction define the interface for action when traversing down an expression.
@@ -160,12 +166,19 @@ const (
 	ConstStrict
 )
 
+// SafeToShareAcrossSession indicates whether the expression can be shared across different sessions.
+// In Instance Plan Cache, we'll share the same Plan/Expression across different sessions, and this interface
+// is used to check whether the expression is safe to share without cloning.
+type SafeToShareAcrossSession interface {
+	SafeToShareAcrossSession() bool
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
-	fmt.Stringer
-	goJSON.Marshaler
 	VecExpr
 	CollationInfo
+	base.HashEquals
+	SafeToShareAcrossSession
 
 	Traverse(TraverseAction) Expression
 
@@ -193,8 +206,11 @@ type Expression interface {
 	// EvalJSON returns the JSON representation of expression.
 	EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
+	// EvalVectorFloat32 returns the VectorFloat32 representation of expression.
+	EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error)
+
 	// GetType gets the type that the expression returns.
-	GetType() *types.FieldType
+	GetType(ctx EvalContext) *types.FieldType
 
 	// Clone copies an expression totally.
 	Clone() Expression
@@ -217,7 +233,7 @@ type Expression interface {
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
-	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
 	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
@@ -249,6 +265,8 @@ type Expression interface {
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
+
+	StringerWithCtx
 }
 
 // CNFExprs stands for a CNF expression.
@@ -286,13 +304,13 @@ func IsEQCondFromIn(expr Expression) bool {
 }
 
 // ExprNotNull checks if an expression is possible to be null.
-func ExprNotNull(expr Expression) bool {
+func ExprNotNull(ctx EvalContext, expr Expression) bool {
 	if c, ok := expr.(*Constant); ok {
 		return !c.Value.IsNull()
 	}
 	// For ScalarFunction, the result would not be correct until we support maintaining
 	// NotNull flag for it.
-	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
+	return mysql.HasNotNullFlag(expr.GetType(ctx).GetFlag())
 }
 
 // EvalBool evaluates expression list to a boolean value. The first returned value
@@ -371,7 +389,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -398,7 +416,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
-		tp := expr.GetType()
+		tp := expr.GetType(ctx)
 		eType := tp.EvalType()
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
@@ -410,10 +428,10 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 
 		// Take the implicit evalReal path if possible.
 		if CanImplicitEvalReal(expr) {
-			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+			if err := implicitEvalReal(ctx, vecEnabled, expr, input, buf); err != nil {
 				return nil, nil, err
 			}
-		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		} else if err := EvalExpr(ctx, vecEnabled, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -426,7 +444,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		for i := range sel {
 			if isZero[i] == -1 {
-				if eType != types.ETInt && !isEQCondFromIn {
+				if eType != types.ETInt || !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -438,6 +456,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 			}
 
 			if isZero[i] == 0 {
+				nulls[sel[i]] = false
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -581,12 +600,26 @@ func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *ch
 				}
 			}
 		}
+	case types.ETVectorFloat32:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if buf.GetVectorFloat32(i).IsZeroValue() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", eType)
 	}
 	return nil
 }
 
-func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func implicitEvalReal(ctx EvalContext, vecEnabled bool, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
 		ind, n := 0, input.NumRows()
@@ -614,8 +647,8 @@ func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, resu
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		switch evalType {
 		case types.ETInt:
 			err = expr.VecEvalInt(ctx, input, result)
@@ -629,10 +662,12 @@ func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *
 			err = expr.VecEvalString(ctx, input, result)
 		case types.ETJson:
 			err = expr.VecEvalJSON(ctx, input, result)
+		case types.ETVectorFloat32:
+			err = expr.VecEvalVectorFloat32(ctx, input, result)
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
+			err = errors.Errorf("unsupported type %s during evaluation", evalType)
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -724,6 +759,19 @@ func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *
 					result.AppendJSON(value)
 				}
 			}
+		case types.ETVectorFloat32:
+			result.ReserveVectorFloat32(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalVectorFloat32(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendVectorFloat32(value)
+				}
+			}
 		case types.ETDecimal:
 			result.ResizeDecimal(n, false)
 			d64s := result.Decimals()
@@ -740,7 +788,7 @@ func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *
 				ind++
 			}
 		default:
-			err = fmt.Errorf("invalid eval type %v", expr.GetType().EvalType())
+			err = errors.Errorf("unsupported type %s during evaluation", expr.GetType(ctx).EvalType())
 		}
 	}
 	return
@@ -801,11 +849,21 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 type Assignment struct {
 	Col *Column
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
-	ColName model.CIStr
+	ColName ast.CIStr
 	Expr    Expression
 	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
 	// should be evaluated after the duplicate situation is detected in the executing procedure.
 	LazyErr error
+}
+
+// Clone clones the Assignment.
+func (a *Assignment) Clone() *Assignment {
+	return &Assignment{
+		Col:     a.Col.Clone().(*Column),
+		ColName: a.ColName,
+		Expr:    a.Expr.Clone(),
+		LazyErr: a.LazyErr,
+	}
 }
 
 // MemoryUsage return the memory usage of Assignment
@@ -861,49 +919,57 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
+		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
-	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
-		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
-		return expr
+	if ctx.IsInNullRejectCheck() {
+		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return res, err
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = evaluateExprWithNull(ctx, schema, arg)
+			res, err := EvaluateExprWithNull(ctx, schema, arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = res
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x
+			return x, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x)
+			return FoldConstant(ctx, x), nil
 		}
 	}
-	return expr
+	return expr, nil
 }
 
 // evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			res, nullFromSet, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			if err != nil {
+				return nil, false, err
+			}
+			args[i], nullFromSets[i] = res, nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
@@ -940,26 +1006,29 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		if err != nil {
+			return nil, false, err
+		}
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
 		// then we think the result Null Constant is also affected by the column schema
-		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+		return c, ok && cons.Value.IsNull() && allArgsNullFromSet, nil
 	case *Column:
 		if !schema.Contains(x) {
-			return x, false
+			return x, false, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x), false
+			return FoldConstant(ctx, x), false, nil
 		}
 	}
-	return expr, false
+	return expr, false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -1001,14 +1070,12 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 		}
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
 	return schema, names, nil
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
-// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1022,7 +1089,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 		newCol := &Column{
 			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: ctx.AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
@@ -1031,17 +1098,16 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
-	// Ignore redundant warning here.
-	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	if !flags.IgnoreTruncateErr() {
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
-		}()
-		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
-	}
 
+	truncateIgnored := false
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
+			if !truncateIgnored {
+				// Ignore redundant warning here.
+				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
+				truncateIgnored = true
+			}
+
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -1072,7 +1138,7 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
+		FuncName: ast.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
 	}
@@ -1092,7 +1158,7 @@ func IsBinaryLiteral(expr Expression) bool {
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
 func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
-	if arg.GetType().EvalType() == types.ETInt {
+	if arg.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg, nil
 		}
@@ -1113,12 +1179,12 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
+		FuncName: ast.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
 	if keepNull {
-		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
+		sf.FuncName = ast.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(ctx, sf), nil
 }
@@ -1150,12 +1216,12 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 // +----------------------+
 // The expected `decimal` and `length` of the outer cast_as_double need to be
 // propagated to the inner div.
-func PropagateType(evalType types.EvalType, args ...Expression) {
+func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
 		expr := args[0]
-		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
-		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
+		oldFlen, oldDecimal := expr.GetType(ctx).GetFlen(), expr.GetType(ctx).GetDecimal()
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType(ctx).GetDecimal())
 		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
 		if newFlen < newDecimal {
 			newFlen = oldFlen - oldDecimal + newDecimal
@@ -1171,13 +1237,28 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
-			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
+			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
 				}
+				if oldFlen-oldDecimal > newFlen-newDecimal {
+					// the input data should never be overflow under the new type
+					if newDecimal > oldDecimal {
+						// if the target decimal part is larger than the original decimal part, we try to extend
+						// the decimal part as much as possible while keeping the integer part big enough to hold
+						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
+						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
+						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
+						incDecimal := min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						newFlen = oldFlen + incDecimal
+						newDecimal = oldDecimal + incDecimal
+					} else {
+						newFlen, newDecimal = oldFlen, oldDecimal
+					}
+				}
 			}
-			args[0].GetType().SetFlenUnderLimit(newFlen)
-			args[0].GetType().SetDecimalUnderLimit(newDecimal)
+			args[0].GetType(ctx).SetFlenUnderLimit(newFlen)
+			args[0].GetType(ctx).SetDecimalUnderLimit(newDecimal)
 		}
 	}
 }
@@ -1212,4 +1293,19 @@ func Args2Expressions4Test(args ...any) []Expression {
 		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
+}
+
+// StringifyExpressionsWithCtx turns a slice of expressions into string
+func StringifyExpressionsWithCtx(ctx EvalContext, exprs []Expression) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, expr := range exprs {
+		sb.WriteString(expr.StringWithCtx(ctx, errors.RedactLogDisable))
+
+		if i != len(exprs)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

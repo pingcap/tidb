@@ -44,7 +44,7 @@ func TestProcessInfoShallowCP(t *testing.T) {
 		StmtCtx:           stmtctx.NewStmtCtx(),
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
-		RedactSQL:         false,
+		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
 

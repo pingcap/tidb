@@ -74,6 +74,7 @@ func (b *builtinLogicOrSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk,
 }
 
 func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	beforeArg0Warns := ctx.WarningCount()
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -85,14 +86,11 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	defer b.bufAllocator.put(buf)
 
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeArg1Warns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf)
-	afterWarns := sc.WarningCount()
-	if err != nil || afterWarns > beforeWarns {
-		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
-		}
+	afterArg1Warns := ctx.WarningCount()
+	if err != nil || afterArg1Warns > beforeArg1Warns {
+		ctx.TruncateWarnings(beforeArg0Warns)
 		return b.fallbackEvalInt(ctx, input, result)
 	}
 
@@ -369,7 +367,7 @@ func (b *builtinLogicAndSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk
 
 func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
+	beforeArg0Warns := ctx.WarningCount()
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -380,14 +378,11 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer b.bufAllocator.put(buf1)
 
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeArg1Warns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf1)
-	afterWarns := sc.WarningCount()
-	if err != nil || afterWarns > beforeWarns {
-		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
-		}
+	afterArg1Warns := ctx.WarningCount()
+	if err != nil || afterArg1Warns > beforeArg1Warns {
+		ctx.TruncateWarnings(beforeArg0Warns)
 		return b.fallbackEvalInt(ctx, input, result)
 	}
 
@@ -553,7 +548,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue

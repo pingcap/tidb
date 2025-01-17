@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -33,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -61,8 +64,14 @@ const taskGCTemplate = `DELETE task FROM
 	WHERE job.table_id IS NULL`
 
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
+const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE (current_job_status IS NULL OR current_job_owner_hb_time < %?)`
 
-const timeFormat = time.DateTime
+// don't remove the rows for non-exist tables directly. Instead, set them to cancelled. In some special situations, the TTL job may still be able
+// to finish correctly. If that happen, the status will be updated from 'cancelled' to 'finished' in `(*ttlJob).finish`
+const ttlJobHistoryGCNonExistTableTemplate = `UPDATE mysql.tidb_ttl_job_history SET status = 'cancelled'
+	WHERE table_id NOT IN (SELECT table_id FROM mysql.tidb_ttl_table_status) AND status = 'running'`
+
+var timeFormat = time.DateTime
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []any) {
 	return insertNewTableIntoStatusTemplate, []any{tableID, parentTableID}
@@ -76,6 +85,20 @@ func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []any)
 	return updateHeartBeatTemplate, []any{now.Format(timeFormat), tableID, id}
 }
 
+func gcTTLTableStatusGCSQL(existIDs []int64, now time.Time) (string, []any) {
+	existIDStrs := make([]string, 0, len(existIDs))
+	for _, id := range existIDs {
+		existIDStrs = append(existIDStrs, strconv.Itoa(int(id)))
+	}
+
+	hbExpireTime := now.Add(-getHeartbeatInterval() * 2)
+	args := []any{hbExpireTime.Format(timeFormat)}
+	if len(existIDStrs) > 0 {
+		return ttlTableStatusGCWithoutIDTemplate + fmt.Sprintf(` AND table_id NOT IN (%s)`, strings.Join(existIDStrs, ",")), args
+	}
+	return ttlTableStatusGCWithoutIDTemplate, args
+}
+
 // JobManager schedules and manages the ttl jobs on this instance
 type JobManager struct {
 	// the `runningJobs`, `scanWorkers` and `delWorkers` should be protected by mutex:
@@ -83,7 +106,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool sessionPool
+	sessPool util.SessionPool
 
 	// id is the ddl id of this instance
 	id string
@@ -111,7 +134,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -119,6 +142,10 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
+	if intest.InTest {
+		// in test environment, in the same log there will be multiple ttl managers, so we need to distinguish them
+		manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", id)
+	}
 
 	manager.infoSchemaCache = cache.NewInfoSchemaCache(getUpdateInfoSchemaCacheInterval())
 	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
@@ -163,16 +190,16 @@ func (m *JobManager) jobLoop() error {
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
-	gcTicker := time.Tick(ttlGCInterval)
+	gcTicker := time.Tick(getTTLGCInterval())
 
-	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
-	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
-	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
-	timerTicker := time.Tick(time.Second)
+	scheduleJobTicker := time.Tick(getCheckJobInterval())
+	jobCheckTicker := time.Tick(getCheckJobInterval())
+	updateJobHeartBeatTicker := time.Tick(getHeartbeatInterval())
+	timerTicker := time.Tick(getJobManagerLoopSyncTimerInterval())
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
-	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(time.Second * 5)
+	updateTaskHeartBeatTicker := time.Tick(getTaskManagerHeartBeatInterval())
+	taskCheckTicker := time.Tick(getTaskManagerLoopCheckTaskInterval())
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
@@ -188,7 +215,7 @@ func (m *JobManager) jobLoop() error {
 		case <-m.ctx.Done():
 			return nil
 		case <-timerTicker:
-			m.onTimerTick(se, timerRT, timerSyncer, time.Now())
+			m.onTimerTick(se, timerRT, timerSyncer, now)
 		case jobReq := <-jobRequestCh:
 			m.handleSubmitJobRequest(se, jobReq)
 		case <-infoSchemaCacheUpdateTicker:
@@ -203,15 +230,12 @@ func (m *JobManager) jobLoop() error {
 			}
 		case <-gcTicker:
 			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			DoGC(gcCtx, se)
+			m.DoGC(gcCtx, se, now)
 			cancel()
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
 			updateHeartBeatCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			err = m.updateHeartBeat(updateHeartBeatCtx, se, now)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to update job heart beat", zap.Error(err))
-			}
+			m.updateHeartBeat(updateHeartBeatCtx, se, now)
 			cancel()
 		case <-jobCheckTicker:
 			m.checkFinishedJob(se)
@@ -254,10 +278,7 @@ func (m *JobManager) jobLoop() error {
 			m.taskManager.resizeWorkersWithSysVar()
 		case <-updateTaskHeartBeatTicker:
 			updateHeartBeatCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			err = m.taskManager.updateHeartBeat(updateHeartBeatCtx, se, now)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to update task heart beat", zap.Error(err))
-			}
+			m.taskManager.updateHeartBeat(updateHeartBeatCtx, se, now)
 			cancel()
 		case <-checkScanTaskFinishedTicker:
 			if m.taskManager.handleScanFinishedTask() {
@@ -281,7 +302,13 @@ func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer
 	rt.Resume()
 	lastSyncTime, lastSyncVer := syncer.GetLastSyncInfo()
 	sinceLastSync := now.Sub(lastSyncTime)
-	if sinceLastSync < 5*time.Second {
+	minSyncDuration := 5 * time.Second
+	if intest.InTest {
+		// in test, we can set the minSyncDuration to 1ms to boost the test speed
+		minSyncDuration = time.Millisecond
+	}
+
+	if sinceLastSync < minSyncDuration {
 		// limit timer sync frequency by every 5 seconds
 		return
 	}
@@ -314,7 +341,7 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, time.Now(), jobReq.RequestID, false)
+	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
 	jobReq.RespCh <- err
 }
 
@@ -346,7 +373,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), time.Now()) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -397,7 +424,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 
 	go func() {
 		defer cancel()
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(getCheckJobTriggeredInterval())
 		defer ticker.Stop()
 	loop:
 		for {
@@ -521,7 +548,7 @@ j:
 		for _, r := range rows {
 			task, err := cache.RowToTTLTask(se, r)
 			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err))
+				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", job.id))
 				continue j
 			}
 			allTasks = append(allTasks, task)
@@ -532,43 +559,105 @@ j:
 		}
 
 		if allFinished {
-			logutil.Logger(m.ctx).Info("job has finished", zap.String("jobID", job.id))
+			logger := logutil.Logger(m.ctx).With(
+				zap.String("jobID", job.id),
+				zap.Int64("tableID", job.tbl.ID),
+				zap.String("table", job.tbl.FullName()),
+			)
 			summary, err := summarizeTaskResult(allTasks)
 			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+				logger.Info("fail to summarize job", zap.Error(err))
+			}
+			logger.Info("job has finished", zap.String("summary", summary.SummaryText),
+				zap.Uint64("totalRows", summary.TotalRows), zap.Uint64("successRows", summary.SuccessRows), zap.Uint64("errorRows", summary.ErrorRows),
+				zap.String("scanTaskError", summary.ScanTaskErr))
+			err = job.finish(se, se.Now(), summary)
+			if err != nil {
+				logger.Warn("fail to finish job", zap.Error(err))
+				continue
 			}
 			m.removeJob(job)
-			job.finish(se, se.Now(), summary)
 		}
 		cancel()
 	}
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
+	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
+	// never be cancelled.
+	jobTables := m.readyForLockHBTimeoutJobTables(now)
+	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
+	// when the heart beat is not sent
+	for _, table := range jobTables {
+		logger := logutil.Logger(m.ctx).With(
+			zap.Int64("tableID", table.ID),
+			zap.String("table", table.FullName()),
+		)
+		logger.Info("try lock new job")
+		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
+			logger.Warn("failed to lock heartbeat timeout job", zap.Error(err))
+		}
+	}
+
+	cancelJobs := false
+	cancelReason := ""
+	switch {
+	case !variable.EnableTTLJob.Load():
+		cancelJobs = true
+		cancelReason = "tidb_ttl_job_enable turned off"
+	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+		cancelJobs = true
+		cancelReason = "out of TTL job schedule window"
+	}
+
+	if cancelJobs {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
-
-				summary, err := summarizeErr(errors.New("ttl job is disabled"))
+				logger := logutil.Logger(m.ctx).With(
+					zap.String("jobID", job.id),
+					zap.Int64("tableID", job.tbl.ID),
+					zap.String("table", job.tbl.FullName()),
+				)
+				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
+				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+					logger.Warn("fail to summarize job", zap.Error(err))
+				}
+				err = job.finish(se, now, summary)
+				if err != nil {
+					logger.Warn("fail to finish job", zap.Error(err))
+					continue
 				}
 				m.removeJob(job)
-				job.finish(se, now, summary)
 			}
 		}
 		return
 	}
 
-	jobTables := m.readyForLockHBTimeoutJobTables(now)
-	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
-	// when the heart beat is not sent
-	for _, table := range jobTables {
-		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
-			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+	// if the table of a running job disappears, also cancel it
+	for _, job := range m.runningJobs {
+		_, ok := m.infoSchemaCache.Tables[job.tbl.ID]
+		if ok {
+			continue
 		}
+
+		// when the job is locked, it can be found in `infoSchemaCache`. Therefore, it must have been dropped.
+		logger := logutil.Logger(m.ctx).With(
+			zap.String("jobID", job.id),
+			zap.Int64("tableID", job.tbl.ID),
+			zap.String("table", job.tbl.FullName()),
+		)
+		logger.Info("cancel job because the table has been dropped or it's no longer TTL table")
+		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
+		if err != nil {
+			logger.Warn("fail to summarize job", zap.Error(err))
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			logger.Warn("fail to finish job", zap.Error(err))
+			continue
+		}
+		m.removeJob(job)
 	}
 }
 
@@ -633,7 +722,12 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 
 		interval, err := table.TTLInfo.GetJobInterval()
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
+			logutil.Logger(m.ctx).Warn(
+				"illegal job interval",
+				zap.Error(err),
+				zap.Int64("tableID", table.ID),
+				zap.String("table", table.FullName()),
+			)
 			return false
 		}
 		return startTime.Add(interval).Before(now)
@@ -647,10 +741,22 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
 		hbTime := tableStatus.CurrentJobOwnerHBTime
-		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
-		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
-		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
-			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
+		// jobManagerLoopTickerInterval is used to do heartbeat periodically.
+		// Use twice the time to detect the heartbeat timeout.
+		hbTimeout := getHeartbeatInterval() * 2
+		if interval := getUpdateTTLTableStatusCacheInterval() * 2; interval > hbTimeout {
+			// tableStatus is get from the cache which may contain stale data.
+			// So if cache update interval > heartbeat interval, use the cache update interval instead.
+			hbTimeout = interval
+		}
+		if hbTime.Add(hbTimeout).Before(now) {
+			logutil.Logger(m.ctx).Info("job heartbeat has stopped",
+				zap.String("jobID", tableStatus.CurrentJobID),
+				zap.Int64("tableID", table.ID),
+				zap.String("table", table.FullName()),
+				zap.Time("hbTime", hbTime),
+				zap.Time("now", now),
+			)
 			return true
 		}
 		return false
@@ -675,6 +781,7 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 		jobID = tableStatus.CurrentJobID
 		jobStart = tableStatus.CurrentJobStartTime
 		expireTime = tableStatus.CurrentJobTTLExpire
+		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
 		sql, args := setTableStatusOwnerSQL(tableStatus.CurrentJobID, table.ID, jobStart, now, expireTime, m.id)
 		if _, err = se.ExecuteSQL(ctx, sql, args...); err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
@@ -707,6 +814,9 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
+		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
+		intest.Assert(se.GetSessionVars().TimeZone.String() == expireTime.Location().String())
+
 		sql, args := setTableStatusOwnerSQL(jobID, table.ID, now, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
@@ -719,7 +829,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
+		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
 		if err != nil {
 			return errors.Wrap(err, "split scan ranges")
 		}
@@ -790,10 +900,16 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 		return nil, err
 	}
 
+	logger := logutil.Logger(m.ctx).With(
+		zap.String("jobID", id),
+		zap.Int64("tableID", table.ID),
+		zap.String("table", table.FullName()),
+	)
+
 	// job is created, notify every scan managers to fetch new tasks
 	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, id)
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
+		logger.Warn("fail to trigger scan tasks", zap.Error(err))
 	}
 
 	job := &ttlJob{
@@ -809,32 +925,58 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 		status: cache.JobStatusRunning,
 	}
 
-	logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
+	logger.Info("append new running job")
 	m.appendJob(job)
 
 	return job, nil
 }
 
 // updateHeartBeat updates the heartbeat for all task with current instance as owner
-func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
+func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
 	for _, job := range m.localJobs() {
-		if job.createTime.Add(ttlJobTimeout).Before(now) {
-			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
-			summary, err := summarizeErr(errors.New("job is timeout"))
-			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
-			}
-			m.removeJob(job)
-			job.finish(se, now, summary)
-			continue
-		}
-
-		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
-		_, err := se.ExecuteSQL(ctx, sql, args...)
+		err := m.updateHeartBeatForJob(ctx, se, now, job)
 		if err != nil {
-			return errors.Wrapf(err, "execute sql: %s", sql)
+			logutil.Logger(m.ctx).Warn("fail to update heartbeat for job",
+				zap.Error(err),
+				zap.String("jobID", job.id),
+				zap.Int64("tableID", job.tbl.ID),
+				zap.String("table", job.tbl.FullName()),
+			)
 		}
 	}
+}
+
+func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	if job.createTime.Add(ttlJobTimeout).Before(now) {
+		logutil.Logger(m.ctx).Info("job is timeout",
+			zap.String("jobID", job.id),
+			zap.Int64("tableID", job.tbl.ID),
+			zap.String("table", job.tbl.FullName()),
+		)
+		summary, err := summarizeErr(errors.New("job is timeout"))
+		if err != nil {
+			return errors.Wrapf(err, "fail to summarize job")
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			return errors.Wrapf(err, "fail to finish job")
+		}
+		m.removeJob(job)
+		return nil
+	}
+
+	intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
+	sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
+	_, err := se.ExecuteSQL(ctx, sql, args...)
+	if err != nil {
+		return errors.Wrapf(err, "execute sql: %s", sql)
+	}
+
+	if se.GetSessionVars().StmtCtx.AffectedRows() != 1 {
+		return errors.Errorf("fail to update job heartbeat, maybe the owner is not myself (%s), affected rows: %d",
+			m.id, se.GetSessionVars().StmtCtx.AffectedRows())
+	}
+
 	return nil
 }
 
@@ -938,13 +1080,33 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 }
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
-func DoGC(ctx context.Context, se session.Session) {
+func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time) {
+	// Remove the table not exist in info schema cache.
+	// Delete the table status before deleting the tasks. Therefore the related tasks
+	if err := m.updateInfoSchemaCache(se); err == nil {
+		// only remove table status after updating info schema without error
+		existIDs := make([]int64, 0, len(m.infoSchemaCache.Tables))
+		for id := range m.infoSchemaCache.Tables {
+			existIDs = append(existIDs, id)
+		}
+		sql, args := gcTTLTableStatusGCSQL(existIDs, now)
+		if _, err := se.ExecuteSQL(ctx, sql, args...); err != nil {
+			logutil.Logger(ctx).Warn("fail to gc ttl table status", zap.Error(err))
+		}
+	} else {
+		logutil.Logger(m.ctx).Warn("failed to update info schema cache", zap.Error(err))
+	}
+
 	if _, err := se.ExecuteSQL(ctx, taskGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc redundant scan task", zap.Error(err))
 	}
 
 	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCNonExistTableTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history for non-exist table", zap.Error(err))
 	}
 }
 
@@ -999,18 +1161,14 @@ GROUP BY
 	}
 
 	noRecordTables := make([]string, 0)
-	for _, db := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(db.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.TTLInfo == nil {
-				continue
-			}
-
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
 			interval, err := tblInfo.TTLInfo.GetJobInterval()
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", db.Name.String()),
+					zap.String("db", v.DBName.O),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour
@@ -1070,12 +1228,12 @@ type SubmitTTLManagerJobRequest struct {
 
 type managerJobAdapter struct {
 	store     kv.Storage
-	sessPool  sessionPool
+	sessPool  util.SessionPool
 	requestCh chan<- *SubmitTTLManagerJobRequest
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
-func NewManagerJobAdapter(store kv.Storage, sessPool sessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
 	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
 }
 
@@ -1088,7 +1246,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	defer se.Close()
 
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false
 	}
@@ -1213,4 +1371,19 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 	}
 
 	return &jobTrace, nil
+}
+
+func (a *managerJobAdapter) Now() (time.Time, error) {
+	se, err := getSession(a.sessPool)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer se.Close()
+
+	tz, err := se.GlobalTimeZone(context.TODO())
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return se.Now().In(tz), nil
 }

@@ -12,11 +12,11 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
+        "//pkg/planner/core/resolve",
+        "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 

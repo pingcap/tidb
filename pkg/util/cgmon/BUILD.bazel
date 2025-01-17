@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cgmon",
+    srcs = ["cgmon.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/cgmon",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/util",
+        "//pkg/util/cgroup",
+        "@com_github_pingcap_log//:log",
+        "@com_github_shirou_gopsutil_v3//mem",
+        "@org_uber_go_zap//:zap",
+    ],
+)

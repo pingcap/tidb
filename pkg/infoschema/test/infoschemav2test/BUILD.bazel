@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "infoschemav2test_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "v2_test.go",
+    ],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/infoschema",
+        "//pkg/infoschema/context",
+        "//pkg/meta/autoid",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/sessionctx/variable",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

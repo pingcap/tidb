@@ -36,4 +36,6 @@ const (
 	ETDuration = ast.ETDuration
 	// ETJson represents type JSON in evaluation.
 	ETJson = ast.ETJson
+	// ETVectorFloat32 represents type VectorFloat32 in evaluation.
+	ETVectorFloat32 = ast.ETVectorFloat32
 )

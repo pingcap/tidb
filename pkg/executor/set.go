@@ -71,7 +71,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				continue
 			}
-			dt, err := v.Expr.(*expression.Constant).Eval(sctx.GetExprCtx(), chunk.Row{})
+			dt, err := v.Expr.(*expression.Constant).Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(sctx.GetExprCtx(), chunk.Row{})
+			value, err := v.Expr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				sessionVars.UnsetUserVar(name)
 			} else {
 				sessionVars.SetUserVarVal(name, value)
-				sessionVars.SetUserVarType(name, v.Expr.GetType())
+				sessionVars.SetUserVarType(name, v.Expr.GetType(sctx.GetExprCtx().GetEvalCtx()))
 			}
 			continue
 		}
@@ -222,10 +222,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx().GetSessionVars().StmtCtx, e.Ctx().GetStore(), newSnapshotTS)
-		} else {
-			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
+		isStaleRead := name == variable.TiDBTxnReadTS
+		err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
+		if name != variable.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
@@ -245,7 +244,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Clients are often noisy in setting session variables such as
-	// autocommit, timezone, query cache
+	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }
@@ -254,7 +253,9 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
 	sessionVars := e.Ctx().GetSessionVars()
 	if co == "" {
-		if co, err = charset.GetDefaultCollation(cs); err != nil {
+		if cs == mysql.UTF8MB4Charset {
+			co = sessionVars.DefaultCollationForUTF8MB4
+		} else if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}
 	} else {
@@ -306,7 +307,7 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		}
 		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
-	nativeVal, err := v.Expr.Eval(e.Ctx().GetExprCtx(), chunk.Row{})
+	nativeVal, err := v.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}
@@ -326,7 +327,11 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-	vars := e.Ctx().GetSessionVars()
+	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
+}
+
+func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
+	vars := sctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -334,12 +339,12 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-	dom := domain.GetDomain(e.Ctx())
+	dom := domain.GetDomain(sctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.Ctx(), snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
 	return nil
 }

@@ -23,13 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -69,6 +67,7 @@ type Scheduler interface {
 	// Close closes the scheduler, should be called if Init returns nil.
 	Close()
 	// GetTask returns the task that the scheduler is managing.
+	// the task is for read only, it might be accessed by multiple goroutines
 	GetTask() *proto.Task
 	Extension
 }
@@ -90,12 +89,11 @@ type BaseScheduler struct {
 	rand *rand.Rand
 }
 
-// MockOwnerChange mock owner change in tests.
-var MockOwnerChange func()
-
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID),
+		zap.Stringer("task-type", task.Type),
+		zap.Bool("allocated-slots", param.allocatedSlots))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
@@ -131,19 +129,36 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
-// refreshTask fetch task state from tidb_global_task table.
-func (s *BaseScheduler) refreshTask() error {
+// getTaskClone returns a clone of the task.
+func (s *BaseScheduler) getTaskClone() *proto.Task {
+	clone := *s.GetTask()
+	return &clone
+}
+
+// refreshTaskIfNeeded fetch task state from tidb_global_task table.
+func (s *BaseScheduler) refreshTaskIfNeeded() error {
 	task := s.GetTask()
-	// we only refresh the base fields of task to reduce memory usage, other fields
-	// must be maintained in memory by the scheduler itself.
-	// TODO it's possible we have a stale task meta on network partition, get task meta when needed??
+	// we only query the base fields of task to reduce memory usage, other fields
+	// are refreshed when needed.
 	newTaskBase, err := s.taskMgr.GetTaskBaseByID(s.ctx, task.ID)
 	if err != nil {
 		return err
 	}
-	newTask := *task
-	newTask.TaskBase = *newTaskBase
-	s.task.Store(&newTask)
+	// state might be changed by user to pausing/resuming/cancelling/modifying, or
+	// in case of network partition, state/step/meta might be changed by other scheduler,
+	// in both cases we refresh the whole task object.
+	if newTaskBase.State != task.State || newTaskBase.Step != task.Step {
+		s.logger.Info("task state/step changed by user or other scheduler",
+			zap.Stringer("old-state", task.State),
+			zap.Stringer("new-state", newTaskBase.State),
+			zap.String("old-step", proto.Step2Str(task.Type, task.Step)),
+			zap.String("new-step", proto.Step2Str(task.Type, newTaskBase.Step)))
+		newTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		s.task.Store(newTask)
+	}
 	return nil
 }
 
@@ -154,135 +169,147 @@ func (s *BaseScheduler) scheduleTask() {
 	for {
 		select {
 		case <-s.ctx.Done():
-			s.logger.Info("schedule task exits", zap.Error(s.ctx.Err()))
+			s.logger.Info("schedule task exits")
 			return
 		case <-ticker.C:
-			err := s.refreshTask()
-			if err != nil {
-				if errors.Cause(err) == storage.ErrTaskNotFound {
-					// this can happen when task is reverted/succeed, but before
-					// we reach here, cleanup routine move it to history.
-					return
-				}
-				s.logger.Error("refresh task failed", zap.Error(err))
-				continue
-			}
-			task := *s.GetTask()
-			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStateRunning {
-					err := s.taskMgr.CancelTask(s.ctx, task.ID)
-					if err != nil {
-						s.logger.Error("cancel task failed", zap.Error(err))
-					}
-				}
-			})
+		}
 
-			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStatePending {
-					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-					if err != nil {
-						s.logger.Error("pause task failed", zap.Error(err))
-					}
-					task.State = proto.TaskStatePausing
-					s.task.Store(&task)
-				}
-			})
-
-			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStateRunning {
-					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-					if err != nil {
-						s.logger.Error("pause task failed", zap.Error(err))
-					}
-					task.State = proto.TaskStatePausing
-					s.task.Store(&task)
-				}
-			})
-
-			switch task.State {
-			case proto.TaskStateCancelling:
-				err = s.onCancelling()
-			case proto.TaskStatePausing:
-				err = s.onPausing()
-			case proto.TaskStatePaused:
-				err = s.onPaused()
-				// close the scheduler.
-				if err == nil {
-					return
-				}
-			case proto.TaskStateResuming:
-				err = s.onResuming()
-			case proto.TaskStateReverting:
-				err = s.onReverting()
-			case proto.TaskStatePending:
-				err = s.onPending()
-			case proto.TaskStateRunning:
-				err = s.onRunning()
-			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
-				s.onFinished()
+		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
+		err := s.refreshTaskIfNeeded()
+		if err != nil {
+			if errors.Cause(err) == storage.ErrTaskNotFound {
+				// this can happen when task is reverted/succeed, but before
+				// we reach here, cleanup routine move it to history.
+				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			if err != nil {
-				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
-			}
-
-			failpoint.Inject("mockOwnerChange", func() {
-				s.logger.Info("mockOwnerChange called")
-				MockOwnerChange()
-				time.Sleep(time.Second)
-			})
+			s.logger.Error("refresh task failed", zap.Error(err))
+			continue
 		}
+		failpoint.InjectCall("afterRefreshTask", s.GetTask())
+		task := s.getTaskClone()
+		// TODO: refine failpoints below.
+		failpoint.Inject("exitScheduler", func() {
+			failpoint.Return()
+		})
+
+		switch task.State {
+		case proto.TaskStateCancelling:
+			err = s.onCancelling()
+		case proto.TaskStatePausing:
+			err = s.onPausing()
+		case proto.TaskStatePaused:
+			err = s.onPaused()
+			// close the scheduler.
+			if err == nil {
+				return
+			}
+		case proto.TaskStateResuming:
+			// need to check allocatedSlots for the following case:
+			// 1. task in pausing state.
+			// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+			// 3. node1's scheduler transfer the node from pausing to paused state.
+			// 4. resume the task.
+			// 5. node2 scheduler call refreshTask and get task with resuming state.
+			if !s.allocatedSlots {
+				s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+				return
+			}
+			err = s.onResuming()
+		case proto.TaskStateReverting:
+			err = s.onReverting()
+		case proto.TaskStatePending:
+			// need to check allocatedSlots for the following case:
+			// 1. task in modifying state, node A and B start schedulers with
+			//    task in modifying state without allocatedSlots.
+			// 2. node A's scheduler finished modifying, and transfer the node
+			//    from modifying to pending state.
+			// 3. node B's scheduler call refreshTask and get task with pending
+			//    state, but this scheduler has not allocated slots.
+			if !s.allocatedSlots {
+				s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+				return
+			}
+			err = s.onPending()
+		case proto.TaskStateRunning:
+			// need to check allocatedSlots for the following case:
+			// 1. task in pausing state.
+			// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+			// 3. node1's scheduler transfer the node from pausing to paused state.
+			// 4. resume the task.
+			// 5. node1 start another scheduler and transfer the node from resuming to running state.
+			// 6. node2 scheduler call refreshTask and get task with running state.
+			if !s.allocatedSlots {
+				s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+				return
+			}
+			err = s.onRunning()
+		case proto.TaskStateModifying:
+			var recreateScheduler bool
+			recreateScheduler, err = s.onModifying()
+			if err == nil && recreateScheduler {
+				return
+			}
+		case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
+			s.onFinished()
+			return
+		}
+		if err != nil {
+			s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
+		}
+
+		failpoint.InjectCall("mockOwnerChange")
 	}
 }
 
 // handle task in cancelling state, schedule revert subtasks.
 func (s *BaseScheduler) onCancelling() error {
 	task := s.GetTask()
-	s.logger.Info("on cancelling state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	errs := []error{errors.New(taskCancelMsg)}
-	return s.onErrHandlingStage(errs)
+	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+
+	return s.revertTask(errors.New(taskCancelMsg))
 }
 
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
-	task := s.GetTask()
-	s.logger.Info("on pausing state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	task := s.getTaskClone()
+	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
 	runningPendingCnt := cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePending]
-	if runningPendingCnt == 0 {
-		s.logger.Info("all running subtasks paused, update the task to paused state")
-		return s.taskMgr.PausedTask(s.ctx, task.ID)
+	if runningPendingCnt > 0 {
+		s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
+		return nil
 	}
-	s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
+
+	s.logger.Info("all running subtasks paused, update the task to paused state")
+	if err = s.taskMgr.PausedTask(s.ctx, task.ID); err != nil {
+		return err
+	}
+	task.State = proto.TaskStatePaused
+	s.task.Store(task)
 	return nil
 }
-
-// MockDMLExecutionOnPausedState is used to mock DML execution when tasks pauses.
-var MockDMLExecutionOnPausedState func(task *proto.Task)
 
 // handle task in paused state.
 func (s *BaseScheduler) onPaused() error {
 	task := s.GetTask()
-	s.logger.Info("on paused state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
-		if val.(bool) {
-			MockDMLExecutionOnPausedState(task)
-		}
-	})
+	s.logger.Info("on paused state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	failpoint.InjectCall("mockDMLExecutionOnPausedState")
 	return nil
 }
 
-// TestSyncChan is used to sync the test.
-var TestSyncChan = make(chan struct{})
-
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
-	task := s.GetTask()
-	s.logger.Info("on resuming state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	task := s.getTaskClone()
+	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
@@ -291,11 +318,12 @@ func (s *BaseScheduler) onResuming() error {
 	if cntByStates[proto.SubtaskStatePaused] == 0 {
 		// Finish the resuming process.
 		s.logger.Info("all paused tasks converted to pending state, update the task to running state")
-		err := s.taskMgr.ResumedTask(s.ctx, task.ID)
-		failpoint.Inject("syncAfterResume", func() {
-			TestSyncChan <- struct{}{}
-		})
-		return err
+		if err = s.taskMgr.ResumedTask(s.ctx, task.ID); err != nil {
+			return err
+		}
+		task.State = proto.TaskStateRunning
+		s.task.Store(task)
+		return nil
 	}
 
 	return s.taskMgr.ResumeSubtasks(s.ctx, task.ID)
@@ -303,19 +331,25 @@ func (s *BaseScheduler) onResuming() error {
 
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
-	task := s.GetTask()
-	s.logger.Debug("on reverting state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	task := s.getTaskClone()
+	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
-	activeRevertCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
-	if activeRevertCnt == 0 {
+	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
+	if runnableSubtaskCnt == 0 {
 		if err = s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
-		return s.taskMgr.RevertedTask(s.ctx, task.ID)
+		if err = s.taskMgr.RevertedTask(s.ctx, task.ID); err != nil {
+			return errors.Trace(err)
+		}
+		task.State = proto.TaskStateReverted
+		s.task.Store(task)
+		return nil
 	}
 	// Wait all subtasks in this step finishes.
 	s.OnTick(s.ctx, task)
@@ -326,7 +360,8 @@ func (s *BaseScheduler) onReverting() error {
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
 	task := s.GetTask()
-	s.logger.Debug("on pending state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	return s.switch2NextStep()
 }
 
@@ -350,8 +385,9 @@ func (s *BaseScheduler) onRunning() error {
 			return err
 		}
 		if len(subTaskErrs) > 0 {
-			s.logger.Warn("subtasks encounter errors")
-			return s.onErrHandlingStage(subTaskErrs)
+			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
+			// we only store the first error as task error.
+			return s.revertTask(subTaskErrs[0])
 		}
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
@@ -363,66 +399,97 @@ func (s *BaseScheduler) onRunning() error {
 	return nil
 }
 
+// onModifying is called when task is in modifying state.
+// the first return value indicates whether the scheduler should be recreated.
+func (s *BaseScheduler) onModifying() (bool, error) {
+	task := s.getTaskClone()
+	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	recreateScheduler := false
+	for _, m := range task.ModifyParam.Modifications {
+		if m.Type == proto.ModifyConcurrency {
+			if task.Concurrency == int(m.To) {
+				// shouldn't happen normally.
+				s.logger.Info("task concurrency not changed, skip", zap.Int("concurrency", task.Concurrency))
+				continue
+			}
+			s.logger.Info("modify task concurrency", zap.Int("from", task.Concurrency), zap.Int64("to", m.To))
+			recreateScheduler = true
+			task.Concurrency = int(m.To)
+		} else {
+			// will implement other modification types later.
+			s.logger.Warn("unsupported modification type", zap.Stringer("type", m.Type))
+		}
+	}
+	if err := s.taskMgr.ModifiedTask(s.ctx, task); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.State = task.ModifyParam.PrevState
+	task.ModifyParam = proto.ModifyParam{}
+	s.task.Store(task)
+	return recreateScheduler, nil
+}
+
 func (s *BaseScheduler) onFinished() {
 	task := s.GetTask()
-	metrics.UpdateMetricsForFinishTask(task)
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 
-func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
-	task := *s.GetTask()
-	// we only store the first error.
-	task.Error = receiveErrs[0]
-	s.task.Store(&task)
-
-	return s.taskMgr.RevertTask(s.ctx, task.ID, task.State, task.Error)
-}
-
-func (s *BaseScheduler) switch2NextStep() (err error) {
-	task := *s.GetTask()
-	nextStep := s.GetNextStep(&task)
+func (s *BaseScheduler) switch2NextStep() error {
+	task := s.getTaskClone()
+	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)))
 
 	if nextStep == proto.StepDone {
-		task.Step = nextStep
-		task.StateUpdateTime = time.Now().UTC()
-		s.task.Store(&task)
-		if err = s.OnDone(s.ctx, s, &task); err != nil {
+		if err := s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
-		return s.taskMgr.SucceedTask(s.ctx, task.ID)
+		if err := s.taskMgr.SucceedTask(s.ctx, task.ID); err != nil {
+			return errors.Trace(err)
+		}
+		task.Step = nextStep
+		task.State = proto.TaskStateSucceed
+		s.task.Store(task)
+		return nil
 	}
 
-	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr.getManagedNodes())
+	nodes := s.nodeMgr.getNodes()
+	nodeIDs := filterByScope(nodes, task.TargetScope)
+	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
 	}
+
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
 	if len(eligibleNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, &task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePlanErr(err)
 	}
-	// OnNextSubtasksBatch might change meta of task.
-	s.task.Store(&task)
 
-	return s.scheduleSubTask(nextStep, metas, eligibleNodes)
+	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
+		return err
+	}
+	task.Step = nextStep
+	task.State = proto.TaskStateRunning
+	// and OnNextSubtasksBatch might change meta of task.
+	s.task.Store(task)
+	return nil
 }
 
 func (s *BaseScheduler) scheduleSubTask(
+	task *proto.Task,
 	subtaskStep proto.Step,
 	metas [][]byte,
 	eligibleNodes []string) error {
-	task := s.GetTask()
 	s.logger.Info("schedule subtasks",
 		zap.Stringer("state", task.State),
-		zap.String("step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, subtaskStep)),
 		zap.Int("concurrency", task.Concurrency),
 		zap.Int("subtasks", len(metas)))
 
@@ -447,9 +514,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 		size += uint64(len(meta))
 	}
-	failpoint.Inject("cancelBeforeUpdateTask", func() {
-		_ = s.taskMgr.CancelTask(s.ctx, task.ID)
-	})
+	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
 
 	// as other fields and generated key and index KV takes space too, we limit
 	// the size of subtasks to 80% of the transaction limit.
@@ -477,14 +542,23 @@ func (s *BaseScheduler) scheduleSubTask(
 }
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
-	task := *s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		return err
 	}
-	task.Error = err
-	s.task.Store(&task)
-	return s.taskMgr.RevertTask(s.ctx, task.ID, task.State, task.Error)
+	return s.revertTask(err)
+}
+
+func (s *BaseScheduler) revertTask(taskErr error) error {
+	task := s.getTaskClone()
+	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+		return err
+	}
+	task.State = proto.TaskStateReverting
+	task.Error = taskErr
+	s.task.Store(task)
+	return nil
 }
 
 // MockServerInfo exported for scheduler_test.go
@@ -532,7 +606,8 @@ func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
 	previousSubtasks, err := s.taskMgr.GetAllSubtasksByStepAndState(s.ctx, taskID, step, proto.SubtaskStateSucceed)
 	if err != nil {
-		s.logger.Warn("get previous succeed subtask failed", zap.String("step", proto.Step2Str(s.GetTask().Type, step)))
+		s.logger.Warn("get previous succeed subtask failed",
+			zap.String("step", proto.Step2Str(s.GetTask().Type, step)))
 		return nil, err
 	}
 	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
@@ -574,5 +649,6 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 	if len(serverNodes) == 0 {
 		serverNodes = managedNodes
 	}
+
 	return serverNodes, nil
 }

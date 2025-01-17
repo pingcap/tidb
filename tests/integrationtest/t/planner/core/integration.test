@@ -234,31 +234,6 @@ INSERT INTO t0(c0) VALUES (3);
 SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;
 
 
-# TestInvisibleIndex
-drop table if exists t;
-create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
-insert into t values (1,2);
-admin check table t;
-select a from t order by a;
-explain select a from t order by a;
-select a from t where a > 0;
-explain select a from t where a > 1;
---error 1176
-select * from t use index(i_a);
---error 1176
-select * from t force index(i_a);
---error 1176
-select * from t ignore index(i_a);
---enable_warnings
-select /*+ USE_INDEX(t, i_a) */ * from t;
-select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-select /*+ FORCE_INDEX(aaa) */ * from t;
---disable_warnings
-admin check table t;
-admin check index t i_a;
-
-
 # TestTopNByConstFunc
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 
@@ -752,7 +727,7 @@ insert t values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);
 select * from t use index (uuk);
 drop database cluster_idx_unique_double_read;
 set @@tidb_enable_clustered_index = DEFAULT;
-use planner__core__integration
+use planner__core__integration;
 
 
 # TestIssue18984
@@ -1604,7 +1579,7 @@ SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN ID
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-analyze table t;
+analyze table t all columns;
 set tidb_opt_limit_push_down_threshold=0;
 explain format=brief select a from t order by a desc limit 10;
 set tidb_opt_limit_push_down_threshold=10;
@@ -1836,7 +1811,7 @@ insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 value(1,1,1);
-analyze table t1;
+analyze table t1 all columns;
 explain format = 'brief' select * from t1 where a=1 or b=1;
 explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
 explain format = 'brief' select * from t1 where null or a=1 or b=1;
@@ -1924,7 +1899,7 @@ drop table if exists t, t2;
 set @@tidb_partition_prune_mode='static';
 CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t values (1),(2),(3),(4),(7),(8),(9),(10);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t;
 CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10);
@@ -2076,7 +2051,7 @@ set @@tidb_enable_pipelined_window_function=DEFAULT;
 drop table if exists t;
 create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
 insert into t values ('20000201'), ('19000101');
-analyze table t;
+analyze table t all columns;
 desc format='brief' select * from t where a < '2000-01-01';
 
 
@@ -2102,9 +2077,9 @@ disconnect conn1;
 drop table if exists t;
 create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a=1;
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a in (1,2,3);
 
 
@@ -2112,9 +2087,9 @@ explain analyze select * from t where a in (1,2,3);
 drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a=1;
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
 explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 
 
@@ -2378,14 +2353,9 @@ CREATE TABLE sbtest (
   PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
   KEY k (k)
 );
-## cannot choose the best plan with RangeScan.
-set @@tidb_opt_fix_control = '46177:off';
+## confirm that we can choose the best plan with RangeScan.
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-set @@tidb_opt_fix_control = '46177:on';
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-set @@tidb_opt_fix_control = default;
 
 # TestSysIsAccessibleWithTiFlashReadIsolation
 create table sys.t (id int);
@@ -2394,3 +2364,11 @@ set tidb_isolation_read_engines='tiflash';
 select * from sys.t;
 drop table sys.t;
 set tidb_isolation_read_engines=DEFAULT;
+
+# TestIssue53580
+drop table if exists t;
+create table t (col TEXT);
+select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+  case when (
+    t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+  ) then 1 else 2 end;

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -82,7 +84,7 @@ func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 
 func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	cx := context.Background()
-	pdc, err := pd.NewClient(cfg.Config.PD, pd.SecurityOption{})
+	pdc, err := pd.NewClient(caller.TestComponent, cfg.Config.PD, pd.SecurityOption{})
 	t.NoError(err)
 	defer pdc.Close()
 	t.NoError(err)
@@ -223,4 +225,34 @@ func TestOperator(t *testing.T) {
 
 	verifySchedulerNotStopped(req, cfg)
 	verifyGCNotStopped(req, cfg)
+}
+
+func TestFailure(t *testing.T) {
+	req := require.New(t)
+	req.NoError(failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/prepare_snap/PrepareConnectionsErr", "return()"))
+	// Make goleak happy.
+	req.NoError(failpoint.Enable("github.com/pingcap/tidb/br/pkg/task/operator/SkipReadyHint", "return()"))
+	defer func() {
+		req.NoError(failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/prepare_snap/PrepareConnectionsErr"))
+		req.NoError(failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/operator/SkipReadyHint"))
+	}()
+
+	cfg := operator.PauseGcConfig{
+		Config: task.Config{
+			PD: []string{"127.0.0.1:2379"},
+		},
+		TTL:       5 * time.Minute,
+		SafePoint: oracle.GoTimeToTS(time.Now()),
+	}
+
+	verifyGCNotStopped(req, cfg)
+	verifySchedulerNotStopped(req, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg)
+	require.Error(t, err)
+
+	verifyGCNotStopped(req, cfg)
+	verifySchedulerNotStopped(req, cfg)
 }

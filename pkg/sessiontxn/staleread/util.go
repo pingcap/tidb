@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	pctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -33,7 +33,7 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(ctx context.Context, sctx pctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
+func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
 	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
 		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
 			return uint64(val.(int)), nil
@@ -67,14 +67,26 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx pctx.PlanContext, tsExpr ast.
 }
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
-func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
-	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx())
+func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
+	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
-	minTsVal := expression.GetMinSafeTime(sctx.GetExprCtx())
-	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
+	sc := sctx.GetSessionVars().StmtCtx
+	minSafeTSVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
+	calculatedTime := expression.CalAppropriateTime(tsVal, nowVal, minSafeTSVal)
+	readTS := oracle.GoTimeToTS(calculatedTime)
+	if calculatedTime.After(minSafeTSVal) {
+		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
+		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
+		// So in this case, do an extra check on it.
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS, true)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return readTS, nil
 }
 
 // IsStmtStaleness indicates whether the current statement is staleness or not

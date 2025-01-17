@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

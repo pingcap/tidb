@@ -14,8 +14,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -324,7 +326,7 @@ func (rng StringifyRange) String() string {
 	} else {
 		endKey = redact.Key(rng.EndKey)
 	}
-	sb.WriteString(redact.String(endKey))
+	sb.WriteString(redact.Value(endKey))
 	sb.WriteString(")")
 	return sb.String()
 }
@@ -355,4 +357,26 @@ func (b HexBytes) String() string {
 // MarshalJSON implements json.Marshaler.
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
+}
+
+func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
+	return zapcore.ObjectMarshalerFunc(func(mal zapcore.ObjectEncoder) error {
+		if m == nil {
+			return nil
+		}
+
+		met := metric.ReadHistogram(m)
+		if met == nil || met.Histogram == nil {
+			return nil
+		}
+
+		hist := met.Histogram
+		for _, b := range hist.GetBucket() {
+			key := fmt.Sprintf("lt_%f", b.GetUpperBound())
+			mal.AddUint64(key, b.GetCumulativeCount())
+		}
+		mal.AddUint64("count", hist.GetSampleCount())
+		mal.AddFloat64("total", hist.GetSampleSum())
+		return nil
+	})
 }

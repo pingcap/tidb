@@ -18,14 +18,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDistinct(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	dc := createDistinctChecker(sc)
+	ctx := mock.NewContext()
+	ctx.ResetSessionAndStmtTimeZone(time.Local)
+	dc := createDistinctChecker(ctx)
 	testCases := []struct {
 		vals   []any
 		expect bool

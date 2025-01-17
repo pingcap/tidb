@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -49,12 +50,13 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)
@@ -86,7 +88,7 @@ func prepareData4OptimizeTrace(t *testing.T, client *testserverclient.TestServer
 	tk.MustExec("create database optimizeTrace")
 	tk.MustExec("use optimizeTrace")
 	tk.MustExec("create table t(a int)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	rows := tk.MustQuery("trace plan select * from t")
 	require.True(t, rows.Next(), "unexpected data")

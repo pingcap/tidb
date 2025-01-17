@@ -63,7 +63,7 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
-	err := bf.vecEvalInt(ctx, input, output)
+	err := vecEvalType(ctx, bf, types.ETInt, input, output)
 	require.NoError(t, err)
 	i64s := output.Int64s()
 
@@ -73,11 +73,12 @@ func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 		return fmt.Sprintf("func: builtinRegexpUTF8Sig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
 	}
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		val, isNull, err := bf.evalInt(ctx, row)
+		val, err := evalBuiltinFunc(bf, ctx, row)
 		require.NoError(t, err)
-		require.Equal(t, output.IsNull(i), isNull, commentf(i))
-		if !isNull {
-			require.Equal(t, i64s[i], val, commentf(i))
+		require.Equal(t, output.IsNull(i), val.IsNull(), commentf(i))
+		if !val.IsNull() {
+			require.Equal(t, types.KindInt64, val.Kind(), commentf(i))
+			require.Equal(t, i64s[i], val.GetInt64(), commentf(i))
 		}
 		i++
 	}

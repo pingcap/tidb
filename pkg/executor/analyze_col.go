@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -46,7 +48,7 @@ type AnalyzeColumnsExec struct {
 
 	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
+	handleCols    plannerutil.HandleCols
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	indexes       []*model.IndexInfo
@@ -64,7 +66,7 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
@@ -106,7 +108,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
 	isoLevel := kv.RC
@@ -129,7 +131,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +159,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		handleHist = &statistics.Histogram{}
 		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-		handleFms = statistics.NewFMSketch(maxSketchSize)
+		handleFms = statistics.NewFMSketch(statistics.MaxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
 			statsVer = int(*e.analyzePB.IdxReq.Version)
 		}
@@ -167,15 +169,18 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			FMSketch:      statistics.NewFMSketch(statistics.MaxSketchSize),
 			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
+			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+				dom.SysProcTracker().KillSysProcess(id)
+			}
 		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, nil, err
@@ -224,7 +229,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
 		}
-		UpdateAnalyzeJob(e.ctx, e.job, rowCount)
+		statsHandle.UpdateAnalyzeJobProgress(e.job, rowCount)
 	}
 	timeZone := e.ctx.GetSessionVars().Location()
 	if hasPkHist(e.handleCols) {
@@ -379,33 +384,27 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
-func hasPkHist(handleCols core.HandleCols) bool {
+func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 
-func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
-	if e == nil || e.StatsVersion != statistics.Version2 {
-		return
-	}
-	opts := e.opts
+// prepareColumns prepares the columns for the analyze job.
+func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	cols := e.colsInfo
-	if e.V2Options != nil {
-		opts = e.V2Options.FilledOpts
-	}
-	sampleRate := *e.analyzePB.ColReq.SampleRate
-	var b strings.Builder
-	if retry {
-		b.WriteString("retry ")
-	}
-	if e.ctx.GetSessionVars().InRestrictedSQL {
-		b.WriteString("auto ")
-	}
-	b.WriteString("analyze table")
+	// Ignore the _row_id column.
 	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
 		cols = cols[:len(cols)-1]
 	}
+	// If there are no columns, skip the process.
+	if len(cols) == 0 {
+		return
+	}
 	if len(cols) < len(e.tableInfo.Columns) {
-		b.WriteString(" columns ")
+		if len(cols) > 1 {
+			b.WriteString(" columns ")
+		} else {
+			b.WriteString(" column ")
+		}
 		for i, col := range cols {
 			if i > 0 {
 				b.WriteString(", ")
@@ -415,6 +414,58 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
 	} else {
 		b.WriteString(" all columns")
 	}
+}
+
+// prepareIndexes prepares the indexes for the analyze job.
+func prepareIndexes(e *AnalyzeColumnsExec, b *strings.Builder) {
+	indexes := e.indexes
+
+	// If there are no indexes, skip the process.
+	if len(indexes) == 0 {
+		return
+	}
+	if len(indexes) < len(e.tableInfo.Indices) {
+		if len(indexes) > 1 {
+			b.WriteString(" indexes ")
+		} else {
+			b.WriteString(" index ")
+		}
+		for i, index := range indexes {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(index.Name.O)
+		}
+	} else {
+		b.WriteString(" all indexes")
+	}
+}
+
+// prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
+func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
+	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
+	if e == nil || e.StatsVersion != statistics.Version2 {
+		return
+	}
+
+	opts := e.opts
+	if e.V2Options != nil {
+		opts = e.V2Options.FilledOpts
+	}
+	sampleRate := *e.analyzePB.ColReq.SampleRate
+	var b strings.Builder
+	// If it is an internal SQL, it means it is triggered by the system itself(auto-analyze).
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		b.WriteString("auto ")
+	}
+	b.WriteString("analyze table")
+
+	prepareIndexes(e, &b)
+	if len(e.indexes) > 0 && len(e.colsInfo) > 0 {
+		b.WriteString(",")
+	}
+	prepareColumns(e, &b)
+
 	var needComma bool
 	b.WriteString(" with ")
 	printOption := func(optType ast.AnalyzeOptionType) {

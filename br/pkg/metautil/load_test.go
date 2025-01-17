@@ -23,8 +23,9 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -41,8 +42,8 @@ func TestLoadBackupMeta(t *testing.T) {
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
-	tblName := model.NewCIStr("t1")
-	dbName := model.NewCIStr("test")
+	tblName := ast.NewCIStr("t1")
+	dbName := ast.NewCIStr("test")
 	tblID := int64(123)
 	mockTbl := &model.TableInfo{
 		ID:   tblID,
@@ -55,9 +56,9 @@ func TestLoadBackupMeta(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -105,6 +106,7 @@ func TestLoadBackupMeta(t *testing.T) {
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -117,8 +119,8 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
-	tblName := model.NewCIStr("t1")
-	dbName := model.NewCIStr("test")
+	tblName := ast.NewCIStr("t1")
+	dbName := ast.NewCIStr("test")
 	tblID := int64(123)
 	partID1 := int64(124)
 	partID2 := int64(125)
@@ -139,9 +141,9 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -201,6 +203,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			},
 		),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -219,7 +222,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 }
 
 func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, []*backuppb.File) {
-	tblName := model.NewCIStr(name)
+	tblName := ast.NewCIStr(name)
 	tblID := int64(tableID)
 	mockTbl := &model.TableInfo{
 		ID:   tblID,
@@ -246,10 +249,10 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 
 		mockDB := model.DBInfo{
 			ID:   1,
-			Name: model.NewCIStr(dbName),
-			Tables: []*model.TableInfo{
-				mockTbl,
-			},
+			Name: ast.NewCIStr(dbName),
+		}
+		mockDB.Deprecated.Tables = []*model.TableInfo{
+			mockTbl,
 		}
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(b, err)
@@ -287,6 +290,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -319,6 +323,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -351,6 +356,7 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)

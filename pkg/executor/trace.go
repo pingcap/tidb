@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -58,7 +59,8 @@ type TraceExec struct {
 	// exhausted being true means there is no more result.
 	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
-	stmtNode ast.StmtNode
+	stmtNode   ast.StmtNode
+	resolveCtx *resolve.Context
 
 	builder *executorBuilder
 	format  string
@@ -74,12 +76,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.exhausted {
 		return nil
 	}
-	se, ok := e.Ctx().(sqlexec.SQLExecutor)
-	if !ok {
-		e.exhausted = true
-		return nil
-	}
-
+	se := e.Ctx().GetSQLExecutor()
 	// For audit log plugin to set the correct statement.
 	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	defer func() {
@@ -114,7 +111,8 @@ func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.
 		stmtCtx.EnableOptimizerCETrace = origin
 	}()
 
-	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -142,7 +140,8 @@ func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionc
 		stmtCtx.EnableOptimizerDebugTrace = origin
 	}()
 
-	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -188,7 +187,8 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	defer func() {
 		stmtCtx.EnableOptimizeTrace = origin
 	}()
-	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err = core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}

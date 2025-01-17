@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
@@ -67,8 +68,13 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) startStatusHTTP() {
+func (s *Server) startStatusHTTP() error {
+	err := s.initHTTPListener()
+	if err != nil {
+		return err
+	}
 	go s.startHTTPServer()
+	return nil
 }
 
 func serveError(w http.ResponseWriter, status int, txt string) {
@@ -211,6 +217,8 @@ func (s *Server) startHTTPServer() {
 		Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
 		Name("StatsHistoryDump")
+	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
+		Name("StatsPriorityQueue")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
@@ -219,7 +227,6 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
-	router.Handle("/binlog/recover", tikvhandler.BinlogRecover{}).Name("BinlogRecover")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -250,7 +257,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
 		router.Handle("/tables/{db}/{table}/ranges", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRanges))
@@ -289,14 +296,12 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
-
-	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
-	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
+	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -305,9 +310,9 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
 		}
 	}
-	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+	router.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
 
-	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
@@ -332,8 +337,8 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
+	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
 		items := []struct {
@@ -418,7 +423,7 @@ func (s *Server) startHTTPServer() {
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
-		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+		router.PathPrefix("/fail/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
@@ -427,7 +432,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", tikvhandler.NewDDLHookHandler(tikvHandlerTool.Store.(kv.Storage)))
+	router.Handle("/test/ddl/hook", tikvhandler.DDLHookHandler{})
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
 	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
@@ -462,6 +467,9 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
+
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
 	s.startStatusServerAndRPCServer(serverMux)
 }
 
@@ -475,7 +483,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
 			var fullPath string
@@ -551,9 +559,15 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 
 // Status of TiDB.
 type Status struct {
-	Connections int    `json:"connections"`
-	Version     string `json:"version"`
-	GitHash     string `json:"git_hash"`
+	Connections int          `json:"connections"`
+	Version     string       `json:"version"`
+	GitHash     string       `json:"git_hash"`
+	Status      DetailStatus `json:"status"`
+}
+
+// DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
+type DetailStatus struct {
+	InitStatsPercentage float64 `json:"init_stats_percentage"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -565,10 +579,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	initStatsPercentage := min(100, initstats.InitStatsPercentage.Load())
 	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,
+		Status: DetailStatus{
+			InitStatsPercentage: initStatsPercentage,
+		},
 	}
 	js, err := json.Marshal(st)
 	if err != nil {
@@ -604,4 +622,18 @@ func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHistoryHandler(do)
+}
+
+func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+
+	return optimizor.NewStatsPriorityQueueHandler(do)
 }

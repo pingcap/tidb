@@ -293,7 +293,8 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 	}
 	if !dup {
 		for i, m := range mutations {
-			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], req)
+			latestExtraMeta := store.getLatestExtraMetaForKey(reqCtx, m)
+			lock, lockedWithConflictTS, err1 := store.buildPessimisticLock(m, items[i], latestExtraMeta, req)
 			lockedWithConflictTSList = append(lockedWithConflictTSList, lockedWithConflictTS)
 			if err1 != nil {
 				return nil, err1
@@ -666,15 +667,19 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 
 // buildPessimisticLock builds the lock according to the request and the current state of the key.
 // Returns the built lock, and the LockedWithConflictTS (if any, otherwise 0).
-func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item,
+func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.Item, latestExtraMeta mvcc.DBUserMeta,
 	req *kvrpcpb.PessimisticLockRequest) (*mvcc.Lock, uint64, error) {
 	var lockedWithConflictTS uint64 = 0
 
 	var writeConflictError error
 
 	if item != nil {
-		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if latestExtraMeta != nil && latestExtraMeta.CommitTS() > userMeta.CommitTS() {
+				userMeta = latestExtraMeta
+			}
+
 			if userMeta.CommitTS() > req.ForUpdateTs {
 				writeConflictError = &kverrors.ErrConflict{
 					StartTS:          req.StartVersion,
@@ -732,6 +737,31 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 		Primary: req.PrimaryLock,
 	}
 	return lock, lockedWithConflictTS, nil
+}
+
+// getLatestExtraMetaForKey returns the userMeta of the extra txn status key with the biggest commit ts.
+// It's used to assert whether a key has been written / locked by another transaction in the fair locking mechanism.
+// Theoretically, the rollback record should be ignored. But we have no way to check the rollback record in the
+// unistore. Returning record with a bigger commit ts may cause extra retry, but it's safe.
+func (store *MVCCStore) getLatestExtraMetaForKey(reqCtx *requestCtx, m *kvrpcpb.Mutation) mvcc.DBUserMeta {
+	it := reqCtx.getDBReader().GetExtraIter()
+	rbStartKey := mvcc.EncodeExtraTxnStatusKey(m.Key, math.MaxUint64)
+	rbEndKey := mvcc.EncodeExtraTxnStatusKey(m.Key, 0)
+
+	for it.Seek(rbStartKey); it.Valid(); it.Next() {
+		item := it.Item()
+		if len(rbEndKey) != 0 && bytes.Compare(item.Key(), rbEndKey) > 0 {
+			break
+		}
+		key := item.Key()
+		if len(key) == 0 || (key[0] != tableExtraPrefix && key[0] != metaExtraPrefix) {
+			continue
+		}
+
+		meta := mvcc.DBUserMeta(item.UserMeta())
+		return meta
+	}
+	return nil
 }
 
 // Prewrite implements the MVCCStore interface.
@@ -959,6 +989,93 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 	return store.dbWriter.Write(batch)
 }
 
+// Flush implements the MVCCStore interface.
+func (store *MVCCStore) Flush(reqCtx *requestCtx, req *kvrpcpb.FlushRequest) error {
+	mutations := req.GetMutations()
+	if !slices.IsSortedFunc(mutations, func(i, j *kvrpcpb.Mutation) int {
+		return bytes.Compare(i.Key, j.Key)
+	}) {
+		return errors.New("mutations are not sorted")
+	}
+
+	regCtx := reqCtx.regCtx
+	hashVals := mutationsToHashVals(mutations)
+	regCtx.AcquireLatches(hashVals)
+	defer regCtx.ReleaseLatches(hashVals)
+
+	startTS := req.StartTs
+	// Only check the PK's status first.
+	for _, m := range mutations {
+		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
+		if err != nil {
+			return err
+		}
+		if lock != nil {
+			continue
+		}
+		if bytes.Equal(m.Key, req.PrimaryKey) {
+			status := store.checkExtraTxnStatus(reqCtx, m.Key, startTS)
+			if status.isRollback {
+				return kverrors.ErrAlreadyRollback
+			}
+			if status.isOpLockCommitted() {
+				// duplicated command
+				return nil
+			}
+		}
+	}
+	items, err := store.getDBItems(reqCtx, mutations)
+	if err != nil {
+		return err
+	}
+	for i, m := range mutations {
+		item := items[i]
+		if item != nil {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				return &kverrors.ErrConflict{
+					StartTS:          startTS,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+					Key:              item.KeyCopy(nil),
+					Reason:           kvrpcpb.WriteConflict_Optimistic,
+				}
+			}
+		}
+		// Op_CheckNotExists type requests should not add lock
+		if m.Op == kvrpcpb.Op_CheckNotExists {
+			if item != nil {
+				val, err := item.Value()
+				if err != nil {
+					return err
+				}
+				if len(val) > 0 {
+					return &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+				}
+			}
+			continue
+		}
+	}
+
+	dummyPrewriteReq := &kvrpcpb.PrewriteRequest{
+		PrimaryLock:  req.PrimaryKey,
+		StartVersion: startTS,
+	}
+	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
+	for i, m := range mutations {
+		if m.Op == kvrpcpb.Op_CheckNotExists {
+			continue
+		}
+		lock, err1 := store.buildPrewriteLock(reqCtx, m, items[i], dummyPrewriteReq)
+		if err1 != nil {
+			return err1
+		}
+		batch.Prewrite(m.Key, lock)
+	}
+
+	return store.dbWriter.Write(batch)
+}
+
 func (store *MVCCStore) tryOnePC(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation,
 	req *kvrpcpb.PrewriteRequest, items []*badger.Item, minCommitTS uint64, maxCommitTS uint64) (bool, error) {
 	if maxCommitTS != 0 && minCommitTS > maxCommitTS {
@@ -1018,7 +1135,7 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 	}
 	var encoder rowcodec.Encoder
 	buf = buf[:0]
-	return encoder.Encode(time.UTC, colIDs, datums, buf)
+	return encoder.Encode(time.UTC, colIDs, datums, nil, buf)
 }
 
 func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutation, item *badger.Item,
@@ -1074,7 +1191,10 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		}
 		lock.Op = uint8(kvrpcpb.Op_Put)
 	}
-	if rowcodec.IsRowKey(m.Key) && lock.Op == uint8(kvrpcpb.Op_Put) {
+	// In the write path, remove the keyspace prefix
+	// to ensure compatibility with the key parsing implemented in the mock.
+	tempKey := rowcodec.RemoveKeyspacePrefix(m.Key)
+	if rowcodec.IsRowKey(tempKey) && lock.Op == uint8(kvrpcpb.Op_Put) {
 		if !rowcodec.IsNewFormat(m.Value) {
 			reqCtx.buf, err = encodeFromOldRow(m.Value, reqCtx.buf)
 			if err != nil {
@@ -1391,6 +1511,45 @@ func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved, committed []uint
 		}
 	}
 	return lockPairs, nil
+}
+
+// ReadBufferFromLock implements the MVCCStore interface.
+func (store *MVCCStore) ReadBufferFromLock(startTS uint64, keys ...[]byte) []*kvrpcpb.KvPair {
+	var buf []byte
+	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
+	for _, key := range keys {
+		buf = store.lockStore.Get(key, buf)
+		if len(buf) == 0 {
+			continue
+		}
+		lock := mvcc.DecodeLock(buf)
+		if lock.StartTS != startTS {
+			continue
+		}
+		switch lock.Op {
+		case uint8(kvrpcpb.Op_Put):
+			val := getValueFromLock(&lock)
+			if val == nil {
+				panic("Op_Put has a nil value")
+			}
+			pairs = append(
+				pairs, &kvrpcpb.KvPair{
+					Key:   key,
+					Value: safeCopy(val),
+				},
+			)
+		case uint8(kvrpcpb.Op_Del):
+			pairs = append(
+				pairs, &kvrpcpb.KvPair{
+					Key:   key,
+					Value: []byte{},
+				},
+			)
+		default:
+			panic("unexpected op. Optimistic txn should only contain put and delete locks")
+		}
+	}
+	return pairs
 }
 
 // CheckRangeLock implements the MVCCStore interface.

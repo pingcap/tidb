@@ -38,6 +38,8 @@ const (
 	BackgroundSubtaskTableID = meta.MaxInt48 - 5
 	// BackgroundSubtaskHistoryTableID is the table ID of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableID = meta.MaxInt48 - 6
+	// NotifierTableID is the table ID of `tidb_ddl_notifier`.
+	NotifierTableID = meta.MaxInt48 - 7
 
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
 	JobTableSQL = "create table " + JobTable + `(
@@ -77,7 +79,7 @@ const (
 		task_key varchar(256),
 		ddl_physical_tid bigint(20),
 		type int,
-		exec_id varchar(256),
+		exec_id varchar(261),
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
@@ -102,7 +104,7 @@ const (
 		task_key varchar(256),
 		ddl_physical_tid bigint(20),
 		type int,
-		exec_id varchar(256),
+		exec_id varchar(261),
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
@@ -117,4 +119,15 @@ const (
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
+
+	// NotifierTableName is `tidb_ddl_notifier`.
+	NotifierTableName = "tidb_ddl_notifier"
+
+	// NotifierTableSQL is the CREATE TABLE SQL of `tidb_ddl_notifier`.
+	NotifierTableSQL = `CREATE TABLE ` + NotifierTableName + ` (
+		ddl_job_id BIGINT,
+		sub_job_id BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL or a merged DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL or a merged DDL',
+		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
+		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
+		PRIMARY KEY(ddl_job_id, sub_job_id))`
 )

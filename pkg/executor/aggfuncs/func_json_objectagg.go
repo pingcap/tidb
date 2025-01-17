@@ -80,8 +80,8 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 			return 0, types.ErrJSONDocumentNULLKey
 		}
 
-		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
-			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
+		if e.args[0].GetType(sctx).GetCharset() == charset.CharsetBin {
+			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType(sctx).GetCharset())
 		}
 
 		key = strings.Clone(key)
@@ -90,7 +90,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 			return 0, errors.Trace(err)
 		}
 
-		realVal, err := getRealJSONValue(value, e.args[1].GetType())
+		realVal, err := getRealJSONValue(value, e.args[1].GetType(sctx))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

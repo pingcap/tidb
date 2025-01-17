@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"time"
 	"unsafe"
 
 	errors2 "github.com/pingcap/errors"
@@ -127,10 +128,9 @@ func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 	return d.offsetOfEachChunk[chkIdx+1] - d.offsetOfEachChunk[chkIdx]
 }
 
-// GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
-func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
+func (d *DataInDiskByChunks) readFromFisk(chkIdx int) error {
 	if err := injectChunkInDiskRandomError(); err != nil {
-		return nil, err
+		return err
 	}
 
 	reader := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
@@ -144,17 +144,37 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 
 	readByteNum, err := io.ReadFull(reader, d.buf)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if int64(readByteNum) != chkSize {
-		return nil, errors2.New("Fail to restore the spilled chunk")
+		return errors2.New("Fail to restore the spilled chunk")
+	}
+
+	return nil
+}
+
+// GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
+func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
+	err := d.readFromFisk(chkIdx)
+	if err != nil {
+		return nil, err
 	}
 
 	chk := NewEmptyChunk(d.fieldTypes)
 	d.deserializeDataToChunk(chk)
-
 	return chk, nil
+}
+
+// FillChunk fills a Chunk from the DataInDiskByChunks by chkIdx.
+func (d *DataInDiskByChunks) FillChunk(srcChkIdx int, destChk *Chunk) error {
+	err := d.readFromFisk(srcChkIdx)
+	if err != nil {
+		return err
+	}
+
+	d.deserializeDataToChunk(destChk)
+	return nil
 }
 
 // Close releases the disk resource.
@@ -163,6 +183,7 @@ func (d *DataInDiskByChunks) Close() {
 		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
 		terror.Call(d.dataFile.file.Close)
 		terror.Log(os.Remove(d.dataFile.file.Name()))
+		d.dataFile.file = nil
 	}
 }
 
@@ -192,7 +213,7 @@ func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk, selSize 
 	d.buf = d.buf[:*pos+selSize]
 
 	selLen := len(chk.sel)
-	for i := 0; i < selLen; i++ {
+	for i := range selLen {
 		*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.sel[i]
 		*pos += intLen
 	}
@@ -262,8 +283,12 @@ func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullM
 
 func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {
 	selLen := int64(selSize) / intLen
-	chk.sel = make([]int, selLen)
-	for i := int64(0); i < selLen; i++ {
+	if int64(cap(chk.sel)) < selLen {
+		chk.sel = make([]int, selLen)
+	} else {
+		chk.sel = chk.sel[:selLen]
+	}
+	for i := range selLen {
 		chk.sel[i] = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += intLen
 	}
@@ -288,7 +313,7 @@ func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
 
 func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
 	offsetNum := len(dst)
-	for i := 0; i < offsetNum; i++ {
+	for i := range offsetNum {
 		dst[i] = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
 		*pos += int64Len
 	}
@@ -297,9 +322,25 @@ func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
 func (d *DataInDiskByChunks) deserializeColumns(chk *Chunk, pos *int64) {
 	for _, col := range chk.columns {
 		length, nullMapSize, dataSize, offsetSize := d.deserializeColMeta(pos)
-		col.nullBitmap = make([]byte, nullMapSize)
-		col.data = make([]byte, dataSize)
-		col.offsets = make([]int64, offsetSize/int64Len)
+
+		if int64(cap(col.nullBitmap)) < nullMapSize {
+			col.nullBitmap = make([]byte, nullMapSize)
+		} else {
+			col.nullBitmap = col.nullBitmap[:nullMapSize]
+		}
+
+		if int64(cap(col.data)) < dataSize {
+			col.data = make([]byte, dataSize)
+		} else {
+			col.data = col.data[:dataSize]
+		}
+
+		offsetsLen := offsetSize / int64Len
+		if int64(cap(col.offsets)) < offsetsLen {
+			col.offsets = make([]int64, offsetsLen)
+		} else {
+			col.offsets = col.offsets[:offsetsLen]
+		}
 
 		col.length = int(length)
 		copy(col.nullBitmap, d.buf[*pos:*pos+nullMapSize])
@@ -333,6 +374,9 @@ func injectChunkInDiskRandomError() error {
 			randNum := rand.Int31n(10000)
 			if randNum < 3 {
 				err = errors2.New("random error is triggered")
+			} else if randNum < 6 {
+				delayTime := rand.Int31n(10) + 5
+				time.Sleep(time.Duration(delayTime) * time.Millisecond)
 			}
 		}
 	})

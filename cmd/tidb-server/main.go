@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -51,27 +52,27 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -80,11 +81,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -102,11 +103,11 @@ const (
 	nmPort             = "P"
 	nmCors             = "cors"
 	nmSocket           = "socket"
-	nmEnableBinlog     = "enable-binlog"
 	nmRunDDL           = "run-ddl"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
+	nmLogGeneral       = "log-general"
 	nmReportStatus     = "report-status"
 	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
@@ -119,6 +120,8 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+
+	nmRedact = "redact"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -162,6 +165,7 @@ var (
 	logLevel     *string
 	logFile      *string
 	logSlowQuery *string
+	logGeneral   *string
 
 	// Status
 	reportStatus    *bool
@@ -169,6 +173,9 @@ var (
 	statusPort      *string
 	metricsAddr     *string
 	metricsInterval *uint
+
+	// subcommand collect-log
+	redactFlag *bool
 
 	// PROXY Protocol
 	proxyProtocolNetworks      *string
@@ -193,14 +200,13 @@ func initFlagSet() *flag.FlagSet {
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store = fset.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
+	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
 	storePath = fset.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host = fset.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = fset.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port = fset.String(nmPort, "4000", "tidb server port")
 	cors = fset.String(nmCors, "", "tidb server allow cors origin")
 	socket = fset.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
-	enableBinlog = flagBoolean(fset, nmEnableBinlog, false, "enable generate binlog")
 	runDDL = flagBoolean(fset, nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease = fset.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit = fset.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -215,6 +221,7 @@ func initFlagSet() *flag.FlagSet {
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
 	logFile = fset.String(nmLogFile, "", "log file path")
 	logSlowQuery = fset.String(nmLogSlowQuery, "", "slow query file path")
+	logGeneral = fset.String(nmLogGeneral, "", "general log file path")
 
 	// Status
 	reportStatus = flagBoolean(fset, nmReportStatus, true, "If enable status report HTTP service.")
@@ -222,6 +229,9 @@ func initFlagSet() *flag.FlagSet {
 	statusPort = fset.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr = fset.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// subcommand collect-log
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
 
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
@@ -249,6 +259,16 @@ func initFlagSet() *flag.FlagSet {
 
 func main() {
 	fset := initFlagSet()
+	if args := fset.Args(); len(args) != 0 {
+		if args[0] == "collect-log" && len(args) > 1 {
+			output := "-"
+			if len(args) > 2 {
+				output = args[2]
+			}
+			terror.MustNil(redact.DeRedactFile(*redactFlag, args[1], output))
+			return
+		}
+	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
@@ -291,33 +311,28 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
+	cgmon.StartCgroupMonitor()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
-	setupBinlogClient()
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom := createStoreAndDomain(keyspaceName)
+	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
-
-	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
-	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
-	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
-	terror.RegisterFinish()
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func() {
 		svr.Close()
+		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.InstanceResourceManager.Stop()
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL()
-
+	topsql.SetupTopSQL(svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -370,20 +385,22 @@ func setCPUAffinity() {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
 		os.Exit(1)
 	}
-	runtime.GOMAXPROCS(len(cpu))
-	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
+	if len(cpu) < runtime.GOMAXPROCS(0) {
+		log.Info("cpu number less than maxprocs", zap.Int("cpu number ", len(cpu)), zap.Int("maxprocs", runtime.GOMAXPROCS(0)))
+		runtime.GOMAXPROCS(len(cpu))
+	}
 }
 
 func registerStores() {
-	err := kvstore.Register("tikv", driver.TiKVDriver{})
+	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
+	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 
-func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	var fullPath string
 	if keyspaceName == "" {
@@ -397,45 +414,11 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
+	err = ddl.StartOwnerManager(context.Background(), storage)
+	terror.MustNil(err)
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
 	return storage, dom
-}
-
-func setupBinlogClient() {
-	cfg := config.GetGlobalConfig()
-	if !cfg.Binlog.Enable {
-		return
-	}
-
-	if cfg.Binlog.IgnoreError {
-		binloginfo.SetIgnoreError(true)
-	}
-
-	var (
-		client *pumpcli.PumpsClient
-		err    error
-	)
-
-	securityOption := pd.SecurityOption{
-		CAPath:   cfg.Security.ClusterSSLCA,
-		CertPath: cfg.Security.ClusterSSLCert,
-		KeyPath:  cfg.Security.ClusterSSLKey,
-	}
-
-	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
-	} else {
-		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
-	}
-
-	terror.MustNil(err)
-
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-
-	binloginfo.SetPumpsClient(client)
-	log.Info("tidb-server", zap.Bool("create pumps client success, ignore binlog error", cfg.Binlog.IgnoreError))
 }
 
 // Prometheus push.
@@ -533,16 +516,13 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
-		cfg.Store = *store
+		cfg.Store = config.StoreType(*store)
 	}
 	if actualFlags[nmStorePath] {
 		cfg.Path = *storePath
 	}
 	if actualFlags[nmSocket] {
 		cfg.Socket = *socket
-	}
-	if actualFlags[nmEnableBinlog] {
-		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.Instance.TiDBEnableDDL.Store(*runDDL)
@@ -581,6 +561,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 	if actualFlags[nmLogSlowQuery] {
 		cfg.Log.SlowQueryFile = *logSlowQuery
+	}
+	if actualFlags[nmLogGeneral] {
+		cfg.Log.GeneralLogFile = *logGeneral
 	}
 
 	// Status
@@ -654,14 +637,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		scope, ok := distroleutil.ToTiDBServiceScope(*serviceScope)
-		if !ok {
-			err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-				*serviceScope,
-				nmTiDBServiceScope, `"", background`)
-			terror.MustNil(err)
-		}
-		cfg.Instance.TiDBServiceScope = scope
+		err = servicescope.CheckServiceScope(*serviceScope)
+		terror.MustNil(err)
+		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
 }
 
@@ -728,12 +706,18 @@ func setGlobalVars() {
 	// We should respect to user's settings in config file.
 	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
-	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
 	util.SetGOGC(cfg.Performance.GOGC)
 
-	ddlLeaseDuration := parseDuration(cfg.Lease)
-	session.SetSchemaLease(ddlLeaseDuration)
+	schemaLeaseDuration := parseDuration(cfg.Lease)
+	if schemaLeaseDuration <= 0 {
+		// previous version allow set schema lease to 0, and mainly used on
+		// uni-store and for test, to be compatible we set it to default value here.
+		log.Warn("schema lease is invalid, use default value",
+			zap.String("lease", schemaLeaseDuration.String()))
+		schemaLeaseDuration = config.DefSchemaLease
+	}
+	session.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
@@ -786,7 +770,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
-	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)
@@ -881,10 +864,9 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	if err != nil {
-		closeDomainAndStorage(storage, dom)
+		closeDDLOwnerMgrDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
-	mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(svr.GetStatusServerAddr())
 	svr.SetDomain(dom)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
@@ -894,6 +876,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 }
 
 func setupMetrics() {
+	enablePyroscope()
 	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
@@ -916,9 +899,10 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
+func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
+	ddl.CloseOwnerManager()
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
@@ -941,10 +925,12 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage(storage, dom)
+	repository.StopRepository()
+	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
+	cgmon.StopCgroupMonitor()
 }
 
 func stringToList(repairString string) []string {
@@ -978,5 +964,29 @@ func closeStmtSummary() {
 	instanceCfg := config.GetGlobalConfig().Instance
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
+	}
+}
+
+func enablePyroscope() {
+	if os.Getenv("PYROSCOPE_SERVER_ADDRESS") != "" {
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(5)
+		_, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName:   "tidb",
+			ServerAddress:     os.Getenv("PYROSCOPE_SERVER_ADDRESS"),
+			Logger:            pyroscope.StandardLogger,
+			AuthToken:         os.Getenv("PYROSCOPE_AUTH_TOKEN"),
+			TenantID:          os.Getenv("PYROSCOPE_TENANT_ID"),
+			BasicAuthUser:     os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
+			BasicAuthPassword: os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
+			ProfileTypes: []pyroscope.ProfileType{
+				pyroscope.ProfileCPU,
+				pyroscope.ProfileAllocSpace,
+			},
+			UploadRate: 30 * time.Second,
+		})
+		if err != nil {
+			log.Fatal("fail to start pyroscope", zap.Error(err))
+		}
 	}
 }

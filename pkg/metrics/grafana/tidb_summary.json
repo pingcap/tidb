@@ -41,7 +41,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -127,7 +127,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -163,7 +163,7 @@
                      "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}",
+                     "legendFormat": "{{instance}} {{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -220,7 +220,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -258,6 +258,13 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}",
                      "refId": "A"
+                  },
+                  {
+                     "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "quota-{{instance}}",
+                     "refId": "B"
                   }
                ],
                "thresholds": [ ],
@@ -306,7 +313,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -351,6 +358,13 @@
                      "intervalFactor": 2,
                      "legendFormat": "HeapInuse-{{instance}}",
                      "refId": "B"
+                  },
+                  {
+                     "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "quota-{{instance}}",
+                     "refId": "C"
                   }
                ],
                "thresholds": [ ],
@@ -419,7 +433,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -519,7 +533,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -605,7 +619,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -707,7 +721,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -793,7 +807,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -886,7 +900,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -929,7 +943,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "CPS by CMD",
+               "title": "CPS By CMD",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -992,7 +1006,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1085,7 +1099,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1178,7 +1192,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1271,7 +1285,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1377,7 +1391,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1463,7 +1477,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1563,7 +1577,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1649,7 +1663,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 6,
+                  "h": 7,
                   "w": 12,
                   "x": 12,
                   "y": 0

@@ -11,7 +11,6 @@ profile.coverprofile
 mysql_tester
 tests/integrationtest/integration-test.out
 tests/integrationtest/integrationtest_tidb-server
-tests/integrationtest/portgenerator
 tests/integrationtest/s/
 tests/integrationtest/replayer/
 *.fail.go
@@ -35,6 +34,7 @@ bazel-bin
 bazel-out
 bazel-testlogs
 bazel-tidb
+MODULE.bazel.lock
 .ijwb/
 /oom_record/
 *.log.json

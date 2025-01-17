@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -57,7 +60,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	}
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: fmt.Sprintf("zap_log_%s", uuid.NewString()), MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 	connID := uint64(123)
@@ -66,7 +69,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 
-	conf = NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf = NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err = InitLogger(conf)
 	require.NoError(t, err)
 	ctx = WithConnID(context.Background(), connID)
@@ -124,7 +127,7 @@ func TestZapLoggerWithCore(t *testing.T) {
 	}
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 
 	opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		return core.With([]zap.Field{zap.String("coreKey", "coreValue")})
@@ -165,7 +168,7 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 }
 
 func TestSetLevel(t *testing.T) {
-	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 	require.Equal(t, zap.InfoLevel, log.GetLevel())
@@ -181,37 +184,80 @@ func TestSetLevel(t *testing.T) {
 	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }
 
-func TestSlowQueryLoggerCreation(t *testing.T) {
-	level := "Error"
-	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	_, prop, err := newSlowQueryLogger(conf)
-	// assert after init slow query logger, the original conf is not changed
-	require.Equal(t, conf.Level, level)
-	require.NoError(t, err)
-	// slow query logger doesn't use the level of the global log config, and the
-	// level should be less than WarnLevel which is used by it to log slow query.
-	require.NotEqual(t, conf.Level, prop.Level.String())
-	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
+	var prop *log.ZapProperties
+	var err error
+	for i := range 2 {
+		level := "Error"
+		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
+		if i == 0 {
+			_, prop, err = newSlowQueryLogger(conf)
+		} else {
+			_, prop, err = newGeneralLogger(conf)
+		}
+		// assert after init logger, the original conf is not changed
+		require.Equal(t, conf.Level, level)
+		require.NoError(t, err)
+		// logger doesn't use the level of the global log config, and the
+		// level should be equals to InfoLevel.
+		require.NotEqual(t, conf.Level, prop.Level.String())
+		require.True(t, prop.Level.Level() == zapcore.InfoLevel)
 
-	level = "warn"
-	slowQueryFn := "slow-query.log"
+		level = "warn"
+		name := "test.log"
+		fileConf := FileLogConfig{
+			log.FileLogConfig{
+				Filename:   name,
+				MaxSize:    10,
+				MaxDays:    10,
+				MaxBackups: 10,
+			},
+		}
+		conf = NewLogConfig(level, DefaultLogFormat, name, "", fileConf, false)
+		if i == 0 {
+			slowQueryConf := newSlowQueryLogConfig(conf)
+			// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+			require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+		} else {
+			generalConf := newGeneralLogConfig(conf)
+			// generalConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+			require.Equal(t, fileConf.FileLogConfig, generalConf.File)
+		}
+	}
+}
+
+func TestCompressedLog(t *testing.T) {
+	level := "warn"
 	fileConf := FileLogConfig{
 		log.FileLogConfig{
-			Filename:   slowQueryFn,
-			MaxSize:    10,
-			MaxDays:    10,
-			MaxBackups: 10,
+			Filename:    "test.log",
+			MaxSize:     10,
+			MaxDays:     10,
+			MaxBackups:  10,
+			Compression: "xxx",
 		},
 	}
-	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
-	slowQueryConf := newSlowQueryLogConfig(conf)
-	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
-	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+	conf := NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
+	err := InitLogger(conf)
+	require.Error(t, err)
+
+	fileConf = FileLogConfig{
+		log.FileLogConfig{
+			Filename:    "test.log",
+			MaxSize:     10,
+			MaxDays:     10,
+			MaxBackups:  10,
+			Compression: "gzip",
+		},
+	}
+	conf = NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
+	err = InitLogger(conf)
+	require.NoError(t, err)
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 
@@ -221,4 +267,64 @@ func TestGlobalLoggerReplace(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
+}
+
+func TestProxyFields(t *testing.T) {
+	revIndex := map[string]int{
+		"http_proxy":  0,
+		"https_proxy": 1,
+		"no_proxy":    2,
+	}
+	envs := [...]string{"http_proxy", "https_proxy", "no_proxy"}
+	envPreset := [...]string{"http://127.0.0.1:8080", "https://127.0.0.1:8443", "localhost,127.0.0.1"}
+
+	// Exhaust all combinations of those environment variables' selection.
+	// Each bit of the mask decided whether this index of `envs` would be set.
+	for mask := 0; mask <= 0b111; mask++ {
+		for _, env := range envs {
+			require.NoError(t, os.Unsetenv(env))
+		}
+
+		for i := range 3 {
+			if (1<<i)&mask != 0 {
+				require.NoError(t, os.Setenv(envs[i], envPreset[i]))
+			}
+		}
+
+		for _, field := range proxyFields() {
+			idx, ok := revIndex[field.Key]
+			require.True(t, ok)
+			require.NotZero(t, (1<<idx)&mask)
+			require.Equal(t, envPreset[idx], field.String)
+		}
+	}
+}
+
+func prepareStdoutLogger(t *testing.T) (*os.File, string) {
+	bak := os.Stdout
+	t.Cleanup(func() {
+		os.Stdout = bak
+	})
+	tempDir := t.TempDir()
+	fileName := path.Join(tempDir, "test.log")
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	os.Stdout = file
+	// InitLogger contains zap.AddStacktrace(zapcore.FatalLevel), so log level
+	// below fatal will not contain stack automatically.
+	require.NoError(t, InitLogger(&LogConfig{}))
+
+	return file, fileName
+}
+
+func TestSampleLoggerFactory(t *testing.T) {
+	file, filename := prepareStdoutLogger(t)
+	fac := SampleLoggerFactory(time.Minute, 3, zap.String(LogFieldCategory, "ddl"))
+	for range 100 {
+		fac().Info("sample log test")
+	}
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(filename)
+	require.NoError(t, err)
+	require.Equal(t, 3, strings.Count(string(content), "sample log test"))
 }

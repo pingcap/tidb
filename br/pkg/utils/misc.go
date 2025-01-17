@@ -16,8 +16,16 @@ package utils
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"os"
+	"os/signal"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -38,8 +46,7 @@ const (
 	// Also note that the offline threshold in PD is 20s, see
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
 
-	// After talk to PD members 100s is not a safe number. set it to 600s
-	storeDisconnectionDuration = 600 * time.Second
+	storeDisconnectionDuration = 100 * time.Second
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -124,7 +131,10 @@ func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts .
 // Some versions of PD may not set the store state in the gRPC response.
 // We need to check it manually.
 func CheckStoreLiveness(s *metapb.Store) error {
-	if s.State != metapb.StoreState_Up {
+	// note: offline store is also considered as alive.
+	// because the real meaning of offline is "Going Offline".
+	// https://docs.pingcap.com/tidb/v7.5/tidb-scheduling#information-collection
+	if s.State != metapb.StoreState_Up && s.State != metapb.StoreState_Offline {
 		return errors.Annotatef(berrors.ErrKVStorage, "the store state isn't up, it is %s", s.State)
 	}
 	// If the field isn't present (the default value), skip this check.
@@ -156,4 +166,53 @@ func WithCleanUp(errOut *error, timeout time.Duration, fn func(context.Context) 
 	} else if err != nil {
 		log.Warn("Encountered but ignored error while cleaning up.", zap.Error(err))
 	}
+}
+
+func AllStackInfo() []byte {
+	res := make([]byte, 256*units.KiB)
+	for {
+		n := runtime.Stack(res, true)
+		if n < len(res) {
+			return res[:n]
+		}
+		res = make([]byte, len(res)*2)
+	}
+}
+
+var (
+	DumpGoroutineWhenExit atomic.Bool
+)
+
+func StartExitSingleListener(ctx context.Context) (context.Context, context.CancelFunc) {
+	cx, cancel := context.WithCancel(ctx)
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
+	go func() {
+		sig := <-sc
+		dumpGoroutine := DumpGoroutineWhenExit.Load()
+		padding := strings.Repeat("=", 8)
+		printDelimate := func(s string) {
+			fmt.Printf("%s[ %s ]%s\n", padding, s, padding)
+		}
+		fmt.Println()
+		printDelimate(fmt.Sprintf("Got signal %v to exit.", sig))
+		printDelimate(fmt.Sprintf("Required Goroutine Dump = %v", dumpGoroutine))
+		if dumpGoroutine {
+			printDelimate("Start Dumping Goroutine")
+			_, _ = os.Stdout.Write(AllStackInfo())
+			printDelimate("End of Dumping Goroutine")
+		}
+		log.Warn("received signal to exit", zap.Stringer("signal", sig))
+		cancel()
+		fmt.Fprintln(os.Stderr, "gracefully shutting down, press ^C again to force exit")
+		<-sc
+		// Even user use SIGTERM to exit, there isn't any checkpoint for resuming,
+		// hence returning fail exit code.
+		os.Exit(1)
+	}()
+	return cx, cancel
 }

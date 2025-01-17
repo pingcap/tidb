@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -182,7 +182,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
-	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
+	con.ParamMarker = &ParamMarker{order: 0}
 	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
@@ -204,7 +204,7 @@ func TestPopRowFirstArg(t *testing.T) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun := &ScalarFunction{Function: f, FuncName: ast.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -259,7 +259,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	ret, err = SubstituteCorCol2Constant(ctx, plus3)
 	require.NoError(t, err)
 	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
-	require.True(t, ret.Equal(ctx, ans3))
+	require.False(t, ret.Equal(ctx, ans3))
 }
 
 func TestPushDownNot(t *testing.T) {
@@ -351,7 +351,7 @@ func TestHashGroupKey(t *testing.T) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, ctx.GetSessionVars().EnableVectorizedExpression, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
 		require.NoError(t, err)
 		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
@@ -376,21 +376,22 @@ func isLogicOrFunction(e Expression) bool {
 
 func TestDisableParseJSONFlag4Expr(t *testing.T) {
 	var expr Expression
+	ctx := createContext(t)
 	expr = &Column{RetType: newIntFieldType()}
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 }
 
@@ -456,6 +457,43 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 }
 
+func TestProjectionBenefitsFromPushedDown(t *testing.T) {
+	type testDataType struct {
+		exprs          []Expression
+		inputSchemaLen int
+		expectResult   bool
+	}
+	castFunc, _ := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")))
+	testDataArray := []testDataType{
+		{[]Expression{newColumn(0), newColumn(1)}, 5, true},
+		{[]Expression{newColumn(0), newColumn(1)}, 2, false},
+		{[]Expression{
+			newColumn(0),
+			newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONDepth, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONLength, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONType, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONValid, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONContains, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONContainsPath, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONKeys, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONSearch, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONMemberOf, newColString("str", "binary"), newColJSON()),
+			newFunctionWithMockCtx(ast.JSONOverlaps, newColJSON(), newColJSON()),
+		}, 3, true},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, newColString("str", "binary")),
+		}, 3, false},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, castFunc),
+		}, 3, true},
+	}
+	for _, testData := range testDataArray {
+		result := ProjectionBenefitsFromPushedDown(testData.exprs, testData.inputSchemaLen)
+		require.Equal(t, result, testData.expectResult)
+	}
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
@@ -471,6 +509,9 @@ func BenchmarkExtractColumns(b *testing.B) {
 		ExtractColumns(expr)
 	}
 	b.ReportAllocs()
+}
+func (m *MockExpr) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
 }
 
 func BenchmarkExprFromSchema(b *testing.B) {
@@ -498,6 +539,10 @@ type MockExpr struct {
 	i   any
 }
 
+func (m *MockExpr) SafeToShareAcrossSession() bool {
+	return false
+}
+
 func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
@@ -520,8 +565,8 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (m *MockExpr) String() string               { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
+func (m *MockExpr) StringWithCtx(ParamValues, string) string { return "" }
+
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }
@@ -567,8 +612,24 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
-func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error) {
+	if x, ok := m.i.(types.VectorFloat32); ok {
+		return x, false, m.err
+	}
+	return types.ZeroVectorFloat32, m.i == nil, m.err
+}
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
+
+func (m *MockExpr) Clone() Expression {
+	cloned := new(MockExpr)
+	cloned.i = m.i
+	cloned.err = m.err
+	if m.t != nil {
+		cloned.t = m.t.Clone()
+	}
+	return cloned
+}
+
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
 func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
@@ -593,6 +654,8 @@ func (m *MockExpr) Coercibility() Coercibility                          { return
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
 func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
@@ -605,3 +668,5 @@ func (m *MockExpr) MemoryUsage() (sum int64) {
 func (m *MockExpr) Traverse(action TraverseAction) Expression {
 	return action.Transform(m)
 }
+func (m *MockExpr) Hash64(_ base.Hasher) {}
+func (m *MockExpr) Equals(_ any) bool    { return false }

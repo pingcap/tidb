@@ -15,172 +15,83 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh         chan *util.DDLEvent
-	statsWriter        types.StatsReadWriter
-	statsHandler       types.StatsHandle
-	globalStatsHandler types.StatsGlobal
+	ddlEventCh   chan *notifier.SchemaChangeEvent
+	statsWriter  types.StatsReadWriter
+	statsHandler types.StatsHandle
+	sub          *subscriber
 }
 
 // NewDDLHandler creates a new ddl handler.
 func NewDDLHandler(
 	statsWriter types.StatsReadWriter,
 	statsHandler types.StatsHandle,
-	globalStatsHandler types.StatsGlobal,
 ) types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:         make(chan *util.DDLEvent, 1000),
-		statsWriter:        statsWriter,
-		statsHandler:       statsHandler,
-		globalStatsHandler: globalStatsHandler,
+		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
+		statsWriter:  statsWriter,
+		statsHandler: statsHandler,
+		sub:          newSubscriber(statsHandler),
 	}
 }
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
-	switch t.GetType() {
-	case model.ActionCreateTable:
-		newTableInfo := t.GetCreateTableInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
-				return err
-			}
-		}
-	case model.ActionTruncateTable:
-		newTableInfo, droppedTableInfo := t.GetTruncateTableInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
-				return err
-			}
-		}
-
-		// Remove the old table stats.
-		droppedIDs, err := h.getTableIDs(droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range droppedIDs {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
-				return err
-			}
-		}
-	case model.ActionDropTable:
-		droppedTableInfo := t.GetDropTableInfo()
-		ids, err := h.getTableIDs(droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
-				return err
-			}
-		}
-	case model.ActionAddColumn:
-		newTableInfo, newColumnInfo := t.GetAddColumnInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
-				return err
-			}
-		}
-	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
-
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
-				return err
-			}
-		}
-	case model.ActionAddTablePartition:
-		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
-		for _, def := range addedPartitionInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionTruncateTablePartition:
-		if err := h.onTruncatePartitions(t); err != nil {
-			return err
-		}
-	case model.ActionDropTablePartition:
-		if err := h.onDropPartitions(t); err != nil {
-			return err
-		}
-	case model.ActionExchangeTablePartition:
-		if err := h.onExchangeAPartition(t); err != nil {
-			return err
-		}
-	case model.ActionReorganizePartition:
-		if err := h.onReorganizePartitions(t); err != nil {
-			return err
-		}
-	case model.ActionAlterTablePartitioning:
-		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
-		// Add new partition stats.
-		for _, def := range addedPartInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-		}
-		// Change id for global stats, since the data has not changed!
-		// Note: This operation will update all tables related to statistics with the new ID.
-		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
-	case model.ActionRemovePartitioning:
-		// Change id for global stats, since the data has not changed!
-		// Note: This operation will update all tables related to statistics with the new ID.
-		oldTblID,
-			newSingleTableInfo,
-			droppedPartInfo := t.GetRemovePartitioningInfo()
-		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
-			return err
-		}
-
-		// Remove partition stats.
-		for _, def := range droppedPartInfo.Definitions {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionFlashbackCluster:
-		return h.statsWriter.UpdateStatsVersion()
+func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
+	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
+	if err := h.sub.handle(ctx, sctx, s); err != nil {
+		statslogutil.StatsLogger().Warn(
+			"failed to handle DDL event",
+			zap.String("event", s.String()),
+			zap.Error(err),
+		)
 	}
 	return nil
+}
+
+// DDLEventCh returns ddl events channel in handle.
+func (h *ddlHandlerImpl) DDLEventCh() chan *notifier.SchemaChangeEvent {
+	return h.ddlEventCh
+}
+
+// UpdateStatsWithCountDeltaAndModifyCountDeltaForTest updates the global stats with the given count delta and modify count delta.
+func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
+	sctx sessionctx.Context,
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	return updateStatsWithCountDeltaAndModifyCountDelta(
+		util.StatsCtx,
+		sctx,
+		tableID,
+		countDelta,
+		modifyCountDelta,
+	)
 }
 
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
 func updateStatsWithCountDeltaAndModifyCountDelta(
+	ctx context.Context,
 	sctx sessionctx.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -212,7 +123,11 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(
+		util.StatsCtx,
+		sctx,
+		tableID,
+	)
 	if err != nil {
 		return err
 	}
@@ -243,28 +158,4 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	return err
-}
-
-func (h *ddlHandlerImpl) getTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return []int64{tblInfo.ID}, nil
-	}
-	ids = make([]int64, 0, len(pi.Definitions)+1)
-	for _, def := range pi.Definitions {
-		ids = append(ids, def.ID)
-	}
-	pruneMode, err := util.GetCurrentPruneMode(h.statsHandler.SPool())
-	if err != nil {
-		return nil, err
-	}
-	if variable.PartitionPruneMode(pruneMode) == variable.Dynamic {
-		ids = append(ids, tblInfo.ID)
-	}
-	return ids, nil
-}
-
-// DDLEventCh returns ddl events channel in handle.
-func (h *ddlHandlerImpl) DDLEventCh() chan *util.DDLEvent {
-	return h.ddlEventCh
 }

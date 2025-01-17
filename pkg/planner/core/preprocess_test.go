@@ -22,12 +22,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -46,7 +47,8 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
@@ -59,7 +61,7 @@ func TestValidator(t *testing.T) {
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
-			errors.New("Invalid default value for 'id'")},
+			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
 			errors.New("Invalid default value for 'id'")},
 		// Default value can be null when the column is primary key in MySQL 5.6.
@@ -72,6 +74,8 @@ func TestValidator(t *testing.T) {
 		{"create table t(id int not null auto_increment, c int, key (c, id))", true, nil},
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
+		{"create table t0 (c int(10), c1 date auto_increment default (current_date()))", true,
+			errors.New("[types:1067]Invalid default value for 'c1'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
 		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
 		{"create table t(a int primary key, b int, c varchar(10), d char(256));", true,
@@ -400,7 +404,8 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 
-		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW)
 		require.NoError(t, err)
 
 		var rs strings.Builder
@@ -408,4 +413,15 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.after, rs.String())
 	}
+}
+
+func TestPreprocessDeleteFromWithAlias(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/56726
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int);")
+	tk.MustExec(" create table t2(id int);")
+	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
+	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 }

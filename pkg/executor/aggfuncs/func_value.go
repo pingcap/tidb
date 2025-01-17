@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -47,6 +48,8 @@ const (
 	DefValue4StringSize = int64(unsafe.Sizeof(value4String{}))
 	// DefValue4JSONSize is the size of value4JSON
 	DefValue4JSONSize = int64(unsafe.Sizeof(value4JSON{}))
+	// DefValue4VectorFloat32Size is the size of value4VectorFloat32
+	DefValue4VectorFloat32Size = int64(unsafe.Sizeof(value4VectorFloat32{}))
 )
 
 // valueEvaluator is used to evaluate values for `first_value`, `last_value`, `nth_value`,
@@ -207,6 +210,26 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
+type value4VectorFloat32 struct {
+	val    types.VectorFloat32
+	isNull bool
+}
+
+func (v *value4VectorFloat32) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+	originalLength := v.val.EstimatedMemUsage()
+	v.val, v.isNull, err = expr.EvalVectorFloat32(ctx, row)
+	v.val = v.val.Clone() // deep copy to avoid content change.
+	return int64(v.val.EstimatedMemUsage() - originalLength), err
+}
+
+func (v *value4VectorFloat32) appendResult(chk *chunk.Chunk, colIdx int) {
+	if v.isNull {
+		chk.AppendNull(colIdx)
+	} else {
+		chk.AppendVectorFloat32(colIdx, v.val)
+	}
+}
+
 func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
 	if tp.GetType() == mysql.TypeBit {
@@ -232,6 +255,10 @@ func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64
 		return &value4String{}, DefValue4StringSize
 	case types.ETJson:
 		return &value4JSON{}, DefValue4JSONSize
+	case types.ETVectorFloat32:
+		return &value4VectorFloat32{}, DefValue4VectorFloat32Size
+	default:
+		panic(fmt.Sprintf("unsupported eval type %v", evalType))
 	}
 	return nil, 0
 }

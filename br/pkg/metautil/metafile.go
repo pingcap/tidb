@@ -23,11 +23,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -36,7 +39,7 @@ const (
 	// MetaFile represents file name
 	MetaFile = "backupmeta"
 	// MetaJSONFile represents backup meta json file name
-	MetaJSONFile = "backupmeta.json"
+	MetaJSONFile = "jsons/backupmeta.json"
 	// MaxBatchSize represents the internal channel buffer size of MetaWriter and MetaReader.
 	MaxBatchSize = 1024
 
@@ -85,24 +88,21 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
-// Decrypt decrypts the content according to CipherInfo and IV.
-func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
-	if len(content) == 0 || cipher == nil {
-		return content, nil
+func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherInfo) ([]byte, error) {
+	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
+		return metaData, nil
 	}
-
-	switch cipher.CipherType {
-	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return content, nil
-	case encryptionpb.EncryptionMethod_AES128_CTR,
-		encryptionpb.EncryptionMethod_AES192_CTR,
-		encryptionpb.EncryptionMethod_AES256_CTR:
-		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
-	default:
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
+	iv := metaData[:CrypterIvLen]
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}
+	return decryptBackupMeta, nil
 }
 
+// walkLeafMetaFile walks the leaves of the given metafile, and deal with it by calling the function `output`.
+// Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -116,32 +116,41 @@ func walkLeafMetaFile(
 		output(file)
 		return nil
 	}
+	eg, ectx := errgroup.WithContext(ctx)
+	workers := tidbutil.NewWorkerPool(8, "download files workers")
 	for _, node := range file.MetaFiles {
-		content, err := storage.ReadFile(ctx, node.Name)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		workers.ApplyOnErrorGroup(eg, func() error {
+			content, err := storage.ReadFile(ectx, node.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		decryptContent, err := Decrypt(content, cipher, node.CipherIv)
-		if err != nil {
-			return errors.Trace(err)
-		}
+			decryptContent, err := utils.Decrypt(content, cipher, node.CipherIv)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		checksum := sha256.Sum256(decryptContent)
-		if !bytes.Equal(node.Sha256, checksum[:]) {
-			return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
-				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:]))
-		}
+			checksum := sha256.Sum256(decryptContent)
+			if !bytes.Equal(node.Sha256, checksum[:]) {
+				return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+					"checksum mismatch expect %x, got %x", node.Sha256, checksum[:]))
+			}
 
-		child := &backuppb.MetaFile{}
-		if err = proto.Unmarshal(decryptContent, child); err != nil {
-			return errors.Trace(err)
-		}
-		if err = walkLeafMetaFile(ctx, storage, child, cipher, output); err != nil {
-			return errors.Trace(err)
-		}
+			child := &backuppb.MetaFile{}
+			if err = proto.Unmarshal(decryptContent, child); err != nil {
+				return errors.Trace(err)
+			}
+
+			// the max depth of the root metafile is only 1.
+			// ASSERT: len(child.MetaFiles) == 0
+			if err = walkLeafMetaFile(ectx, storage, child, cipher, output); err != nil {
+				return errors.Trace(err)
+			}
+
+			return nil
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
 // Table wraps the schema and files of a table.
@@ -155,11 +164,6 @@ type Table struct {
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
-}
-
-// NoChecksum checks whether the table has a calculated checksum.
-func (tbl *Table) NoChecksum() bool {
-	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -226,12 +230,36 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
+func ArchiveSize(files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
 	}
 	return total
+}
+
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+func (stats ChecksumStats) ChecksumExists() bool {
+	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
+		return false
+	}
+	return true
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
 }
 
 // ReadDDLs reads the ddls from the backupmeta.
@@ -277,6 +305,7 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 
 type readSchemaConfig struct {
 	skipFiles bool
+	skipStats bool
 }
 
 // ReadSchemaOption describes some extra option of reading the config.
@@ -288,6 +317,10 @@ func SkipFiles(conf *readSchemaConfig) {
 	conf.skipFiles = true
 }
 
+func SkipStats(conf *readSchemaConfig) {
+	conf.skipStats = true
+}
+
 // GetBasic returns a basic copy of the backup meta.
 func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
@@ -296,95 +329,128 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
-	ch := make(chan any, MaxBatchSize)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(ch)
-		if err := reader.readSchemas(ctx, func(s *backuppb.Schema) { ch <- s }); err != nil {
-			errCh <- errors.Trace(err)
-		}
-	}()
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	cfg := readSchemaConfig{}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	ch := make(chan any, MaxBatchSize)
+	schemaCh := make(chan *backuppb.Schema, MaxBatchSize)
+	// Make sure these 2 goroutine avoid to blocked by the errCh.
+	// And the second error in the errCh is not the root cause error.
+	errCh := make(chan error, 2)
+	// download and parse metafile
+	go func() {
+		defer close(schemaCh)
+		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
+			if cfg.skipStats {
+				s.Stats = nil
+				s.StatsIndex = nil
+			}
+			select {
+			case <-cctx.Done():
+			case schemaCh <- s:
+			}
+		}); err != nil {
+			errCh <- errors.Trace(err)
+		}
+	}()
+	// parse the schema
+	go func() {
+		defer close(ch)
+		eg, ectx := errgroup.WithContext(cctx)
+		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
+		for {
+			select {
+			case <-ectx.Done():
+				errCh <- errors.Trace(ectx.Err())
+				return
+			case s, ok := <-schemaCh:
+				if !ok {
+					if err := eg.Wait(); err != nil {
+						errCh <- err
+					}
+					return
+				}
+				workers.ApplyOnErrorGroup(eg, func() error {
+					table, err := parseSchemaFile(s)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					select {
+					case <-ectx.Done():
+					case ch <- table:
+					}
+					return nil
+				})
+			}
+		}
+	}()
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
 	var fileMap map[int64][]*backuppb.File
 	if !cfg.skipFiles {
+		fileCh := make(chan *backuppb.File, MaxBatchSize)
+		fileErrCh := make(chan error, 1)
 		fileMap = make(map[int64][]*backuppb.File)
-		outputFn := func(file *backuppb.File) {
-			tableID := tablecodec.DecodeTableID(file.GetStartKey())
-			if tableID == 0 {
-				log.Panic("tableID must not equal to 0", logutil.File(file))
+		go func() {
+			defer close(fileCh)
+			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
+				select {
+				case <-cctx.Done():
+				case fileCh <- file:
+				}
+			})
+			if err != nil {
+				fileErrCh <- err
 			}
-			fileMap[tableID] = append(fileMap[tableID], file)
-		}
-		err := reader.readDataFiles(ctx, outputFn)
-		if err != nil {
-			return errors.Trace(err)
+		}()
+	generateFileMapDone:
+		for {
+			select {
+			case <-cctx.Done():
+				return errors.Trace(cctx.Err())
+			case err := <-fileErrCh:
+				return errors.Trace(err)
+			case file, ok := <-fileCh:
+				if !ok {
+					break generateFileMapDone
+				}
+				tableID := tablecodec.DecodeTableID(file.GetStartKey())
+				if tableID == 0 {
+					log.Panic("tableID must not equal to 0", logutil.File(file))
+				}
+				fileMap[tableID] = append(fileMap[tableID], file)
+			}
 		}
 	}
 
 	for {
 		// table ID -> *Table
 		tableMap := make(map[int64]*Table, MaxBatchSize)
-		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item any) error {
-			s := item.(*backuppb.Schema)
-			dbInfo := &model.DBInfo{}
-			if err := json.Unmarshal(s.Db, dbInfo); err != nil {
-				return errors.Trace(err)
-			}
-
-			var tableInfo *model.TableInfo
-			if s.Table != nil {
-				tableInfo = &model.TableInfo{}
-				if err := json.Unmarshal(s.Table, tableInfo); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			var stats *util.JSONTable
-			if s.Stats != nil {
-				stats = &util.JSONTable{}
-				if err := json.Unmarshal(s.Stats, stats); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			var statsFileIndexes []*backuppb.StatsFileIndex
-			if len(s.StatsIndex) > 0 {
-				statsFileIndexes = s.StatsIndex
-			}
-
-			table := &Table{
-				DB:               dbInfo,
-				Info:             tableInfo,
-				Crc64Xor:         s.Crc64Xor,
-				TotalKvs:         s.TotalKvs,
-				TotalBytes:       s.TotalBytes,
-				TiFlashReplicas:  int(s.TiflashReplicas),
-				Stats:            stats,
-				StatsFileIndexes: statsFileIndexes,
-			}
-			if tableInfo != nil {
+		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item any) error {
+			table := item.(*Table)
+			if table.Info != nil {
 				if fileMap != nil {
-					if files, ok := fileMap[tableInfo.ID]; ok {
+					if files, ok := fileMap[table.Info.ID]; ok {
 						table.Files = append(table.Files, files...)
 					}
-					if tableInfo.Partition != nil {
+					if table.Info.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
-						for _, p := range tableInfo.Partition.Definitions {
+						for _, p := range table.Info.Partition.Definitions {
 							if files, ok := fileMap[p.ID]; ok {
 								table.Files = append(table.Files, files...)
 							}
 						}
 					}
 				}
-				tableMap[tableInfo.ID] = table
+				tableMap[table.Info.ID] = table
 			} else {
 				// empty database
-				tableMap[dbInfo.ID] = table
+				tableMap[table.DB.ID] = table
 			}
 			return nil
 		})
@@ -399,6 +465,43 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			output <- table
 		}
 	}
+}
+
+func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
+	dbInfo := &model.DBInfo{}
+	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tableInfo *model.TableInfo
+	if s.Table != nil {
+		tableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var stats *util.JSONTable
+	if s.Stats != nil {
+		stats = &util.JSONTable{}
+		if err := json.Unmarshal(s.Stats, stats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var statsFileIndexes []*backuppb.StatsFileIndex
+	if len(s.StatsIndex) > 0 {
+		statsFileIndexes = s.StatsIndex
+	}
+
+	return &Table{
+		DB:               dbInfo,
+		Info:             tableInfo,
+		Crc64Xor:         s.Crc64Xor,
+		TotalKvs:         s.TotalKvs,
+		TotalBytes:       s.TotalBytes,
+		TiFlashReplicas:  int(s.TiflashReplicas),
+		Stats:            stats,
+		StatsFileIndexes: statsFileIndexes,
+	}, nil
 }
 
 func receiveBatch(

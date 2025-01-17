@@ -589,10 +589,10 @@ func TestVecMonth(t *testing.T) {
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
 	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
-	require.NoError(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
-	require.NoError(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 }

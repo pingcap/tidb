@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -188,6 +191,12 @@ type MemBuffer interface {
 
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
+
+	// GetLocal checks if the key exists in the buffer in local memory.
+	GetLocal(context.Context, []byte) ([]byte, error)
+
+	// BatchGet gets values from the memory buffer.
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -216,6 +225,8 @@ type Transaction interface {
 	Mem() uint64
 	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
 	SetMemoryFootprintChangeHook(func(uint64))
+	// MemHookSet returns whether the memory footprint change hook is set.
+	MemHookSet() bool
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Commit commits the transaction operations to KV store.
@@ -276,6 +287,10 @@ type Transaction interface {
 
 	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
 	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
+	// IsPipelined returns whether the transaction is used for pipelined DML.
+	IsPipelined() bool
+	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
+	MayFlush() error
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -312,6 +327,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.
@@ -331,17 +347,19 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
-// StoreType represents the type of a store.
+// StoreType represents the type of storage engine.
 type StoreType uint8
 
 const (
-	// TiKV means the type of a store is TiKV.
+	// TiKV means the type of store engine is TiKV.
 	TiKV StoreType = iota
-	// TiFlash means the type of a store is TiFlash.
+	// TiFlash means the type of store engine is TiFlash.
 	TiFlash
-	// TiDB means the type of a store is TiDB.
+	// TiDB means the type of store engine is TiDB.
+	// used to read memory data from other instances to have a global view of the
+	// data, such as for information_schema.cluster_slow_query.
 	TiDB
-	// UnSpecified means the store type is unknown
+	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255
 )
 
@@ -371,8 +389,8 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 	return NewPartitionedKeyRangesWithHints(ranges, nil)
 }
 
-// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
-func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+// NewNonPartitionedKeyRanges constructs a new RequestRange for a non-partitioned table.
+func NewNonPartitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return NewNonParitionedKeyRangesWithHint(ranges, nil)
 }
 
@@ -564,7 +582,7 @@ type Request struct {
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
-	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	ResourceGroupTagger *ResourceGroupTagBuilder
 	// Paging indicates whether the request is a paging request.
 	Paging struct {
 		Enable bool
@@ -585,8 +603,10 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxExecutionTime is the timeout of the whole query execution
+	MaxExecutionTime uint64
 
-	RunawayChecker *resourcegroup.RunawayChecker
+	RunawayChecker resourcegroup.RunawayChecker
 
 	// ConnID stores the session connection id.
 	ConnID uint64
@@ -702,6 +722,10 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.
 	GetCodec() tikv.Codec
+	// SetOption is a thin wrapper around sync.Map.
+	SetOption(k any, v any)
+	// GetOption is a thin wrapper around sync.Map.
+	GetOption(k any) (any, bool)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -754,3 +778,76 @@ const (
 	// RCCheckTS stands for 'read consistency read with ts check'.
 	RCCheckTS
 )
+
+// ResourceGroupTagBuilder is used to build the resource group tag for a kv request.
+type ResourceGroupTagBuilder struct {
+	sqlDigest  *parser.Digest
+	planDigest *parser.Digest
+	accessKey  []byte
+}
+
+// NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
+func NewResourceGroupTagBuilder() *ResourceGroupTagBuilder {
+	return &ResourceGroupTagBuilder{}
+}
+
+// SetSQLDigest sets the sql digest for the request.
+func (b *ResourceGroupTagBuilder) SetSQLDigest(digest *parser.Digest) *ResourceGroupTagBuilder {
+	b.sqlDigest = digest
+	return b
+}
+
+// SetPlanDigest sets the plan digest for the request.
+func (b *ResourceGroupTagBuilder) SetPlanDigest(digest *parser.Digest) *ResourceGroupTagBuilder {
+	b.planDigest = digest
+	return b
+}
+
+// BuildProtoTagger sets the access key for the request.
+func (b *ResourceGroupTagBuilder) BuildProtoTagger() tikvrpc.ResourceGroupTagger {
+	return func(req *tikvrpc.Request) {
+		b.Build(req)
+	}
+}
+
+// EncodeTagWithKey encodes the resource group tag, returns the encoded bytes.
+func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
+	tag := &tipb.ResourceGroupTag{}
+	if b.sqlDigest != nil {
+		tag.SqlDigest = b.sqlDigest.Bytes()
+	}
+	if b.planDigest != nil {
+		tag.PlanDigest = b.planDigest.Bytes()
+	}
+	if len(key) > 0 {
+		tag.TableId = decodeTableID(key)
+		label := resourcegrouptag.GetResourceGroupLabelByKey(key)
+		tag.Label = &label
+	}
+	tagEncoded, err := tag.Marshal()
+	if err != nil {
+		return nil
+	}
+	return tagEncoded
+}
+
+// Build builds the resource group tag for the request.
+func (b *ResourceGroupTagBuilder) Build(req *tikvrpc.Request) {
+	if req == nil {
+		return
+	}
+	if encodedBytes := b.EncodeTagWithKey(resourcegrouptag.GetFirstKeyFromRequest(req)); len(encodedBytes) > 0 {
+		req.ResourceGroupTag = encodedBytes
+	}
+}
+
+// DecodeTableIDFunc is used to decode table id from key.
+var DecodeTableIDFunc func(Key) int64
+
+// avoid import cycle, not import tablecodec in kv package.
+func decodeTableID(key Key) int64 {
+	if DecodeTableIDFunc != nil {
+		return DecodeTableIDFunc(key)
+	}
+	return 0
+}

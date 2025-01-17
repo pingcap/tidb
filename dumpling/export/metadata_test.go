@@ -40,7 +40,7 @@ func TestMysqlMetaData(t *testing.T) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: ON.000001\n" +
@@ -72,8 +72,8 @@ func TestMetaDataAfterConn(t *testing.T) {
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows2)
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, true))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, true))
 
 	m.buffer.Write(m.afterConnBuffer.Bytes())
 
@@ -108,7 +108,7 @@ func TestMysqlWithFollowersMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(followerRows)
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: ON.000001\n" +
@@ -140,7 +140,7 @@ func TestMysqlWithNullFollowersMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(sqlmock.NewRows([]string{"SQL_Remaining_Delay"}).AddRow(nil))
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: ON.000001\n" +
@@ -171,7 +171,7 @@ func TestMariaDBMetaData(t *testing.T) {
 	mock.ExpectQuery("SELECT @@global.gtid_binlog_pos").WillReturnRows(rows)
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMariaDB, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMariaDB}, false))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -197,7 +197,7 @@ func TestMariaDBWithFollowersMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(followerRows)
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: ON.000001\n" +
@@ -239,7 +239,7 @@ func TestEarlierMysqlMetaData(t *testing.T) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeMySQL}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: mysql-bin.000001\n" +
@@ -266,7 +266,7 @@ func TestTiDBSnapshotMetaData(t *testing.T) {
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeTiDB, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeTiDB}, false))
 
 	expected := "SHOW MASTER STATUS:\n" +
 		"\tLog: tidb-binlog\n" +
@@ -279,7 +279,7 @@ func TestTiDBSnapshotMetaData(t *testing.T) {
 		AddRow(logFile, pos, "", "")
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
 	m = newGlobalMetadata(tcontext.Background(), createStorage(t), snapshot)
-	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerTypeTiDB, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeTiDB}, false))
 
 	expected = "SHOW MASTER STATUS:\n" +
 		"\tLog: tidb-binlog\n" +
@@ -303,7 +303,7 @@ func TestNoPrivilege(t *testing.T) {
 
 	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	// some consistencyType will ignore this error, this test make sure no extra message is written
-	require.Error(t, m.recordGlobalMetaData(conn, version.ServerTypeTiDB, false))
+	require.Error(t, m.recordGlobalMetaData(conn, version.ServerInfo{ServerType: version.ServerTypeTiDB}, false))
 	require.Equal(t, "", m.buffer.String())
 }
 

@@ -26,7 +26,7 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower rank tasks can be scheduled if resource is enough.
+	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
@@ -49,10 +49,14 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
-	// PausedTask updated task state to paused.
+	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
 	ResumedTask(ctx context.Context, taskID int64) error
+	// ModifiedTask tries to update task concurrency and meta, and update state
+	// back to prev-state, if success, it will also update concurrency of all
+	// active subtasks.
+	ModifiedTask(ctx context.Context, task *proto.Task) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
@@ -79,11 +83,6 @@ type TaskManager interface {
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
-	// GetManagedNodes returns the nodes managed by dist framework and can be used
-	// to execute tasks. If there are any nodes with background role, we use them,
-	// else we use nodes without role.
-	// returned nodes are sorted by node id(host:port).
-	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
 
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
 	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
@@ -108,7 +107,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, nextStep proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
@@ -129,15 +128,18 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then scheduler will mark it as finished.
-	GetNextStep(task *proto.Task) proto.Step
+	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
+	// initialize required fields on scheduler.Init
+	GetNextStep(task *proto.TaskBase) proto.Step
 }
 
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
-	taskMgr  TaskManager
-	nodeMgr  *NodeManager
-	slotMgr  *SlotManager
-	serverID string
+	taskMgr        TaskManager
+	nodeMgr        *NodeManager
+	slotMgr        *SlotManager
+	serverID       string
+	allocatedSlots bool
 }
 
 // schedulerFactoryFn is used to create a scheduler.

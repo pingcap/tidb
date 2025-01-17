@@ -16,11 +16,11 @@ package hint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 // QBHintHandler is used to handle hints at different query blocks.
@@ -148,7 +148,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 				// we should add the query block number where it is located to the first table in the view's qb_name hint table list.
 				qbNum := hint.Tables[0].QBName.L
 				if qbNum == "" {
-					hint.Tables[0].QBName = model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
+					hint.Tables[0].QBName = ast.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
 				}
 			}
 			p.ViewQBNameToTable[qbName] = hint.Tables
@@ -220,7 +220,7 @@ const (
 
 // getBlockName finds the offset of query block name. It uses 0 as offset for top level update or delete,
 // -1 for invalid block name.
-func (p *QBHintHandler) getBlockOffset(blockName model.CIStr) int {
+func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 	if p.QBNameToSelOffset != nil {
 		level, ok := p.QBNameToSelOffset[blockName.L]
 		if ok {
@@ -243,7 +243,7 @@ func (p *QBHintHandler) getBlockOffset(blockName model.CIStr) int {
 }
 
 // GetHintOffset gets the offset of stmt that the hints take effects.
-func (p *QBHintHandler) GetHintOffset(qbName model.CIStr, currentOffset int) int {
+func (p *QBHintHandler) GetHintOffset(qbName ast.CIStr, currentOffset int) int {
 	if qbName.L != "" {
 		return p.getBlockOffset(qbName)
 	}
@@ -295,21 +295,23 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 			}
 			continue
 		}
-		p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		if !slices.Contains(p.QBOffsetToHints[offset], hint) {
+			p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		}
 	}
 	return p.QBOffsetToHints[currentOffset]
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, qbOffset int) (model.CIStr, error) {
+func GenerateQBName(nodeType NodeType, qbOffset int) (ast.CIStr, error) {
 	if qbOffset == 0 {
 		if nodeType == TypeDelete {
-			return model.NewCIStr(defaultDeleteBlockName), nil
+			return ast.NewCIStr(defaultDeleteBlockName), nil
 		}
 		if nodeType == TypeUpdate {
-			return model.NewCIStr(defaultUpdateBlockName), nil
+			return ast.NewCIStr(defaultUpdateBlockName), nil
 		}
-		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
+		return ast.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
+	return ast.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
 }

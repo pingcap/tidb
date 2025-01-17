@@ -15,53 +15,70 @@
 package executor
 
 import (
+	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSetDataFromCheckConstraints(t *testing.T) {
-	mt := memtableRetriever{}
-	sctx := defaultCtx()
-	dbs := []*model.DBInfo{
+	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: model.NewCIStr("test"),
-			Tables: []*model.TableInfo{
+			ID:    1,
+			Name:  ast.NewCIStr("t1"),
+			State: model.StatePublic,
+		},
+		{
+			ID:   2,
+			Name: ast.NewCIStr("t2"),
+			Columns: []*model.ColumnInfo{
 				{
-					ID:   1,
-					Name: model.NewCIStr("t1"),
-				},
-				{
-					ID:   2,
-					Name: model.NewCIStr("t2"),
-					Constraints: []*model.ConstraintInfo{
-						{
-							Name:       model.NewCIStr("t2_c1"),
-							Table:      model.NewCIStr("t2"),
-							ExprString: "id<10",
-							State:      model.StatePublic,
-						},
-					},
-				},
-				{
-					ID:   3,
-					Name: model.NewCIStr("t3"),
-					Constraints: []*model.ConstraintInfo{
-						{
-							Name:       model.NewCIStr("t3_c1"),
-							Table:      model.NewCIStr("t3"),
-							ExprString: "id<10",
-							State:      model.StateDeleteOnly,
-						},
-					},
+					Name:      ast.NewCIStr("id"),
+					FieldType: *types.NewFieldType(mysql.TypeLonglong),
+					State:     model.StatePublic,
 				},
 			},
+			Constraints: []*model.ConstraintInfo{
+				{
+					Name:       ast.NewCIStr("t2_c1"),
+					Table:      ast.NewCIStr("t2"),
+					ExprString: "id<10",
+					State:      model.StatePublic,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			ID:   3,
+			Name: ast.NewCIStr("t3"),
+			Columns: []*model.ColumnInfo{
+				{
+					Name:      ast.NewCIStr("id"),
+					FieldType: *types.NewFieldType(mysql.TypeLonglong),
+					State:     model.StatePublic,
+				},
+			},
+			Constraints: []*model.ConstraintInfo{
+				{
+					Name:       ast.NewCIStr("t3_c1"),
+					Table:      ast.NewCIStr("t3"),
+					ExprString: "id<10",
+					State:      model.StateDeleteOnly,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
-	err := mt.setDataFromCheckConstraints(sctx, dbs)
+	mockIs := infoschema.MockInfoSchema(tblInfos)
+	mt := memtableRetriever{is: mockIs, extractor: &plannercore.InfoSchemaCheckConstraintsExtractor{}}
+	sctx := defaultCtx()
+	err := mt.setDataFromCheckConstraints(context.Background(), sctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row
@@ -75,43 +92,57 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	mt := memtableRetriever{}
 	sctx := defaultCtx()
-	dbs := []*model.DBInfo{
+	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: model.NewCIStr("test"),
-			Tables: []*model.TableInfo{
+			ID:    1,
+			Name:  ast.NewCIStr("t1"),
+			State: model.StatePublic,
+		},
+		{
+			ID:   2,
+			Name: ast.NewCIStr("t2"),
+			Columns: []*model.ColumnInfo{
 				{
-					ID:   1,
-					Name: model.NewCIStr("t1"),
-				},
-				{
-					ID:   2,
-					Name: model.NewCIStr("t2"),
-					Constraints: []*model.ConstraintInfo{
-						{
-							Name:       model.NewCIStr("t2_c1"),
-							Table:      model.NewCIStr("t2"),
-							ExprString: "id<10",
-							State:      model.StatePublic,
-						},
-					},
-				},
-				{
-					ID:   3,
-					Name: model.NewCIStr("t3"),
-					Constraints: []*model.ConstraintInfo{
-						{
-							Name:       model.NewCIStr("t3_c1"),
-							Table:      model.NewCIStr("t3"),
-							ExprString: "id<10",
-							State:      model.StateDeleteOnly,
-						},
-					},
+					Name:      ast.NewCIStr("id"),
+					FieldType: *types.NewFieldType(mysql.TypeLonglong),
+					State:     model.StatePublic,
 				},
 			},
+			Constraints: []*model.ConstraintInfo{
+				{
+					Name:       ast.NewCIStr("t2_c1"),
+					Table:      ast.NewCIStr("t2"),
+					ExprString: "id<10",
+					State:      model.StatePublic,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			ID:   3,
+			Name: ast.NewCIStr("t3"),
+			Columns: []*model.ColumnInfo{
+				{
+					Name:      ast.NewCIStr("id"),
+					FieldType: *types.NewFieldType(mysql.TypeLonglong),
+					State:     model.StatePublic,
+				},
+			},
+			Constraints: []*model.ConstraintInfo{
+				{
+					Name:       ast.NewCIStr("t3_c1"),
+					Table:      ast.NewCIStr("t3"),
+					ExprString: "id<10",
+					State:      model.StateDeleteOnly,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
-	err := mt.setDataFromTiDBCheckConstraints(sctx, dbs)
+	mockIs := infoschema.MockInfoSchema(tblInfos)
+	mt.is = mockIs
+	mt.extractor = &plannercore.InfoSchemaTiDBCheckConstraintsExtractor{}
+	err := mt.setDataFromTiDBCheckConstraints(context.Background(), sctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row

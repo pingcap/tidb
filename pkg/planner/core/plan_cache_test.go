@@ -26,14 +26,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
@@ -64,18 +66,35 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		require.NoError(t, err)
 		stmt := stmts[0]
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		return plannercore.ToString(p)
 	}
-
+	defer func() {
+		tk.MustExec("set session tidb_redact_log=MARKER")
+	}()
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -90,11 +109,12 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)
-	err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
@@ -233,6 +253,18 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestIssue53872(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table test(id int, col int)`)
+	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
+	tk.MustExec(`set @a=100, @b=100`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -245,12 +277,22 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Contains(t, rows[6][4], "range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, 40, 50, 60)]")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_11(Probe) 37.46 root  ",
+		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -381,25 +423,6 @@ func TestIssue49736(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 force plan-cache: may use risky cached plan: limit count is too large`))
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
-func TestIssue49736Partition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`prepare st from 'select * from t where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
-	tk.MustExec(`prepare st from 'select * from t where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 force plan-cache: may use risky cached plan: query accesses partitioned tables is un-cacheable"))
-	tk.MustExec(`set @a=1`)
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -1004,6 +1027,11 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select distinct a from t1 where a > 1 and b < 2",          // distinct
 		"select count(*) from t1 where a > 1 and b < 2 group by a", // group by
 		"select * from t1 order by a",                              // order by
+		"select * from t3 where full_name = 'a b'",                 // generated column
+		"select * from t3 where a > 1 and full_name = 'a b'",
+		"select * from t1 where a in (1, 2)",                    // Partitioned
+		"select * from t2 where a in (1, 2) and b in (1, 2, 3)", // Partitioned
+		"select * from t1 where a in (1, 2) and b < 15",         // Partitioned
 	}
 
 	unsupported := []string{
@@ -1021,8 +1049,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where bt > 0", // bit
 		"select * from t where a > 1 and bt > 0",
 		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
-		"select * from t3 where full_name = 'a b'",                                // generated column
-		"select * from t3 where a > 1 and full_name = 'a b'",
 		"select * from v",                // view
 		"select * from t where a = null", // null
 		"select * from t where false",    // table dual
@@ -1032,8 +1058,8 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
-		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
-		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query has some unsupported Node",
+		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1043,8 +1069,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: access tables in system schema",
-		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
-		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
 		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
@@ -1084,7 +1108,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	for idx, q := range unsupported {
 		tk.MustExec("explain format = 'plan_cache'" + q)
 		warn := tk.MustQuery("show warnings").Rows()[0]
-		require.Equal(t, reasons[idx], warn[2])
+		require.Equal(t, reasons[idx], warn[2], "idx: %d", idx)
 	}
 }
 
@@ -1107,9 +1131,10 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
 	}
 }
@@ -1246,6 +1271,20 @@ func TestPlanCacheBindingIgnore(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func TestIssue53505(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (v varchar(16))`)
+	tk.MustExec(`insert into t values ('156')`)
+	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+	tk.MustExec(`set @arg=0x6E`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustExec(`set @arg=0x70`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
@@ -1280,12 +1319,234 @@ func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
 	tk.MustExec("create table t (a int) partition by hash(a) partitions 4;")
 	tk.MustExec("analyze table t;")
 	tk.MustExec("prepare st from 'select * from t';")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec("execute st;")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec("execute st;")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
+func randValueForMVIndex(colType string) string {
+	randSize := 50
+	colType = strings.ToLower(colType)
+	switch colType {
+	case "int":
+		return fmt.Sprintf("%v", randSize-rand.Intn(randSize))
+	case "string":
+		return fmt.Sprintf("\"%v\"", rand.Intn(randSize))
+	case "json-string":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("string"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	case "json-signed":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("int"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	default:
+		return "unknown type " + colType
+	}
+}
+
+func insertValuesForMVIndex(nRows int, colTypes ...string) string {
+	var stmtVals []string
+	for i := 0; i < nRows; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+		stmtVals = append(stmtVals, "("+strings.Join(vals, ", ")+")")
+	}
+	return strings.Join(stmtVals, ", ")
+}
+
+func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge, hitCache bool, queryTemplate string, colTypes ...string) {
+	for i := 0; i < 5; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+
+		query := queryTemplate
+		var setStmt, usingStmt string
+		for i, p := range vals {
+			query = strings.Replace(query, "?", p, 1)
+			if i > 0 {
+				setStmt += ", "
+				usingStmt += ", "
+			}
+			setStmt += fmt.Sprintf("@a%v=%v", i, p)
+			usingStmt += fmt.Sprintf("@a%v", i)
+		}
+		result := tk.MustQuery(query).Sort()
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		tk.MustExec(fmt.Sprintf("set %v", setStmt))
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%v'", queryTemplate))
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result1 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result1.Rows())
+		if isIndexMerge && hitCache {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result2.Rows())
+		if isIndexMerge && hitCache {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result3 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result3.Rows())
+		if isIndexMerge && hitCache {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // hit the cache
+		}
+
+		if isIndexMerge && hitCache { // check the plan
+			result4 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+			result.Check(result4.Rows())
+			tkProcess := tk.Session().ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+			rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+			haveIndexMerge := false
+			for _, r := range rows {
+				if strings.Contains(r[0].(string), "IndexMerge") {
+					haveIndexMerge = true
+				}
+			}
+			require.True(t, haveIndexMerge) // IndexMerge has to be used.
+		}
+	}
+}
+
+func TestPlanCacheMVIndexRandomly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	// cases from TestIndexMergeFromComposedDNFCondition
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t2(a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false, false,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, false,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, ?) and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false, true,
+		`select * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or e=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or d=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+
+	// cases from TestIndexMergeFromComposedCNFCondition
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1(a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))))`)
+	tk.MustExec(fmt.Sprintf("insert into t1 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	tk.MustExec(`create table t2(a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t1, idx, idx2) */ * from t1 where ? member of (a) and ? member of (b)`,
+		`int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx, idx2) */ * from t2 where ? member of (a) and ? member of (b) and c=?`,
+		`int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		`select /*+ use_index_merge(t2, idx, idx2, idx4) */ * from t2 where ? member of (a) and ? member of (b) and c=? and d=?`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, false,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true, false,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ? member of (a) and c=? and c=?`,
+		`int`, `int`, `int`)
+
+	// case from TestIndexMergeIssue50265
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-string", "json-string", "json-signed")))
+	verifyPlanCacheForMVIndex(t, tk, false, false,
+		`SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM t WHERE ? member of (domains) OR ? member of (image_signatures) OR ? member of (canonical_links) OR json_contains(fpi, "[69236881]") LIMIT 100`,
+		`string`, `string`, `string`)
+
+	// case from TestIndexMergeEliminateRedundantAndPaths
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,KEY `fpi` ((cast(`fpi` as signed array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-signed", "string")))
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		"SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   ? member of (fpi)   AND ? member of (nslc) LIMIT   100",
+		"int", "string")
+
+	// case from TestIndexMergeSingleCaseCouldFeelIndexMergeHint
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "json-string", "json-signed", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		"SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+	verifyPlanCacheForMVIndex(t, tk, true, true,
+		"SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+}
+
+func TestPlanCacheMVIndexManually(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	planSuiteData := plannercore.GetPlanCacheSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
+			strings.HasPrefix(strings.ToLower(input[i]), "execute") ||
+			strings.HasPrefix(strings.ToLower(input[i]), "show") {
+			result := tk.MustQuery(input[i])
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+			})
+			result.Check(testkit.Rows(output[i].Result...))
+		} else {
+			tk.MustExec(input[i])
+		}
+	}
 }
 
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {
@@ -1329,4 +1590,108 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 		tk.MustExec("update t set a = 2 where a = 1")
 		tk.MustExec("delete from t where a = 2")
 	}
+}
+
+func TestIndexRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE t0 (id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY)`)
+	tk.MustExec(`CREATE TABLE t1(c0 FLOAT ZEROFILL, PRIMARY KEY(c0));`)
+	tk.MustExec(`INSERT INTO t0 (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
+	tk.MustExec("INSERT INTO t1(c0) VALUES (1);")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
+}
+
+func TestPlanCacheDirtyTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, t1Dirty := range []bool{true, false} {
+		for _, t2Dirty := range []bool{true, false} {
+			tk.MustExec(`create table t1 (a int);`)
+			tk.MustExec(`create table t2 (a int);`)
+			tk.MustExec(`begin`)
+			tk.MustExec(`prepare st from 'select 1 from t1, t2'`)
+			if t1Dirty {
+				tk.MustExec(`insert into t1 values (1)`)
+			}
+			if t2Dirty {
+				tk.MustExec(`insert into t2 values (1)`)
+			}
+			tk.MustExec(`execute st`) // generate a cached plan with t1Dirty & t2Dirty
+			tk.MustExec(`commit`)
+
+			// test cases
+			for _, testT1Dirty := range []bool{true, false} {
+				for _, testT2Dirty := range []bool{true, false} {
+					tk.MustExec(`begin`)
+					if testT1Dirty {
+						tk.MustExec(`insert into t1 values (1)`)
+					}
+					if testT2Dirty {
+						tk.MustExec(`insert into t2 values (1)`)
+					}
+					tk.MustExec(`execute st`)
+
+					if testT1Dirty == t1Dirty && testT2Dirty == t2Dirty {
+						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+					} else {
+						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+					}
+
+					tk.MustExec(`commit`)
+				}
+			}
+			tk.MustExec(`drop table t1, t2`)
+		}
+	}
+}
+
+func TestInstancePlanCacheAcrossSession(t *testing.T) {
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec(`create table t (a int)`)
+	tk1.MustExec(`insert into t values (1), (2), (3), (4), (5)`)
+	tk1.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk1.MustExecWithContext(ctx, `set @a=2`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`))
+	tk1.MustExecWithContext(ctx, `set @a=3`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`))
+	tk1.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// session2 can share session1's cached plan
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExecWithContext(ctx, `use test`)
+	tk2.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk2.MustExecWithContext(ctx, `set @a=4`)
+	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
+	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestIssue54652(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set autocommit=on`)
+	tk.MustQuery(`select @@autocommit`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where pk=? for update'`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
+	tk.MustExec(`commit`)
 }

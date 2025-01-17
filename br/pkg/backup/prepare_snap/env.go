@@ -17,6 +17,7 @@ package preparesnap
 import (
 	"context"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -28,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -102,12 +103,40 @@ type CliEnv struct {
 }
 
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
-	stores, err := c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := c.Cache.PDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}
 	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
 	return withoutTiFlash, err
+}
+
+func AdaptForGRPCInTest(p PrepareClient) PrepareClient {
+	return &gRPCGoAdapter{
+		inner: p,
+	}
+}
+
+// GrpcGoAdapter makes the `Send` call synchronous.
+// grpc-go doesn't guarantee concurrency call to `Send` or `Recv` is safe.
+// But concurrency call to `send` and `recv` is safe.
+// This type is exported for testing.
+type gRPCGoAdapter struct {
+	inner  PrepareClient
+	sendMu sync.Mutex
+	recvMu sync.Mutex
+}
+
+func (s *gRPCGoAdapter) Send(req *brpb.PrepareSnapshotBackupRequest) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return s.inner.Send(req)
+}
+
+func (s *gRPCGoAdapter) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
+	s.recvMu.Lock()
+	defer s.recvMu.Unlock()
+	return s.inner.Recv()
 }
 
 func (c CliEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
@@ -124,7 +153,7 @@ func (c CliEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClie
 	if err != nil {
 		return nil, err
 	}
-	return cli, nil
+	return &gRPCGoAdapter{inner: cli}, nil
 }
 
 func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endKey []byte) (regions []Region, err error) {
@@ -147,16 +176,17 @@ func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endK
 
 type RetryAndSplitRequestEnv struct {
 	Env
-	GetBackoffer func() utils.Backoffer
+	GetBackoffStrategy func() utils.BackoffStrategy
 }
 
 func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
-	// Retry for about 2 minutes.
-	rs := utils.InitialRetryState(12, 10*time.Second, 10*time.Second)
-	bo := utils.Backoffer(&rs)
-	if r.GetBackoffer != nil {
-		bo = r.GetBackoffer()
+	var bo utils.BackoffStrategy
+	if r.GetBackoffStrategy != nil {
+		bo = r.GetBackoffStrategy()
+	} else {
+		bo = utils.ConstantBackoff(10 * time.Second)
 	}
+
 	cli, err := utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
 		cli, err := r.Env.ConnectToStore(ctx, storeID)
 		if err != nil {

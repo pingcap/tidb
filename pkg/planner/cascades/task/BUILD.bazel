@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "task",
+    srcs = [
+        "base.go",
+        "task.go",
+        "task_apply_rule.go",
+        "task_opt_group.go",
+        "task_opt_group_expression.go",
+        "task_scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/task",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/base/cascadesctx",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/rule",
+        "//pkg/planner/cascades/util",
+    ],
+)
+
+go_test(
+    name = "task_test",
+    timeout = "short",
+    srcs = [
+        "task_scheduler_test.go",
+        "task_test.go",
+    ],
+    embed = [":task"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)

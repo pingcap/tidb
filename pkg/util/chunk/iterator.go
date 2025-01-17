@@ -184,6 +184,11 @@ func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
 }
 
+// ResetChunk reset the chunk this iter holds
+func (it *Iterator4Chunk) ResetChunk(chk *Chunk) {
+	it.chk = chk
+}
+
 // Error returns none-nil error if anything wrong happens during the iteration.
 func (*Iterator4Chunk) Error() error {
 	return nil
@@ -408,7 +413,7 @@ type multiIterator struct {
 // NewMultiIterator creates a new multiIterator
 func NewMultiIterator(iters ...Iterator) Iterator {
 	iter := &multiIterator{}
-	for i := 0; i < len(iters); i++ {
+	for i := range iters {
 		if iters[i].Len() > 0 {
 			iter.iters = append(iter.iters, iters[i])
 			iter.length += iters[i].Len()

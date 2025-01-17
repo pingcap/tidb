@@ -38,6 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	_ Copier = &KS3Storage{}
+)
+
 const (
 	// ks3 sdk does not expose context, we use hardcoded timeout for network request
 	ks3SDKProvider = "ks3-sdk"
@@ -523,20 +527,29 @@ type ks3ObjectReader struct {
 	reader       io.ReadCloser
 	pos          int64
 	rangeInfo    RangeInfo
-	retryCnt     int
 	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
 func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
+	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	if err != nil && errors.Cause(err) != io.EOF && r.retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		log.L().Warn(
+			"read s3 object failed, will retry",
+			zap.String("file", r.name),
+			zap.Int("retryCnt", retryCnt),
+			zap.Error(err),
+		)
 		// if can retry, reopen a new reader and try read again
 		end := r.rangeInfo.End + 1
 		if end == r.rangeInfo.Size {
@@ -553,7 +566,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		if r.prefetchSize > 0 {
 			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
 		}
-		r.retryCnt++
+		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
@@ -725,3 +738,45 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 
 // Close implements ExternalStorage interface.
 func (*KS3Storage) Close() {}
+
+func maybeObjectAlreadyExists(err awserr.Error) bool {
+	// Some versions of server did return the error code "ObjectAlreayExists"...
+	return err.Code() == "ObjectAlreayExists" || err.Code() == "ObjectAlreadyExists"
+}
+
+// CopyFrom implements Copier.
+func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*KS3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
+	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
+	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	if err != nil {
+		aErr, ok := err.(awserr.Error)
+		if !ok {
+			return err
+		}
+		// KS3 reports an error when copying an object to an existing path.
+		// AWS S3 will directly override the target. Simulating its behavior.
+		// Glitch: this isn't an atomic operation. So it is possible left nothing to `spec.To`...
+		if maybeObjectAlreadyExists(aErr) {
+			log.Warn("The object of `spec.To` already exists, will delete it and retry", zap.String("object", spec.To), logutil.ShortError(err))
+			if err := rs.DeleteFile(ctx, spec.To); err != nil {
+				return errors.Annotate(err, "during deleting an exist object for making place for copy")
+			}
+
+			return rs.CopyFrom(ctx, e, spec)
+		}
+	}
+	return nil
+}

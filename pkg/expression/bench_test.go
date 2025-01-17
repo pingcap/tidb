@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -44,7 +45,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   BuildContext
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -149,7 +150,7 @@ func (h *benchHelper) init() {
 
 	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
 	for i := 0; i < len(h.exprs); i++ {
-		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
+		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType(h.ctx))
 	}
 
 	h.outputChunk = chunk.NewChunkWithCapacity(h.outputTypes, numRows)
@@ -160,10 +161,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	h.init()
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
+	evalCtx := h.ctx.GetEvalCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(evalCtx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
@@ -383,6 +385,29 @@ func (g *jsonStringGener) gen() any {
 		panic(err)
 	}
 	return j.String()
+}
+
+type vectorFloat32RandGener struct {
+	dimension int
+	randGen   *defaultRandGen
+}
+
+// create a vectorfloat32 randomly with dimension. if dimension = -1, return nil vectorfloat32
+func newVectorFloat32RandGener(dimension int) *vectorFloat32RandGener {
+	return &vectorFloat32RandGener{dimension, newDefaultRandGen()}
+}
+
+func (g *vectorFloat32RandGener) gen() any {
+	if g.dimension == -1 {
+		return nil
+	}
+	var values []float32
+	for i := 0; i < g.dimension; i++ {
+		values = append(values, g.randGen.Float32())
+	}
+	vec := types.InitVectorFloat32(g.dimension)
+	copy(vec.Elements(), values)
+	return vec
 }
 
 type decimalStringGener struct {
@@ -1222,6 +1247,8 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 			col.AppendJSON(v.(types.BinaryJSON))
 		case types.ETString:
 			col.AppendString(v.(string))
+		case types.ETVectorFloat32:
+			col.AppendVectorFloat32(v.(types.VectorFloat32))
 		}
 	}
 }
@@ -1258,6 +1285,8 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 		return types.NewFieldType(mysql.TypeJSON)
 	case types.ETString:
 		return types.NewFieldType(mysql.TypeVarString)
+	case types.ETVectorFloat32:
+		return types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 	default:
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
@@ -1292,7 +1321,7 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType(ctx.GetEvalCtx()).EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -1312,7 +1341,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch expr.GetType().EvalType() {
+			switch expr.GetType(ctx).EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
@@ -1370,11 +1399,11 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	ctx := createContext(b)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(ctx, perrors.RedactLogDisable)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")
@@ -1435,11 +1464,11 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDatetime, types.ETTimestamp:
 			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETDuration:
@@ -1447,7 +1476,7 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		case types.ETJson:
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else if funcName == ast.GetVar {
@@ -1667,6 +1696,21 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					}
 					i++
 				}
+			case types.ETVectorFloat32:
+				err := baseFunc.vecEvalVectorFloat32(ctx, input, output)
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
+				// do not forget to call ResizeXXX/ReserveXXX
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				for row := it.Begin(); row != it.End(); row = it.Next() {
+					val, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
+					if !isNull {
+						require.Equal(t, output.GetVectorFloat32(i).Compare(val), 0, commentf(i))
+					}
+					i++
+				}
 			default:
 				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
@@ -1821,6 +1865,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 							b.Fatal(err)
 						}
 					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						if err := baseFunc.vecEvalVectorFloat32(ctx, input, output); err != nil {
+							b.Fatal(err)
+						}
+					}
 				default:
 					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
@@ -1934,6 +1984,21 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 							}
 						}
 					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						output.Reset(testCase.retEvalType)
+						for row := it.Begin(); row != it.End(); row = it.Next() {
+							v, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+							if err != nil {
+								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendVectorFloat32(v)
+							}
+						}
+					}
 				default:
 					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
@@ -2012,6 +2077,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	vecEnabled := ctx.GetSessionVars().EnableVectorizedExpression
 	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
@@ -2029,7 +2095,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := VecEvalBool(ctx, exprs, input, selected, nulls)
+						_, _, err := VecEvalBool(ctx, vecEnabled, exprs, input, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2083,7 +2149,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := vectorizedFilter(ctx, exprs, it, selected, nulls)
+						_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2118,7 +2184,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	b.Run("Vec-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := vectorizedFilter(ctx, []Expression{expr}, it, selected, nulls)
+			_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}

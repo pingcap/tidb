@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-// noRecord is used to indicate that there is no related record in mysql.analyze_jobs.
-const noRecord = -1
+// NoRecord is used to indicate that there is no related record in mysql.analyze_jobs.
+const NoRecord = -1
 
 // justFailed is used to indicate that the last analysis has just failed.
 const justFailed = 0
@@ -59,9 +59,11 @@ const lastFailedDurationQueryForTable = `
 	LIMIT 1;
 `
 
+// LastFailedDurationQueryForPartition is used to get the duration of the last failed analysis for each specified partition.
+// Exported for testing.
 // For multiple partitions, we only need to return the duration of the most recent failed analysis.
 // We pick the minimum duration of all failed analyses because we want to be conservative.
-const lastFailedDurationQueryForPartition = `
+const LastFailedDurationQueryForPartition = `
 	SELECT
 		MIN(TIMESTAMPDIFF(SECOND, aj.start_time, CURRENT_TIMESTAMP)) AS min_duration
 	FROM (
@@ -80,9 +82,9 @@ const lastFailedDurationQueryForPartition = `
 	JOIN mysql.analyze_jobs aj ON aj.id = latest_failures.max_id;
 `
 
-// getAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
+// GetAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
 // If there are no successful analyses, it returns 0.
-func getAverageAnalysisDuration(
+func GetAverageAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
@@ -99,25 +101,25 @@ func getAverageAnalysisDuration(
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	// NOTE: if there are no successful analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return noRecord, nil
+		return NoRecord, nil
 	}
 	avgDuration := rows[0].GetMyDecimal(0)
 	duration, err := avgDuration.ToFloat64()
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	return time.Duration(duration) * time.Second, nil
 }
 
-// getLastFailedAnalysisDuration returns the duration since the last failed analysis.
+// GetLastFailedAnalysisDuration returns the duration since the last failed analysis.
 // If there is no failed analysis, it returns 0.
-func getLastFailedAnalysisDuration(
+func GetLastFailedAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
@@ -128,18 +130,18 @@ func getLastFailedAnalysisDuration(
 		query = lastFailedDurationQueryForTable
 		params = append(params, schema, tableName)
 	} else {
-		query = lastFailedDurationQueryForPartition
+		query = LastFailedDurationQueryForPartition
 		params = append(params, schema, tableName, partitionNames)
 	}
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	// NOTE: if there are no failed analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return noRecord, nil
+		return NoRecord, nil
 	}
 	lastFailedDuration := rows[0].GetUint64(0)
 	if lastFailedDuration == 0 {

@@ -17,11 +17,11 @@ package sqlexec
 import (
 	"context"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -49,15 +49,15 @@ type RestrictedSQLExecutor interface {
 	// This function only saves you from processing potentially unsafe parameters.
 	ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error)
 	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
-	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error)
 	// ExecRestrictedSQL run sql string in ctx with internal session.
-	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
 	AnalyzeSnapshot    *bool
-	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
+	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
 	UnTrackSysProc     func(id uint64)
 	PartitionPruneMode string
 	SnapshotTS         uint64
@@ -119,7 +119,7 @@ func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 }
 
 // ExecOptionWithSysProcTrack tells ExecRestrictedStmt/SQL to track sys process.
-func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sessionctx.Context) error, untrack func(id uint64)) OptionFuncAlias {
+func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.TrackSysProcID = procID
 		option.TrackSysProc = track
@@ -146,12 +146,6 @@ type SQLExecutor interface {
 	// ExecuteInternal means execute sql as the internal sql.
 	ExecuteInternal(ctx context.Context, sql string, args ...any) (RecordSet, error)
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
-	// allowed when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// clear allowed flag
-	ClearDiskFullOpt()
-	// GetSessionVars is used to read some result after ExecuteXXX
-	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -170,6 +164,9 @@ type SQLParser interface {
 type Statement interface {
 	// OriginText gets the origin SQL text.
 	OriginText() string
+
+	// Text gets the utf8 encoded SQL text.
+	Text() string
 
 	// GetTextToLog gets the desensitization SQL text for logging.
 	GetTextToLog(keepHint bool) string
@@ -193,7 +190,7 @@ type Statement interface {
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
 	// Fields gets result fields.
-	Fields() []*ast.ResultField
+	Fields() []*resolve.ResultField
 
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
@@ -204,6 +201,22 @@ type RecordSet interface {
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
+}
+
+// DetachableRecordSet extends the `RecordSet` to support detaching from current session context
+type DetachableRecordSet interface {
+	RecordSet
+
+	// TryDetach detaches the record set from the current session context.
+	//
+	// The last two return value indicates whether the record set is suitable for detaching, and whether
+	// it detaches successfully. If it faces any error during detaching (and there is no way to rollback),
+	// it will return the error. If an error is returned, the record set (and session) will be left at
+	// an unknown state.
+	//
+	// If the caller receives `_, false, _`, it means the original record set can still be used. If the caller
+	// receives an error, it means the original record set (and the session) is dirty.
+	TryDetach() (RecordSet, bool, error)
 }
 
 // MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.
@@ -239,8 +252,8 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 
 // ExecSQL executes the sql and returns the result.
 // TODO: consider retry.
-func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
-	rs, err := se.(SQLExecutor).ExecuteInternal(ctx, sql, args...)
+func ExecSQL(ctx context.Context, exec SQLExecutor, sql string, args ...any) ([]chunk.Row, error) {
+	rs, err := exec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

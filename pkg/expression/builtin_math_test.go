@@ -514,6 +514,17 @@ func TestTruncate(t *testing.T) {
 		{[]any{uint64(9223372036854775808), -10}, 9223372030000000000},
 		{[]any{9223372036854775807, -7}, 9223372036850000000},
 		{[]any{uint64(18446744073709551615), -10}, uint64(18446744070000000000)},
+
+		// For issue 57651
+		{[]any{math.NaN(), 400}, math.NaN()},
+		{[]any{math.NaN(), -400}, math.NaN()},
+		{[]any{math.NaN(), 3}, math.NaN()},
+		{[]any{1.1, 400}, 1.1},
+		{[]any{1.1, -400}, 0},
+		{[]any{1.1, 3}, 1.1},
+		{[]any{0, 400}, 0},
+		{[]any{0, -400}, 0},
+		{[]any{0, 3}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -591,7 +602,7 @@ func TestConv(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeVarString, tp.GetType())
 		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
@@ -756,6 +767,8 @@ func TestRadians(t *testing.T) {
 		{float64(180), float64(math.Pi)},
 		{-360, -2 * float64(math.Pi)},
 		{"180", float64(math.Pi)},
+		{float64(1.0e308), float64(1.7453292519943295e306)},
+		{float64(23), float64(0.4014257279586958)},
 	}
 
 	Dtbl := tblToDtbl(tbl)

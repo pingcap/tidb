@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -42,14 +41,11 @@ type AfFinalResult struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
-	rowBuffer           []types.Datum
-	mutableRow          chunk.MutRow
 	partialResultMap    aggfuncs.AggPartialResultMapper
 	BInMap              int
 	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
-	groupKeys           [][]byte
 
 	spillHelper *parallelHashAggSpillHelper
 
@@ -104,7 +100,7 @@ func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, in
 		}
 
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.MergePartialResult(exprCtx, value[j], dstVal[j])
+			memDelta, err := af.MergePartialResult(exprCtx.GetEvalCtx(), value[j], dstVal[j])
 			if err != nil {
 				return err
 			}
@@ -144,7 +140,7 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 	exprCtx := sctx.GetExprCtx()
 	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(exprCtx, results[j], result); err != nil {
+			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}

@@ -20,19 +20,14 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,17 +41,17 @@ func TestGetDDLInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	dbInfo2 := &model.DBInfo{
-		ID:    2,
-		Name:  model.NewCIStr("b"),
-		State: model.StateNone,
+		ID: 2,
 	}
 	job := &model.Job{
+		Version:  model.GetJobVerInUse(),
 		ID:       1,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
 	job1 := &model.Job{
+		Version:  model.GetJobVerInUse(),
 		ID:       2,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionAddIndex,
@@ -96,27 +91,9 @@ func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) e
 	return err
 }
 
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []any{unique, model.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
-		ReorgMeta: &model.DDLReorgMeta{ // Add index job must have this field.
-			SQLMode:       mysql.SQLMode(0),
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-		},
-	}
-}
-
 func TestIssue42268(t *testing.T) {
 	// issue 42268 missing table name in 'admin show ddl' result during drop table
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_0")
@@ -129,8 +106,7 @@ func TestIssue42268(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -141,8 +117,7 @@ func TestIssue42268(t *testing.T) {
 			tblName := fmt.Sprintf("%s", rs.Rows()[0][2])
 			require.Equal(t, tblName, "t_0")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("drop table t_0")
 }

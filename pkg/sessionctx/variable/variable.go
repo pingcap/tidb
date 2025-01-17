@@ -68,6 +68,8 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+	// Marker is a special log redact behavior
+	Marker = "MARKER"
 
 	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
@@ -81,6 +83,18 @@ const (
 	OOMActionCancel = "CANCEL"
 	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
 	OOMActionLog = "LOG"
+
+	// TSOClientRPCModeDefault is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client sends batched
+	// TSO requests serially.
+	TSOClientRPCModeDefault = "DEFAULT"
+	// TSOClientRPCModeParallel is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 2 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by half, at the expense of about twice the amount of TSO RPC calls.
+	TSOClientRPCModeParallel = "PARALLEL"
+	// TSOClientRPCModeParallelFast is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
+	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
 )
 
 // Global config name list.
@@ -140,10 +154,10 @@ type SysVar struct {
 	SetSession func(*SessionVars, string) error
 	// SetGlobal is called after validation
 	SetGlobal func(context.Context, *SessionVars, string) error
-	// IsHintUpdatableVerfied indicate whether we've confirmed that SET_VAR() hint is worked for this hint.
-	IsHintUpdatableVerfied bool
+	// IsHintUpdatableVerified indicate whether we've confirmed that SET_VAR() hint is worked for this hint.
+	IsHintUpdatableVerified bool
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
-	// However, this feature is no longer used. All variables are visble.
+	// However, this feature is no longer used. All variables are visible.
 	Hidden bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)

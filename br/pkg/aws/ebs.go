@@ -11,6 +11,8 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -19,7 +21,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -40,11 +44,53 @@ type EC2Session struct {
 
 type VolumeAZs map[string]string
 
+type ebsBackupRetryer struct {
+	delegate request.Retryer
+}
+
+func (e *ebsBackupRetryer) MaxRetries() int {
+	return e.delegate.MaxRetries()
+}
+
+var backOffTimeOverride = map[string]time.Duration{
+	// From the SDK:
+	// Sadly it seems there isn't an exported operation name...
+	// const opCreateSnapshots = "CreateSnapshots"
+	// The quota for create snapshots is 5 per minute.
+	// Back off for a longer time so we won't excced it.
+	"CreateSnapshots": 20 * time.Second,
+	// const opCreateVolume = "CreateVolume"
+	"CreateVolume": 20 * time.Second,
+}
+
+func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
+	backOff := e.delegate.RetryRules(r)
+	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
+		backOff = max(override, backOff)
+	}
+	log.Warn(
+		"Retrying an operation.",
+		logutil.ShortError(r.Error),
+		zap.Duration("backoff", backOff),
+		zap.StackSkip("stack", 1),
+	)
+	return backOff
+}
+
+func (e *ebsBackupRetryer) ShouldRetry(r *request.Request) bool {
+	return e.delegate.ShouldRetry(r)
+}
+
 func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	// aws-sdk has builtin exponential backoff retry mechanism, see:
 	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
 	// with default retryer & max-retry=9, we will wait for at least 30s in total
 	awsConfig := aws.NewConfig().WithMaxRetries(9).WithRegion(region)
+	defRetry := new(client.DefaultRetryer)
+	ourRetry := ebsBackupRetryer{
+		delegate: defRetry,
+	}
+	awsConfig.Retryer = ourRetry
 	// TiDB Operator need make sure we have the correct permission to call aws api(through aws env variables)
 	// we may change this behaviour in the future.
 	sessionOptions := session.Options{Config: *awsConfig}
@@ -77,7 +123,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
+	workerPool := util.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
@@ -251,6 +297,9 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
+			} else if *s.State == ec2.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", utils.GetOrZero(s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
@@ -274,7 +323,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -557,7 +606,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -662,7 +711,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {

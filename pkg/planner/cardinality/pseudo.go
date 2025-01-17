@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -40,7 +41,7 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
-func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression) float64 {
+func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
@@ -52,11 +53,12 @@ func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression)
 		if colID == unknownColumnID {
 			continue
 		}
+		statistics.ColumnStatsIsInvalid((*statistics.Column)(nil), sctx, coll, colID)
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			col, ok := coll.Columns[colID]
-			if !ok {
+			col := coll.GetCol(colID)
+			if col == nil {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
@@ -72,20 +74,29 @@ func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression)
 		return minFactor
 	}
 	// use the unique key info
-	for _, idx := range coll.Indices {
-		if !idx.Info.Unique {
-			continue
-		}
+	hasUniqueKey := false
+	coll.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		unique := true
+		firstMatch := false
 		for _, col := range idx.Info.Columns {
 			if !colExists[col.Name.L] {
 				unique = false
 				break
 			}
+			firstMatch = true
 		}
-		if unique {
-			return 1.0 / float64(coll.RealtimeCount)
+		if firstMatch {
+			// This might trigger the statistics load.
+			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
 		}
+		if idx.Info.Unique && unique {
+			hasUniqueKey = true
+			return true
+		}
+		return false
+	})
+	if hasUniqueKey {
+		return 1.0 / float64(coll.RealtimeCount)
 	}
 	return minFactor
 }

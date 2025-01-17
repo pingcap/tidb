@@ -25,10 +25,6 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -39,6 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -46,7 +46,6 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -303,6 +302,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      len(execIDs),
+		Store:                sch.storeWithPD,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -363,7 +363,7 @@ func (*ImportSchedulerExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
+func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if sch.GlobalSort {
@@ -527,7 +527,7 @@ func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, t
 func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...any) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
 	return executor.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
+		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
 		return err
 	})
 }
@@ -577,14 +577,9 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
-		for key, val := range subtaskMeta.Result.ColSizeMap {
-			columnSizeMap[key] += val
-		}
 	}
-	taskMeta.Result.ColSizeMap = columnSizeMap
 
 	if globalSort {
 		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
@@ -614,10 +609,7 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
-	failpoint.Inject("syncBeforeJobStarted", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	failpoint.InjectCall("syncBeforeJobStarted", taskMeta.JobID)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
@@ -626,14 +618,12 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHa
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
 			})
 		},
 	)
-	failpoint.Inject("syncAfterJobStarted", func() {
-		TestSyncChan <- struct{}{}
-	})
+	failpoint.InjectCall("syncAfterJobStarted")
 	return err
 }
 
@@ -649,7 +639,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
 			})
 		},
@@ -667,12 +657,11 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
-					Affected:   taskMeta.Result.LoadedRowCnt,
-					ColSizeMap: taskMeta.Result.ColSizeMap,
+					Affected: taskMeta.Result.LoadedRowCnt,
 				}); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 			})
 		},
@@ -688,7 +677,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.T
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 			})
 		},
@@ -704,7 +693,7 @@ func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.CancelJob(ctx, exec, meta.JobID)
 			})
 		},

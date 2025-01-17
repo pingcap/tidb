@@ -165,9 +165,13 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
-// quoteJSONString escapes interior quote and other characters for JSON_QUOTE
-// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
-// TODO: add JSON_QUOTE builtin
+// quoteJSONString escapes interior quote and other characters for json functions.
+//
+// The implementation of `JSON_QUOTE` doesn't use this function. The `JSON_QUOTE` used `goJSON` to encode the string
+// directly. Therefore, this function is not compatible with `JSON_QUOTE` function for the convience of internal usage.
+//
+// This function will add extra quotes to the string if it contains special characters which needs to escape, or it's not
+// a valid ECMAScript identifier.
 func quoteJSONString(s string) string {
 	var escapeByteMap = map[byte]string{
 		'\\': "\\\\",
@@ -402,8 +406,7 @@ func (bj BinaryJSON) Modify(pathExprList []JSONPathExpression, values []BinaryJS
 	}
 	for _, pathExpr := range pathExprList {
 		if pathExpr.flags.containsAnyAsterisk() || pathExpr.flags.containsAnyRange() {
-			// TODO: should return 3149(42000)
-			return retj, errors.New("Invalid path expression")
+			return retj, ErrInvalidJSONPathMultipleSelection
 		}
 	}
 	for i := 0; i < len(pathExprList); i++ {
@@ -480,12 +483,10 @@ func (bj BinaryJSON) ArrayInsert(pathExpr JSONPathExpression, value BinaryJSON) 
 func (bj BinaryJSON) Remove(pathExprList []JSONPathExpression) (BinaryJSON, error) {
 	for _, pathExpr := range pathExprList {
 		if len(pathExpr.legs) == 0 {
-			// TODO: should return 3153(42000)
-			return bj, errors.New("Invalid path expression")
+			return bj, ErrJSONVacuousPath
 		}
 		if pathExpr.flags.containsAnyAsterisk() || pathExpr.flags.containsAnyRange() {
-			// TODO: should return 3149(42000)
-			return bj, errors.New("Invalid path expression")
+			return bj, ErrInvalidJSONPathMultipleSelection
 		}
 		modifer := &binaryModifier{bj: bj}
 		bj = modifer.remove(pathExpr)
@@ -1188,7 +1189,7 @@ func (bj BinaryJSON) GetElemDepth() int {
 // [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
 func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []JSONPathExpression) (res BinaryJSON, isNull bool, err error) {
 	if containType != JSONContainsPathOne && containType != JSONContainsPathAll {
-		return res, true, ErrInvalidJSONPath
+		return res, true, ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_search")
 	}
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 

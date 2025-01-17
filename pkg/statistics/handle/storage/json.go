@@ -18,16 +18,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"time"
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	compressutil "github.com/pingcap/tidb/pkg/util/compress"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,13 +35,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*util.JSONExtendedStats {
+func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*statsutil.JSONExtendedStats {
 	if statsColl == nil || len(statsColl.Stats) == 0 {
 		return nil
 	}
-	stats := make([]*util.JSONExtendedStats, 0, len(statsColl.Stats))
+	stats := make([]*statsutil.JSONExtendedStats, 0, len(statsColl.Stats))
 	for name, item := range statsColl.Stats {
-		js := &util.JSONExtendedStats{
+		js := &statsutil.JSONExtendedStats{
 			StatsName:  name,
 			ColIDs:     item.ColIDs,
 			Tp:         item.Tp,
@@ -53,7 +53,7 @@ func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*util.JSON
 	return stats
 }
 
-func extendedStatsFromJSON(statsColl []*util.JSONExtendedStats) *statistics.ExtendedStatsColl {
+func extendedStatsFromJSON(statsColl []*statsutil.JSONExtendedStats) *statistics.ExtendedStatsColl {
 	if len(statsColl) == 0 {
 		return nil
 	}
@@ -70,8 +70,8 @@ func extendedStatsFromJSON(statsColl []*util.JSONExtendedStats) *statistics.Exte
 	return stats
 }
 
-func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *util.JSONColumn {
-	jsonCol := &util.JSONColumn{
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *statsutil.JSONColumn {
+	jsonCol := &statsutil.JSONColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
@@ -89,58 +89,90 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*util.JSONTable, error) {
+func GenJSONTableFromStats(
+	sctx sessionctx.Context,
+	dbName string,
+	tableInfo *model.TableInfo,
+	tbl *statistics.Table,
+	colStatsUsage map[model.TableItemID]statstypes.ColStatsTimeInfo,
+) (*statsutil.JSONTable, error) {
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
-	jsonTbl := &util.JSONTable{
+	jsonTbl := &statsutil.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*util.JSONColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*util.JSONColumn, len(tbl.Indices)),
+		Columns:      make(map[string]*statsutil.JSONColumn, tbl.ColNum()),
+		Indices:      make(map[string]*statsutil.JSONColumn, tbl.IdxNum()),
 		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
 	}
-	for _, col := range tbl.Columns {
-		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+	var outerErr error
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		hist, err := col.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return nil, errors.Trace(err)
+			outerErr = errors.Trace(err)
+			return true
 		}
 		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return nil, err
+			outerErr = err
+			return true
 		}
 		jsonTbl.Columns[col.Info.Name.L] = proto
 		col.FMSketch.DestroyAndPutToPool()
 		hist.DestroyAndPutToPool()
+		return false
+	})
+	if outerErr != nil {
+		return nil, outerErr
 	}
-	for _, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return nil, err
+			outerErr = err
+			return true
 		}
 		jsonTbl.Indices[idx.Info.Name.L] = proto
+		return false
+	})
+	if outerErr != nil {
+		return nil, outerErr
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
+	if colStatsUsage != nil {
+		// nilIfNil checks if the provided *time.Time is nil and returns a nil or its string representation accordingly.
+		nilIfNil := func(t *types.Time) *string {
+			if t == nil {
+				return nil
+			}
+			s := t.String()
+			return &s
+		}
+		jsonColStatsUsage := make([]*statsutil.JSONPredicateColumn, 0, len(colStatsUsage))
+		for id, usage := range colStatsUsage {
+			jsonCol := &statsutil.JSONPredicateColumn{
+				ID:             id.ID,
+				LastUsedAt:     nilIfNil(usage.LastUsedAt),
+				LastAnalyzedAt: nilIfNil(usage.LastAnalyzedAt),
+			}
+			jsonColStatsUsage = append(jsonColStatsUsage, jsonCol)
+		}
+		jsonTbl.PredicateColumns = jsonColStatsUsage
+	}
+
 	return jsonTbl, nil
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
-func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *util.JSONTable) (*statistics.Table, error) {
-	newHistColl := statistics.HistColl{
-		PhysicalID:     physicalID,
-		HavePhysicalID: true,
-		RealtimeCount:  jsonTbl.Count,
-		ModifyCount:    jsonTbl.ModifyCount,
-		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
-		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
-	}
+func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *statsutil.JSONTable) (*statistics.Table, error) {
+	newHistColl := *statistics.NewHistColl(physicalID, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
 	tbl := &statistics.Table{
-		HistColl: newHistColl,
+		HistColl:              newHistColl,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
@@ -167,7 +199,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				PhysicalID:        physicalID,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
-			tbl.Indices[idx.ID] = idx
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
+			}
+			tbl.SetIdx(idx.ID, idx)
+			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, true)
 		}
 	}
 
@@ -177,7 +214,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				continue
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 			tmpFT := colInfo.FieldType
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -189,7 +225,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
 				tmpFT = *types.NewFieldType(mysql.TypeBlob)
 			}
-			hist, err := hist.ConvertTo(sc, &tmpFT)
+			hist, err := hist.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &tmpFT)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -215,7 +251,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
-			tbl.Columns[col.ID] = col
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
+			}
+			tbl.SetCol(col.ID, col)
+			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
@@ -223,7 +264,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 }
 
 // JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
-func JSONTableToBlocks(jsTable *util.JSONTable, blockSize int) ([][]byte, error) {
+func JSONTableToBlocks(jsTable *statsutil.JSONTable, blockSize int) ([][]byte, error) {
 	data, err := json.Marshal(jsTable)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -251,7 +292,7 @@ func JSONTableToBlocks(jsTable *util.JSONTable, blockSize int) ([][]byte, error)
 }
 
 // BlocksToJSONTable convert gzip-compressed blocks to JSONTable
-func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
+func BlocksToJSONTable(blocks [][]byte) (*statsutil.JSONTable, error) {
 	if len(blocks) == 0 {
 		return nil, errors.New("Block empty error")
 	}
@@ -275,7 +316,7 @@ func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jsonTbl := util.JSONTable{}
+	jsonTbl := statsutil.JSONTable{}
 	err = json.Unmarshal(jsonStr, &jsonTbl)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -284,7 +325,7 @@ func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
 }
 
 // TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
-func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *util.JSONTable, exist bool, err error) {
+func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
 	// get meta version
 	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {

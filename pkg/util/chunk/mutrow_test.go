@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
@@ -29,12 +28,12 @@ func TestMutRow(t *testing.T) {
 	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
-	sc := stmtctx.NewStmtCtx()
-	for i := 0; i < row.Len(); i++ {
+	typeCtx := types.DefaultStmtNoWarningContext
+	for i := range row.Len() {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.Compare(sc.TypeCtx(), &d2, collate.GetCollator(allTypes[i].GetCollate()))
+		cmp, err := d.Compare(typeCtx, &d2, collate.GetCollator(allTypes[i].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -79,7 +78,7 @@ func TestMutRow(t *testing.T) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	dur, _, err := types.ParseDuration(sc.TypeCtx(), "01:23:45", 0)
+	dur, _, err := types.ParseDuration(typeCtx, "01:23:45", 0)
 	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
@@ -118,7 +117,7 @@ func BenchmarkMutRowSetRow(b *testing.B) {
 	rowChk.AppendString(1, "abcd")
 	row := rowChk.GetRow(0)
 	mutRow := MutRowFromValues(1, "abcd")
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		mutRow.SetRow(row)
 	}
 }
@@ -127,7 +126,7 @@ func BenchmarkMutRowSetDatums(b *testing.B) {
 	b.ReportAllocs()
 	mutRow := MutRowFromValues(1, "abcd")
 	datums := []types.Datum{types.NewDatum(1), types.NewDatum("abcd")}
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		mutRow.SetDatums(datums...)
 	}
 }
@@ -135,7 +134,7 @@ func BenchmarkMutRowSetDatums(b *testing.B) {
 func BenchmarkMutRowSetValues(b *testing.B) {
 	b.ReportAllocs()
 	mutRow := MutRowFromValues(1, "abcd")
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		mutRow.SetValues(1, "abcd")
 	}
 }
@@ -146,7 +145,7 @@ func BenchmarkMutRowFromTypes(b *testing.B) {
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeVarchar),
 	}
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		MutRowFromTypes(tps)
 	}
 }
@@ -154,7 +153,7 @@ func BenchmarkMutRowFromTypes(b *testing.B) {
 func BenchmarkMutRowFromDatums(b *testing.B) {
 	b.ReportAllocs()
 	datums := []types.Datum{types.NewDatum(1), types.NewDatum("abc")}
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		MutRowFromDatums(datums)
 	}
 }
@@ -162,7 +161,7 @@ func BenchmarkMutRowFromDatums(b *testing.B) {
 func BenchmarkMutRowFromValues(b *testing.B) {
 	b.ReportAllocs()
 	values := []any{1, "abc"}
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		MutRowFromValues(values)
 	}
 }
@@ -208,8 +207,8 @@ func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < rowsNum; j++ {
+	for range b.N {
+		for range rowsNum {
 			mutRow.ShallowCopyPartialRow(0, row)
 		}
 	}
@@ -220,9 +219,9 @@ func BenchmarkChunkAppendPartialRow(b *testing.B) {
 	chk := newChunkWithInitCap(rowsNum, 0, 0, 8, 8, sizeTime)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		chk.Reset()
-		for j := 0; j < rowsNum; j++ {
+		for range rowsNum {
 			chk.AppendPartialRow(0, row)
 		}
 	}

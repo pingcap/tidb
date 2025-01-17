@@ -22,39 +22,42 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
-func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
-	var tblInfo *model.TableInfo
-	var prefix string
-	if tbl, ok := is.TableByID(tblColID.TableID); ok {
-		tblInfo = tbl.Meta()
-		prefix = tblInfo.Name.L + "."
-	} else {
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		require.True(t, exists, comment)
-		for _, tbl := range db.Tables {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				if def.ID == tblColID.TableID {
-					tblInfo = tbl
-					prefix = tbl.Name.L + "." + def.Name.L + "."
-					break
-				}
-			}
-			if tblInfo != nil {
-				break
+func getTblInfoByPhyID(t *testing.T, is infoschema.InfoSchema, physicalTblID int64) (*model.TableInfo, string) {
+	if tbl, ok := is.TableByID(context.Background(), physicalTblID); ok {
+		tblInfo := tbl.Meta()
+		return tblInfo, tblInfo.Name.L
+	}
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tbl := range tblInfos {
+		pi := tbl.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			if def.ID == physicalTblID {
+				return tbl, tbl.Name.L + "." + def.Name.L
 			}
 		}
-
-		require.NotNil(t, tblInfo, comment)
 	}
+	require.Fail(t, "table not found, physical ID: %d", physicalTblID)
+	return nil, ""
+}
+
+func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
+	tblInfo, prefix := getTblInfoByPhyID(t, is, tblColID.TableID)
+	prefix += "."
 
 	var colName string
 	for _, col := range tblInfo.Columns {
@@ -66,20 +69,80 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 	return colName
 }
 
-func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
-	var tblColIDs []model.TableItemID
-	if histNeededOnly {
-		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
+func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLoadItem, comment string) string {
+	str := getColumnName(t, is, item.TableItemID, comment)
+	if item.FullLoad {
+		str += " full"
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
+		str += " meta"
 	}
+	return str
+}
+
+func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
+	tblColIDs, _, _, _ := CollectColumnStatsUsage(lp, false)
 	cols := make([]string, 0, len(tblColIDs))
-	for _, tblColID := range tblColIDs {
+	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
 	sort.Strings(cols)
 	require.Equal(t, expected, cols, comment)
+}
+
+func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
+	predicateCols, _, expandedPartitions, _ := CollectColumnStatsUsage(lp, true)
+	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
+	for tblColID, fullLoad := range predicateCols {
+		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
+	}
+	cols := make([]string, 0, len(loadItems))
+	for _, item := range loadItems {
+		col := getStatsLoadItem(t, is, item, comment)
+		cols = append(cols, col)
+	}
+	sort.Strings(cols)
+	require.Equal(t, expectedCols, cols, comment+", we get %v", cols)
+	if len(expectedParts) == 0 {
+		require.Empty(t, expandedPartitions, comment)
+		return
+	}
+	expanded := make(map[string][]string, len(expandedPartitions))
+	for tblID, partIDs := range expandedPartitions {
+		_, tblName := getTblInfoByPhyID(t, is, tblID)
+		parts := make([]string, 0, len(partIDs))
+		for _, partID := range partIDs {
+			_, partName := getTblInfoByPhyID(t, is, partID)
+			parts = append(parts, partName)
+		}
+		sort.Strings(parts)
+		expanded[tblName] = parts
+	}
+	require.Equal(t, expectedParts, expanded, comment)
+}
+
+func TestSkipSystemTables(t *testing.T) {
+	sql := "select * from mysql.stats_meta where a > 1"
+	res := []string{}
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+	// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
+	// logical optimization while others may occur after logical optimization.
+	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
+	lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
+	require.NoError(t, err)
+	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
 }
 
 func TestCollectPredicateColumns(t *testing.T) {
@@ -257,19 +320,20 @@ func TestCollectPredicateColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 	}
 }
 
@@ -277,51 +341,55 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
 	tests := []struct {
-		pruneMode string
-		sql       string
-		res       []string
+		pruneMode     string
+		sql           string
+		res           []string
+		expandedParts map[string][]string
 	}{
 		{
 			sql: "select * from t where a > 2",
-			res: []string{"t.a"},
+			res: []string{"t.a full"},
 		},
 		{
 			sql: "select * from t where b in (2, 5) or c = 5",
-			res: []string{"t.b", "t.c"},
+			res: []string{"t.b full", "t.c full"},
 		},
 		{
 			sql: "select * from t where a + b > 1",
-			res: []string{"t.a", "t.b"},
+			res: []string{"t.a full", "t.b full"},
 		},
 		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
-			res: []string{"t.b"},
+			res: []string{"t.a meta", "t.b full"},
 		},
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
-			res: []string{"t.c", "t2.a"},
+			res: []string{"t.b meta", "t.c full", "t2.a full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			pruneMode: "static",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.p1.b", "pt1.p1.ptn", "pt1.p2.b", "pt1.p2.ptn"},
+			res:       []string{"pt1.b full", "pt1.ptn full"},
+			expandedParts: map[string][]string{
+				"pt1": {"pt1.p1", "pt1.p2"},
+			},
 		},
 		{
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.b", "pt1.ptn"},
+			res:       []string{"pt1.b full", "pt1.ptn full"},
 		},
 	}
 
@@ -340,19 +408,20 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
 		// Hence, we disable JoinReOrder and PruneColumnsAgain here.
-		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
+		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, true, tt.res, comment)
+		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, tt.expandedParts, comment)
 	}
 }

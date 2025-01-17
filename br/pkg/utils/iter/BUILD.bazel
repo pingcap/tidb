@@ -12,7 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/utils/iter",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/utils",
+        "//pkg/util",
         "@org_golang_x_exp//constraints",
         "@org_golang_x_sync//errgroup",
     ],

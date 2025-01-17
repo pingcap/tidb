@@ -70,9 +70,13 @@ func (p *prepareStream) InitConn(ctx context.Context, cli PrepareClient) error {
 	p.cli = cli
 	p.clientLoopHandle, ctx = errgroup.WithContext(ctx)
 	ctx, p.stopBgTasks = context.WithCancel(ctx)
+	log.Info("initializing", zap.Uint64("store", p.storeID))
 	return p.GoLeaseLoop(ctx, p.leaseDuration)
 }
 
+// Finalize cuts down this connection and remove the lease.
+// This will block until all messages has been flushed to `output` channel.
+// After this return, no more messages should be appended to the `output` channel.
 func (p *prepareStream) Finalize(ctx context.Context) error {
 	log.Info("shutting down", zap.Uint64("store", p.storeID))
 	return p.stopClientLoop(ctx)
@@ -150,7 +154,8 @@ func (p *prepareStream) clientLoop(ctx context.Context, dur time.Duration) error
 			return nil
 		case res := <-p.serverStream:
 			if err := p.onResponse(ctx, res); err != nil {
-				p.sendErr(errors.Annotate(err, "failed to recv from the stream"))
+				err = errors.Annotate(err, "failed to recv from the stream")
+				p.sendErr(err)
 				return err
 			}
 		case <-ticker.C:
@@ -185,6 +190,10 @@ func (p *prepareStream) sendErr(err error) {
 }
 
 func (p *prepareStream) convertToEvent(resp *brpb.PrepareSnapshotBackupResponse) (event, bool) {
+	if resp == nil {
+		log.Warn("Received nil message, that shouldn't happen in a normal cluster.", zap.Uint64("store", p.storeID))
+		return event{}, false
+	}
 	switch resp.Ty {
 	case brpb.PrepareSnapshotBackupEventType_WaitApplyDone:
 		return event{

@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -22,9 +23,9 @@ import (
 func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.TableInfo {
 	info, err := mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	cDBName := model.NewCIStr(db)
-	cTableName := model.NewCIStr(table)
-	tableInfo, err := info.TableByName(cDBName, cTableName)
+	cDBName := ast.NewCIStr(db)
+	cTableName := ast.NewCIStr(table)
+	tableInfo, err := info.TableByName(context.Background(), cDBName, cTableName)
 	require.NoError(t, err)
 	return tableInfo.Meta()
 }
@@ -132,7 +133,7 @@ func TestChecksum(t *testing.T) {
 	require.NoError(t, exe3.Each(func(req *kv.Request) error {
 		if first {
 			first = false
-			ranges, err := backup.BuildTableRanges(tableInfo3)
+			ranges, err := distsql.BuildTableRanges(tableInfo3)
 			require.NoError(t, err)
 			require.Equalf(t, ranges[:1], req.KeyRanges.FirstPartitionRange(), "%v", req.KeyRanges.FirstPartitionRange())
 		}

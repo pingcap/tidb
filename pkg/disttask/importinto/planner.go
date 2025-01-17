@@ -23,21 +23,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +118,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 
 		addSpecs(specs)
 	case proto.ImportStepMergeSort:
-		specs, err := generateMergeSortSpecs(planCtx)
+		specs, err := generateMergeSortSpecs(planCtx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -300,7 +301,7 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
+func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
@@ -308,7 +309,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		return nil, err
 	}
 	for kvGroup, kvMeta := range kvMetas {
-		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
@@ -344,7 +345,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetasForIngest(planCtx)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -362,68 +363,97 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
-		if err1 != nil {
-			return nil, err1
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
+		if err3 != nil {
+			return nil, err3
 		}
-
-		err1 = func() error {
-			defer func() {
-				err2 := splitter.Close()
-				if err2 != nil {
-					logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err2))
-				}
-			}()
-			startKey := tidbkv.Key(kvMeta.StartKey)
-			var endKey tidbkv.Key
-			for {
-				endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err2 := splitter.SplitOneRangesGroup()
-				if err2 != nil {
-					return err2
-				}
-				if len(endKeyOfGroup) == 0 {
-					endKey = kvMeta.EndKey
-				} else {
-					endKey = tidbkv.Key(endKeyOfGroup).Clone()
-				}
-				logutil.Logger(ctx).Info("kv range as subtask",
-					zap.String("startKey", hex.EncodeToString(startKey)),
-					zap.String("endKey", hex.EncodeToString(endKey)),
-					zap.Int("dataFiles", len(dataFiles)))
-				if startKey.Cmp(endKey) >= 0 {
-					return errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
-						hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-				}
-				// each subtask will write and ingest one range group
-				m := &WriteIngestStepMeta{
-					KVGroup: kvGroup,
-					SortedKVMeta: external.SortedKVMeta{
-						StartKey: startKey,
-						EndKey:   endKey,
-						// this is actually an estimate, we don't know the exact size of the data
-						TotalKVSize: uint64(config.DefaultBatchSize),
-					},
-					DataFiles:      dataFiles,
-					StatFiles:      statFiles,
-					RangeSplitKeys: rangeSplitKeys,
-					RangeSplitSize: splitter.GetRangeSplitSize(),
-				}
-				specs = append(specs, &WriteIngestSpec{m})
-
-				startKey = endKey
-				if len(endKeyOfGroup) == 0 {
-					break
-				}
-			}
-			return nil
-		}()
-		if err1 != nil {
-			return nil, err1
-		}
+		specs = append(specs, specsForOneSubtask...)
 	}
 	return specs, nil
+}
+
+func splitForOneSubtask(
+	ctx context.Context,
+	extStorage storage.ExternalStorage,
+	kvGroup string,
+	kvMeta *external.SortedKVMeta,
+	ts uint64,
+) ([]planner.PipelineSpec, error) {
+	splitter, err := getRangeSplitter(ctx, extStorage, kvMeta)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err3 := splitter.Close()
+		if err3 != nil {
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err3))
+		}
+	}()
+
+	ret := make([]planner.PipelineSpec, 0, 16)
+
+	startKey := tidbkv.Key(kvMeta.StartKey)
+	var endKey tidbkv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+		if err2 != nil {
+			return nil, err2
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = kvMeta.EndKey
+		} else {
+			endKey = tidbkv.Key(endKeyOfGroup).Clone()
+		}
+		logutil.Logger(ctx).Info("kv range as subtask",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)),
+			zap.Int("dataFiles", len(dataFiles)))
+		if startKey.Cmp(endKey) >= 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+		rangeJobKeys = append(rangeJobKeys, startKey)
+		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+		rangeJobKeys = append(rangeJobKeys, endKey)
+
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
+		// each subtask will write and ingest one range group
+		m := &WriteIngestStepMeta{
+			KVGroup: kvGroup,
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKey,
+				EndKey:   endKey,
+				// this is actually an estimate, we don't know the exact size of the data
+				TotalKVSize: uint64(config.DefaultBatchSize),
+			},
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
+			TS:             ts,
+		}
+		ret = append(ret, &WriteIngestSpec{m})
+
+		startKey = endKey
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+	}
+
+	return ret, nil
 }
 
 func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
@@ -470,7 +500,7 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan) (map[string]*external.SortedKVMeta, error) {
 	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort])
 	if err != nil {
 		return nil, err
@@ -482,7 +512,7 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.So
 	for kvGroup, kvMeta := range kvMetasOfEncodeStep {
 		// only part of kv files are merge sorted. we need to merge kv metas that
 		// are not merged into the kvMetasOfMergeSort.
-		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			if _, ok := kvMetasOfMergeSort[kvGroup]; ok {
 				// this should not happen, because we only generate merge sort
 				// subtasks for those kv groups with MaxOverlappingTotal > MergeSortOverlapThreshold
@@ -495,8 +525,11 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.So
 	return kvMetasOfMergeSort, nil
 }
 
-func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta *external.SortedKVMeta) (
-	*external.RangeSplitter, error) {
+func getRangeSplitter(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	kvMeta *external.SortedKVMeta,
+) (*external.RangeSplitter, error) {
 	regionSplitSize, regionSplitKeys, err := importer.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))
@@ -507,14 +540,16 @@ func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta
 		zap.Int64("region-split-size", regionSplitSize),
 		zap.Int64("region-split-keys", regionSplitKeys))
 
+	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
 		ctx,
 		kvMeta.MultipleFilesStats,
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
+		int64(config.SplitRegionSize),
+		int64(config.SplitRegionKeys),
 		regionSplitSize,
 		regionSplitKeys,
-		false,
 	)
 }

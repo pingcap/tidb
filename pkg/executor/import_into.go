@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -29,7 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -40,15 +43,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-)
-
-var (
-	// TestCancelFunc for test.
-	TestCancelFunc context.CancelFunc
 )
 
 const unknownImportedRowCount = -1
@@ -95,6 +92,10 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err
 	}
 	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
+		return err
+	}
+
 	controller, err := importer.NewLoadDataController(importPlan, e.tbl, astArgs)
 	if err != nil {
 		return err
@@ -116,7 +117,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
@@ -125,12 +126,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err
 	}
 
-	failpoint.Inject("cancellableCtx", func() {
-		// KILL is not implemented in testkit, so we use a fail-point to simulate it.
-		newCtx, cancel := context.WithCancel(ctx)
-		ctx = newCtx
-		TestCancelFunc = cancel
-	})
+	failpoint.InjectCall("cancellableCtx", &ctx)
 
 	jobID, task, err := e.submitTask(ctx)
 	if err != nil {
@@ -145,6 +141,49 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	return e.fillJobInfo(ctx, jobID, req)
 }
 
+// ValidateImportIntoColAssignmentsWithEncodeCtx validates the column assignment expressions should be compatible with the
+// encoding context (which maybe different with the context in the current session).
+// For example, the function `tidb_is_ddl_owner()` requires the optional eval properties which are not
+// provided by the encoding context, so we should avoid using it in the column assignment expressions.
+func ValidateImportIntoColAssignmentsWithEncodeCtx(plan *importer.Plan, assigns []*ast.Assignment) error {
+	encodeCtx, err := litkv.NewSession(&encode.SessionOptions{
+		SQLMode: plan.SQLMode,
+		SysVars: plan.ImportantSysVars,
+	}, log.L())
+	if err != nil {
+		return err
+	}
+
+	providedProps := encodeCtx.GetExprCtx().GetEvalCtx().GetOptionalPropSet()
+	for i, assign := range assigns {
+		expr, err := expression.BuildSimpleExpr(encodeCtx.GetExprCtx(), assign.Expr)
+		if err != nil {
+			return err
+		}
+
+		if err = checkExprWithProvidedProps(i, expr, providedProps); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func checkExprWithProvidedProps(idx int, expr expression.Expression, props expression.OptionalEvalPropKeySet) error {
+	if e, ok := expr.(*expression.ScalarFunction); ok {
+		if e.Function.RequiredOptionalEvalProps()|props != props {
+			return errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", e.FuncName.O, idx)
+		}
+
+		for _, arg := range e.GetArgs() {
+			if err := checkExprWithProvidedProps(idx, arg, props); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
 	e.dataFilled = true
 	// we use taskManager to get job, user might not have the privilege to system tables.
@@ -155,14 +194,14 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}
 	var info *importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		sqlExec := se.(sqlexec.SQLExecutor)
+		sqlExec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
 		return err2
 	}); err != nil {
 		return err
 	}
-	fillOneImportJobInfo(info, req, unknownImportedRowCount)
+	FillOneImportJobInfo(info, req, unknownImportedRowCount)
 	return nil
 }
 
@@ -215,7 +254,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 
-	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
@@ -331,7 +370,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
 	var info *importer.JobInfo
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2

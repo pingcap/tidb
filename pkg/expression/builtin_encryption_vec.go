@@ -694,7 +694,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 		}
 
 		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
-		//       added to str and this will damange the data layout in chunk.Column
+		//       added to str and this will damage the data layout in chunk.Column
 		str := []byte(strBuf.GetString(i))
 		cipherText, err := encrypt.AESEncryptWithECB(str, key)
 		if err != nil {
@@ -737,7 +737,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		tc := typeCtx(ctx)
-		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
 
 		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}
@@ -875,6 +875,16 @@ func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
 }
 
 func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -888,7 +898,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	globalVars := vars.GlobalVarsAccessor
 	enableValidation := false
 	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
@@ -901,7 +911,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 		}
 		if !enableValidation {
 			i64s[i] = 0
-		} else if score, isNull, err := b.validateStr(ctx, buf.GetString(i), &globalVars); err != nil {
+		} else if score, isNull, err := b.validateStr(buf.GetString(i), user, &globalVars); err != nil {
 			return err
 		} else if !isNull {
 			i64s[i] = score

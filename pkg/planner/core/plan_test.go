@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -25,10 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -52,7 +54,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(core.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
@@ -327,7 +329,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql1)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
+	physicalPlan, ok := info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
@@ -340,7 +342,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
+	physicalPlan, ok = info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
 
@@ -368,15 +370,11 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
@@ -411,7 +409,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
@@ -428,7 +426,6 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -438,7 +435,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -452,7 +449,6 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -462,7 +458,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -485,7 +481,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// limit 960 should go paging
 	for i := 0; i < 10; i++ {
@@ -533,7 +529,7 @@ func TestCopPaging(t *testing.T) {
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
-	aggSchemaBuilder := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+	aggSchemaBuilder := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 		for _, agg := range aggFuncs {
 			newCol := &expression.Column{
@@ -547,7 +543,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
-	checkResult := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
 			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
 				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
@@ -682,28 +678,28 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	window := &core.PhysicalWindow{}
-	newPlan, err := window.Clone()
+	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
 	newWindow, ok := newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = window.Clone()
+	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
 	newWindow, ok = newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	sort := &core.PhysicalSort{}
-	newPlan, err = sort.Clone()
+	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
 	newSort, ok := newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 
 	sort.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = sort.Clone()
+	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
 	newSort, ok = newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)

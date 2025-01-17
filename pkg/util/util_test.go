@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -46,14 +48,14 @@ func TestLogFormat(t *testing.T) {
 		StmtCtx:           stmtctx.NewStmtCtx(),
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
-		RedactSQL:         false,
+		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
 
-	assert.Len(t, logFields, 8)
+	assert.Len(t, logFields, 9)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
 	assert.Equal(t, "conn", logFields[1].Key)
@@ -68,6 +70,11 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+
+	info.RedactSQL = errors.RedactLogMarker
+	logFields = GenLogFields(costTime, info, true)
+	assert.Equal(t, "select * from table where `a` > ‹1›", logFields[6].String)
+	info.RedactSQL = ""
 
 	logFields = GenLogFields(costTime, info, true)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
@@ -113,4 +120,19 @@ func TestIsInCorrectIdentifierName(t *testing.T) {
 		got := IsInCorrectIdentifierName(tc.input)
 		require.Equalf(t, tc.correct, got, "IsInCorrectIdentifierName(%v) != %v", tc.name, tc.correct)
 	}
+}
+
+func TestDupProto(t *testing.T) {
+	p := &pb.StorageBackend{
+		Backend: &pb.StorageBackend_S3{
+			S3: &pb.S3{
+				Endpoint: "127.0.0.1",
+			},
+		},
+	}
+
+	p2 := ProtoV1Clone(p)
+	require.Equal(t, p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
+	p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint = "127.0.0.2"
+	require.Equal(t, p.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
 }

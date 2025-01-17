@@ -16,46 +16,39 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
-	// SetInterceptor sets the interceptor.
-	SetInterceptor(h Interceptor)
 	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
-}
-
-// SetInterceptor implements DDL.SetInterceptor interface.
-func (d *ddl) SetInterceptor(i Interceptor) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.interceptor = i
-}
-
-// IsReorgCanceled exports for testing.
-func (rc *reorgCtx) IsReorgCanceled() bool {
-	return rc.isReorgCanceled()
 }
 
 // NewReorgCtx exports for testing.
@@ -71,6 +64,17 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+func NewJobSubmitterForTest() *JobSubmitter {
+	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
+	return &JobSubmitter{
+		ddlJobDoneChMap: &syncMap,
+	}
+}
+
+func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
+	return s.ddlJobDoneChMap
 }
 
 func createMockStore(t *testing.T) kv.Storage {
@@ -106,7 +110,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -118,7 +122,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *typ
 }
 
 func TestModifyColumn(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := NewMetaBuildContextWithSctx(mock.NewContext())
 	tests := []struct {
 		origin string
 		to     string
@@ -163,7 +167,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: model.NewCIStr(name),
+			Name: ast.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)
@@ -195,79 +199,6 @@ func TestIgnorableSpec(t *testing.T) {
 	for _, spec := range ignorableSpecs {
 		require.True(t, isIgnorableSpec(spec))
 	}
-}
-
-func TestBuildJobDependence(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// Add some non-add-index jobs.
-	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
-	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
-	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
-	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
-	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
-	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		require.NoError(t, m.EnQueueDDLJob(job1))
-		require.NoError(t, m.EnQueueDDLJob(job2))
-		require.NoError(t, m.EnQueueDDLJob(job3))
-		require.NoError(t, m.EnQueueDDLJob(job6))
-		require.NoError(t, m.EnQueueDDLJob(job7))
-		require.NoError(t, m.EnQueueDDLJob(job9))
-		require.NoError(t, m.EnQueueDDLJob(job11))
-		return nil
-	})
-	require.NoError(t, err)
-	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job4)
-		require.NoError(t, err)
-		require.Equal(t, job4.DependencyID, int64(2))
-		return nil
-	})
-	require.NoError(t, err)
-	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job5)
-		require.NoError(t, err)
-		require.Equal(t, job5.DependencyID, int64(3))
-		return nil
-	})
-	require.NoError(t, err)
-	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job8)
-		require.NoError(t, err)
-		require.Equal(t, job8.DependencyID, int64(0))
-		return nil
-	})
-	require.NoError(t, err)
-	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job10)
-		require.NoError(t, err)
-		require.Equal(t, job10.DependencyID, int64(9))
-		return nil
-	})
-	require.NoError(t, err)
-	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job12)
-		require.NoError(t, err)
-		require.Equal(t, job12.DependencyID, int64(11))
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestError(t *testing.T) {
@@ -303,4 +234,231 @@ func TestCheckDuplicateConstraint(t *testing.T) {
 	require.NoError(t, err)
 	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
 	require.EqualError(t, err, "[ddl:1061]Duplicate key name 'u1'")
+}
+
+func TestGetTableDataKeyRanges(t *testing.T) {
+	// case 1, empty flashbackIDs
+	keyRanges := getTableDataKeyRanges([]int64{})
+	require.Len(t, keyRanges, 1)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+
+	// case 2, insert a execluded table ID
+	keyRanges = getTableDataKeyRanges([]int64{3})
+	require.Len(t, keyRanges, 2)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+
+	// case 3, insert some execluded table ID
+	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
+	require.Len(t, keyRanges, 4)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(5))
+	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
+	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
+	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+}
+
+func TestMergeContinuousKeyRanges(t *testing.T) {
+	cases := []struct {
+		input  []keyRangeMayExclude
+		expect []kv.KeyRange
+	}{
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{2}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{4}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{
+				{StartKey: []byte{1}, EndKey: []byte{2}},
+				{StartKey: []byte{5}, EndKey: []byte{6}},
+			},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{5}, EndKey: []byte{6}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{2}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{3}, EndKey: []byte{4}}},
+		},
+	}
+
+	for i, ca := range cases {
+		ranges := mergeContinuousKeyRanges(ca.input)
+		require.Equal(t, ca.expect, ranges, "case %d", i)
+	}
+}
+
+func TestDetectAndUpdateJobVersion(t *testing.T) {
+	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
+
+	reset := func() {
+		model.SetJobVerInUse(model.JobVersion1)
+	}
+	t.Cleanup(reset)
+	// other ut in the same address space might change it
+	reset()
+	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+
+	t.Run("in ut", func(t *testing.T) {
+		reset()
+		d.detectAndUpdateJobVersion()
+		if testargsv1.ForceV1 {
+			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		} else {
+			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		}
+	})
+
+	d.etcdCli = &clientv3.Client{}
+	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
+		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		for i, v := range versions {
+			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
+				ServerVersionInfo: infosync.ServerVersionInfo{Version: v}}
+		}
+		bytes, err := json.Marshal(serverInfos)
+		require.NoError(t, err)
+		inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+	}
+
+	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
+		reset()
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
+			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
+		d.detectAndUpdateJobVersion()
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	})
+
+	t.Run("v1 first, later all support v2", func(t *testing.T) {
+		reset()
+		intervalBak := detectJobVerInterval
+		t.Cleanup(func() {
+			detectJobVerInterval = intervalBak
+		})
+		detectJobVerInterval = time.Millisecond
+		// unknown version
+		mockGetAllServerInfo(t, "unknown")
+		iterateCnt := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateJobVersionOnce", func() {
+			iterateCnt++
+			if iterateCnt == 1 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// user set version explicitly in config
+				mockGetAllServerInfo(t, "9.0.0-xxx")
+			} else if iterateCnt == 2 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// invalid version
+				mockGetAllServerInfo(t, "xxx")
+			} else if iterateCnt == 3 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// less than 8.4.0
+				mockGetAllServerInfo(t, "8.0.11-TiDB-8.3.0")
+			} else if iterateCnt == 4 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade case
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0")
+			} else if iterateCnt == 5 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade done
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
+			} else {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+			}
+		})
+		d.detectAndUpdateJobVersion()
+		d.wg.Wait()
+		require.EqualValues(t, 6, iterateCnt)
+	})
 }

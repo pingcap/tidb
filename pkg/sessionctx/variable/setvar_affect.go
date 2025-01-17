@@ -108,6 +108,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fastscan":                                {},
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
+	"tidb_hash_join_version":                          {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
@@ -117,7 +118,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 func setHintUpdatable(vars []*SysVar) {
 	for _, v := range vars {
 		if _, ok := isHintUpdatableVerified[v.Name]; ok {
-			v.IsHintUpdatableVerfied = true
+			v.IsHintUpdatableVerified = true
 		}
 	}
 }

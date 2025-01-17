@@ -246,7 +246,7 @@ func TestDefaultClient(t *testing.T) {
 	require.Empty(t, timer.EventData)
 	require.True(t, timer.EventStart.IsZero())
 	require.Equal(t, []byte("s1"), timer.SummaryData)
-	require.Equal(t, eventStart, timer.Watermark)
+	require.Equal(t, eventStart.Unix(), timer.Watermark.Unix())
 	require.Equal(t, EventExtra{}, timer.EventExtra)
 
 	// close event with option
@@ -267,7 +267,7 @@ func TestDefaultClient(t *testing.T) {
 	require.Empty(t, timer.EventData)
 	require.True(t, timer.EventStart.IsZero())
 	require.Equal(t, []byte("s2"), timer.SummaryData)
-	require.Equal(t, watermark, timer.Watermark)
+	require.Equal(t, watermark.Unix(), timer.Watermark.Unix())
 
 	// manual trigger
 	err = store.Update(ctx, timer.ID, &TimerUpdate{

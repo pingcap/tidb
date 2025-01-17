@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
@@ -41,7 +40,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) er
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
@@ -314,13 +313,9 @@ var funcName2Alias = map[string]string{
 	"aes_encrypt":                ast.AesEncrypt,
 	"compress":                   ast.Compress,
 	"decode":                     ast.Decode,
-	"des_decrypt":                ast.DesDecrypt,
-	"des_encrypt":                ast.DesEncrypt,
 	"encode":                     ast.Encode,
-	"encrypt":                    ast.Encrypt,
 	"md5":                        ast.MD5,
-	"old_password":               ast.OldPassword,
-	"password_func":              ast.PasswordFunc,
+	"password":                   ast.PasswordFunc,
 	"random_bytes":               ast.RandomBytes,
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,
@@ -348,9 +343,18 @@ var funcName2Alias = map[string]string{
 	"json_merge_preserve":        ast.JSONMergePreserve,
 	"json_pretty":                ast.JSONPretty,
 	"json_quote":                 ast.JSONQuote,
+	"json_schema_valid":          ast.JSONSchemaValid,
 	"json_search":                ast.JSONSearch,
 	"json_storage_size":          ast.JSONStorageSize,
 	"json_depth":                 ast.JSONDepth,
 	"json_keys":                  ast.JSONKeys,
 	"json_length":                ast.JSONLength,
+	"vec_dims":                   ast.VecDims,
+	"vec_l1_distance":            ast.VecL1Distance,
+	"vec_l2_distance":            ast.VecL2Distance,
+	"vec_negative_inner_product": ast.VecNegativeInnerProduct,
+	"vec_cosine_distance":        ast.VecCosineDistance,
+	"vec_l2_norm":                ast.VecL2Norm,
+	"vec_from_text":              ast.VecFromText,
+	"vec_as_text":                ast.VecAsText,
 }

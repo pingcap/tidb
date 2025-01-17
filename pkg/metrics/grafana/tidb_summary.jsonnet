@@ -111,7 +111,7 @@ local connectionP = graphPanel.new(
 .addTarget(
   prometheus.target(
     'tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
-    legendFormat='{{instance}}',
+    legendFormat='{{instance}} {{resource_group}}',
   )
 )
 .addTarget(
@@ -133,6 +133,12 @@ local cpuP = graphPanel.new(
     'rate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[1m])',
     legendFormat='{{instance}}',
   )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_maxprocs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='quota-{{instance}}',
+  )
 );
 
 local memP = graphPanel.new(
@@ -152,6 +158,12 @@ local memP = graphPanel.new(
   prometheus.target(
     'go_memory_classes_heap_objects_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_unused_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
     legendFormat='HeapInuse-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_memory_quota_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='quota-{{instance}}',
   )
 );
 
@@ -260,7 +272,7 @@ local qpsP = graphPanel.new(
 );
 
 local cpsByCMDP = graphPanel.new(
-  title='CPS by CMD',
+  title='CPS By CMD',
   datasource=myDS,
   legend_rightSide=true,
   description='MySQL command statistics by command type. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html',
@@ -421,7 +433,7 @@ local maxTxnRetryP = graphPanel.new(
 
 // Merge together.
 local panelW = 12;
-local panelH = 6;
+local panelH = 7;
 local rowW = 24;
 local rowH = 1;
 

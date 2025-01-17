@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -98,16 +99,25 @@ func (r *resultChecker) initRowPtrs() {
 	}
 }
 
-func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
+func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
+	ctx := exprstatic.NewEvalContext()
+
 	if r.rowPtrs == nil {
 		r.initRowPtrs()
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
+		if offset < 0 {
+			offset = 0
+		}
+		if count < 0 {
+			count = (int64(len(r.rowPtrs)) - offset)
+		}
+		r.rowPtrs = r.rowPtrs[offset : offset+count]
 	}
 
 	cursor := 0
 	fieldTypes := make([]*types.FieldType, 0)
 	for _, col := range r.schema.Columns {
-		fieldTypes = append(fieldTypes, col.GetType())
+		fieldTypes = append(fieldTypes, col.GetType(ctx))
 	}
 
 	// Check row number
@@ -138,7 +148,7 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
 	return true
 }
 
-func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
+func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
 	opt := testutil.MockDataSourceParameters{
 		DataSchema: schema,
 		Rows:       sortCase.Rows,
@@ -148,7 +158,7 @@ func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *exp
 	return testutil.BuildMockDataSource(opt)
 }
 
-func buildSortExec(ctx *mock.Context, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) *sortexec.SortExec {
+func buildSortExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) *sortexec.SortExec {
 	dataSource.PrepareChunks()
 	exe := &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
@@ -163,10 +173,14 @@ func buildSortExec(ctx *mock.Context, sortCase *testutil.SortCase, dataSource *t
 	return exe
 }
 
-func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
+func executeSortExecutor(t *testing.T, exe *sortexec.SortExec, isParallelSort bool) []*chunk.Chunk {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+	if !isParallelSort {
+		exe.IsUnparallel = true
+		exe.InitUnparallelModeForTest()
+	}
 
 	resultChunks := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(exe)
@@ -181,10 +195,14 @@ func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
 	return resultChunks
 }
 
-func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) []*chunk.Chunk {
+func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker, isParallelSort bool) []*chunk.Chunk {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+	if !isParallelSort {
+		exe.IsUnparallel = true
+		exe.InitUnparallelModeForTest()
+	}
 
 	resultChunks := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(exe)
@@ -195,8 +213,10 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 		if i == 10 {
 			// Trigger the spill
 			tracker.Consume(hardLimit)
-			// Wait for spill
-			time.Sleep(10 * time.Millisecond)
+			tracker.Consume(-hardLimit)
+
+			// Wait for the finish of spill, or the spill may not be triggered even data in memory has been drained
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		if chk.NumRows() == 0 {
@@ -210,7 +230,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
 	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
-	return checker.check(resultChunks)
+	return checker.check(resultChunks, -1, -1)
 }
 
 func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
@@ -219,11 +239,10 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1048576)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
-	resultChunks := executeSortExecutor(t, exe)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	resultChunks := executeSortExecutor(t, exe, false)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
@@ -241,14 +260,13 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
 
 	// To ensure that spill has been trigger before getting chunk, or we may get chunk from memory.
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, false)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
@@ -270,20 +288,20 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	exe.IsUnparallel = true
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	}
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, false)
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
-	sortPartitionNum := exe.GetSortPartitionListLenForTest()
 	if enableFailPoint {
 		// If we disable the failpoint, there may be only one partition.
+		sortPartitionNum := exe.GetSortPartitionListLenForTest()
 		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all partitions are spilled
@@ -309,11 +327,10 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
-	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker, false)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
@@ -328,12 +345,13 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func TestSortSpillDiskUnparallel(t *testing.T) {
+func TestUnparallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
 	for i := 0; i < 50; i++ {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
@@ -359,12 +377,13 @@ func TestFallBackAction(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
-	executeSortExecutor(t, exe)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	executeSortExecutor(t, exe, false)
 	err := exe.Close()
 	require.NoError(t, err)
 

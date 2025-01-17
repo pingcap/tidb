@@ -36,6 +36,12 @@ func GetCgroupCPU() (CPUUsage, error) {
 	return cpuUsage, nil
 }
 
+// GetCPUPeriodAndQuota returns CPU period and quota time of cgroup.
+// This is Linux-specific and not supported in the current OS.
+func GetCPUPeriodAndQuota() (period int64, quota int64, err error) {
+	return -1, -1, nil
+}
+
 // CPUQuotaToGOMAXPROCS converts the CPU quota applied to the calling process
 // to a valid GOMAXPROCS value. This is Linux-specific and not supported in the
 // current OS.

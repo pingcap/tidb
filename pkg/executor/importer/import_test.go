@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -197,10 +197,10 @@ func TestAdjustOptions(t *testing.T) {
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize", "return(2048)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
 	}()
 	d := t.TempDir()
 	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
@@ -231,17 +231,17 @@ func TestASTArgsFromStmt(t *testing.T) {
 }
 
 func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
 	}()
 	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
 	c := &LoadDataController{logger: log.L()}
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 	fileMeta.Compression = mydump.CompressionGZ
 	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
@@ -319,7 +319,7 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 			ThreadCnt: 3,
 		},
 	}
-	require.Equal(t, 32, c.getBackendWorkerConcurrency())
+	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.CloudStorageURI = "xxx"
 	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.ThreadCnt = 123
@@ -414,6 +414,28 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+	// test glob matching pattern [12]
+	err = os.WriteFile(path.Join(tempDir, "glob-1.csv"), []byte("1,1"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-2.csv"), []byte("2,2"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-3.csv"), []byte("3,3"), 0o644)
+	require.NoError(t, err)
+	c.Path = path.Join(tempDir, "glob-[12].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath := make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-1.csv", "glob-2.csv"}, gotPath)
+	// test glob matching pattern [2-3]
+	c.Path = path.Join(tempDir, "glob-[2-3].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath = make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 }
 
 func TestGetDataSourceType(t *testing.T) {

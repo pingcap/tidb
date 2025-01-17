@@ -16,8 +16,8 @@ package vecgroupchecker
 
 import (
 	"bytes"
-	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -57,12 +57,16 @@ type VecGroupChecker struct {
 
 	// groupCount is the count of groups in the current chunk
 	groupCount int
+
+	// vecEnabled indicates whether to use vectorized evaluation or not.
+	vecEnabled bool
 }
 
 // NewVecGroupChecker creates a new VecGroupChecker
-func NewVecGroupChecker(ctx expression.EvalContext, items []expression.Expression) *VecGroupChecker {
+func NewVecGroupChecker(ctx expression.EvalContext, vecEnabled bool, items []expression.Expression) *VecGroupChecker {
 	return &VecGroupChecker{
 		ctx:          ctx,
+		vecEnabled:   vecEnabled,
 		GroupByItems: items,
 		groupCount:   0,
 		nextGroupID:  0,
@@ -92,14 +96,15 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.firstGroupKey, e.firstRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	ec := e.ctx.ErrCtx()
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.firstGroupKey, e.firstRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.lastGroupKey, e.lastRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.lastGroupKey, e.lastRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
@@ -136,7 +141,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	}
 
 	for _, item := range e.GroupByItems {
-		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
+		err = e.evalGroupItemsAndResolveGroups(item, e.vecEnabled, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -155,7 +160,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 func (e *VecGroupChecker) getFirstAndLastRowDatum(
 	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	var firstRowDatum, lastRowDatum types.Datum
-	tp := item.GetType()
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	switch eType {
 	case types.ETInt:
@@ -286,6 +291,27 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 		} else {
 			lastRowDatum.SetNull()
 		}
+	case types.ETVectorFloat32:
+		firstRowVal, firstRowIsNull, err := item.EvalVectorFloat32(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalVectorFloat32(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			// make a copy to avoid DATA RACE
+			firstRowDatum.SetVectorFloat32(firstRowVal.Clone())
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			// make a copy to avoid DATA RACE
+			lastRowDatum.SetVectorFloat32(lastRowVal.Clone())
+		} else {
+			lastRowDatum.SetNull()
+		}
 	case types.ETString:
 		firstRowVal, firstRowIsNull, err := item.EvalString(e.ctx, chk.GetRow(0))
 		if err != nil {
@@ -310,7 +336,7 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 			lastRowDatum.SetNull()
 		}
 	default:
-		err = fmt.Errorf("invalid eval type %v", eType)
+		err = errors.Errorf("unsupported type %s during evaluation", eType)
 		return err
 	}
 
@@ -322,8 +348,8 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
 // And resolve the rows into groups according to the evaluation results
 func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
-	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
-	tp := item.GetType()
+	item expression.Expression, vecEnabled bool, chk *chunk.Chunk, numRows int) (err error) {
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	if e.allocateBuffer == nil {
 		e.allocateBuffer = expression.GetColumn
@@ -336,7 +362,7 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
+	err = expression.EvalExpr(e.ctx, vecEnabled, item, eType, chk, col)
 	if err != nil {
 		return err
 	}
@@ -447,6 +473,30 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 			}
 			previousIsNull = isNull
 		}
+	case types.ETVectorFloat32:
+		var previousKey, key types.VectorFloat32
+		if !previousIsNull {
+			previousKey = col.GetVectorFloat32(0)
+		}
+		for i := 1; i < numRows; i++ {
+			isNull := col.IsNull(i)
+			if !isNull {
+				key = col.GetVectorFloat32(i)
+			}
+			if e.sameGroup[i] {
+				if isNull == previousIsNull {
+					if !isNull && previousKey.Compare(key) != 0 {
+						e.sameGroup[i] = false
+					}
+				} else {
+					e.sameGroup[i] = false
+				}
+			}
+			if !isNull {
+				previousKey = key
+			}
+			previousIsNull = isNull
+		}
 	case types.ETString:
 		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
 		for i := 1; i < numRows; i++ {
@@ -461,7 +511,7 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 			previousIsNull = isNull
 		}
 	default:
-		err = fmt.Errorf("invalid eval type %v", eType)
+		err = errors.Errorf("unsupported type %s during evaluation", eType)
 	}
 	if err != nil {
 		return err
@@ -491,6 +541,7 @@ func (e *VecGroupChecker) IsExhausted() bool {
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]

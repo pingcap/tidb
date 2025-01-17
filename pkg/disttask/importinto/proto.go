@@ -17,20 +17,21 @@ package importinto
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 )
 
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
-	// IMPORT INTO job id.
+	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID  int64
 	Plan   importer.Plan
 	Stmt   string
@@ -86,8 +87,9 @@ type WriteIngestStepMeta struct {
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
+	RangeJobKeys          [][]byte `json:"range-job-keys"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
-	RangeSplitSize        int64    `json:"range-split-size"`
+	TS                    uint64   `json:"ts"`
 
 	Result Result
 }
@@ -108,7 +110,6 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
-	Progress      *importer.Progress
 
 	mu       sync.Mutex
 	Checksum *verification.KVGroupChecksum
@@ -143,6 +144,14 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
+	panicked   *atomic.Bool
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "encodeAndSortOperator", "RecoverArgs", func() {
+		t.panicked.Store(true)
+	}, false
 }
 
 func (t *importStepMinimalTask) String() string {
@@ -173,5 +182,4 @@ type Checksum struct {
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
-	ColSizeMap   map[int64]int64
 }

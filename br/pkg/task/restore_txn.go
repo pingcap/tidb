@@ -12,7 +12,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"go.uber.org/zap"
 )
 
 // RunRestoreTxn starts a txn kv restore task inside the current goroutine.
@@ -27,8 +30,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	defer cancel()
 
 	// Restore raw does not need domain.
-	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -38,17 +40,10 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		true,
-	)
+	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetConcurrencyPerStore(uint(cfg.Concurrency))
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {
@@ -60,7 +55,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -69,7 +64,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 
 	files := backupMeta.Files
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 
 	if len(files) == 0 {
@@ -78,8 +73,9 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeFileRanges(
-		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+	log.Info("restore files", zap.Int("count", len(files)))
+	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -92,23 +88,28 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		int64(len(ranges)+len(files)),
 		!cfg.LogProgress)
 
+	onProgress := func(i int64) { updateCh.IncBy(i) }
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, nil, updateCh, false)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), onProgress, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, true)
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, false, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restorePostWork(ctx, client, restoreSchedulers)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
-	err = client.WaitForFilesRestored(ctx, files, updateCh)
+	err = client.GetRestorer(nil).GoRestore(onProgress, restore.CreateUniqueFileSets(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = client.GetRestorer(nil).WaitUntilFinish()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Restore has finished.
 	updateCh.Close()
 

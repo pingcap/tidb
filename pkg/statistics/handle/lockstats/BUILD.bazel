@@ -15,8 +15,10 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
+        "//pkg/util",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -45,6 +47,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sqlexec/mock",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",

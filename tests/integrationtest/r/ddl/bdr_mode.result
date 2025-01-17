@@ -479,5 +479,9 @@ alter table t add column c int null;
 alter table t add column d int not null;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t add column d int not null default 10;
+alter table t add column e int default 10;
+alter table t add column f int comment "test";
+alter table t add column g int default 10 comment "test";
+alter table t add column h int as (a + 1) virtual;
 admin unset bdr role;
 drop database bdr_mode;

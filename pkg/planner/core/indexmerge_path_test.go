@@ -20,15 +20,22 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +47,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, domains json null, images json null, KEY `a_domains_b` (a, (cast(`domains` as char(253) array)), b))")
-	sql := "SELECT * FROM t WHERE   15975127 member of (domains)   AND 15975128 member of (domains) AND a = 1 AND b = 2"
+	sql := "SELECT * FROM t WHERE   '15975127' member of (domains)   AND '15975128' member of (domains) AND a = 1 AND b = 2"
 
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -55,24 +62,30 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.Session().GetSessionVars().PlanColumnID.Store(0)
-	err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-	p, err := builder.Build(context.TODO(), stmt)
+	p, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
-	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(core.LogicalPlan))
+	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
-	ds, ok := logicalP.(*core.DataSource)
+	ds, ok := logicalP.(*logicalop.DataSource)
 	for !ok {
 		p := logicalP.Children()[0]
-		ds, ok = p.(*core.DataSource)
+		ds, ok = p.(*logicalop.DataSource)
 	}
-	cnfs := ds.GetAllConds()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cnfs := ds.AllConds
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareCols4MVIndex(tbl.Meta(), tbl.Meta().FindIndexByName("a_domains_b"), ds.TblCols)
+	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
+		tbl.Meta(),
+		tbl.Meta().FindIndexByName("a_domains_b"),
+		ds.TblCols,
+		true,
+	)
 	require.True(t, ok)
 	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
@@ -287,7 +300,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 
-	check := func(sql string, params ...string) {
+	check := func(hitCache bool, sql string, params ...string) {
 		sqlWithoutParam := sql
 		var setStmt, usingStmt string
 		for i, p := range params {
@@ -306,33 +319,37 @@ func TestPlanCacheMVIndex(t *testing.T) {
 		result.Check(result1.Rows())
 		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 		result.Check(result2.Rows())
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		if hitCache {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		} else {
+			require.Greater(t, len(tk.MustQuery("show warnings").Rows()), 0) // show the reason
+		}
 	}
 	randV := func(vs ...string) string {
 		return vs[rand.Intn(len(vs))]
 	}
 
 	for i := 0; i < 50; i++ {
-		check(`select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where (? member of (long_link)) AND (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (long_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (m_id = ? and m_item_id = ? and country = ?) OR (? member of (short_link) and not json_overlaps(product_sources, ?) and country = ?)`,
+		check(true, `select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where (? member of (long_link)) AND (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (long_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (m_id = ? and m_item_id = ? and country = ?) OR (? member of (short_link) and not json_overlaps(product_sources, ?) and country = ?)`,
 			fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids)`,
+		check(true, `select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids)`,
 			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids) AND m_item_id IS NULL AND m_id = ? AND country IS NOT NULL`,
+		check(true, `select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids) AND m_item_id IS NULL AND m_id = ? AND country IS NOT NULL`,
 			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (f_profile_ids) AND ? member of (short_link) AND json_overlaps(product_sources, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (short_link) AND ti.country = "0" AND NOT ? member of (long_link) AND ti.m_item_id = "0"`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (short_link) AND ? member of (long_link) OR ? member of (f_profile_ids) AND ti.m_item_id = "0" OR ti.m_item_set_id = ?`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
-		check(`select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR (? member of (f_profile_ids))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(true, `select * from ti where ? member of (f_profile_ids) AND ? member of (short_link) AND json_overlaps(product_sources, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(true, `select * from ti where ? member of (short_link) AND ti.country = "0" AND NOT ? member of (long_link) AND ti.m_item_id = "0"`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where ? member of (short_link) AND ? member of (long_link) OR ? member of (f_profile_ids) AND ti.m_item_id = "0" OR ti.m_item_set_id = ?`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where ? member of (domains) OR ? member of (signatures) OR (? member of (f_profile_ids))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
+		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'[0,1,2]'`, `'[0]'`, `'[1,2]'`))
 	}
 }
 
@@ -422,4 +439,59 @@ func randMVIndexValue(opts randMVIndexValOpts) string {
 		return fmt.Sprintf(`"2000-01-%v"`, rand.Intn(opts.distinct)+1)
 	}
 	return ""
+}
+
+func TestAnalyzeVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
+	require.NoError(t, err)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
+	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+
+	tk.MustExec("set tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx"))
+	tk.MustExec("analyze table t index a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustExec("analyze table t index a, idx, idx2")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 }

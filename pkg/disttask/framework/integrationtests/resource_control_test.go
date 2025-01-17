@@ -64,7 +64,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 	schedulerExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	schedulerExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
 	schedulerExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			return stepTransition[task.Step]
 		},
 	).AnyTimes()
@@ -80,7 +80,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c.TestDXFContext, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c.TestDXFContext, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		ch := c.enterSubtask(subtask)
 		defer c.leaveSubtask(subtask)
 		select {
@@ -96,7 +96,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, concurrencies []int) {
 	for i, concurrency := range concurrencies {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, concurrency, "", nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)

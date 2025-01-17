@@ -37,7 +37,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 			RetType: types.NewFieldTypeBuilder().SetType(mType).BuildP(),
 			Index:   0,
 		}
-		vgc := NewVecGroupChecker(ctx, exprs)
+		vgc := NewVecGroupChecker(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs)
 
 		fts := []*types.FieldType{types.NewFieldType(mType)}
 		chk := chunk.New(fts, 1, 1)
@@ -186,7 +186,7 @@ func TestVecGroupChecker4GroupCount(t *testing.T) {
 	ctx := mock.NewContext()
 	for _, testCase := range testCases {
 		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
-		groupChecker := NewVecGroupChecker(ctx, expr)
+		groupChecker := NewVecGroupChecker(ctx, ctx.GetSessionVars().EnableVectorizedExpression, expr)
 		groupNum := 0
 		for i, inputChk := range inputChks {
 			flag, err := groupChecker.SplitIntoGroups(inputChk)
@@ -209,7 +209,7 @@ func TestVecGroupChecker(t *testing.T) {
 		Index:   0,
 	}
 	ctx := mock.NewContext()
-	groupChecker := NewVecGroupChecker(ctx, []expression.Expression{col0})
+	groupChecker := NewVecGroupChecker(ctx, ctx.GetSessionVars().EnableVectorizedExpression, []expression.Expression{col0})
 
 	chk := chunk.New([]*types.FieldType{tp}, 6, 6)
 	chk.Reset()
@@ -267,4 +267,14 @@ func TestVecGroupChecker(t *testing.T) {
 	require.Equal(t, b, 0)
 	require.Equal(t, e, 3)
 	require.True(t, groupChecker.IsExhausted())
+}
+
+func TestIssue53867(t *testing.T) {
+	checker := NewVecGroupChecker(nil, true, nil)
+	checker.groupOffset = make([]int, 20)
+	checker.nextGroupID = 10
+	checker.groupCount = 15
+	require.False(t, checker.IsExhausted())
+	checker.Reset()
+	require.True(t, checker.IsExhausted())
 }

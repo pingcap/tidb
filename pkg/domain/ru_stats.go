@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -34,7 +36,7 @@ import (
 const (
 	maxRetryCount   int           = 10
 	ruStatsInterval time.Duration = 24 * time.Hour
-	// only keep stats rows for last 3 monthes(92 days at most).
+	// only keep stats rows for last 3 months(92 days at most).
 	ruStatsGCDuration time.Duration = 92 * ruStatsInterval
 	gcBatchSize       int64         = 1000
 )
@@ -46,7 +48,7 @@ type RUStatsWriter struct {
 	RMClient  pd.ResourceManagerClient
 	InfoCache *infoschema.InfoCache
 	store     kv.Storage
-	sessPool  *sessionPool
+	sessPool  util.SessionPool
 	// current time, cache it here to make unit test easier.
 	StartTime time.Time
 }
@@ -108,12 +110,29 @@ func (do *Domain) requestUnitsWriterLoop() {
 }
 
 // GetLastExpectedTime return the last written ru time.
+// NOTE:
+//   - due to DST(daylight saving time), the actual duration for a specific
+//     time may be shorter or longer than the interval when DST happens.
+//   - All the tidb-server should be deployed in the same timezone to ensure
+//     the duration is calculated correctly.
+//   - The interval must not be longer than 24h.
 func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
-	nowTs := now.Unix()
-	intervalSecs := int64(interval / time.Second)
-	tzOffset := time.Date(1971, 1, 1, 0, 0, 0, 0, time.Local).Unix()
-	targetTs := nowTs - (nowTs+intervalSecs-tzOffset)%intervalSecs
-	return time.Unix(targetTs, 0)
+	return GetLastExpectedTimeTZ(now, interval, time.Local)
+}
+
+// GetLastExpectedTimeTZ return the last written ru time under specifical timezone.
+// make it public only for test.
+func GetLastExpectedTimeTZ(now time.Time, interval time.Duration, tz *time.Location) time.Time {
+	if tz == nil {
+		tz = time.Local
+	}
+	year, month, day := now.Date()
+	start := time.Date(year, month, day, 0, 0, 0, 0, tz)
+	// cast to int64 to bypass the durationcheck lint.
+	count := int64(now.Sub(start) / interval)
+	targetDur := time.Duration(count) * interval
+	// use UTC timezone to calculate target time so it can be compatible with DST.
+	return start.In(time.UTC).Add(targetDur).In(tz)
 }
 
 // DoWriteRUStatistics write ru historical data into mysql.request_unit_by_group.
@@ -169,7 +188,7 @@ func (r *RUStatsWriter) fetchResourceGroupStats(ctx context.Context) ([]meta.Gro
 	infos := r.InfoCache.GetLatest()
 	res := make([]meta.GroupRUStats, 0, len(groups))
 	for _, g := range groups {
-		groupInfo, exists := infos.ResourceGroupByName(model.NewCIStr(g.Name))
+		groupInfo, exists := infos.ResourceGroupByName(ast.NewCIStr(g.Name))
 		if !exists {
 			continue
 		}
@@ -184,21 +203,21 @@ func (r *RUStatsWriter) fetchResourceGroupStats(ctx context.Context) ([]meta.Gro
 
 func (r *RUStatsWriter) loadLatestRUStats() (*meta.RUStats, error) {
 	snapshot := r.store.GetSnapshot(kv.MaxVersion)
-	metaStore := meta.NewSnapshotMeta(snapshot)
+	metaStore := meta.NewReader(snapshot)
 	return metaStore.GetRUStats()
 }
 
 func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	return kv.RunInNewTxn(ctx, r.store, true, func(_ context.Context, txn kv.Transaction) error {
-		return meta.NewMeta(txn).SetRUStats(stats)
+		return meta.NewMutator(txn).SetRUStats(stats)
 	})
 }
 
 func (r *RUStatsWriter) isLatestDataInserted(lastEndTime time.Time) (bool, error) {
 	end := lastEndTime.Format(time.DateTime)
 	start := lastEndTime.Add(-ruStatsInterval).Format(time.DateTime)
-	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
+	rows, sqlErr := runaway.ExecRCRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
 	if sqlErr != nil {
 		return false, errors.Trace(sqlErr)
 	}
@@ -211,7 +230,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 		return nil
 	}
 
-	_, err := execRestrictedSQL(r.sessPool, sql, nil)
+	_, err := runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 	return err
 }
 
@@ -219,7 +238,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	gcEndDate := lastEndTime.Add(-ruStatsGCDuration).Format(time.DateTime)
 	countSQL := fmt.Sprintf("SELECT count(*) FROM mysql.request_unit_by_group where end_time <= '%s'", gcEndDate)
-	rows, err := execRestrictedSQL(r.sessPool, countSQL, nil)
+	rows, err := runaway.ExecRCRestrictedSQL(r.sessPool, countSQL, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -228,7 +247,7 @@ func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	loopCount := (totalCount + gcBatchSize - 1) / gcBatchSize
 	for i := int64(0); i < loopCount; i++ {
 		sql := fmt.Sprintf("DELETE FROM mysql.request_unit_by_group where end_time <= '%s' order by end_time limit %d", gcEndDate, gcBatchSize)
-		_, err = execRestrictedSQL(r.sessPool, sql, nil)
+		_, err = runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

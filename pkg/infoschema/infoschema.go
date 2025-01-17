@@ -16,7 +16,9 @@ package infoschema
 
 import (
 	"cmp"
+	stdctx "context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -24,50 +26,17 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-// InfoSchema is the interface used to retrieve the schema information.
-// It works as a in memory cache and doesn't handle any schema change.
-// InfoSchema is read-only, and the returned value is a copy.
-type InfoSchema interface {
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema model.CIStr) bool
-	TableByName(schema, table model.CIStr) (table.Table, error)
-	TableExists(schema, table model.CIStr) bool
-	SchemaByID(id int64) (*model.DBInfo, bool)
-	TableByID(id int64) (table.Table, bool)
-	AllSchemas() []*model.DBInfo
-	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	Misc
-}
-
-// Misc contains the methods that are not closely related to InfoSchema.
-type Misc interface {
-	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
-	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
-	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
-	// AllPlacementBundles is used to get all placement bundles
-	AllPlacementBundles() []*placement.Bundle
-	// AllPlacementPolicies returns all placement policies
-	AllPlacementPolicies() []*model.PolicyInfo
-	// AllResourceGroups returns all resource groups
-	AllResourceGroups() []*model.ResourceGroupInfo
-	// HasTemporaryTable returns whether information schema has temporary table
-	HasTemporaryTable() bool
-	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
-}
-
-var _ Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
@@ -91,15 +60,19 @@ const bucketCount = 512
 type infoSchema struct {
 	infoSchemaMisc
 	schemaMap map[string]*schemaTables
+	// schemaID2Name is a map from schema ID to schema name.
+	// it should be enough to query by name only theoretically, but there are some
+	// places we only have schema ID, and we check both name and id in some sanity checks.
+	schemaID2Name map[int64]string
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 }
 
 type infoSchemaMisc struct {
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -127,20 +100,57 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	result := newInfoSchema()
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
+	var tableIDs map[int64]struct{}
 	for _, tb := range tbList {
+		intest.AssertFunc(func() bool {
+			if tableIDs == nil {
+				tableIDs = make(map[int64]struct{})
+			}
+			_, ok := tableIDs[tb.ID]
+			intest.Assert(!ok)
+			tableIDs[tb.ID] = struct{}{}
+			return true
+		})
 		tb.DBID = dbInfo.ID
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
+	// Add a system table.
+	tables := []*model.TableInfo{
+		{
+			// Use a very big ID to avoid conflict with normal tables.
+			ID:   9999,
+			Name: ast.NewCIStr("stats_meta"),
+			Columns: []*model.ColumnInfo{
+				{
+					State:  model.StatePublic,
+					Offset: 0,
+					Name:   ast.NewCIStr("a"),
+					ID:     1,
+				},
+			},
+			State: model.StatePublic,
+		},
+	}
+	mysqlDBInfo := &model.DBInfo{ID: 2, Name: ast.NewCIStr("mysql")}
+	mysqlDBInfo.Deprecated.Tables = tables
+	tableNames = &schemaTables{
+		dbInfo: mysqlDBInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.addSchema(tableNames)
+	for _, tb := range tables {
+		tb.DBID = mysqlDBInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -156,18 +166,14 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	result := newInfoSchema()
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
@@ -186,35 +192,59 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 
 var _ InfoSchema = (*infoSchema)(nil)
 
-func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemaMap[schema.L]
+func (is *infoSchema) base() *infoSchema {
+	return is
+}
+
+func newInfoSchema() *infoSchema {
+	return &infoSchema{
+		infoSchemaMisc: infoSchemaMisc{
+			policyMap:             map[string]*model.PolicyInfo{},
+			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		},
+		schemaMap:           map[string]*schemaTables{},
+		schemaID2Name:       map[int64]string{},
+		sortedTablesBuckets: make([]sortedTables, bucketCount),
+	}
+}
+
+func (is *infoSchema) SchemaByName(schema ast.CIStr) (val *model.DBInfo, ok bool) {
+	return is.schemaByName(schema.L)
+}
+
+func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
+	tableNames, ok := is.schemaMap[name]
 	if !ok {
 		return
 	}
 	return tableNames.dbInfo, true
 }
 
-func (is *infoSchema) SchemaMetaVersion() int64 {
-	return is.schemaMetaVersion
-}
-
-func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
+func (is *infoSchema) SchemaExists(schema ast.CIStr) bool {
 	_, ok := is.schemaMap[schema.L]
 	return ok
 }
 
-func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (t table.Table, err error) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
+}
+
+// TableInfoByName implements InfoSchema.TableInfoByName
+func (is *infoSchema) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
+	return getTableInfo(tbl), err
 }
 
 // TableIsView indicates whether the schema.table is a view.
-func TableIsView(is InfoSchema, schema, table model.CIStr) bool {
-	tbl, err := is.TableByName(schema, table)
+func TableIsView(is InfoSchema, schema, table ast.CIStr) bool {
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
 	if err == nil {
 		return tbl.Meta().IsView()
 	}
@@ -222,15 +252,15 @@ func TableIsView(is InfoSchema, schema, table model.CIStr) bool {
 }
 
 // TableIsSequence indicates whether the schema.table is a sequence.
-func TableIsSequence(is InfoSchema, schema, table model.CIStr) bool {
-	tbl, err := is.TableByName(schema, table)
+func TableIsSequence(is InfoSchema, schema, table ast.CIStr) bool {
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
 	if err == nil {
 		return tbl.Meta().IsSequence()
 	}
 	return false
 }
 
-func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
+func (is *infoSchema) TableExists(schema, table ast.CIStr) bool {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if _, ok = tbNames.tables[table.L]; ok {
 			return true
@@ -249,24 +279,12 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) ResourceGroupByID(id int64) (val *model.ResourceGroupInfo, ok bool) {
-	is.resourceGroupMutex.RLock()
-	defer is.resourceGroupMutex.RUnlock()
-	for _, v := range is.resourceGroupMap {
-		if v.ID == id {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	for _, v := range is.schemaMap {
-		if v.dbInfo.ID == id {
-			return v.dbInfo, true
-		}
+	name, ok := is.schemaID2Name[id]
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	return is.schemaByName(name)
 }
 
 // SchemaByTable get a table's schema name
@@ -274,10 +292,21 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	if tableInfo == nil {
 		return nil, false
 	}
-	return is.SchemaByID(tableInfo.DBID)
+	if tableInfo.DBID > 0 {
+		return is.SchemaByID(tableInfo.DBID)
+	}
+	tbl, ok := is.TableByID(stdctx.Background(), tableInfo.ID)
+	if !ok {
+		return nil, false
+	}
+	return is.SchemaByID(tbl.Meta().DBID)
 }
 
-func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
@@ -286,20 +315,84 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-// allocByID returns the Allocators of a table.
-func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
-	tbl, ok := is.TableByID(id)
+func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), tableID)
 	if !ok {
-		return autoid.Allocators{}, false
+		return
 	}
-	return tbl.Allocators(nil), true
+	db, ok := is.SchemaByID(tbl.Meta().DBID)
+	if !ok {
+		return
+	}
+
+	return db.Name, true
+}
+
+// TableInfoByID implements InfoSchema.TableInfoByID
+func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), id)
+	return getTableInfo(tbl), ok
+}
+
+// FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoSchema) FindTableInfoByPartitionID(
+	partitionID int64,
+) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
+	tbl, db, partDef := is.FindTableByPartitionID(partitionID)
+	return getTableInfo(tbl), db, partDef
+}
+
+// SchemaTableInfos implements MetaOnlyInfoSchema.
+func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil, nil
+	}
+	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
+	for _, tbl := range schemaTables.tables {
+		tables = append(tables, tbl.Meta())
+	}
+	return tables, nil
+}
+
+// SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
+func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableNameInfo, error) {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil, nil
+	}
+	ret := make([]*model.TableNameInfo, 0, len(schemaTables.tables))
+	for _, t := range schemaTables.tables {
+		ret = append(ret, &model.TableNameInfo{
+			ID:   t.Meta().ID,
+			Name: t.Meta().Name,
+		})
+	}
+	return ret, nil
+}
+
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter context.SpecialAttributeFilter) []context.TableInfoResult {
+	ret := make([]context.TableInfoResult, 0, 10)
+	for _, dbName := range is.AllSchemaNames() {
+		res := context.TableInfoResult{DBName: dbName}
+		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
+		terror.Log(err)
+		for _, tblInfo := range tblInfos {
+			if !filter(tblInfo) {
+				continue
+			}
+			res.TableInfos = append(res.TableInfos, tblInfo)
+		}
+		ret = append(ret, res)
+	}
+	return ret
 }
 
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
-	schemas := is.AllSchemas()
+	schemas := is.AllSchemaNames()
 	for _, v := range schemas {
-		names = append(names, v.Name.O)
+		names = append(names, v.O)
 	}
 	return
 }
@@ -311,15 +404,12 @@ func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
-func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	schemaTables, ok := is.schemaMap[schema.L]
-	if !ok {
-		return
+func (is *infoSchema) AllSchemaNames() (schemas []ast.CIStr) {
+	rs := make([]ast.CIStr, 0, len(is.schemaMap))
+	for _, v := range is.schemaMap {
+		rs = append(rs, v.dbInfo.Name)
 	}
-	for _, tbl := range schemaTables.tables {
-		tables = append(tables, tbl)
-	}
-	return
+	return rs
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
@@ -341,14 +431,30 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 	return nil, nil, nil
 }
 
+// addSchema is used to add a schema to the infoSchema, it will overwrite the old
+// one if it already exists.
+func (is *infoSchema) addSchema(st *schemaTables) {
+	is.schemaMap[st.dbInfo.Name.L] = st
+	is.schemaID2Name[st.dbInfo.ID] = st.dbInfo.Name.L
+}
+
+func (is *infoSchema) delSchema(di *model.DBInfo) {
+	delete(is.schemaMap, di.Name.L)
+	delete(is.schemaID2Name, di.ID)
+}
+
 // HasTemporaryTable returns whether information schema has temporary table
 func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
+func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
+}
+
 // GetSequenceByName gets the sequence by name.
-func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
-	tbl, err := is.TableByName(schema, sequence)
+func GetSequenceByName(is InfoSchema, schema, sequence ast.CIStr) (util.SequenceTable, error) {
+	tbl, err := is.TableByName(stdctx.Background(), schema, sequence)
 	if err != nil {
 		return nil, err
 	}
@@ -382,13 +488,13 @@ func init() {
 		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  infoSchemaTables,
 	}
+	infoSchemaDB.Deprecated.Tables = infoSchemaTables
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence ast.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
-	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {
+	mock.MockInfoschema = func(tbList []*model.TableInfo) context.MetaOnlyInfoSchema {
 		return MockInfoSchema(tbList)
 	}
 }
@@ -404,7 +510,7 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchemaMisc) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
+func (is *infoSchemaMisc) PolicyByName(name ast.CIStr) (*model.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	t, r := is.policyMap[name.L]
@@ -412,11 +518,23 @@ func (is *infoSchemaMisc) PolicyByName(name model.CIStr) (*model.PolicyInfo, boo
 }
 
 // ResourceGroupByName is used to find the resource group.
-func (is *infoSchemaMisc) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
+func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
 	return t, r
+}
+
+// ResourceGroupByID is used to find the resource group.
+func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	for _, v := range is.resourceGroupMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // AllResourceGroups returns all resource groups.
@@ -430,6 +548,12 @@ func (is *infoSchemaMisc) AllResourceGroups() []*model.ResourceGroupInfo {
 	return groups
 }
 
+func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupInfo {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	return maps.Clone(is.resourceGroupMap)
+}
+
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -439,6 +563,12 @@ func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 		policies = append(policies, policy)
 	}
 	return policies
+}
+
+func (is *infoSchemaMisc) ClonePlacementPolicies() map[string]*model.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	return maps.Clone(is.policyMap)
 }
 
 func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
@@ -478,7 +608,7 @@ func (is *infoSchemaMisc) deletePolicy(name string) {
 	delete(is.policyMap, name)
 }
 
-func (is *infoSchemaMisc) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -518,7 +648,7 @@ func (is *infoSchemaMisc) addReferredForeignKeys(schema model.CIStr, tbInfo *mod
 	}
 }
 
-func (is *infoSchemaMisc) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -563,7 +693,7 @@ func NewSessionTables() *SessionTables {
 }
 
 // TableByName get table by name
-func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+func (is *SessionTables) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t, true
@@ -573,8 +703,8 @@ func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bo
 }
 
 // TableExists check if table with the name exists
-func (is *SessionTables) TableExists(schema, table model.CIStr) (ok bool) {
-	_, ok = is.TableByName(schema, table)
+func (is *SessionTables) TableExists(schema, table ast.CIStr) (ok bool) {
+	_, ok = is.TableByName(stdctx.Background(), schema, table)
 	return
 }
 
@@ -604,7 +734,7 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 }
 
 // RemoveTable remove a table
-func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+func (is *SessionTables) RemoveTable(schema, table ast.CIStr) (exist bool) {
 	tbls := is.schemaTables(schema)
 	if tbls == nil {
 		return false
@@ -649,7 +779,7 @@ func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 	return tbls
 }
 
-func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
+func (is *SessionTables) schemaTables(schema ast.CIStr) *schemaTables {
 	if is.schemaMap == nil {
 		return nil
 	}
@@ -672,24 +802,48 @@ type SessionExtendedInfoSchema struct {
 }
 
 // TableByName implements InfoSchema.TableByName
-func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
 	if ts.LocalTemporaryTables != nil {
-		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
 			return tbl, nil
 		}
 	}
 
 	if ts.MdlTables != nil {
-		if tbl, ok := ts.MdlTables.TableByName(schema, table); ok {
+		if tbl, ok := ts.MdlTables.TableByName(ctx, schema, table); ok {
 			return tbl, nil
 		}
 	}
 
-	return ts.InfoSchema.TableByName(schema, table)
+	return ts.InfoSchema.TableByName(ctx, schema, table)
+}
+
+// TableInfoByName implements InfoSchema.TableInfoByName
+func (ts *SessionExtendedInfoSchema) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
+	tbl, err := ts.TableByName(stdctx.Background(), schema, table)
+	return getTableInfo(tbl), err
+}
+
+// TableInfoByID implements InfoSchema.TableInfoByID
+func (ts *SessionExtendedInfoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
+	tbl, ok := ts.TableByID(stdctx.Background(), id)
+	return getTableInfo(tbl), ok
+}
+
+// FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
+func (ts *SessionExtendedInfoSchema) FindTableInfoByPartitionID(
+	partitionID int64,
+) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
+	tbl, db, partDef := ts.FindTableByPartitionID(partitionID)
+	return getTableInfo(tbl), db, partDef
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (table.Table, bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
@@ -702,7 +856,7 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 		}
 	}
 
-	return ts.InfoSchema.TableByID(id)
+	return ts.InfoSchema.TableByID(ctx, id)
 }
 
 // SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.
@@ -754,10 +908,29 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 // If the id is a partition id, the corresponding table.Table and PartitionDefinition will be returned.
 // If the id is not found in the InfoSchema, nil will be returned for both return values.
 func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.PartitionDefinition) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	if ok {
 		return tbl, nil
 	}
 	tbl, _, partDef := is.FindTableByPartitionID(id)
 	return tbl, partDef
+}
+
+func getTableInfo(tbl table.Table) *model.TableInfo {
+	if tbl == nil {
+		return nil
+	}
+	return tbl.Meta()
+}
+
+func getTableInfoList(tables []table.Table) []*model.TableInfo {
+	if tables == nil {
+		return nil
+	}
+
+	infoLost := make([]*model.TableInfo, 0, len(tables))
+	for _, tbl := range tables {
+		infoLost = append(infoLost, tbl.Meta())
+	}
+	return infoLost
 }

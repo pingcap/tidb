@@ -19,9 +19,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -86,7 +87,7 @@ func (ss *Schemas) BackupSchemas(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	workerPool := utils.NewWorkerPool(concurrency, "Schemas")
+	workerPool := tidbutil.NewWorkerPool(concurrency, "Schemas")
 	errg, ectx := errgroup.WithContext(ctx)
 	startAll := time.Now()
 	op := metautil.AppendSchema
@@ -105,7 +106,7 @@ func (ss *Schemas) BackupSchemas(
 		}
 
 		var checksum *checkpoint.ChecksumItem
-		var exists bool = false
+		var exists = false
 		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
@@ -144,7 +145,7 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost))
+							zap.Duration("TimeTaken", calculateCost))
 					}
 				}
 				if statsHandle != nil {

@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package priorityqueue
+package priorityqueue_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,8 +30,8 @@ type testData struct {
 }
 
 func TestCalculateWeight(t *testing.T) {
-	// Note: all group are sorted by weight in ascending order.
-	pc := NewPriorityCalculator()
+	// Note: all groups are sorted by weight in ascending order.
+	pc := priorityqueue.NewPriorityCalculator()
 	// Only focus on change percentage. Bigger change percentage, higher weight.
 	changePercentageGroup := []testData{
 		{
@@ -106,13 +107,15 @@ func TestCalculateWeight(t *testing.T) {
 
 // testWeightCalculation is a helper function to test the weight calculation.
 // It will check if the weight is increasing for each test data group.
-func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testData) {
+func testWeightCalculation(t *testing.T, pc *priorityqueue.PriorityCalculator, group []testData) {
 	prevWeight := -1.0
 	for _, tc := range group {
-		job := &TableAnalysisJob{
-			ChangePercentage:     tc.ChangePercentage,
-			TableSize:            tc.TableSize,
-			LastAnalysisDuration: tc.LastAnalysisDuration,
+		job := &priorityqueue.NonPartitionedTableAnalysisJob{
+			Indicators: priorityqueue.Indicators{
+				ChangePercentage:     tc.ChangePercentage,
+				TableSize:            tc.TableSize,
+				LastAnalysisDuration: tc.LastAnalysisDuration,
+			},
 		}
 		weight := pc.CalculateWeight(job)
 		require.Greater(t, weight, 0.0)
@@ -122,23 +125,24 @@ func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testDat
 }
 
 func TestGetSpecialEvent(t *testing.T) {
-	pc := NewPriorityCalculator()
+	pc := priorityqueue.NewPriorityCalculator()
 
-	jobWithIndex := &TableAnalysisJob{
-		PartitionIndexes: map[string][]string{
-			"index1": {"p1", "p2"},
+	jobWithIndex1 := &priorityqueue.DynamicPartitionedTableAnalysisJob{
+		PartitionIndexIDs: map[int64][]int64{
+			1: {1, 2},
 		},
 	}
-	require.Equal(t, eventNewIndex, pc.getSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex1))
 
-	jobWithIndex = &TableAnalysisJob{
-		Indexes: []string{"index1"},
+	jobWithIndex2 := &priorityqueue.NonPartitionedTableAnalysisJob{
+		IndexIDs: map[int64]struct{}{
+			1: {},
+		},
 	}
-	require.Equal(t, eventNewIndex, pc.getSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex2))
 
-	jobWithoutIndex := &TableAnalysisJob{
-		PartitionIndexes: map[string][]string{},
-		Indexes:          []string{},
+	jobWithoutIndex := &priorityqueue.DynamicPartitionedTableAnalysisJob{
+		PartitionIndexIDs: map[int64][]int64{},
 	}
-	require.Equal(t, eventNone, pc.getSpecialEvent(jobWithoutIndex))
+	require.Equal(t, priorityqueue.EventNone, pc.GetSpecialEvent(jobWithoutIndex))
 }

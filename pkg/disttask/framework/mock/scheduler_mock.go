@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -41,6 +42,11 @@ func (m *MockScheduler) EXPECT() *MockSchedulerMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockScheduler) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // Close mocks base method.
 func (m *MockScheduler) Close() {
 	m.ctrl.T.Helper()
@@ -69,7 +75,7 @@ func (mr *MockSchedulerMockRecorder) GetEligibleInstances(arg0, arg1 any) *gomoc
 }
 
 // GetNextStep mocks base method.
-func (m *MockScheduler) GetNextStep(arg0 *proto.Task) proto.Step {
+func (m *MockScheduler) GetNextStep(arg0 *proto.TaskBase) proto.Step {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetNextStep", arg0)
 	ret0, _ := ret[0].(proto.Step)
@@ -200,6 +206,11 @@ func (m *MockCleanUpRoutine) EXPECT() *MockCleanUpRoutineMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockCleanUpRoutine) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // CleanUp mocks base method.
 func (m *MockCleanUpRoutine) CleanUp(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -235,6 +246,11 @@ func NewMockTaskManager(ctrl *gomock.Controller) *MockTaskManager {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTaskManager) EXPECT() *MockTaskManagerMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTaskManager) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // CancelTask mocks base method.
@@ -353,21 +369,6 @@ func (mr *MockTaskManagerMockRecorder) GetAllSubtasksByStepAndState(arg0, arg1, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasksByStepAndState), arg0, arg1, arg2, arg3)
 }
 
-// GetManagedNodes mocks base method.
-func (m *MockTaskManager) GetManagedNodes(arg0 context.Context) ([]proto.ManagedNode, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetManagedNodes", arg0)
-	ret0, _ := ret[0].([]proto.ManagedNode)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetManagedNodes indicates an expected call of GetManagedNodes.
-func (mr *MockTaskManagerMockRecorder) GetManagedNodes(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetManagedNodes", reflect.TypeOf((*MockTaskManager)(nil).GetManagedNodes), arg0)
-}
-
 // GetSubtaskCntGroupByStates mocks base method.
 func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, error) {
 	m.ctrl.T.Helper()
@@ -476,6 +477,20 @@ func (m *MockTaskManager) GetUsedSlotsOnNodes(arg0 context.Context) (map[string]
 func (mr *MockTaskManagerMockRecorder) GetUsedSlotsOnNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsedSlotsOnNodes", reflect.TypeOf((*MockTaskManager)(nil).GetUsedSlotsOnNodes), arg0)
+}
+
+// ModifiedTask mocks base method.
+func (m *MockTaskManager) ModifiedTask(arg0 context.Context, arg1 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifiedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ModifiedTask indicates an expected call of ModifiedTask.
+func (mr *MockTaskManagerMockRecorder) ModifiedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifiedTask", reflect.TypeOf((*MockTaskManager)(nil).ModifiedTask), arg0, arg1)
 }
 
 // PauseTask mocks base method.

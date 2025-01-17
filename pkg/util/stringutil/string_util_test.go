@@ -194,16 +194,28 @@ func TestBuildStringFromLabels(t *testing.T) {
 	}
 }
 
-func TestEscapeGlobExceptAsterisk(t *testing.T) {
+func TestEscapeGlobQuestionMark(t *testing.T) {
 	cases := [][2]string{
 		{"123", "123"},
 		{"12*3", "12*3"},
 		{"12?", `12\?`},
-		{`[1-2]`, `\[1-2\]`},
+		{`[1-2]`, `[1-2]`},
 	}
 	for _, pair := range cases {
-		require.Equal(t, pair[1], EscapeGlobExceptAsterisk(pair[0]))
+		require.Equal(t, pair[1], EscapeGlobQuestionMark(pair[0]))
 	}
+}
+
+func TestMemoizeStr(t *testing.T) {
+	cnt := 0
+	slowStringFn := func() string {
+		cnt++
+		return "slow"
+	}
+	stringer := MemoizeStr(slowStringFn)
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, 1, cnt)
 }
 
 func BenchmarkDoMatch(b *testing.B) {
@@ -221,7 +233,7 @@ func BenchmarkDoMatch(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if !match {
 					b.Fatal("Match expected.")
@@ -244,7 +256,7 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 		b.Run(v.pattern, func(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				match := DoMatch(v.target, patChars, patTypes)
 				if match {
 					b.Fatal("Unmatch expected.")

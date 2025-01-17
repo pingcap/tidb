@@ -11,16 +11,21 @@ import (
 const (
 	flagBackoffTime         = "backoff-time"
 	flagTickInterval        = "tick-interval"
-	flagFullScanDiffTick    = "full-scan-tick"
-	flagAdvancingByCache    = "advancing-by-cache"
 	flagTryAdvanceThreshold = "try-advance-threshold"
+	flagCheckPointLagLimit  = "check-point-lag-limit"
 
-	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 4 * time.Minute
-	DefaultBackOffTime          = 5 * time.Second
-	DefaultTickInterval         = 12 * time.Second
-	DefaultFullScanTick         = 4
-	DefaultAdvanceByCache       = true
+	// used for chaos testing
+	flagOwnershipCycleInterval = "ownership-cycle-interval"
+)
+
+const (
+	DefaultTryAdvanceThreshold = 4 * time.Minute
+	DefaultCheckPointLagLimit  = 48 * time.Hour
+	DefaultBackOffTime         = 5 * time.Second
+	DefaultTickInterval        = 12 * time.Second
+
+	// used for chaos testing, default to disable
+	DefaultOwnershipCycleInterval = 0
 )
 
 var (
@@ -34,6 +39,13 @@ type Config struct {
 	TickDuration time.Duration `toml:"tick-interval" json:"tick-interval"`
 	// The threshold for polling TiKV for checkpoint of some range.
 	TryAdvanceThreshold time.Duration `toml:"try-advance-threshold" json:"try-advance-threshold"`
+	// The maximum lag could be tolerated for the checkpoint lag.
+	CheckPointLagLimit time.Duration `toml:"check-point-lag-limit" json:"check-point-lag-limit"`
+
+	// Following configs are used in chaos testings, better not to enable in prod
+	//
+	// used to periodically becomes/retire advancer owner
+	OwnershipCycleInterval time.Duration `toml:"ownership-cycle-interval" json:"ownership-cycle-interval"`
 }
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
@@ -43,13 +55,24 @@ func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 		"From how long we trigger the tick (advancing the checkpoint).")
 	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold,
 		"If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
+	f.Duration(flagCheckPointLagLimit, DefaultCheckPointLagLimit,
+		"The maximum lag could be tolerated for the checkpoint lag.")
+
+	// used for chaos testing
+	f.Duration(flagOwnershipCycleInterval, DefaultOwnershipCycleInterval,
+		"The interval that the owner will retire itself")
+
+	// mark hidden
+	_ = f.MarkHidden(flagOwnershipCycleInterval)
 }
 
 func Default() Config {
 	return Config{
-		BackoffTime:         DefaultBackOffTime,
-		TickDuration:        DefaultTickInterval,
-		TryAdvanceThreshold: DefaultTryAdvanceThreshold,
+		BackoffTime:            DefaultBackOffTime,
+		TickDuration:           DefaultTickInterval,
+		TryAdvanceThreshold:    DefaultTryAdvanceThreshold,
+		CheckPointLagLimit:     DefaultCheckPointLagLimit,
+		OwnershipCycleInterval: DefaultOwnershipCycleInterval,
 	}
 }
 
@@ -67,6 +90,14 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
+	conf.CheckPointLagLimit, err = f.GetDuration(flagCheckPointLagLimit)
+	if err != nil {
+		return err
+	}
+	conf.OwnershipCycleInterval, err = f.GetDuration(flagOwnershipCycleInterval)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -74,6 +105,11 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 // in the normal condition (the subscribe manager is available.)
 func (conf Config) GetDefaultStartPollThreshold() time.Duration {
 	return conf.TryAdvanceThreshold
+}
+
+// GetCheckPointLagLimit returns the maximum lag could be tolerated for the checkpoint lag.
+func (conf Config) GetCheckPointLagLimit() time.Duration {
+	return conf.CheckPointLagLimit
 }
 
 // GetSubscriberErrorStartPollThreshold returns the threshold of begin polling the checkpoint

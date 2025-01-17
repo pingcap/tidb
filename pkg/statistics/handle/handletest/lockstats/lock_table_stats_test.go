@@ -15,15 +15,19 @@
 package lockstats
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,9 +37,10 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -56,6 +61,17 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, 1, len(lockedTables))
 
+	// Insert a new row to the table.
+	tk.MustExec("insert into t(a, b) values(3,'c')")
+	// Enable the failpoint to test the historical stats meta is not recorded.
+	err = failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/statistics/handle/usage/panic-when-record-historical-stats-meta",
+		"1*return(true)",
+	)
+	require.NoError(t, err)
+	// Dump stats delta to KV.
+	require.NotPanics(t, func() { handle.DumpStatsDeltaToKV(true) })
+
 	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
@@ -63,7 +79,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tblStats2 := handle.GetTableStats(tbl)
-	require.Equal(t, int64(2), tblStats2.RealtimeCount)
+	require.Equal(t, int64(3), tblStats2.RealtimeCount)
 }
 
 func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
@@ -71,9 +87,10 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -102,9 +119,10 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -162,24 +180,26 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("create table t2(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("analyze table test.t1, test.t2")
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.Nil(t, err)
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.Nil(t, err)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
 	tbl1Stats := handle.GetTableStats(tbl1.Meta())
-	for _, col := range tbl1Stats.Columns {
+	tbl1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 	tbl2Stats := handle.GetTableStats(tbl2.Meta())
-	for _, col := range tbl2Stats.Columns {
+	tbl2Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t1, t2")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -222,9 +242,10 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -247,9 +268,10 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -351,7 +373,7 @@ func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *domain.Domain, *
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.Nil(t, err)
 
 	return store, dom, tk, tbl.Meta()

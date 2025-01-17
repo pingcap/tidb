@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
 // TxnMode represents using optimistic or pessimistic mode in the transaction
@@ -51,6 +53,10 @@ type Session interface {
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
 	// ResetWithGlobalTimeZone resets the session time zone to global time zone
 	ResetWithGlobalTimeZone(ctx context.Context) error
+	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
+	GlobalTimeZone(ctx context.Context) (*time.Location, error)
+	// KillStmt kills the current statement execution
+	KillStmt()
 	// Close closes the session
 	Close()
 	// Now returns the current time in location specified by session var
@@ -105,6 +111,20 @@ func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]ch
 
 // RunInTxn executes the specified function in a txn
 func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode) (err error) {
+	success := false
+	defer func() {
+		// Always try to `ROLLBACK` the transaction even if only the `BEGIN` fails. If the `BEGIN` is killed
+		// after it runs the first `Next`, the transaction is already active and needs to be `ROLLBACK`ed.
+		if !success {
+			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
+			// Using another timeout context to avoid that this behavior will be changed in the future.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			terror.Log(rollbackErr)
+			cancel()
+		}
+	}()
+
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 
@@ -122,14 +142,6 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 		return err
 	}
 	tracer.EnterPhase(metrics.PhaseOther)
-
-	success := false
-	defer func() {
-		if !success {
-			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
-			terror.Log(rollbackErr)
-		}
-	}()
 
 	if err = fn(); err != nil {
 		return err
@@ -166,6 +178,20 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 
 	_, err := s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
+}
+
+// GlobalTimeZone returns the global timezone
+func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
+	str, err := s.GetSessionVars().GetGlobalSystemVar(ctx, "time_zone")
+	if err != nil {
+		return nil, err
+	}
+	return timeutil.ParseTimeZone(str)
+}
+
+// KillStmt kills the current statement execution
+func (s *session) KillStmt() {
+	s.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 }
 
 // Close closes the session

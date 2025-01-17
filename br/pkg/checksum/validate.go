@@ -33,7 +33,7 @@ func FastChecksum(
 	errCh := make(chan error)
 	go func() {
 		reader := metautil.NewMetaReader(backupMeta, storage, cipher)
-		if err := reader.ReadSchemasFiles(ctx, ch); err != nil {
+		if err := reader.ReadSchemasFiles(ctx, ch, metautil.SkipStats); err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)

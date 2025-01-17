@@ -24,12 +24,15 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -45,12 +48,8 @@ var (
 	_ functionClass = &aesEncryptFunctionClass{}
 	_ functionClass = &compressFunctionClass{}
 	_ functionClass = &decodeFunctionClass{}
-	_ functionClass = &desDecryptFunctionClass{}
-	_ functionClass = &desEncryptFunctionClass{}
 	_ functionClass = &encodeFunctionClass{}
-	_ functionClass = &encryptFunctionClass{}
 	_ functionClass = &md5FunctionClass{}
-	_ functionClass = &oldPasswordFunctionClass{}
 	_ functionClass = &passwordFunctionClass{}
 	_ functionClass = &randomBytesFunctionClass{}
 	_ functionClass = &sha1FunctionClass{}
@@ -118,10 +117,10 @@ func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(args[0].GetType().GetFlen()) // At most.
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen()) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode := ctx.GetBlockEncryptionMode()
 	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
 		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
@@ -253,10 +252,10 @@ func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1)) // At most.
+	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType(ctx.GetEvalCtx()).GetFlen()/aes.BlockSize + 1)) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode := ctx.GetBlockEncryptionMode()
 	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
 		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
@@ -386,7 +385,7 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinDecodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
@@ -394,6 +393,9 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinDecodeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDecodeSig) Clone() builtinFunc {
@@ -419,22 +421,6 @@ func (b *builtinDecodeSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	return decodeStr, false, err
 }
 
-type desDecryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *desDecryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_DECRYPT")
-}
-
-type desEncryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *desEncryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_ENCRYPT")
-}
-
 type encodeFunctionClass struct {
 	baseFunctionClass
 }
@@ -449,7 +435,7 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
@@ -457,6 +443,9 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinEncodeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinEncodeSig) Clone() builtinFunc {
@@ -482,22 +471,6 @@ func (b *builtinEncodeSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	return dataStr, false, err
 }
 
-type encryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *encryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "ENCRYPT")
-}
-
-type oldPasswordFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *oldPasswordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "OLD_PASSWORD")
-}
-
 type passwordFunctionClass struct {
 	baseFunctionClass
 }
@@ -518,6 +491,9 @@ func (c *passwordFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinPasswordSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinPasswordSig) Clone() builtinFunc {
@@ -541,7 +517,7 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	tc := typeCtx(ctx)
-	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -566,6 +542,9 @@ func (c *randomBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinRandomBytesSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRandomBytesSig) Clone() builtinFunc {
@@ -606,7 +585,7 @@ func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)
@@ -617,6 +596,9 @@ func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinMD5Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMD5Sig) Clone() builtinFunc {
@@ -633,7 +615,8 @@ func (b *builtinMD5Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool
 		return "", isNull, err
 	}
 	sum := md5.Sum([]byte(arg)) // #nosec G401
-	hexStr := fmt.Sprintf("%x", sum)
+	hexStr := hex.EncodeToString(sum[:])
+
 	return hexStr, false, nil
 }
 
@@ -649,7 +632,7 @@ func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
@@ -660,6 +643,9 @@ func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinSHA1Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSHA1Sig) Clone() builtinFunc {
@@ -696,7 +682,7 @@ func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(128) // sha512
@@ -707,6 +693,9 @@ func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinSHA2Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSHA2Sig) Clone() builtinFunc {
@@ -727,7 +716,7 @@ func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
@@ -737,6 +726,9 @@ func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinSM3Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSM3Sig) Clone() builtinFunc {
@@ -844,7 +836,7 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	srcLen := args[0].GetType().GetFlen()
+	srcLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
 		compressBound = mysql.MaxBlobWidth
@@ -858,6 +850,9 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinCompressSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCompressSig) Clone() builtinFunc {
@@ -924,6 +919,9 @@ func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUncompressSig) Clone() builtinFunc {
@@ -981,6 +979,9 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx BuildContext, args []E
 
 type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
@@ -1021,12 +1022,14 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, ar
 		return nil, err
 	}
 	bf.tp.SetFlen(21)
-	sig := &builtinValidatePasswordStrengthSig{bf}
+	sig := &builtinValidatePasswordStrengthSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
@@ -1035,10 +1038,25 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinValidatePasswordStrengthSig) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
 // See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
 func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	globalVars := vars.GlobalVarsAccessor
 	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1050,11 +1068,11 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.
 	} else if !variable.TiDBOptOn(validation) {
 		return 0, false, nil
 	}
-	return b.validateStr(ctx, str, &globalVars)
+	return b.validateStr(str, user, &globalVars)
 }
 
-func (b *builtinValidatePasswordStrengthSig) validateStr(ctx EvalContext, str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
-	if warn, err := pwdValidator.ValidateUserNameInPassword(str, ctx.GetSessionVars()); err != nil {
+func (b *builtinValidatePasswordStrengthSig) validateStr(str string, user *auth.UserIdentity, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+	if warn, err := pwdValidator.ValidateUserNameInPassword(str, user, globalVars); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 0, false, nil

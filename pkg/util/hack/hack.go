@@ -53,7 +53,7 @@ var LoadFactorNum = 13
 func init() {
 	// In go1.21, the load factor num becomes 12 and go team has decided not to backport the fix to 1.21.
 	// See more details in https://github.com/golang/go/issues/63438
-	if strings.Contains(runtime.Version(), `go1.21`) {
+	if strings.Contains(runtime.Version(), `go1.21`) || strings.Contains(runtime.Version(), `go1.22`) {
 		LoadFactorNum = 12
 	}
 }
@@ -82,4 +82,9 @@ const (
 // EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
 func EstimateBucketMemoryUsage[K comparable, V any]() uint64 {
 	return (8*(1+uint64(unsafe.Sizeof(*new(K))+unsafe.Sizeof(*new(V)))) + 16) / 2 * 3
+}
+
+// GetBytesFromPtr return a bytes array from the given ptr and length
+func GetBytesFromPtr(ptr unsafe.Pointer, length int) []byte {
+	return unsafe.Slice((*byte)(ptr), length)
 }

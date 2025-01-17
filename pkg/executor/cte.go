@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var _ exec.Executor = &CTEExec{}
@@ -88,16 +90,16 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	defer e.producer.resTbl.Unlock()
 
 	if e.producer.checkAndUpdateCorColHashCode() {
-		e.producer.reset()
-		if err = e.producer.reopenTbls(); err != nil {
+		err = e.producer.reset()
+		if err != nil {
 			return err
 		}
 	}
 	if e.producer.openErr != nil {
 		return e.producer.openErr
 	}
-	if !e.producer.opened {
-		if err = e.producer.openProducer(ctx, e); err != nil {
+	if !e.producer.hasCTEResult() && !e.producer.executorOpened {
+		if err = e.producer.openProducerExecutor(ctx, e); err != nil {
 			return err
 		}
 	}
@@ -108,8 +110,14 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
-	if !e.producer.resTbl.Done() {
-		if err = e.producer.produce(ctx, e); err != nil {
+	if !e.producer.hasCTEResult() {
+		// in case that another CTEExec call close without generate CTE result.
+		if !e.producer.executorOpened {
+			if err = e.producer.openProducerExecutor(ctx, e); err != nil {
+				return err
+			}
+		}
+		if err = e.producer.genCTEResult(ctx); err != nil {
 			return err
 		}
 	}
@@ -118,7 +126,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func setFirstErr(firstErr error, newErr error, msg string) error {
 	if newErr != nil {
-		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.Any("extra msg", msg))
+		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.String("extra msg", msg))
 		if firstErr == nil {
 			firstErr = newErr
 		}
@@ -131,7 +139,7 @@ func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
-		if !e.producer.closed {
+		if e.producer.executorOpened {
 			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
 				ok := v.(bool)
 				if ok {
@@ -139,12 +147,17 @@ func (e *CTEExec) Close() (firstErr error) {
 					panic(exeerrors.ErrMemoryExceedForQuery)
 				}
 			})
-			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-			// It means you can still read resTbl after call closeProducer().
-			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// closeProducerExecutor() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducerExecutor().
+			// You can even call all three functions(openProducerExecutor/genCTEResult/closeProducerExecutor) in CTEExec.Next().
 			// Separating these three function calls is only to follow the abstraction of the volcano model.
-			err := e.producer.closeProducer()
+			err := e.producer.closeProducerExecutor()
 			firstErr = setFirstErr(firstErr, err, "close cte producer error")
+			if !e.producer.hasCTEResult() {
+				// CTE result is not generated, in this case, we reset it
+				err = e.producer.reset()
+				firstErr = setFirstErr(firstErr, err, "close cte producer error")
+			}
 		}
 	}()
 	err := e.BaseExecutor.Close()
@@ -159,10 +172,10 @@ func (e *CTEExec) reset() {
 }
 
 type cteProducer struct {
-	// opened should be false when not open or open fail(a.k.a. openErr != nil)
-	opened   bool
-	produced bool
-	closed   bool
+	// executorOpened is used to indicate whether the executor(seedExec/recursiveExec) is opened.
+	// when executorOpened is true, the executor is opened, otherwise it means the executor is
+	// not opened or is already closed.
+	executorOpened bool
 
 	// cteProducer is shared by multiple operators, so if the first operator tries to open
 	// and got error, the second should return open error directly instead of open again.
@@ -180,12 +193,12 @@ type cteProducer struct {
 	iterInTbl  cteutil.Storage
 	iterOutTbl cteutil.Storage
 
-	hashTbl baseHashTable
+	hashTbl join.BaseHashTable
 
 	// UNION ALL or UNION DISTINCT.
 	isDistinct bool
 	curIter    int
-	hCtx       *hashContext
+	hCtx       *join.HashContext
 	sel        []int
 
 	// Limit related info.
@@ -201,14 +214,10 @@ type cteProducer struct {
 	corColHashCodes [][]byte
 }
 
-func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) openProducerExecutor(ctx context.Context, cteExec *CTEExec) (err error) {
 	defer func() {
 		p.openErr = err
-		if err == nil {
-			p.opened = true
-		} else {
-			p.opened = false
-		}
+		p.executorOpened = true
 	}()
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
@@ -238,20 +247,20 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	}
 
 	if p.isDistinct {
-		p.hashTbl = newConcurrentMapHashTable()
-		p.hCtx = &hashContext{
-			allTypes: cteExec.RetFieldTypes(),
+		p.hashTbl = join.NewConcurrentMapHashTable()
+		p.hCtx = &join.HashContext{
+			AllTypes: cteExec.RetFieldTypes(),
 		}
 		// We use all columns to compute hash.
-		p.hCtx.keyColIdx = make([]int, len(p.hCtx.allTypes))
-		for i := range p.hCtx.keyColIdx {
-			p.hCtx.keyColIdx[i] = i
+		p.hCtx.KeyColIdx = make([]int, len(p.hCtx.AllTypes))
+		for i := range p.hCtx.KeyColIdx {
+			p.hCtx.KeyColIdx[i] = i
 		}
 	}
 	return nil
 }
 
-func (p *cteProducer) closeProducer() (firstErr error) {
+func (p *cteProducer) closeProducerExecutor() (firstErr error) {
 	err := exec.Close(p.seedExec)
 	firstErr = setFirstErr(firstErr, err, "close seedExec err")
 
@@ -270,7 +279,7 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	// because ExplainExec still needs tracker to get mem usage info.
 	p.memTracker = nil
 	p.diskTracker = nil
-	p.closed = true
+	p.executorOpened = false
 	return
 }
 
@@ -337,15 +346,21 @@ func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
 	return nil
 }
 
-func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) hasCTEResult() bool {
+	return p.resTbl.Done()
+}
+
+// genCTEResult generates the result of CTE, and stores the result in resTbl.
+// This is a synchronous function, which means it will block until the result is generated.
+func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
-	resAction := setupCTEStorageTracker(p.resTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
-	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
+	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
+	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
 	if p.iterOutTbl != nil {
-		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
+		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
@@ -428,12 +443,27 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 		return
 	}
 
+	var iterNum uint64
 	for {
 		chk := exec.TryNewCacheChunk(p.recursiveExec)
 		if err = exec.Next(ctx, p.recursiveExec, chk); err != nil {
 			return
 		}
 		if chk.NumRows() == 0 {
+			if iterNum%1000 == 0 {
+				// To avoid too many logs.
+				p.logTbls(ctx, err, iterNum, zapcore.DebugLevel)
+			}
+			iterNum++
+			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
+				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
+					if p.iterInTbl.GetDiskBytes() == 0 && p.iterOutTbl.GetDiskBytes() == 0 && p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum, zapcore.InfoLevel)
+						panic("assert row container spill disk failed")
+					}
+				}
+			})
+
 			if err = p.setupTblsForNewIteration(); err != nil {
 				return
 			}
@@ -492,6 +522,8 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	if err = p.iterInTbl.Reopen(); err != nil {
 		return err
 	}
+	setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
+
 	if p.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
@@ -506,17 +538,25 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	}
 
 	// Clear data in iterOutTbl.
-	return p.iterOutTbl.Reopen()
+	if err = p.iterOutTbl.Reopen(); err != nil {
+		return err
+	}
+	setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
+	return nil
 }
 
-func (p *cteProducer) reset() {
+func (p *cteProducer) reset() error {
 	p.curIter = 0
 	p.hashTbl = nil
-
-	p.opened = false
+	p.executorOpened = false
 	p.openErr = nil
-	p.produced = false
-	p.closed = false
+
+	// Normally we need to setup tracker after calling Reopen(),
+	// But reopen resTbl means we need to call genCTEResult() again, it will setup tracker.
+	if err := p.resTbl.Reopen(); err != nil {
+		return err
+	}
+	return p.iterInTbl.Reopen()
 }
 
 func (p *cteProducer) resetTracker() {
@@ -528,16 +568,6 @@ func (p *cteProducer) resetTracker() {
 		p.diskTracker.Reset()
 		p.diskTracker = nil
 	}
-}
-
-func (p *cteProducer) reopenTbls() (err error) {
-	if p.isDistinct {
-		p.hashTbl = newConcurrentMapHashTable()
-	}
-	if err := p.resTbl.Reopen(); err != nil {
-		return err
-	}
-	return p.iterInTbl.Reopen()
 }
 
 // Check if tbl meets the requirement of limit.
@@ -569,7 +599,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 
 func (p *cteProducer) tryDedupAndAdd(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
+	hashTbl join.BaseHashTable) (res *chunk.Chunk, err error) {
 	if p.isDistinct {
 		if chk, err = p.deduplicate(chk, storage, hashTbl); err != nil {
 			return nil, err
@@ -582,10 +612,10 @@ func (p *cteProducer) tryDedupAndAdd(chk *chunk.Chunk,
 // Use the returned sel to choose the computed hash values.
 func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
 	numRows := chk.NumRows()
-	p.hCtx.initHash(numRows)
+	p.hCtx.InitHash(numRows)
 	// Continue to reset to make sure all hasher is new.
-	for i := numRows; i < len(p.hCtx.hashVals); i++ {
-		p.hCtx.hashVals[i].Reset()
+	for i := numRows; i < len(p.hCtx.HashVals); i++ {
+		p.hCtx.HashVals[i].Reset()
 	}
 	sel = chk.Sel()
 	var hashBitMap []bool
@@ -611,8 +641,8 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 	}
 
 	for i := 0; i < chk.NumCols(); i++ {
-		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.hashVals,
-			chk, p.hCtx.allTypes[i], i, p.hCtx.buf, p.hCtx.hasNull,
+		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.HashVals,
+			chk, p.hCtx.AllTypes[i], i, p.hCtx.Buf, p.hCtx.HasNull,
 			hashBitMap, false); err != nil {
 			return nil, err
 		}
@@ -624,14 +654,14 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 // Duplicated rows are only marked to be removed by sel in Chunk, instead of really deleted.
 func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (chkNoDup *chunk.Chunk, err error) {
+	hashTbl join.BaseHashTable) (chkNoDup *chunk.Chunk, err error) {
 	numRows := chk.NumRows()
 	if numRows == 0 {
 		return chk, nil
 	}
 
 	// 1. Compute hash values for chunk.
-	chkHashTbl := newConcurrentMapHashTable()
+	chkHashTbl := join.NewConcurrentMapHashTable()
 	selOri, err := p.computeChunkHash(chk)
 	if err != nil {
 		return nil, err
@@ -641,7 +671,7 @@ func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	// This sel is for filtering rows duplicated in cur chk.
 	selChk := make([]int, 0, numRows)
 	for i := 0; i < numRows; i++ {
-		key := p.hCtx.hashVals[selOri[i]].Sum64()
+		key := p.hCtx.HashVals[selOri[i]].Sum64()
 		row := chk.GetRow(i)
 
 		hasDup, err := p.checkHasDup(key, row, chk, storage, chkHashTbl)
@@ -664,7 +694,7 @@ func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	// This sel is for filtering rows duplicated in cteutil.Storage.
 	selStorage := make([]int, 0, len(selChk))
 	for i := 0; i < len(selChk); i++ {
-		key := p.hCtx.hashVals[selChk[i]].Sum64()
+		key := p.hCtx.HashVals[selChk[i]].Sum64()
 		row := chk.GetRow(i)
 
 		hasDup, err := p.checkHasDup(key, row, nil, storage, hashTbl)
@@ -692,11 +722,11 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	row chunk.Row,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashTbl baseHashTable) (hasDup bool, err error) {
+	hashTbl join.BaseHashTable) (hasDup bool, err error) {
 	entry := hashTbl.Get(probeKey)
 
-	for ; entry != nil; entry = entry.next {
-		ptr := entry.ptr
+	for ; entry != nil; entry = entry.Next {
+		ptr := entry.Ptr
 		var matchedRow chunk.Row
 		if curChk != nil {
 			matchedRow = curChk.GetRow(int(ptr.RowIdx))
@@ -707,8 +737,8 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 			return false, err
 		}
 		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx.TypeCtx(),
-			row, p.hCtx.allTypes, p.hCtx.keyColIdx,
-			matchedRow, p.hCtx.allTypes, p.hCtx.keyColIdx)
+			row, p.hCtx.AllTypes, p.hCtx.KeyColIdx,
+			matchedRow, p.hCtx.AllTypes, p.hCtx.KeyColIdx)
 		if err != nil {
 			return false, err
 		}
@@ -734,4 +764,12 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 		}
 	}
 	return changed
+}
+
+func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64, lvl zapcore.Level) {
+	logutil.Logger(ctx).Log(lvl, "cte iteration info",
+		zap.Int64("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Int64("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
+		zap.Int64("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Int64("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
+		zap.Int64("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Int64("resTbl disk usage", p.resTbl.GetDiskBytes()),
+		zap.Int("resTbl rows", p.resTbl.NumRows()), zap.Uint64("iteration num", iterNum), zap.Error(err))
 }

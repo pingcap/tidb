@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "worker",
+    srcs = ["worker.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/worker",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/lightning/metric"],
+)
+
+go_test(
+    name = "worker_test",
+    timeout = "short",
+    srcs = ["worker_test.go"],
+    flaky = True,
+    deps = [
+        ":worker",
+        "@com_github_stretchr_testify//require",
+    ],
+)

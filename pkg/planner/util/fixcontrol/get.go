@@ -11,6 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// 	NOTE: For assigning new fix control numbers - use the issue number associated with the fix.
+//
 
 package fixcontrol
 
@@ -20,6 +23,24 @@ import (
 )
 
 const (
+	// Fix52592 controls whether to disallow fast path for Get and BatchGet.
+	// Fast path does not support column projection, so we need to disable it when column projection is required.
+	// Here are the common cases that column projection is required:
+	// 1. Wide tables with many columns, where applications only query a few columns.
+	// 2. JSON fields with large column values, where queries may not necessarily retrieve the values of JSON columns
+	//    or only extract specific small JSON content.
+	// By default, fast path is enabled, when it's disabled, the optimizer will fallback to coproccessor.
+	// It should be only disabled when fast path is more expensive than coprocessor.
+	// See #52592
+	Fix52592 uint64 = 52592
+	// Fix33031 controls whether to disallow plan cache for partitioned
+	// tables (both prepared statments and non-prepared statements)
+	// See #33031
+	Fix33031 uint64 = 33031
+	// Fix43817 controls whether to allow optimizer to evaluate non-correlated sub-queries in the optimization phase.
+	// If it is not allowed, the optimizer will return a particular error when encountering non-correlated sub-queries.
+	// This fix-control is mainly for Index Advisor.
+	Fix43817 uint64 = 43817
 	// Fix44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	Fix44262 uint64 = 44262
 	// Fix44389 controls whether to consider non-point ranges of some CNF item when building ranges.
@@ -40,9 +61,19 @@ const (
 	Fix45798 uint64 = 45798
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
+	// Fix47400 controls whether to allow a rowEst below 1
+	Fix47400 uint64 = 47400
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736
+	// Fix52869 controls whether to disable the limitation that index merge path won't be generated automatically when
+	// there exist other single-index access paths that do range scan.
+	Fix52869 uint64 = 52869
+	// Fix54337 controls whether to apply or not range intersection for index access.
+	Fix54337 uint64 = 54337
+	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
+	// the function in TopN operators
+	Fix56318 uint64 = 56318
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

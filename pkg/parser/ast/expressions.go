@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
@@ -505,9 +504,9 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 // ColumnName represents column name.
 type ColumnName struct {
 	node
-	Schema model.CIStr
-	Table  model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Table  CIStr
+	Name   CIStr
 }
 
 // Restore implements Node interface.
@@ -560,16 +559,23 @@ func (n *ColumnName) OrigColName() (ret string) {
 	return
 }
 
+// Match means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// Because column a want column from database test exactly.
+func (n *ColumnName) Match(b *ColumnName) bool {
+	if n.Schema.L == "" || n.Schema.L == b.Schema.L {
+		if n.Table.L == "" || n.Table.L == b.Table.L {
+			return n.Name.L == b.Name.L
+		}
+	}
+	return false
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode
 
 	// Name is the referenced column name.
 	Name *ColumnName
-
-	// Refer is the result field the column name refers to.
-	// The value of Refer.Expr is used as the value of the expression.
-	Refer *ResultField
 }
 
 // Restore implements Node interface.
@@ -1031,8 +1037,6 @@ type PositionExpr struct {
 	N int
 	// P is the parameterized position.
 	P ExprNode
-	// Refer is the result field the position refers to.
-	Refer *ResultField
 }
 
 // Restore implements Node interface.

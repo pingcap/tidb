@@ -16,111 +16,111 @@ package ingest
 
 import (
 	"context"
-	"fmt"
 	"math"
+	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	kvutil "github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // BackendCtxMgr is used to manage the BackendCtx.
 type BackendCtxMgr interface {
-	CheckAvailable() (bool, error)
+	// CheckMoreTasksAvailable checks if it can run more ingest backfill tasks.
+	CheckMoreTasksAvailable() (bool, error)
 	// Register uses jobID to identify the BackendCtx. If there's already a
 	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
 	// BackendCtx will be created and returned.
 	Register(
 		ctx context.Context,
 		jobID int64,
-		unique bool,
+		hasUnique bool,
 		etcdClient *clientv3.Client,
-		pdSvcDiscovery pd.ServiceDiscovery,
+		pdSvcDiscovery sd.ServiceDiscovery,
 		resourceGroupName string,
+		importConc int,
+		maxWriteSpeed int,
+		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
+	// EncodeJobSortPath encodes the job ID to the local disk sort path.
+	EncodeJobSortPath(jobID int64) string
+	// Load returns the registered BackendCtx with the given jobID.
 	Load(jobID int64) (BackendCtx, bool)
-
-	MarkJobProcessing(jobID int64) (ok bool)
-	MarkJobFinish()
 }
 
+// litBackendCtxMgr manages multiple litBackendCtx for each DDL job. Each
+// litBackendCtx can use some local disk space and memory resource which are
+// controlled by litBackendCtxMgr.
 type litBackendCtxMgr struct {
-	generic.SyncMap[int64, *litBackendCtx]
-	memRoot         MemRoot
-	diskRoot        DiskRoot
-	processingJobID int64
-	lastLoggingTime time.Time
-	mu              sync.Mutex
+	// the lifetime of entries in backends should cover all other resources so it can
+	// be used as a lightweight indicator when interacts with other resources.
+	// Currently, the entry must be created not after disk folder is created and
+	// memory usage is tracked, and vice versa when considering deletion.
+	backends struct {
+		mu sync.RWMutex
+		m  map[int64]*litBackendCtx
+	}
+	// all disk resources of litBackendCtx should be used under path. Currently the
+	// hierarchy is ${path}/${jobID} for each litBackendCtx.
+	path     string
+	memRoot  MemRoot
+	diskRoot DiskRoot
 }
 
-func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
+// NewLitBackendCtxMgr creates a new litBackendCtxMgr.
+func NewLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
-		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
-		memRoot:  nil,
-		diskRoot: nil,
+		path: path,
 	}
+	mgr.backends.m = make(map[int64]*litBackendCtx, 4)
 	mgr.memRoot = NewMemRootImpl(int64(memQuota), mgr)
 	mgr.diskRoot = NewDiskRootImpl(path, mgr)
 	LitMemRoot = mgr.memRoot
-	LitDiskRoot = mgr.diskRoot
-	LitDiskRoot.UpdateUsage()
-	err := LitDiskRoot.StartupCheck()
+	litDiskRoot = mgr.diskRoot
+	litDiskRoot.UpdateUsage()
+	err := litDiskRoot.StartupCheck()
 	if err != nil {
-		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
+		ddllogutil.DDLIngestLogger().Warn("ingest backfill may not be available", zap.Error(err))
 	}
 	return mgr
 }
 
-// MarkJobProcessing marks ingest backfill is processing.
-func (m *litBackendCtxMgr) MarkJobProcessing(jobID int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.processingJobID == 0 || m.processingJobID == jobID {
-		m.processingJobID = jobID
-		return true
-	}
-	if time.Since(m.lastLoggingTime) > 1*time.Minute {
-		logutil.BgLogger().Info("ingest backfill worker is already in used by another DDL job",
-			zap.String("category", "ddl-ingest"),
-			zap.Int64("processing job ID", m.processingJobID))
-		m.lastLoggingTime = time.Now()
-	}
-	return false
-}
-
-// MarkJobFinish marks ingest backfill is finished.
-func (m *litBackendCtxMgr) MarkJobFinish() {
-	m.mu.Lock()
-	m.processingJobID = 0
-	m.mu.Unlock()
-}
-
-// CheckAvailable checks if the ingest backfill is available.
-func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
+// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
+func (m *litBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
-		logutil.BgLogger().Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
+		ddllogutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 		return false, err
 	}
 	return true, nil
 }
 
+// ResignOwnerForTest is only used for test.
+var ResignOwnerForTest = atomic.NewBool(false)
+
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
 	jobID int64,
-	unique bool,
+	hasUnique bool,
 	etcdClient *clientv3.Client,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 	resourceGroupName string,
+	concurrency int,
+	maxWriteSpeed int,
+	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -128,66 +128,101 @@ func (m *litBackendCtxMgr) Register(
 	}
 
 	m.memRoot.RefreshConsumption()
-	ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
+	ok := m.memRoot.CheckConsume(structSizeBackendCtx)
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
-	cfg, err := genConfig(ctx, m.memRoot, jobID, unique, resourceGroupName)
+	sortPath := m.EncodeJobSortPath(jobID)
+	err := os.MkdirAll(sortPath, 0700)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
+		return nil, err
+	}
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency, maxWriteSpeed)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
+	failpoint.Inject("beforeCreateLocalBackend", func() {
+		ResignOwnerForTest.Store(true)
+	})
+	// lock backends because createLocalBackend will let lightning create the sort
+	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
+	// checking the existence of the entry in backends.
+	m.backends.mu.Lock()
 	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
 	if err != nil {
+		m.backends.mu.Unlock()
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
-	m.Store(jobID, bcCtx)
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
+	m.backends.m[jobID] = bcCtx
+	m.memRoot.Consume(structSizeBackendCtx)
+	m.backends.mu.Unlock()
 
-	m.memRoot.Consume(StructSizeBackendCtx)
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
-		zap.Bool("is unique index", unique))
+		zap.Bool("has unique index", hasUnique))
 	return bcCtx, nil
+}
+
+// EncodeJobSortPath implements BackendCtxMgr.
+func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
+	return filepath.Join(m.path, encodeBackendTag(jobID))
 }
 
 func createLocalBackend(
 	ctx context.Context,
-	cfg *litConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	cfg *local.BackendConfig,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (*local.Backend, error) {
-	tls, err := cfg.lightning.ToTLS()
+	tidbCfg := config.GetGlobalConfig()
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
+		nil, nil, nil,
+	)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
-	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.keyspaceName))
-	// We disable the switch TiKV mode feature for now,
-	// because the impact is not fully tested.
-	var raftKV2SwitchModeDuration time.Duration
-	backendConfig := local.NewBackendConfig(cfg.lightning, int(LitRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
-	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
+	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
+		zap.String("sortDir", cfg.LocalStoreDir),
+		zap.String("keyspaceName", cfg.KeyspaceName))
+	return local.NewBackend(ctx, tls, *cfg, pdSvcDiscovery)
 }
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+func newBackendContext(
+	ctx context.Context,
+	jobID int64,
+	be *local.Backend,
+	cfg *local.BackendConfig,
+	vars map[string]string,
+	memRoot MemRoot,
+	diskRoot DiskRoot,
+	etcdClient *clientv3.Client,
+	initTS uint64,
+) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
-		MemRoot:        memRoot,
-		DiskRoot:       diskRoot,
+		engines:        make(map[int64]*engineInfo, 10),
+		memRoot:        memRoot,
+		diskRoot:       diskRoot,
 		jobID:          jobID,
 		backend:        be,
 		ctx:            ctx,
 		cfg:            cfg,
 		sysVars:        vars,
-		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx
@@ -195,58 +230,68 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
-	bc, exist := m.SyncMap.Delete(jobID)
+	m.backends.mu.RLock()
+	_, exist := m.backends.m[jobID]
+	m.backends.mu.RUnlock()
 	if !exist {
 		return
 	}
-	bc.unregisterAll(jobID)
-	bc.backend.Close()
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Close()
+
+	m.backends.mu.Lock()
+	defer m.backends.mu.Unlock()
+	bc, exist := m.backends.m[jobID]
+	if !exist {
+		return
 	}
-	m.memRoot.Release(StructSizeBackendCtx)
-	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
+	_ = bc.FinishAndUnregisterEngines(OptCloseEngines)
+	bc.backend.Close()
+	m.memRoot.Release(structSizeBackendCtx)
+	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
+	delete(m.backends.m, jobID)
 }
 
 func (m *litBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
-	return m.SyncMap.Load(jobID)
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+	ret, ok := m.backends.m[jobID]
+	return ret, ok
 }
 
 // TotalDiskUsage returns the total disk usage of all backends.
 func (m *litBackendCtxMgr) TotalDiskUsage() uint64 {
 	var totalDiskUsed uint64
-	for _, key := range m.Keys() {
-		bc, exists := m.SyncMap.Load(key)
-		if exists {
-			_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
-			totalDiskUsed += uint64(bcDiskUsed)
-		}
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+
+	for _, bc := range m.backends.m {
+		_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+		totalDiskUsed += uint64(bcDiskUsed)
 	}
 	return totalDiskUsed
 }
 
 // UpdateMemoryUsage collects the memory usages from all the backend and updates it to the memRoot.
 func (m *litBackendCtxMgr) UpdateMemoryUsage() {
-	for _, key := range m.Keys() {
-		bc, exists := m.SyncMap.Load(key)
-		if exists {
-			curSize := bc.backend.TotalMemoryConsume()
-			m.memRoot.ReleaseWithTag(EncodeBackendTag(bc.jobID))
-			m.memRoot.ConsumeWithTag(EncodeBackendTag(bc.jobID), curSize)
-		}
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+
+	for _, bc := range m.backends.m {
+		curSize := bc.backend.TotalMemoryConsume()
+		m.memRoot.ReleaseWithTag(encodeBackendTag(bc.jobID))
+		m.memRoot.ConsumeWithTag(encodeBackendTag(bc.jobID), curSize)
 	}
 }
 
-// EncodeBackendTag encodes the job ID to backend tag.
+// encodeBackendTag encodes the job ID to backend tag.
 // The backend tag is also used as the file name of the local index data files.
-func EncodeBackendTag(jobID int64) string {
-	return fmt.Sprintf("%d", jobID)
+func encodeBackendTag(jobID int64) string {
+	return strconv.FormatInt(jobID, 10)
 }
 
-// DecodeBackendTag decodes the backend tag to job ID.
-func DecodeBackendTag(name string) (int64, error) {
+// decodeBackendTag decodes the backend tag to job ID.
+func decodeBackendTag(name string) (int64, error) {
 	return strconv.ParseInt(name, 10, 64)
 }

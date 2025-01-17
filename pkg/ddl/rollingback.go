@@ -20,9 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -45,8 +43,7 @@ func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 }
 
 func convertAddIdxJob2RollbackJob(
-	d *ddlCtx,
-	t *meta.Meta,
+	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
 	allIndexInfos []*model.IndexInfo,
@@ -58,9 +55,12 @@ func convertAddIdxJob2RollbackJob(
 		}
 	})
 
+	dropArgs := &model.ModifyIndexArgs{
+		PartitionIDs: getPartitionIDs(tblInfo),
+		OpType:       model.OpRollbackAddIndex,
+	}
+
 	originalState := allIndexInfos[0].State
-	idxNames := make([]model.CIStr, 0, len(allIndexInfos))
-	ifExists := make([]bool, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		if indexInfo.Primary {
 			nullCols, err := getNullColInfos(tblInfo, indexInfo)
@@ -77,14 +77,17 @@ func convertAddIdxJob2RollbackJob(
 		// The write reorganization state in add index job that likes write only state in drop index job.
 		// So the next state is delete only state.
 		indexInfo.State = model.StateDeleteOnly
-		idxNames = append(idxNames, indexInfo.Name)
-		ifExists = append(ifExists, false)
+		dropArgs.IndexArgs = append(dropArgs.IndexArgs, &model.IndexArg{
+			IndexName: indexInfo.Name,
+			IfExist:   false,
+		})
 	}
 
-	// the second and the third args will be used in onDropIndex.
-	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	// Convert to ModifyIndexArgs
+	job.FillFinishedArgs(dropArgs)
+
 	job.SchemaState = model.StateDeleteOnly
-	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
+	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
 		return ver, errors.Trace(err1)
 	}
@@ -99,35 +102,27 @@ func convertAddIdxJob2RollbackJob(
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
-func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
 	defer func() {
 		if ingest.LitBackCtxMgr != nil {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 	}()
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	unique := make([]bool, 1)
-	indexName := make([]model.CIStr, 1)
-	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
-	indexOption := make([]*ast.IndexOption, 1)
-
-	err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
-	}
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	var indexesInfo []*model.IndexInfo
-	for _, idxName := range indexName {
-		indexInfo := tblInfo.FindIndexByName(idxName.L)
+	for _, a := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(a.IndexName.L)
 		if indexInfo != nil {
 			indexesInfo = append(indexesInfo, indexInfo)
 		}
@@ -136,31 +131,30 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	return convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexesInfo, occuredErr)
+	return convertAddIdxJob2RollbackJob(jobCtx, job, tblInfo, indexesInfo, occuredErr)
 }
 
 // rollingbackModifyColumn change the modifying-column job into rolling back state.
 // Since modifying column job has two types: normal-type and reorg-type, we should handle it respectively.
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
-func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		// column type change workers are started. we have to ask them to exit.
-		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgWorkerJobStateChange(job)
-		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
-		return w.onModifyColumn(d, t, job)
-	}
-	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
+func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
-		return ver, err
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
-	if !needChangeColumnData(oldCol, jp.newCol) {
+
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if !needChangeColumnData(oldCol, args.Column) {
 		// Normal-type rolling back
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
+			if args.ModifyColumnType == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}
@@ -173,7 +167,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		return ver, nil
 	}
 	// reorg-type rolling back
-	if jp.changingCol == nil {
+	if args.ChangingColumn == nil {
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
@@ -183,8 +177,8 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
+func rollingbackAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, columnInfo, col, _, _, err := checkAddColumn(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -197,8 +191,12 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []any{col.Name}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
+	// rollback the AddColumn ddl. fill the DropColumn args into job.
+	args := &model.TableColumnArgs{
+		Col: &model.ColumnInfo{Name: col.Name},
+	}
+	model.FillRollBackArgsForAddColumn(job, args)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -207,8 +205,8 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, _, err := checkDropColumn(d, t, job)
+func rollingbackDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, colInfo, idxInfos, _, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -239,8 +237,8 @@ func rollingbackDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, indexInfo, _, err := checkDropIndex(d, t, job)
+func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, indexInfo, _, err := checkDropIndex(jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -259,88 +257,112 @@ func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	}
 }
 
-func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		// add index workers are started. need to ask them to exit.
-		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgWorkerJobStateChange(job)
-		ver, err = w.onCreateIndex(d, t, job, isPK)
+func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateWriteReorganization {
+		// Add vector index workers are started. need to ask them to exit.
+		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
+		ver, err = w.onCreateVectorIndex(jobCtx, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
-		ver, err = convertNotReorgAddIdxJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob)
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 	}
 	return
 }
 
-func needNotifyAndStopReorgWorker(job *model.Job) bool {
-	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-		// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
-		if job.MultiSchemaInfo != nil {
-			// However, if the sub-job is non-revertible, it means the reorg process is finished.
-			// We don't need to start another round to notify reorg workers to exit.
-			return job.MultiSchemaInfo.Revertible
-		}
-		return true
-	}
-	return false
+func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 }
 
 // rollbackExchangeTablePartition will clear the non-partitioned
 // table's ExchangePartitionInfo state.
-func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
+func rollbackExchangeTablePartition(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	tblInfo.ExchangePartitionInfo = nil
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StatePublic
 	if len(tblInfo.Constraints) == 0 {
-		return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	}
-	var (
-		defID          int64
-		ptSchemaID     int64
-		ptID           int64
-		partName       string
-		withValidation bool
-	)
-	if err = job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+	args, err := model.GetExchangeTablePartitionArgs(job)
+	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	pt, err := getTableInfo(jobCtx.metaMut, args.PTTableID, args.PTSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	pt.ExchangePartitionInfo = nil
 	var ptInfo []schemaIDAndTableInfo
 	ptInfo = append(ptInfo, schemaIDAndTableInfo{
-		schemaID: ptSchemaID,
+		schemaID: args.PTSchemaID,
 		tblInfo:  pt,
 	})
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true, ptInfo...)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true, ptInfo...)
 	return ver, errors.Trace(err)
 }
 
-func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingbackExchangeTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateNone {
 		// Nothing is changed
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
 	var nt *model.TableInfo
-	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	nt, err = GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
+	ver, err = rollbackExchangeTablePartition(jobCtx, job, nt)
 	return ver, errors.Trace(err)
 }
 
-func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	if !job.IsRollbackable() {
+		// Only Original state and StateWrite can be rolled back, otherwise new partitions
+		// may have been used and new data would get lost.
+		// So we must continue to roll forward!
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
+	pi := tblInfo.Partition
+	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
+		// Rollback the changes, note that no new partitions has been used yet!
+		// so only metadata rollback and we can cancel the DDL
+		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLAction = model.ActionNone
+		tblInfo.Partition.DDLState = model.StateNone
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+	// No change yet, just cancel the job.
+	job.State = model.JobStateCancelled
+	return ver, errors.Trace(otherwiseErr)
+}
+
+func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	job.Args = []any{partNames}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+
+	args := &model.TablePartitionArgs{
+		PartNames: partNames,
+	}
+	model.FillRollbackArgsForAddPartition(job, args)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -348,8 +370,152 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	return ver, errors.Trace(otherwiseErr)
 }
 
-func rollingbackAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, _, addingDefinitions, err := checkAddPartition(t, job)
+func onRollbackReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if job.SchemaState == model.StatePublic {
+		// We started to destroy the old indexes, so we can no longer rollback!
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
+	jobCtx.jobArgs = args
+
+	return rollbackReorganizePartitionWithErr(jobCtx, job, dbterror.ErrCancelledDDLJob)
+}
+
+func rollbackReorganizePartitionWithErr(jobCtx *jobContext, job *model.Job, otherwiseErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, otherwiseErr
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertReorgPartitionJob2RollbackJob(jobCtx, job, otherwiseErr, tblInfo)
+}
+
+func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	pi := tblInfo.Partition
+	addingDefinitions := pi.AddingDefinitions
+	partNames := make([]string, 0, len(addingDefinitions))
+	for _, pd := range addingDefinitions {
+		partNames = append(partNames, pd.Name.L)
+	}
+	var dropIndices []*model.IndexInfo
+	for _, indexInfo := range tblInfo.Indices {
+		if !indexInfo.Unique {
+			continue
+		}
+		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
+		if !ok {
+			// non-changed index
+			continue
+		}
+		if !isNew {
+			if pi.DDLState == model.StateDeleteReorganization {
+				// Revert the non-public state
+				indexInfo.State = model.StatePublic
+			}
+		} else {
+			if pi.DDLState == model.StateDeleteReorganization {
+				indexInfo.State = model.StateWriteOnly
+			} else {
+				dropIndices = append(dropIndices, indexInfo)
+			}
+		}
+	}
+	for _, indexInfo := range dropIndices {
+		DropIndexColumnFlag(tblInfo, indexInfo)
+		RemoveDependentHiddenColumns(tblInfo, indexInfo)
+		removeIndexInfo(tblInfo, indexInfo)
+	}
+	if pi.DDLState == model.StateDeleteReorganization {
+		// New partitions are public,
+		// but old is still double written.
+		// OK to revert.
+		// Remove the AddingDefinitions
+		// Add back the DroppingDefinitions
+		if job.Type == model.ActionReorganizePartition {
+			// Reassemble the list of partitions in the OriginalPartitionIDsOrder
+			// Special handling, since for LIST partitioning,
+			// only pi.OriginalPartitionIDsOrder shows how to merge back the DroppingDefinitions.
+			// Implicitly it will also filter away AddingPartitions.
+			// pi.Definitions and pi.DroppingDefinitions contain the original partitions
+			// in the original order, but where the DroppingDefinitions should be placed,
+			// can only be known through pi.OriginalPartitionIDsOrder.
+			// RANGE/HASH/KEY would have consecutive added/dropped partitions, but use
+			// the same code to avoid confusion.
+			defPos := 0
+			dropPos := 0
+			newDefs := make([]model.PartitionDefinition, 0, len(pi.OriginalPartitionIDsOrder))
+			for _, id := range pi.OriginalPartitionIDsOrder {
+				if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
+					newDefs = append(newDefs, pi.Definitions[defPos])
+					defPos++
+					continue
+				}
+				if dropPos < len(pi.DroppingDefinitions) && id == pi.DroppingDefinitions[dropPos].ID {
+					newDefs = append(newDefs, pi.DroppingDefinitions[dropPos])
+					dropPos++
+					continue
+				}
+				for {
+					defPos++
+					if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
+						newDefs = append(newDefs, pi.Definitions[defPos])
+						break
+					}
+				}
+			}
+			if len(newDefs) != len(pi.OriginalPartitionIDsOrder) {
+				return ver, errors.Trace(errors.New("Internal error, failed to find original partition definitions"))
+			}
+			pi.Definitions = newDefs
+		} else {
+			// Move back to StateWriteReorganization, i.e. use the original table
+			// (non-partitioned or differently partitioned) as the main table to use.
+			// Otherwise, the Type does not match the expression.
+			pi.Type, pi.DDLType = pi.DDLType, pi.Type
+			pi.Expr, pi.DDLExpr = pi.DDLExpr, pi.Expr
+			pi.Columns, pi.DDLColumns = pi.DDLColumns, pi.Columns
+			pi.Definitions = pi.DroppingDefinitions
+		}
+		pi.Num = uint64(len(pi.Definitions))
+		// We should move back one state, since there might be other sessions seeing the new partitions.
+		job.SchemaState = model.StateWriteReorganization
+		pi.DDLState = job.SchemaState
+	}
+
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	args.PartNames = partNames
+	job.FillArgs(args)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollingback
+	return ver, errors.Trace(otherwiseErr)
+}
+
+func rollingbackAddTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+	tblInfo, _, addingDefinitions, err := checkAddPartition(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -359,11 +525,11 @@ func rollingbackAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 		return ver, errors.Trace(dbterror.ErrCancelledDDLJob)
 	}
 	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+	return convertAddTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
 }
 
-func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
+func rollingbackDropTableOrView(jobCtx *jobContext, job *model.Job) error {
+	tblInfo, err := checkTableExistAndCancelNonExistJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -377,16 +543,16 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func rollingbackDropTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	return cancelOnlyNotHandledJob(job, model.StatePublic)
 }
 
-func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+func rollingbackDropSchema(jobCtx *jobContext, job *model.Job) error {
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -400,8 +566,8 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, from, _, err := checkRenameIndex(t, job)
+func rollingbackRenameIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, from, _, err := checkRenameIndex(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -427,93 +593,72 @@ func cancelOnlyNotHandledJob(job *model.Job, initialState model.SchemaState) (ve
 	return ver, nil
 }
 
-func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	if job.SchemaState == model.StateNone {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
-	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
-}
-
-func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		w.jobLogger(job).Info("pausing the DDL job", zap.String("job", job.String()))
-		d.notifyReorgWorkerJobStateChange(job)
-	}
-
-	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-}
-
-func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
-		ver, err = rollingbackAddColumn(d, t, job)
+		ver, err = rollingbackAddColumn(jobCtx, job)
 	case model.ActionAddIndex:
-		ver, err = rollingbackAddIndex(w, d, t, job, false)
+		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddPrimaryKey:
-		ver, err = rollingbackAddIndex(w, d, t, job, true)
+		ver, err = rollingbackAddIndex(jobCtx, job)
+	case model.ActionAddVectorIndex:
+		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
-		ver, err = rollingbackAddTablePartition(d, t, job)
+		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		ver, err = rollingbackReorganizePartition(d, t, job)
+		ver, err = onRollbackReorganizePartition(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = rollingbackDropColumn(d, t, job)
+		ver, err = rollingbackDropColumn(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = rollingbackDropIndex(d, t, job)
+		ver, err = rollingbackDropIndex(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		err = rollingbackDropTableOrView(t, job)
+		err = rollingbackDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
-		ver, err = rollingbackDropTablePartition(t, job)
+		ver, err = rollingbackDropTablePartition(jobCtx, job)
 	case model.ActionExchangeTablePartition:
-		ver, err = rollingbackExchangeTablePartition(d, t, job)
+		ver, err = rollingbackExchangeTablePartition(jobCtx, job)
 	case model.ActionDropSchema:
-		err = rollingbackDropSchema(t, job)
+		err = rollingbackDropSchema(jobCtx, job)
 	case model.ActionRenameIndex:
-		ver, err = rollingbackRenameIndex(t, job)
+		ver, err = rollingbackRenameIndex(jobCtx, job)
 	case model.ActionTruncateTable:
-		ver, err = rollingbackTruncateTable(t, job)
+		ver, err = rollingbackTruncateTable(jobCtx, job)
 	case model.ActionModifyColumn:
-		ver, err = rollingbackModifyColumn(w, d, t, job)
-	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
+		ver, err = rollingbackModifyColumn(jobCtx, job)
+	case model.ActionDropForeignKey:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
+	case model.ActionTruncateTablePartition:
+		ver, err = rollingbackTruncateTablePartition(jobCtx, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
-		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
+		model.ActionModifyTableAutoIDCache, model.ActionAlterIndexVisibility,
 		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
 	case model.ActionAddCheckConstraint:
-		ver, err = rollingBackAddConstraint(d, t, job)
+		ver, err = rollingBackAddConstraint(jobCtx, job)
 	case model.ActionDropCheckConstraint:
-		ver, err = rollingBackDropConstraint(t, job)
+		ver, err = rollingBackDropConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
-		ver, err = rollingBackAlterConstraint(d, t, job)
+		ver, err = rollingBackAlterConstraint(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
 	}
 
-	logger := w.jobLogger(job)
+	logger := jobCtx.logger
 	if err != nil {
 		if job.Error == nil {
 			job.Error = toTError(err)
@@ -554,8 +699,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	return
 }
 
-func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
+func rollingBackAddConstraint(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -574,12 +719,12 @@ func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if job.IsRollingback() {
 		job.State = model.JobStateRollbackDone
 	}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }
 
-func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
+func rollingBackDropConstraint(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, constrInfoInMeta, err := checkDropCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -594,8 +739,8 @@ func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err err
 	return ver, nil
 }
 
-func rollingBackAlterConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
+func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -612,6 +757,6 @@ func rollingBackAlterConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	if job.IsRollingback() {
 		job.State = model.JobStateRollbackDone
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }

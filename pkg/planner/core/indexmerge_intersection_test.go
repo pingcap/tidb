@@ -15,10 +15,12 @@
 package core_test
 
 import (
+	"context"
 	"regexp"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -41,6 +43,35 @@ func TestPlanCacheForIntersectionIndexMerge(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
 	require.True(t, tk.HasPlanForLastExecution("IndexMerge"))
+}
+
+func TestIndexMergeWithOrderProperty(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, e int, key a(a), key b(b), key c(c), key ac(a, c), key bc(b, c), key ae(a, e), key be(b, e)," +
+		" key abd(a, b, d), key cd(c, d))")
+	tk.MustExec("create table t2 (a int, b int, c int, key a(a), key b(b), key ac(a, c))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		// Expect no warnings.
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
 }
 
 func TestHintForIntersectionIndexMerge(t *testing.T) {
@@ -117,11 +148,12 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 	tk.MustExec("insert into t8 values('啊aabbccdd', 'abcc', 'cccc', 'aa', '2,test')," +
 		"('啊aabb', 'abcdc', 'aaaa', '??', '2')")
 
-	require.NoError(t, handle.HandleDDLEvent(<-handle.DDLEventCh()))
-	require.Nil(t, handle.Update(domain.InfoSchema()))
+	err := statstestutil.HandleNextDDLEventWithTxn(handle)
+	require.NoError(t, err)
+	require.Nil(t, handle.Update(context.Background(), domain.InfoSchema()))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t1,t2,t3,t4")
-	require.Nil(t, handle.Update(domain.InfoSchema()))
+	require.Nil(t, handle.Update(context.Background(), domain.InfoSchema()))
 
 	var (
 		input  []string

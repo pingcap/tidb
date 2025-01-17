@@ -21,11 +21,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -406,11 +405,11 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 			continue
 		}
 		fsp := i64s[i]
-		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 		}
-		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		if fsp > int64(types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 		}
 		res, _, err := types.ParseDuration(tc, utc, int(fsp))
 		if err != nil {
@@ -547,11 +546,11 @@ func (b *builtinNowWithArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, 
 	for i := 0; i < n; i++ {
 		fsp := 0
 		if !bufFsp.IsNull(i) {
-			if fsps[i] > int64(types.MaxFsp) {
-				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsps[i], types.MaxFsp)
+			if fsps[i] > int64(math.MaxInt32) || fsps[i] < int64(types.MinFsp) {
+				return types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 			}
-			if fsps[i] < int64(types.MinFsp) {
-				return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsps[i])
+			if fsps[i] > int64(types.MaxFsp) {
+				return types.ErrTooBigPrecision.GenWithStackByArgs(fsps[i], "now", types.MaxFsp)
 			}
 			fsp = int(fsps[i])
 		}
@@ -816,6 +815,16 @@ func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
 }
 
 func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	store, err := b.GetKVStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -836,7 +845,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chu
 	args0 := buf0.Times()
 	args1 := buf1.Times()
 	timeZone := getTimeZone(ctx)
-	minSafeTime := getMinSafeTime(ctx, timeZone)
+	minSafeTime := GetStmtMinSafeTime(vars.StmtCtx, store, timeZone)
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf0, buf1)
 	times := result.Times()
@@ -1081,7 +1090,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = b.args[1].GetType().GetDecimal()
+	duration.Fsp = b.args[1].GetType(ctx).GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1399,11 +1408,11 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx EvalContext, input *chun
 			continue
 		}
 		fsp := i64s[i]
-		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", fsp, types.MaxFsp)
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 		}
-		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		if fsp > int64(types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
 		}
 		res, isNull, err := evalUTCTimestampWithFsp(ctx, int(fsp))
 		if err != nil {
@@ -1438,7 +1447,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	fsp := b.args[0].GetType().GetDecimal()
+	fsp := b.args[0].GetType(ctx).GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1555,8 +1564,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	ds := buf.Times()
 
 	mode := 0
-	modeStr, ok := ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if ok && modeStr != "" {
+	if modeStr := ctx.GetDefaultWeekFormatMode(); modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return handleInvalidTimeError(ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
@@ -2040,7 +2048,7 @@ func (b *builtinMakeTimeSig) vectorized() bool {
 }
 
 func (b *builtinMakeTimeSig) getVecIntParam(ctx EvalContext, arg Expression, input *chunk.Chunk, col *chunk.Column) (err error) {
-	if arg.GetType().EvalType() == types.ETReal {
+	if arg.GetType(ctx).EvalType() == types.ETReal {
 		err = arg.VecEvalReal(ctx, input, col)
 		if err != nil {
 			return err
@@ -2086,7 +2094,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk
 	seconds := secondsBuf.Float64s()
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
-	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
