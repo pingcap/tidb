@@ -1242,7 +1242,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 	}
 	for i, c := range cases {
 		// Test wrapping with CastAsInt.
-		intExpr := WrapWithCastAsInt(ctx, c.expr)
+		intExpr := WrapWithCastAsInt(ctx, c.expr, nil)
 		require.Equal(t, types.ETInt, intExpr.GetType(ctx).EvalType())
 		intRes, isNull, err := intExpr.EvalInt(ctx, c.row.ToRow())
 		require.NoErrorf(t, err, "cast[%v]: %#v", i, t)

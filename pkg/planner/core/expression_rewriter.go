@@ -2160,7 +2160,10 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between(er.sctx.GetEvalCtx(), [3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		expr = expression.WrapWithCastAsInt(er.sctx, expr, nil)
+		lexp = expression.WrapWithCastAsInt(er.sctx, lexp, nil)
+		rexp = expression.WrapWithCastAsInt(er.sctx, rexp, nil)
+		return
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETDecimal:

@@ -238,7 +238,7 @@ func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, ta
 
 func rewriteBitFunc(ctx expression.BuildContext, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
-	innerCast := expression.WrapWithCastAsInt(ctx, arg)
+	innerCast := expression.WrapWithCastAsInt(ctx, arg, nil)
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
 	if funcType != ast.AggFuncBitAnd {
