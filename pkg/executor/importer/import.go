@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -754,6 +755,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 
 	if sv, ok := seCtx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
 		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.

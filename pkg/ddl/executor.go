@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -4927,6 +4928,26 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
+// GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
+func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		logutil.DDLLogger().Info("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
+		return 0
+	}
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		logutil.DDLLogger().Info("pd unavailable when get default max node count")
+		return 0
+	}
+	stores, err := pdClient.GetAllStores(context.Background())
+	if err != nil {
+		logutil.DDLLogger().Info("get all stores failed when get default max node count")
+		return 0
+	}
+	return max(3, len(stores)/3)
+}
+
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 	defaultMaxNodeCnt := 0
@@ -4946,21 +4967,13 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		m.TargetScope = variable.ServiceScope.Load()
 
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
-			maxNodeCnt := variable.TidbOptInt(sv, 0)
-			if maxNodeCnt == -1 {
+			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+			if m.MaxNodeCount == -1 { // -1 means calculate automatically
 				if defaultMaxNodeCnt == 0 {
-					store, ok := sctx.GetStore().(kv.StorageWithPD)
-					if ok {
-						stores, err := store.GetPDClient().GetAllStores(context.Background())
-						if err == nil {
-							defaultMaxNodeCnt = max(3, len(stores)/3)
-						}
-					}
-				} else {
-					maxNodeCnt = defaultMaxNodeCnt
+					defaultMaxNodeCnt = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
 				}
+				m.MaxNodeCount = defaultMaxNodeCnt
 			}
-			m.MaxNodeCount = maxNodeCnt
 		}
 		if hasSysDB(job) {
 			if m.IsDistReorg {
