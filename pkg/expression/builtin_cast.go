@@ -2549,8 +2549,13 @@ func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.Fiel
 	tp.SetFlen(expr.GetType(ctx.GetEvalCtx()).GetFlen())
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
-	if targetType != nil {
+	// inherit NotNullFlag from source type
+	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag)
+	if targetType == nil {
+		// inherit UnsignedFlag from source type if targetType is nil
+		tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.UnsignedFlag)
+	} else {
+		// otherwise set UnsignedFlag based on targetType
 		tp.AddFlag(targetType.GetFlag() & mysql.UnsignedFlag)
 	}
 	return BuildCastFunction(ctx, expr, tp)
@@ -2763,7 +2768,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	switch tp.EvalType() {
 	case types.ETInt:
 		wrapCastFunc = func(ctx BuildContext, expr Expression) Expression {
-			return WrapWithCastAsInt(ctx, expr, nil)
+			return WrapWithCastAsInt(ctx, expr, tp)
 		}
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
