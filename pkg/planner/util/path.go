@@ -408,19 +408,17 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
 
-// IsFullTableRange checks that a table scan does not have any filtering such that it can limit the range of
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
 // the table scan.
-func (path *AccessPath) IsFullTableRange(tableInfo *model.TableInfo) bool {
-	if path.IsTablePath() {
-		var unsignedIntHandle bool
-		if path.IsIntHandlePath && tableInfo.PKIsHandle {
-			if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 		}
-		if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
-			return true
-		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
 	}
 	return false
 }

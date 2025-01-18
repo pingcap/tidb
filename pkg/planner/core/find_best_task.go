@@ -725,9 +725,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
-	lhsPseudo, rhsPseudo := false, false
-	lhsFullScan := lhs.path.IsFullTableRange(tableInfo)
-	rhsFullScan := rhs.path.IsFullTableRange(tableInfo)
+	lhsPseudo, rhsPseudo := statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
+	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
 	if statsTbl != nil && len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhsFullScan && lhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
@@ -1237,11 +1237,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.Global) || (c.path.Index != nil && c.path.Index.MVIndex) {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			if !c.path.IsFullTableRange(ds.TableInfo) {
+			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
