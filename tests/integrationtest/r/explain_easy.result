@@ -423,9 +423,9 @@ IndexReader	10.00	root		index:IndexRangeScan
 └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t where b in (1, 2) and b in (1, 3);
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:Selection
-└─Selection	10.00	cop[tikv]		eq(explain_easy.t.b, 1)
-  └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		in(explain_easy.t.b, 1, 2), in(explain_easy.t.b, 1, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 and a = 1;
 id	estRows	task	access object	operator info
 IndexReader	10.00	root		index:IndexRangeScan
@@ -440,12 +440,12 @@ explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b
 id	estRows	task	access object	operator info
 Projection	0.00	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
 └─HashJoin	0.00	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
-  ├─IndexReader(Build)	0.00	root		index:Selection
+  ├─TableReader(Build)	0.00	root		data:Selection
   │ └─Selection	0.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
-  │   └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:idx(a, b)	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	9990.00	root		index:Selection
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9990.00	root		data:Selection
     └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.b))
-      └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	estRows	task	access object	operator info
 HashJoin	8000.00	root		anti semi join, left side:TableReader, equal:[eq(explain_easy.t.b, explain_easy.t.b)]

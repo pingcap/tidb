@@ -16,9 +16,9 @@ IndexReader	3323.33	root		index:IndexRangeScan
 └─IndexRangeScan	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain format = 'brief' select a, b from access_path_selection where b < 3;
 id	estRows	task	access object	operator info
-IndexReader	3323.33	root		index:Selection
+TableReader	3323.33	root		data:Selection
 └─Selection	3323.33	cop[tikv]		lt(access_path_selection.access_path_selection.b, 3)
-  └─IndexFullScan	10000.00	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	keep order:false, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo
 explain format = 'brief' select a, b from access_path_selection where a < 3 and b < 3;
 id	estRows	task	access object	operator info
 IndexReader	1104.45	root		index:Selection
