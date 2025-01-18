@@ -16,6 +16,9 @@ package history
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -67,31 +71,33 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	return version, err
 }
 
-// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
-func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool) {
+// RecordHistoricalStatsMeta records the historical stats meta for multiple tables.
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64) {
 	if version == 0 {
 		return
 	}
+	filteredTableIDs := make([]int64, 0, len(tableIDs))
 	if !enforce {
-		tbl, ok := sh.statsHandle.Get(tableID)
-		if !ok {
-			return
+		for _, tableID := range tableIDs {
+			tbl, ok := sh.statsHandle.Get(tableID)
+			if !ok || !tbl.IsInitialized() {
+				continue
+			}
+			filteredTableIDs = append(filteredTableIDs, tableID)
 		}
-		if !tbl.IsInitialized() {
-			return
-		}
+
 	}
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			return nil
 		}
-		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, tableID, version, source)
+		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableIDs...)
 	}, handleutil.FlagWrapTxn)
 	if err != nil { // just log the error, hide the error from the outside caller.
 		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
 			zap.Uint64("version", version),
 			zap.String("source", source),
+			zap.Int64s("tableIDs", tableIDs),
 			zap.Error(err))
 	}
 }
@@ -105,46 +111,43 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta.
+// RecordHistoricalStatsMeta records the historical stats meta for multiple tables.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	tableID int64,
 	version uint64,
 	source string,
+	tableIDs ...int64,
 ) error {
-	if tableID == 0 || version == 0 {
-		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
+	intest.Assert(version != 0, "version should not be zero")
+	if len(tableIDs) == 0 {
+		return nil
 	}
-	rows, _, err := handleutil.ExecRowsWithCtx(
-		ctx,
-		sctx,
-		"select modify_count, count from mysql.stats_meta where table_id = %? and version = %?",
-		tableID,
-		version,
-	)
+
+	// Convert tableIDs to string for SQL IN clause
+	tableIDStrs := make([]string, 0, len(tableIDs))
+	for _, id := range tableIDs {
+		tableIDStrs = append(tableIDStrs, strconv.FormatInt(id, 10))
+	}
+	tableIDsStr := strings.Join(tableIDStrs, ",")
+
+	// Single query that combines SELECT and INSERT
+	sql := fmt.Sprintf(`REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time)
+		SELECT table_id, modify_count, count, %d, '%s', NOW()
+		FROM mysql.stats_meta
+		WHERE table_id IN (%s) AND version = %d`,
+		version, source, tableIDsStr, version)
+
+	_, err := handleutil.ExecWithCtx(ctx, sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(rows) == 0 {
-		return errors.New("no historical meta stats can be recorded")
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
-	if _, err := handleutil.ExecWithCtx(
-		ctx,
-		sctx,
-		sql,
-		tableID,
-		modifyCount,
-		count,
-		version,
-		source,
-	); err != nil {
-		return errors.Trace(err)
+	// Invalidate cache for all tables
+	for _, tableID := range tableIDs {
+		cache.TableRowStatsCache.Invalidate(tableID)
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
+
 	return nil
 }
 
