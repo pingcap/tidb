@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS, then
@@ -113,22 +115,70 @@ func UpdateStatsMeta(
 		}
 	}
 
-	// Lock the stats_meta and stats_table_locked tables using SELECT FOR UPDATE to prevent write conflicts.
-	// This ensures that we acquire the necessary locks before attempting to update the tables, reducing the likelihood
-	// of encountering lock conflicts during the update process.
-	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
-	if lockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
-			return err
+	// Enable prepared statement cache to avoid repeated compilation of the same statement.
+	if _, err := statsutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = ON"); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := statsutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
+		if err != nil {
+			logutil.BgLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
+		}
+	}()
+
+	// Get lock one by one to avoid deadlock.
+	prepareSelectForUnlockedTables := `
+		PREPARE select_stmt_unlocked FROM 'SELECT * FROM mysql.stats_meta WHERE table_id = ? FOR UPDATE'
+	`
+	if _, err := statsutil.ExecWithCtx(ctx, sctx, prepareSelectForUnlockedTables); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := statsutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt_unlocked")
+		if err != nil {
+			logutil.BgLogger().Error("failed to deallocate prepared statement",
+				zap.String("statementName", "select_stmt_unlocked"),
+				zap.Error(errors.Trace(err)),
+			)
+		}
+	}()
+	for _, tableID := range unlockedTableIDs {
+		_, err := statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %s", tableID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = statsutil.ExecWithCtx(ctx, sctx, "EXECUTE select_stmt_unlocked USING @table_id")
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 
-	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
-	if unlockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
-			return err
+	prepareSelectForLockedTables := `
+		PREPARE select_stmt_locked FROM 'SELECT * FROM mysql.stats_table_locked WHERE table_id = ? FOR UPDATE'
+	`
+	if _, err := statsutil.ExecWithCtx(ctx, sctx, prepareSelectForLockedTables); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := statsutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt_locked")
+		if err != nil {
+			logutil.BgLogger().Error("failed to deallocate prepared statement",
+				zap.String("statementName", "select_stmt_locked"),
+				zap.Error(errors.Trace(err)),
+			)
+		}
+	}()
+	for _, tableID := range lockedTableIDs {
+		_, err := statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %s", tableID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = statsutil.ExecWithCtx(ctx, sctx, "EXECUTE select_stmt_locked USING @table_id")
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	// Execute locked updates
 	if len(lockedValues) > 0 {
 		sql := fmt.Sprintf("insert into mysql.stats_table_locked (version, table_id, modify_count, count) values %s "+
