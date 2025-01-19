@@ -124,6 +124,44 @@ func RecordHistoricalStatsMeta(
 		return nil
 	}
 
+	// Enable prepared statement cache to avoid repeated compilation of the same statement.
+	if _, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = ON"); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
+		if err != nil {
+			logutil.BgLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
+		}
+	}()
+	prepareSelectForUpdate := `
+		PREPARE select_stmt FROM 'SELECT * FROM mysql.stats_meta WHERE table_id = ? AND version = ? FOR UPDATE'
+	`
+	if _, err := handleutil.ExecWithCtx(ctx, sctx, prepareSelectForUpdate); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt")
+		if err != nil {
+			logutil.BgLogger().Error("failed to deallocate prepared statement", zap.Error(errors.Trace(err)))
+		}
+	}()
+
+	for _, tableID := range tableIDs {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %d", tableID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @version = %d", version))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = handleutil.ExecWithCtx(ctx, sctx, "EXECUTE select_stmt USING @table_id, @version")
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// Convert tableIDs to string for SQL IN clause
 	tableIDStrs := make([]string, 0, len(tableIDs))
 	for _, id := range tableIDs {
