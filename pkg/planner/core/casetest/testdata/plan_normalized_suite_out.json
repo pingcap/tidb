@@ -54,17 +54,17 @@
       {
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
-          " Projection                root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply                   root semi join, left side:Projection, equal:eq(?, ?)",
-          "   ├─Projection            root cast(test.t1.a, decimal(10,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
-          "   │ └─TableReader         root ",
-          "   │   └─Selection         cop  gt(test.t1.b, ?)",
-          "   │     └─TableFullScan   cop  table:t1, range:[?,?], keep order:false",
-          "   └─StreamAgg             root funcs:sum(?)->?",
-          "     └─IndexReader         root index:StreamAgg",
-          "       └─StreamAgg         cop  funcs:sum(test.t2.b)->?",
-          "         └─Selection       cop  eq(test.t2.a, test.t1.a)",
-          "           └─IndexFullScan cop  table:t2, index:b(b), range:[?,?], keep order:false"
+          " Projection                 root test.t1.a, test.t1.b, test.t1.c",
+          " └─Apply                    root semi join, left side:Projection, equal:eq(?, ?)",
+          "   ├─Projection             root cast(test.t1.a, decimal(10,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
+          "   │ └─TableReader          root ",
+          "   │   └─Selection          cop  gt(test.t1.b, ?)",
+          "   │     └─TableFullScan    cop  table:t1, range:[?,?], keep order:false",
+          "   └─StreamAgg              root funcs:sum(?)->?",
+          "     └─TableReader          root ",
+          "       └─StreamAgg          cop  funcs:sum(test.t2.b)->?",
+          "         └─Selection        cop  not(isnull(test.t2.b))",
+          "           └─TableRangeScan cop  table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
         ]
       },
       {
