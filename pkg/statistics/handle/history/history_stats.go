@@ -91,13 +91,14 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			return nil
 		}
-		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableIDs...)
+		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, filteredTableIDs...)
 	}, handleutil.FlagWrapTxn)
 	if err != nil { // just log the error, hide the error from the outside caller.
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Uint64("version", version),
 			zap.String("source", source),
 			zap.Int64s("tableIDs", tableIDs),
+			zap.Int64s("filteredTableIDs", filteredTableIDs),
 			zap.Error(err))
 	}
 }
