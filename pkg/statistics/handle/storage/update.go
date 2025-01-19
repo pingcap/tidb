@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -122,7 +122,7 @@ func UpdateStatsMeta(
 	defer func() {
 		_, err := statsutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
 		if err != nil {
-			logutil.BgLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
+			statslogutil.StatsLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
 		}
 	}()
 
@@ -136,7 +136,7 @@ func UpdateStatsMeta(
 	defer func() {
 		_, err := statsutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt_unlocked")
 		if err != nil {
-			logutil.BgLogger().Error("failed to deallocate prepared statement",
+			statslogutil.StatsLogger().Error("failed to deallocate prepared statement",
 				zap.String("statementName", "select_stmt_unlocked"),
 				zap.Error(errors.Trace(err)),
 			)
@@ -162,7 +162,7 @@ func UpdateStatsMeta(
 	defer func() {
 		_, err := statsutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt_locked")
 		if err != nil {
-			logutil.BgLogger().Error("failed to deallocate prepared statement",
+			statslogutil.StatsLogger().Error("failed to deallocate prepared statement",
 				zap.String("statementName", "select_stmt_locked"),
 				zap.Error(errors.Trace(err)),
 			)
