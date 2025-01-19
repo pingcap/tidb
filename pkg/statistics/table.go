@@ -119,6 +119,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -353,6 +355,7 @@ func (t *Table) DelIdx(id int64) {
 	t.ColAndIdxExistenceMap.DeleteIdxAnalyzed(id)
 }
 
+// CleanUpStats reset the stats of the table to no stats.
 func (t *Table) CleanUpStats() {
 	t.columns = make(map[int64]*Column, len(t.columns))
 	t.indices = make(map[int64]*Index, len(t.indices))
