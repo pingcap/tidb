@@ -327,6 +327,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.
@@ -602,6 +603,8 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxExecutionTime is the timeout of the whole query execution
+	MaxExecutionTime uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

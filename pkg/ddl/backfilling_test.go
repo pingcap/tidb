@@ -16,9 +16,12 @@ package ddl
 
 import (
 	"bytes"
+	"context"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -60,17 +63,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
-	originMgr := ingest.LitBackCtxMgr
-	originInit := ingest.LitInitialized
-	defer func() {
-		ingest.LitBackCtxMgr = originMgr
-		ingest.LitInitialized = originInit
-	}()
-	mockMgr := ingest.NewMockBackendCtxMgr(
-		func() sessionctx.Context {
-			return nil
-		})
-	ingest.LitBackCtxMgr = mockMgr
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -93,6 +87,7 @@ func TestPickBackfillType(t *testing.T) {
 	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
+	ingest.LitInitialized = false
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
@@ -484,4 +479,35 @@ func TestValidateAndFillRanges(t *testing.T) {
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.Error(t, err)
+}
+
+func TestTuneTableScanWorkerBatchSize(t *testing.T) {
+	reorgMeta := &model.DDLReorgMeta{}
+	reorgMeta.Concurrency.Store(4)
+	reorgMeta.BatchSize.Store(32)
+	copCtx := &copr.CopContextSingleIndex{
+		CopContextBase: &copr.CopContextBase{
+			FieldTypes: []*types.FieldType{},
+		},
+	}
+	opCtx, cancel := NewDistTaskOperatorCtx(context.Background(), 1, 1)
+	w := tableScanWorker{
+		copCtx:        copCtx,
+		ctx:           opCtx,
+		srcChkPool:    createChunkPool(copCtx, reorgMeta),
+		hintBatchSize: 32,
+		reorgMeta:     reorgMeta,
+	}
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 32, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	reorgMeta.SetBatchSize(64)
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 64, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	cancel()
 }

@@ -23,17 +23,20 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"go.uber.org/zap"
 )
 
 var (
@@ -81,101 +84,213 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	return false
 }
 
+const (
+	dumpDeltaBatchSize = 100_000
+	tooSlowThreshold   = 20 * time.Second
+)
+
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
+	defer util.Recover(metrics.LabelStats, "DumpStatsDeltaToKV", nil, false)
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
 		metrics.StatsDeltaUpdateHistogram.Observe(dur.Seconds())
 	}()
+
 	s.SweepSessionStatsList()
 	deltaMap := s.SessionTableDelta().GetDeltaAndReset()
 	defer func() {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
+	if time.Since(start) > tooSlowThreshold {
+		statslogutil.SingletonStatsSamplerLogger().Warn("Sweeping session list is too slow",
+			zap.Int("tableCount", len(deltaMap)),
+			zap.Duration("duration", time.Since(start)))
+	}
 
-	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		currentTime := time.Now()
-		for id, item := range deltaMap {
-			if !s.needDumpStatsDelta(is, dumpAll, id, item, currentTime) {
-				continue
-			}
-			updated, err := s.dumpTableStatCountToKV(is, id, item)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if updated {
-				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
-			}
-			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
-				delete(deltaMap, id)
-				return errors.Trace(err)
-			}
-			if updated {
-				delete(deltaMap, id)
-			} else {
-				m := deltaMap[id]
-				m.ColSize = nil
-				deltaMap[id] = m
-			}
+	// Sort table IDs to ensure a consistent dump order to reduce the chance of deadlock.
+	tableIDs := make([]int64, 0, len(deltaMap))
+	for id := range deltaMap {
+		tableIDs = append(tableIDs, id)
+	}
+	slices.Sort(tableIDs)
+
+	// Check if recording historical stats meta is enabled.
+	// TODO: Once RecordHistoricalStatsMeta supports batch processing, this check can be removed and handled within the API.
+	skipRecordHistoricalStatsMeta := false
+	err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		if !sctx.GetSessionVars().EnableHistoricalStats {
+			skipRecordHistoricalStatsMeta = true
+			return nil
 		}
 		return nil
 	})
-}
-
-// dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-// For a partitioned table, we will update its global-stats as well.
-func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
-	statsVersion := uint64(0)
-	defer func() {
-		if err == nil && statsVersion != 0 {
-			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
-		}
-	}()
-	if delta.Count == 0 {
-		return true, nil
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	err = utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		statsVersion, err = utilstats.GetStartTS(sctx)
+	// Dump stats delta in batches.
+	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
+		end := i + dumpDeltaBatchSize
+		if end > len(tableIDs) {
+			end = len(tableIDs)
+		}
+
+		batchTableIDs := tableIDs[i:end]
+		var (
+			statsVersion uint64
+			batchUpdates []*storage.DeltaUpdate
+		)
+		batchStart := time.Now()
+		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
+			// Collect all updates in the batch.
+			for _, id := range batchTableIDs {
+				item := deltaMap[id]
+				if !s.needDumpStatsDelta(is, dumpAll, id, item, batchStart) {
+					continue
+				}
+				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
+			}
+			if time.Since(batchStart) > tooSlowThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Warn("Collecting batch updates is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(batchStart)))
+			}
+
+			if len(batchUpdates) == 0 {
+				return nil
+			}
+
+			// Process all updates in the batch with a single transaction.
+			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
+			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			statsVersion = startTs
+			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
+			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
+			// For example, dumpStatsDeltaToKV may sort the array.
+			batchUpdates = updated
+			intest.AssertFunc(
+				func() bool {
+					return slices.IsSortedFunc(batchUpdates, func(i, j *storage.DeltaUpdate) int {
+						return cmp.Compare(i.TableID, j.TableID)
+					})
+				},
+				"batchUpdates should be sorted by table ID",
+			)
+
+			// Update deltaMap after the batch is successfully dumped.
+			for _, update := range batchUpdates {
+				delete(deltaMap, update.TableID)
+			}
+
+			if time.Since(batchStart) > tooSlowThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Warn("Dumping batch updates is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(batchStart)))
+			}
+
+			return nil
+		}, utilstats.FlagWrapTxn)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
-		// Check if the table and its partitions are locked.
-		tidAndPid := make([]int64, 0, 2)
-		if tbl != nil {
-			tidAndPid = append(tidAndPid, tbl.Meta().ID)
+		if !skipRecordHistoricalStatsMeta {
+			startRecordHistoricalStatsMeta := time.Now()
+			// Record historical stats meta for all tables one by one.
+			// FIXME: Although this feature is currently disabled, it would be beneficial to implement it in batches for efficiency.
+			for _, update := range batchUpdates {
+				if !update.IsLocked {
+					failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+						panic("panic when record historical stats meta")
+					})
+					s.statsHandle.RecordHistoricalStatsMeta(update.TableID, statsVersion, "flush stats", false)
+				}
+			}
+			if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
+				statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
+			}
 		}
-		tidAndPid = append(tidAndPid, physicalTableID)
-		lockedTables, err := s.statsHandle.GetLockedTables(tidAndPid...)
-		if err != nil {
-			return err
+	}
+
+	return nil
+}
+
+// dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.
+// Note: The `batchUpdates` parameter may be modified during the execution of this function.
+//
+// 1. Handles partitioned tables:
+//   - For partitioned tables, the function ensures that the global statistics are updated appropriately
+//     in addition to the individual partition statistics.
+//
+// 2. Stashes lock information:
+//   - Records lock information for each table or partition.
+func (s *statsUsageImpl) dumpStatsDeltaToKV(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	updates []*storage.DeltaUpdate,
+) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
+	if len(updates) == 0 {
+		return 0, nil, nil
+	}
+	beforeLen := len(updates)
+	statsVersion, err = utilstats.GetStartTS(sctx)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Collect all table IDs that need lock checking.
+	allTableIDs := make([]int64, 0, len(updates))
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+		}
+		// Add psychical table ID.
+		allTableIDs = append(allTableIDs, update.TableID)
+		// Add parent table ID if it's a partition table.
+		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
+			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		}
+	}
+
+	// Batch get lock status for all tables.
+	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Prepare batch updates
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
 		}
 
-		var affectedRows uint64
-		// If it's a partitioned table and its global-stats exists,
-		// update its count and modify_count as well.
-		if tbl != nil {
-			// We need to check if the table and the partition are locked.
+		tbl, _, _ := is.FindTableByPartitionID(update.TableID)
+		if tbl != nil { // It's a partition table.
+			tableID := tbl.Meta().ID
 			isTableLocked := false
 			isPartitionLocked := false
-			tableID := tbl.Meta().ID
+
 			if _, ok := lockedTables[tableID]; ok {
 				isTableLocked = true
 			}
-			if _, ok := lockedTables[physicalTableID]; ok {
+			if _, ok := lockedTables[update.TableID]; ok {
 				isPartitionLocked = true
 			}
+
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
-				physicalTableID, tableOrPartitionLocked); err != nil {
-				return err
-			}
-			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			update.IsLocked = tableOrPartitionLocked
+
 			// If the partition is locked, we don't need to update the global-stats.
 			// We will update its global-stats when the partition is unlocked.
 			// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
@@ -188,34 +303,37 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			// 4. If table is not locked and partition is not locked, we update the global-stats.
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
-				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
-					return err
-				}
-				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+				updates = append(updates, storage.NewDeltaUpdate(tableID, update.Delta, isTableLocked))
 			}
 		} else {
-			// This is a non-partitioned table.
-			// Check if it's locked.
 			isTableLocked := false
-			if _, ok := lockedTables[physicalTableID]; ok {
+			if _, ok := lockedTables[update.TableID]; ok {
 				isTableLocked = true
 			}
-			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
-				physicalTableID, isTableLocked); err != nil {
-				return err
-			}
-			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			update.IsLocked = isTableLocked
 		}
+	}
+	intest.Assert(len(updates) >= beforeLen, "updates can only be appended")
+	if len(updates) > beforeLen {
+		// Resort updates after appending new updates.
+		slices.SortFunc(updates, func(i, j *storage.DeltaUpdate) int {
+			return cmp.Compare(i.TableID, j.TableID)
+		})
+	}
 
-		updated = affectedRows > 0
-		return nil
-	}, utilstats.FlagWrapTxn)
-	return
+	// Batch update stats meta.
+	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Because we may sort the updates, we need to return the updated slice.
+	// Otherwise the caller may use the original slice and get wrong results.
+	return statsVersion, updates, nil
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
+	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
@@ -295,10 +413,10 @@ func (s *SessionStatsItem) Delete() {
 }
 
 // Update will updates the delta and count for one table id.
-func (s *SessionStatsItem) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+func (s *SessionStatsItem) Update(id int64, delta int64, count int64) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.Update(id, delta, count, colSize)
+	s.mapper.Update(id, delta, count)
 }
 
 // ClearForTest clears the mapper for test.
@@ -445,10 +563,10 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 }
 
 // Update updates the delta of the table.
-func (m *TableDelta) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+func (m *TableDelta) Update(id int64, delta int64, count int64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	UpdateTableDeltaMap(m.delta, id, delta, count, colSize)
+	UpdateTableDeltaMap(m.delta, id, delta, count)
 }
 
 // Merge merges the deltaMap into the TableDelta.
@@ -459,23 +577,15 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
+		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count)
 	}
 }
 
 // UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
+func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
-	if item.ColSize == nil {
-		item.ColSize = make(map[int64]int64)
-	}
-	if colSize != nil {
-		for key, val := range *colSize {
-			item.ColSize[key] += val
-		}
-	}
 	m[id] = item
 }
 

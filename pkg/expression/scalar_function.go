@@ -16,14 +16,12 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -40,7 +38,7 @@ var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
+	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType `plan-cache-clone:"shallow"`
@@ -134,8 +132,9 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // StringWithCtx implements Expression interface.
 func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
+	buffer.WriteString(sf.FuncName.L)
+	buffer.WriteByte('(')
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
@@ -270,7 +269,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
 	}
@@ -700,19 +699,17 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1th> interface.
 func (sf *ScalarFunction) Equals(other any) bool {
-	if other == nil {
+	sf2, ok := other.(*ScalarFunction)
+	if !ok {
 		return false
 	}
-	var sf2 *ScalarFunction
-	switch x := other.(type) {
-	case *ScalarFunction:
-		sf2 = x
-	case ScalarFunction:
-		sf2 = &x
-	default:
+	if sf == nil {
+		return sf2 == nil
+	}
+	if sf2 == nil {
 		return false
 	}
-	ok := sf.FuncName.L == sf2.FuncName.L
+	ok = sf.FuncName.L == sf2.FuncName.L
 	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
 	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
 		return false

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -40,6 +42,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"go.uber.org/zap"
 )
+
+// HeavyFunctionNameMap stores function names that is worth to do HeavyFunctionOptimize.
+// Currently this only applies to Vector data types and their functions. The HeavyFunctionOptimize
+// eliminate the usage of the function in TopN operators to avoid vector distance re-calculation
+// of TopN in the root task.
+var HeavyFunctionNameMap = map[string]struct{}{
+	"vec_cosine_distance":        {},
+	"vec_l1_distance":            {},
+	"vec_l2_distance":            {},
+	"vec_negative_inner_product": {},
+	"vec_dims":                   {},
+	"vec_l2_norm":                {},
+}
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
 	switch v := t.(type) {
@@ -861,7 +876,29 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan) *PhysicalTopN {
+func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
+	var newGlobalTopN *PhysicalTopN
+
+	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
+	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
+	// the ByItems in order to reuse the function result.
+	byItemIndex := make([]int, 0)
+	for i, byItem := range p.ByItems {
+		if ContainHeavyFunction(byItem.Expr) {
+			byItemIndex = append(byItemIndex, i)
+		}
+	}
+	if fixValue && len(byItemIndex) > 0 {
+		x, err := p.Clone(p.SCtx())
+		if err != nil {
+			return nil, nil
+		}
+		newGlobalTopN = x.(*PhysicalTopN)
+		// the projecton's construction cannot be create if the AllowProjectionPushDown is disable.
+		if storeTp == kv.TiKV && !p.SCtx().GetSessionVars().AllowProjectionPushDown {
+			newGlobalTopN = nil
+		}
+	}
 	newByItems := make([]*util.ByItems, 0, len(p.ByItems))
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
@@ -875,13 +912,98 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan) *PhysicalT
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+
+	// Add a extra physicalProjection to save the distance column, a example like :
+	// select id from t order by vec_distance(vec, '[1,2,3]') limit x
+	// The Plan will be modified like:
+	//
+	// Original: DataSource(id, vec) -> TopN(by vec->dis) -> Projection(id)
+	//                                  └─Byitem: vec_distance(vec, '[1,2,3]')
+	//
+	// New:      DataSource(id, vec) -> Projection(id, vec->dis) -> TopN(by dis) -> Projection(id)
+	//                                  └─Byitem: dis
+	//
+	// Note that for plan now, TopN has its own schema and does not use the schema of children.
+	if newGlobalTopN != nil {
+		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
+		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))
+		bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns))
+		for _, col := range newGlobalTopN.Schema().Columns {
+			newCol := col.Clone().(*expression.Column)
+			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
+			bottomProjExprs = append(bottomProjExprs, newCol)
+		}
+		type DistanceColItem struct {
+			Index       int
+			DistanceCol *expression.Column
+		}
+		distanceCols := make([]DistanceColItem, 0)
+		for _, idx := range byItemIndex {
+			bottomProjExprs = append(bottomProjExprs, newGlobalTopN.ByItems[idx].Expr)
+			distanceCol := &expression.Column{
+				UniqueID: newGlobalTopN.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  newGlobalTopN.ByItems[idx].Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+			}
+			distanceCols = append(distanceCols, DistanceColItem{
+				Index:       idx,
+				DistanceCol: distanceCol,
+			})
+		}
+		for _, dis := range distanceCols {
+			bottomProjSchemaCols = append(bottomProjSchemaCols, dis.DistanceCol)
+		}
+
+		bottomProj := PhysicalProjection{
+			Exprs: bottomProjExprs,
+		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
+		bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
+		bottomProj.SetChildren(childPlan)
+
+		topN := PhysicalTopN{
+			ByItems:     newByItems,
+			PartitionBy: newPartitionBy,
+			Count:       newCount,
+		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
+		// mppTask's topN
+		for _, item := range distanceCols {
+			topN.ByItems[item.Index].Expr = item.DistanceCol
+		}
+
+		// rootTask's topn, need reuse the distance col
+		for _, expr := range distanceCols {
+			newGlobalTopN.ByItems[expr.Index].Expr = expr.DistanceCol
+		}
+		topN.SetChildren(bottomProj)
+
+		return topN, newGlobalTopN
+	}
+
 	topN := PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
-	return topN
+	return topN, newGlobalTopN
+}
+
+// ContainHeavyFunction check if the expr contains a function that need to do HeavyFunctionOptimize. Currently this only applies
+// to Vector data types and their functions. The HeavyFunctionOptimize eliminate the usage of the function in TopN operators
+// to avoid vector distance re-calculation of TopN in the root task.
+func ContainHeavyFunction(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := HeavyFunctionNameMap[sf.FuncName.L]; ok {
+		return true
+	}
+	for _, arg := range sf.GetArgs() {
+		if ContainHeavyFunction(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
@@ -966,7 +1088,75 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 	return true
 }
 
-// Attach2Task implements physical plan
+// For https://github.com/pingcap/tidb/issues/51723,
+// This function only supports `CLUSTER_SLOW_QUERY`,
+// it will change plan from
+// TopN -> TableReader -> TableFullScan[cop] to
+// TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
+func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
+	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
+		return nil, false
+	}
+
+	var (
+		selOnTblScan   *PhysicalSelection
+		selSelectivity float64
+		tblScan        *PhysicalTableScan
+		err            error
+		ok             bool
+	)
+
+	copTsk.tablePlan, err = copTsk.tablePlan.Clone(p.SCtx())
+	if err != nil {
+		return nil, false
+	}
+	finalTblScanPlan := copTsk.tablePlan
+	for len(finalTblScanPlan.Children()) > 0 {
+		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		finalTblScanPlan = finalTblScanPlan.Children()[0]
+	}
+
+	if tblScan, ok = finalTblScanPlan.(*PhysicalTableScan); !ok {
+		return nil, false
+	}
+
+	// Check the table is `CLUSTER_SLOW_QUERY` or not.
+	if tblScan.Table.Name.O != infoschema.ClusterTableSlowLog {
+		return nil, false
+	}
+
+	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	if !ok {
+		return nil, false
+	}
+	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
+		return nil, false
+	}
+	if selOnTblScan != nil && tblScan.StatsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.StatsInfo().RowCount / tblScan.StatsInfo().RowCount
+	}
+	tblScan.Desc = colsProp.SortItems[0].Desc
+	tblScan.KeepOrder = true
+
+	childProfile := copTsk.Plan().StatsInfo()
+	newCount := p.Offset + p.Count
+	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	pushedLimit := PhysicalLimit{
+		Count: newCount,
+	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
+	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
+	child := pushedLimit.Children()[0]
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	if selSelectivity > 0 && selSelectivity < 1 {
+		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+	}
+	rootTask := copTsk.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask), true
+}
+
+// Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
@@ -974,22 +1164,56 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
+	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
+		if changed {
+			return newTask
+		}
+	}
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
+		var newGlobalTopN *PhysicalTopN
 		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
-			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
+			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.indexPlan, copTask.getStoreType())
 			copTask.indexPlan = pushedDownTopN
+			if newGlobalTopN != nil {
+				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+				// Skip TopN with partition on the root. This is a derived topN and window function
+				// will take care of the filter.
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
-			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
+			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.tablePlan, copTask.getStoreType())
 			copTask.tablePlan = pushedDownTopN
+			if newGlobalTopN != nil {
+				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+				// Skip TopN with partition on the root. This is a derived topN and window function
+				// will take care of the filter.
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
 		}
 	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
-		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		pushedDownTopN, newGlobalTopN := p.getPushedDownTopN(mppTask.p, kv.TiFlash)
 		mppTask.p = pushedDownTopN
+		if newGlobalTopN != nil {
+			rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+			// Skip TopN with partition on the root. This is a derived topN and window function
+			// will take care of the filter.
+			if len(p.GetPartitionBy()) > 0 {
+				return t
+			}
+			return attachPlan2Task(newGlobalTopN, rootTask)
+		}
 	}
 	rootTask := t.ConvertToRootTask(p.SCtx())
 	// Skip TopN with partition on the root. This is a derived topN and window function
@@ -1438,8 +1662,8 @@ func BuildFinalModeAggregation(
 // If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
-	newSchema.Keys = p.schema.Keys
-	newSchema.UniqueKeys = p.schema.UniqueKeys
+	newSchema.PKOrUK = p.schema.PKOrUK
+	newSchema.NullableUK = p.schema.NullableUK
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema

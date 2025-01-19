@@ -36,6 +36,7 @@ import (
 )
 
 func TestLitExprContext(t *testing.T) {
+	baseFlags := types.DefaultStmtFlags &^ types.FlagAllowNegativeToUnsigned
 	cases := []struct {
 		sqlMode       mysql.SQLMode
 		sysVars       map[string]string
@@ -47,11 +48,12 @@ func TestLitExprContext(t *testing.T) {
 		{
 			sqlMode:    mysql.ModeNone,
 			timestamp:  1234567,
-			checkFlags: types.DefaultStmtFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				m[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				m[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
@@ -67,55 +69,60 @@ func TestLitExprContext(t *testing.T) {
 		{
 			sqlMode: mysql.ModeStrictTransTables | mysql.ModeNoZeroDate | mysql.ModeNoZeroInDate |
 				mysql.ModeErrorForDivisionByZero,
-			checkFlags: types.DefaultStmtFlags,
+			checkFlags: baseFlags,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				return m
 			}(),
 		},
 		{
 			sqlMode:    mysql.ModeNoZeroDate | mysql.ModeNoZeroInDate | mysql.ModeErrorForDivisionByZero,
-			checkFlags: types.DefaultStmtFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagTruncateAsWarning | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				m[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				m[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				return m
 			}(),
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeNoZeroInDate,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeNoZeroDate,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
 		},
 		{
 			sqlMode:    mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			checkFlags: types.DefaultStmtFlags | types.FlagIgnoreZeroInDateErr | types.FlagIgnoreInvalidDateErr,
+			checkFlags: baseFlags | types.FlagIgnoreZeroInDateErr | types.FlagIgnoreInvalidDateErr,
 			checkErrLevel: func() errctx.LevelMap {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
@@ -244,17 +251,8 @@ func TestLitTableMutateContext(t *testing.T) {
 		stats, ok := tblCtx.GetStatisticsSupport()
 		require.True(t, ok)
 		// test for `UpdatePhysicalTableDelta` and `GetColumnSize`
-		stats.UpdatePhysicalTableDelta(123, 5, 2, variable.DeltaColsMap{1: 2, 3: 4})
-		r := tblCtx.GetColumnSize(123)
-		require.Equal(t, map[int64]int64{1: 2, 3: 4}, r)
-		stats.UpdatePhysicalTableDelta(123, 8, 2, variable.DeltaColsMap{3: 5, 4: 3})
-		r = tblCtx.GetColumnSize(123)
-		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, r)
-		// the result should be a cloned value
-		r[1] = 100
-		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, tblCtx.GetColumnSize(123))
-		// test gets a non-existed table
-		require.Empty(t, tblCtx.GetColumnSize(456))
+		stats.UpdatePhysicalTableDelta(123, 5, 2)
+		stats.UpdatePhysicalTableDelta(123, 8, 2)
 	}
 
 	// test for default

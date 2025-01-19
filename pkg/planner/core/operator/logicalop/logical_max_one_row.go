@@ -26,7 +26,8 @@ import (
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	BaseLogicalPlan
+	// logical max one row, doesn't have any other attribute to distinguish, use plan id inside.
+	BaseLogicalPlan `hash64-equals:"true"`
 }
 
 // Init initializes LogicalMaxOneRow.
@@ -76,7 +77,7 @@ func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression,
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

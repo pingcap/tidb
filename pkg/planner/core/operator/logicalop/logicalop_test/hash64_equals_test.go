@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -32,6 +31,338 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLogicalTopNHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalTopN{}.Init(ctx, 1)
+	p1.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	p1.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
+	p2 := logicalop.LogicalTopN{}.Init(ctx, 1)
+	p2.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	p2.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	p2.ByItems = []*util.ByItems{{Expr: col2, Desc: true}}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.ByItems = []*util.ByItems{{Expr: col1, Desc: false}}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	p2.PartitionBy = []property.SortItem{{Col: col1, Desc: false}}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.PartitionBy = []property.SortItem{{Col: col2, Desc: true}}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.PartitionBy = []property.SortItem{{Col: col1, Desc: true}}
+	p2.Offset = 2
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Offset = 0
+	p2.Count = 1
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Count = 0
+	p2.PreferLimitToCop = true
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.PreferLimitToCop = false
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+}
+
+func TestLogicalTableDualHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalTableDual{}.Init(ctx, 1)
+	p1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	p2 := logicalop.LogicalTableDual{}.Init(ctx, 1)
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col2}})
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	p2.RowCount = 2
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	p2.RowCount = 0
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+}
+
+func TestLogicalSortHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalSort{}.Init(ctx, 1)
+	s2 := logicalop.LogicalSort{}.Init(ctx, 1)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.ByItems = []*util.ByItems{}
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s2.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: false}}
+	hasher1.Reset()
+	s1.Hash64(hasher1)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	hasher1.Reset()
+	s1.Hash64(hasher1)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+}
+
+func TestLogicalShowDDLJobs(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalShowDDLJobs{}.Init(ctx)
+	s2 := logicalop.LogicalShowDDLJobs{}.Init(ctx)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.LogicalSchemaProducer.SetSchema(expression.NewSchema(col1))
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+}
+
+func TestLogicalShowHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalShow{}.Init(ctx)
+	s2 := logicalop.LogicalShow{}.Init(ctx)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.LogicalSchemaProducer.SetSchema(expression.NewSchema(col1))
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+}
+
+func TestLogicalSequence(t *testing.T) {
+	ctx := mock.NewContext()
+	m1 := logicalop.LogicalSequence{}.Init(ctx, 1)
+	m2 := logicalop.LogicalSequence{}.Init(ctx, 1)
+	// since logical max one row doesn't have any elements, they are always indicate
+	// that they are equal.
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	m1.Hash64(hasher1)
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.SetID(m1.ID())
+	hasher2.Reset()
+	m2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, m1.Equals(m2))
+}
+
+func TestLogicalSelectionHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalSelection{Conditions: []expression.Expression{col1}}.Init(ctx, 1)
+	p2 := logicalop.LogicalSelection{Conditions: []expression.Expression{col1}}.Init(ctx, 1)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	// change conditions
+	p2.Conditions = []expression.Expression{}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Conditions = nil
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Conditions = []expression.Expression{col2}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+}
+
+func TestLogicalProjectionHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalProjection{Exprs: []expression.Expression{col2}}.Init(ctx, 1)
+	p1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	p2 := logicalop.LogicalProjection{Exprs: []expression.Expression{col2}}.Init(ctx, 1)
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	// change Exprs
+	p2.Exprs = []expression.Expression{}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Exprs = nil
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	// change CalculateNoDelay
+	p2.Exprs = []expression.Expression{col2}
+	p2.CalculateNoDelay = true
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	// change Proj4Expand
+	p2.CalculateNoDelay = false
+	p2.Proj4Expand = true
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Proj4Expand = false
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+}
 
 func TestLogicalUnionAllHash64Equals(t *testing.T) {
 	col1 := &expression.Column{
@@ -112,13 +443,13 @@ func TestLogicalMemTableHash64Equals(t *testing.T) {
 	require.False(t, m1.Equals(m2))
 
 	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
-	m2.DBName = pmodel.NewCIStr("d1")
+	m2.DBName = ast.NewCIStr("d1")
 	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, m1.Equals(m2))
 
-	m2.DBName = pmodel.NewCIStr("")
+	m2.DBName = ast.NewCIStr("")
 	m2.TableInfo = &model.TableInfo{ID: 1}
 	hasher2.Reset()
 	m2.Hash64(hasher2)
@@ -176,13 +507,20 @@ func TestLogicalSchemaProducerHash64Equals(t *testing.T) {
 }
 
 func TestLogicalMaxOneRowHash64Equals(t *testing.T) {
-	m1 := &logicalop.LogicalMaxOneRow{}
-	m2 := &logicalop.LogicalMaxOneRow{}
+	ctx := mock.NewContext()
+	m1 := logicalop.LogicalMaxOneRow{}.Init(ctx, 1)
+	m2 := logicalop.LogicalMaxOneRow{}.Init(ctx, 1)
 	// since logical max one row doesn't have any elements, they are always indicate
 	// that they are equal.
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
 	m1.Hash64(hasher1)
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.SetID(m1.ID())
+	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, m1.Equals(m2))

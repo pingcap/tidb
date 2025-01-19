@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -180,19 +179,30 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
-	if pi.DDLAction != model.ActionReorganizePartition &&
-		pi.DDLAction != model.ActionRemovePartitioning &&
-		pi.DDLAction != model.ActionAlterTablePartitioning {
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
+		// continue after switch!
+	case model.ActionTruncateTablePartition:
+		for _, def := range pi.DroppingDefinitions {
+			p, err := initPartition(ret, def)
+			if err != nil {
+				return nil, err
+			}
+			partitions[def.ID] = p
+		}
+		fallthrough
+	default:
 		return ret, nil
 	}
-	// In StateWriteReorganization we are using the 'old' partition definitions
+	// In WriteReorganization we are using the 'old' partition definitions
 	// and if any new change happens in DroppingDefinitions, it needs to be done
 	// also in AddingDefinitions (with new evaluation of the new expression)
-	// In StateDeleteReorganization we are using the 'new' partition definitions
+	// In DeleteReorganization/Public we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes
-	if pi.DDLState == model.StateDeleteReorganization {
+	// should also see the changes.
+	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -213,6 +223,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, err
 			}
+			p.skipAssert = true
 			partitions[def.ID] = p
 			ret.doubleWritePartitions[def.ID] = nil
 		}
@@ -236,6 +247,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				if err != nil {
 					return nil, err
 				}
+				p.skipAssert = true
 				partitions[def.ID] = p
 			}
 		}
@@ -280,24 +292,24 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 	)
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, tp pmodel.PartitionType, expr string, partCols []pmodel.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
+func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
-	dbName := pmodel.NewCIStr(ctx.GetEvalCtx().CurrentDB())
+	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
 	}
 	switch tp {
-	case pmodel.PartitionTypeNone:
+	case ast.PartitionTypeNone:
 		// Nothing to do
 		return nil, nil
-	case pmodel.PartitionTypeRange:
+	case ast.PartitionTypeRange:
 		return generateRangePartitionExpr(ctx, expr, partCols, defs, columns, names)
-	case pmodel.PartitionTypeHash:
+	case ast.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, expr, columns, names)
-	case pmodel.PartitionTypeKey:
+	case ast.PartitionTypeKey:
 		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names)
-	case pmodel.PartitionTypeList:
+	case ast.PartitionTypeList:
 		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names)
 	}
 	panic("cannot reach here")
@@ -702,7 +714,7 @@ func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string) (int64
 	return ret, true
 }
 
-func rangePartitionExprStrings(cols []pmodel.CIStr, expr string) []string {
+func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 	var s []string
 	if len(cols) > 0 {
 		s = make([]string, 0, len(cols))
@@ -715,7 +727,7 @@ func rangePartitionExprStrings(cols []pmodel.CIStr, expr string) []string {
 	return s
 }
 
-func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr,
+func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
 		ForKeyPruning: &ForKeyPruning{},
@@ -730,7 +742,7 @@ func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols
 	return ret, nil
 }
 
-func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr,
+func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	p := parser.New()
@@ -820,7 +832,7 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
+func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []ast.CIStr, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
@@ -854,7 +866,7 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 	return partExpr, deDupCols, offset, nil
 }
 
-func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.TableInfo, expr string, partCols []pmodel.CIStr,
+func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.TableInfo, expr string, partCols []ast.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
@@ -931,7 +943,7 @@ func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr s
 }
 
 func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
-	tblInfo *model.TableInfo, partCols []pmodel.CIStr, defs []model.PartitionDefinition,
+	tblInfo *model.TableInfo, partCols []ast.CIStr, defs []model.PartitionDefinition,
 	columns []*expression.Column, names types.NameSlice) error {
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
@@ -1364,13 +1376,13 @@ func (t *partitionedTable) GetPartitionColumnIDs() []int64 {
 	return colIDs
 }
 
-func (t *partitionedTable) GetPartitionColumnNames() []pmodel.CIStr {
+func (t *partitionedTable) GetPartitionColumnNames() []ast.CIStr {
 	pi := t.Meta().Partition
 	if len(pi.Columns) > 0 {
 		return pi.Columns
 	}
 	colIDs := t.GetPartitionColumnIDs()
-	colNames := make([]pmodel.CIStr, 0, len(colIDs))
+	colNames := make([]ast.CIStr, 0, len(colIDs))
 	for _, colID := range colIDs {
 		for _, col := range t.Cols() {
 			if col.ID == colID {
@@ -1399,11 +1411,11 @@ func (t *partitionedTable) CheckForExchangePartition(ctx expression.EvalContext,
 }
 
 // locatePartitionCommon returns the partition idx of the input record.
-func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp pmodel.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, error) {
+func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp ast.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, error) {
 	var err error
 	var idx int
 	switch tp {
-	case pmodel.PartitionTypeRange:
+	case ast.PartitionTypeRange:
 		if columnsPartitioned {
 			idx, err = t.locateRangeColumnPartition(ctx, partitionExpr, r)
 		} else {
@@ -1422,18 +1434,18 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 				return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 			}
 		}
-	case pmodel.PartitionTypeHash:
+	case ast.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
-	case pmodel.PartitionTypeKey:
+	case ast.PartitionTypeKey:
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
-	case pmodel.PartitionTypeList:
+	case ast.PartitionTypeList:
 		idx, err = partitionExpr.locateListPartition(ctx, r)
 		pi := t.Meta().Partition
 		if idx != pi.GetOverlappingDroppingPartitionIdx(idx) {
 			return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 		}
-	case pmodel.PartitionTypeNone:
+	case ast.PartitionTypeNone:
 		idx = 0
 	}
 	if err != nil {
@@ -1464,18 +1476,23 @@ func (t *partitionedTable) locateReorgPartition(ctx expression.EvalContext, r []
 	// all partitions will be reorganized,
 	// so we can use the number in Dropping or AddingDefinitions,
 	// depending on current state.
-	num := len(pi.AddingDefinitions)
-	if pi.DDLState == model.StateDeleteReorganization {
-		num = len(pi.DroppingDefinitions)
+	reorgDefs := pi.AddingDefinitions
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		if pi.DDLState == model.StatePublic {
+			reorgDefs = pi.DroppingDefinitions
+		}
+		fallthrough
+	default:
+		if pi.DDLState == model.StateDeleteReorganization {
+			reorgDefs = pi.DroppingDefinitions
+		}
 	}
-	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(num), columnsSet, r)
+	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(len(reorgDefs)), columnsSet, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if pi.DDLState == model.StateDeleteReorganization {
-		return pi.DroppingDefinitions[idx].ID, nil
-	}
-	return pi.AddingDefinitions[idx].ID, nil
+	return reorgDefs[idx].ID, nil
 }
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
@@ -1571,7 +1588,7 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLonglong))
 			if err != nil {
 				return 0, err
 			}
@@ -1645,7 +1662,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	tblInfo.ID = pi.NewTableID
+	if pi.NewTableID != 0 {
+		tblInfo.ID = pi.NewTableID
+	}
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
@@ -1735,9 +1754,6 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
-		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
 		variable.EnableCheckConstraint.Load() {
@@ -1751,7 +1767,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 	if err != nil {
 		return
 	}
-	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic {
 		return
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
@@ -1761,6 +1777,10 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
+		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+			// Preserve the _tidb_rowid also in the new partition!
+			r = append(r, types.NewIntDatum(recordID.IntValue()))
+		}
 		recordID, err = tbl.addRecord(ctx, txn, r, opt)
 		if err != nil {
 			return
@@ -1872,9 +1892,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(to) {
-		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		variable.EnableCheckConstraint.Load() {
@@ -1888,6 +1905,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
@@ -1933,7 +1951,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 		}
-		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+		if newTo != 0 && !deleteOnly {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
@@ -1960,7 +1978,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if newTo == newFrom {
 			tbl = t.getPartition(newTo)
-			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+			if deleteOnly {
 				err = tbl.RemoveRecord(ctx, txn, h, currData)
 			} else {
 				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
@@ -1976,7 +1994,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+		if !deleteOnly {
 			tbl = t.getPartition(newTo)
 			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {

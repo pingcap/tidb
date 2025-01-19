@@ -84,6 +84,7 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
 	checked     bool
 	colAnalyzed map[int64]bool
@@ -125,6 +126,16 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	}
 	analyzed, ok := m.colAnalyzed[id]
 	return ok && analyzed
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.idxAnalyzed[id]
+		return ok
+	}
+	_, ok := m.colAnalyzed[id]
+	return ok
 }
 
 // InsertCol inserts a column with its meta into the map.
@@ -222,10 +233,7 @@ type HistColl struct {
 
 	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
 	StatsVer int
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Pseudo         bool
+	Pseudo   bool
 
 	/*
 		Fields below are only used in a query, like for estimation, and they will be useless when stored in
@@ -247,12 +255,11 @@ type HistColl struct {
 }
 
 // NewHistColl creates a new HistColl.
-func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
+func NewHistColl(id int64, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
 	return &HistColl{
 		columns:            make(map[int64]*Column, colNum),
 		indices:            make(map[int64]*Index, idxNum),
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -263,12 +270,11 @@ func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, co
 }
 
 // NewHistCollWithColsAndIdxs creates a new HistColl with given columns and indices.
-func NewHistCollWithColsAndIdxs(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
+func NewHistCollWithColsAndIdxs(id int64, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
 	return &HistColl{
 		columns:            cols,
 		indices:            idxs,
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -580,14 +586,13 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        make(map[int64]*Column, len(t.columns)),
-		indices:        make(map[int64]*Index, len(t.indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       make(map[int64]*Column, len(t.columns)),
+		indices:       make(map[int64]*Index, len(t.indices)),
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	for id, col := range t.columns {
 		newHistColl.columns[id] = col.Copy()
@@ -622,14 +627,13 @@ func (t *Table) Copy() *Table {
 // The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        t.columns,
-		indices:        t.indices,
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	nt := &Table{
 		HistColl:              newHistColl,
@@ -811,7 +815,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 // ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
-// The Column should be visible in the table and really has analyzed statistics in the stroage.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we need to load it into memory. The second bool is whether this column has stats in the system table or not.
@@ -819,24 +823,27 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to foce to load the stats.
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, true, true
+		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
 	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
+	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
-	// 1. !ok && hasAnalyzed => need load
-	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
-	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
-	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+	// 1. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 2. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true, true
 	}
 
@@ -914,12 +921,11 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 		}
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		columns:        cols,
+		PhysicalID:    coll.PhysicalID,
+		Pseudo:        coll.Pseudo,
+		RealtimeCount: coll.RealtimeCount,
+		ModifyCount:   coll.ModifyCount,
+		columns:       cols,
 	}
 	return newColl
 }
@@ -980,7 +986,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	}
 	newColl := &HistColl{
 		PhysicalID:         coll.PhysicalID,
-		HavePhysicalID:     coll.HavePhysicalID,
 		Pseudo:             coll.Pseudo,
 		RealtimeCount:      coll.RealtimeCount,
 		ModifyCount:        coll.ModifyCount,
@@ -1002,7 +1007,6 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	pseudoHistColl := HistColl{
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
-		HavePhysicalID:    true,
 		columns:           make(map[int64]*Column, 2),
 		indices:           make(map[int64]*Index, 2),
 		Pseudo:            true,

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,7 +65,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +540,7 @@ func TestSplitbyColon(t *testing.T) {
 		{
 			"123a",
 			[]string{"123a"},
-			[]string{},
+			[]string{""},
 		},
 		{
 			"1a: 2b",
@@ -593,9 +593,16 @@ func TestSplitbyColon(t *testing.T) {
 			[]string{"Time"},
 			[]string{"2021-09-08T14:39:54.506967433+08:00"},
 		},
+		{
+
+			"Cop_proc_avg: 0 Cop_proc_addr: Cop_proc_max: Cop_proc_min: ",
+			[]string{"Cop_proc_avg", "Cop_proc_addr", "Cop_proc_max", "Cop_proc_min"},
+			[]string{"0", "", "", ""},
+		},
 	}
 	for _, c := range cases {
 		resFields, resValues := splitByColon(c.line)
+		logutil.BgLogger().Info(c.line)
 		require.Equal(t, c.fields, resFields)
 		require.Equal(t, c.values, resValues)
 	}

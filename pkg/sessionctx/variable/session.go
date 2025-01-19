@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -340,38 +341,13 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// ColSize is a data struct to store the delta information for a table.
-type ColSize struct {
-	ColID int64
-	Size  int64
-}
-
-// DeltaCols is used to update the delta size for cols.
-type DeltaCols interface {
-	// UpdateColSizeMap is used to update delta map for cols.
-	UpdateColSizeMap(m map[int64]int64) map[int64]int64
-}
-
-// DeltaColsMap implements DeltaCols
-type DeltaColsMap map[int64]int64
-
-// UpdateColSizeMap implements DeltaCols
-func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
-	if m == nil && len(cols) > 0 {
-		m = make(map[int64]int64, len(cols))
-	}
-	for colID, size := range cols {
-		m[colID] += size
-	}
-	return m
-}
-
 // UpdateDeltaForTable updates the delta info for some table.
 // The `cols` argument is used to update the delta size for cols.
 // If `cols` is nil, it means that the delta size for cols is not changed.
 func (tc *TransactionContext) UpdateDeltaForTable(
-	physicalTableID int64, delta int64,
-	count int64, cols DeltaCols,
+	physicalTableID int64,
+	delta int64,
+	count int64,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -382,9 +358,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if cols != nil {
-		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
-	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -811,6 +784,9 @@ type SessionVars struct {
 	// Parameter values for plan cache.
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
+
+	// The Cached Plan for this execution, it should be *plannercore.PlanCacheValue.
+	PlanCacheValue any
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -1708,6 +1684,9 @@ type SessionVars struct {
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
+
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2438,6 +2417,7 @@ func (s *SessionVars) SetStringUserVar(name string, strVal string, collation str
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
+	s.StmtCtx.LastInsertIDSet = true
 	s.StmtCtx.LastInsertID = insertID
 }
 
@@ -2908,7 +2888,6 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 type TableDelta struct {
 	Delta    int64
 	Count    int64
-	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
 }
@@ -2918,7 +2897,6 @@ func (td TableDelta) Clone() TableDelta {
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
@@ -3775,8 +3753,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}

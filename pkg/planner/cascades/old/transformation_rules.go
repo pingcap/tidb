@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -1904,7 +1904,7 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
 	// builds UniqueKey info of innerGroup.
 	innerGroup.BuildKeyInfo()
-	for _, keyInfo := range innerGroup.Prop.Schema.Keys {
+	for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			if !joinKeys.Contains(col) {
@@ -2191,7 +2191,7 @@ func (*TransformAggToProj) Match(expr *memo.ExprIter) bool {
 	childGroup := expr.GetExpr().Children[0]
 	childGroup.BuildKeyInfo()
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
-	for _, key := range childGroup.Prop.Schema.Keys {
+	for _, key := range childGroup.Prop.Schema.PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			return true
 		}

@@ -856,6 +856,7 @@ insert into tx2 values (json_array(922337203685477581)),(json_array(922337203685
 #
 # ordering by a JSON col is not supported in MySQL, and the order is a bit questionable in TiDB.
 # sort by count for test result stability.
+-- replace_regex /\[3\.0\]/[3]/
 select col, count(1) c from tx2 group by col order by c desc;
 
 
@@ -2182,12 +2183,6 @@ DROP TABLE IF EXISTS test.t;
 CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
 INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
-
-# TestIssue41878
-DROP TABLE IF EXISTS test.t;
-CREATE TABLE test.t (c0 decimal(10,0));
-INSERT INTO test.t VALUES (0);
-SELECT c0 FROM test.t WHERE CAST(ATAN2(((t.c0) IS NULL), (- (''))) AS TIME);
 
 # TestIssue56339
 drop table if exists test.t;

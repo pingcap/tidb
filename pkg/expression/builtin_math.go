@@ -1941,7 +1941,7 @@ func (b *builtinRadiansSig) evalReal(ctx EvalContext, row chunk.Row) (float64, b
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return x * math.Pi / 180, false, nil
+	return x * (math.Pi / 180), false, nil
 }
 
 type sinFunctionClass struct {
@@ -2157,13 +2157,14 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
-		return x, false, nil
-	}
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return x, false, nil
 	}
 
 	if d >= 0 {

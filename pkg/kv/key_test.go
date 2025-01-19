@@ -353,7 +353,7 @@ func TestKeyRangeDefinition(t *testing.T) {
 		StartKey: []byte("s2"),
 		EndKey:   []byte("e2"),
 	}}
-	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
+	require.Equal(t, int64(104), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {

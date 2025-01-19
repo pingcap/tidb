@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
@@ -65,7 +65,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -763,7 +765,7 @@ type SchemaTableStorage struct {
 	DataFree      int64  `json:"data_free"`
 }
 
-func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *pmodel.CIStr, table *pmodel.CIStr) (messages []*SchemaTableStorage, err error) {
+func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, table *ast.CIStr) (messages []*SchemaTableStorage, err error) {
 	var s sessiontypes.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
@@ -834,13 +836,13 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	params := mux.Vars(req)
 
 	var (
-		dbName    *pmodel.CIStr
-		tableName *pmodel.CIStr
+		dbName    *ast.CIStr
+		tableName *ast.CIStr
 		isSingle  bool
 	)
 
 	if reqDbName, ok := params[handler.DBName]; ok {
-		cDBName := pmodel.NewCIStr(reqDbName)
+		cDBName := ast.NewCIStr(reqDbName)
 		// all table schemas in a specified database
 		schemaInfo, exists := schema.SchemaByName(cDBName)
 		if !exists {
@@ -851,7 +853,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := pmodel.NewCIStr(reqTableName)
+			cTableName := ast.NewCIStr(reqTableName)
 			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
@@ -950,10 +952,10 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 
 	if dbName, ok := params[handler.DBName]; ok {
-		cDBName := pmodel.NewCIStr(dbName)
+		cDBName := ast.NewCIStr(dbName)
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := pmodel.NewCIStr(tableName)
+			cTableName := ast.NewCIStr(tableName)
 			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
@@ -1049,7 +1051,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1348,7 +1350,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+	regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -1371,7 +1373,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 		if err != nil {
 			return nil, err
 		}
@@ -1957,7 +1959,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	hook := req.FormValue("ddl_hook")
 	switch hook {
 	case "ctc_hook":
-		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			log.Info("on job run before", zap.String("job", job.String()))
 			// Only block the ctc type ddl here.
 			if job.Type != model.ActionModifyColumn {
@@ -1974,7 +1976,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "default_hook":
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 
 	handler.WriteData(w, "success!")

@@ -580,7 +580,7 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
+					`TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11`,
 					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},

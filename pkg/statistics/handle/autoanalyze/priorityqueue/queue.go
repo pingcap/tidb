@@ -16,6 +16,7 @@ package priorityqueue
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -643,7 +644,8 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 					zap.Int64("tableID", job.GetTableID()),
 					zap.String("job", job.String()),
 				)
-				// TODO: Remove this after handling the DDL event.
+				// Delete the job from the queue since its table is missing. This is a safeguard -
+				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
 					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
@@ -651,6 +653,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 						zap.String("job", job.String()),
 					)
 				}
+				continue
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
@@ -751,11 +754,24 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	job.RegisterSuccessHook(func(j AnalysisJob) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil
+		// check is expected when the job finishes after the switch.
+		if pq.syncFields.runningJobs == nil {
+			return
+		}
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
 	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil check
+		// is expected when jobs finish after the switch. Failed jobs will be handled by the next
+		// initialization, so we can safely ignore them here.
+		if pq.syncFields.runningJobs == nil || pq.syncFields.mustRetryJobs == nil {
+			return
+		}
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 		if needRetry {
@@ -798,6 +814,38 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	}
 
 	return pq.syncFields.inner.len(), nil
+}
+
+// Snapshot returns a snapshot of all the jobs in the priority queue.
+func (pq *AnalysisPriorityQueue) Snapshot() (
+	snapshot statstypes.PriorityQueueSnapshot,
+	err error,
+) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return statstypes.PriorityQueueSnapshot{}, errors.New(notInitializedErrMsg)
+	}
+
+	currentJobs := pq.syncFields.inner.list()
+	mustRetryTables := make([]int64, 0, len(pq.syncFields.mustRetryJobs))
+	for tableID := range pq.syncFields.mustRetryJobs {
+		mustRetryTables = append(mustRetryTables, tableID)
+	}
+
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
+	for i, job := range currentJobs {
+		jsonJobs[i] = job.AsJSON()
+	}
+	// Sort by the weight in descending order.
+	sort.Slice(jsonJobs, func(i, j int) bool {
+		return jsonJobs[i].Weight > jsonJobs[j].Weight
+	})
+
+	return statstypes.PriorityQueueSnapshot{
+		CurrentJobs:     jsonJobs,
+		MustRetryTables: mustRetryTables,
+	}, nil
 }
 
 // Close closes the priority queue.
