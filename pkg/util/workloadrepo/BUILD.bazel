@@ -45,6 +45,7 @@ go_test(
     srcs = ["worker_test.go"],
     embed = [":workloadrepo"],
     flaky = True,
+    shard_count = 13,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
