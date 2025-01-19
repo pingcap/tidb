@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
@@ -54,9 +53,9 @@ type DataSource struct {
 	Table         table.Table
 	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
-	DBName        pmodel.CIStr
+	DBName        ast.CIStr
 
-	TableAsName *pmodel.CIStr `hash64-equals:"true"`
+	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
@@ -74,7 +73,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64
-	PartitionNames  []pmodel.CIStr
+	PartitionNames  []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -93,7 +92,7 @@ type DataSource struct {
 	// PreferStoreType means the DataSource is enforced to which storage.
 	PreferStoreType int `hash64-equals:"true"`
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
-	PreferPartitions map[int][]pmodel.CIStr
+	PreferPartitions map[int][]ast.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
 	IS               infoschema.InfoSchema
 	// IsForUpdateRead should be true in either of the following situations

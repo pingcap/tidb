@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -522,7 +521,7 @@ func TestGetDefaultValue(t *testing.T) {
 
 func newCol(name string) *Column {
 	return ToColumn(&model.ColumnInfo{
-		Name:  pmodel.NewCIStr(name),
+		Name:  ast.NewCIStr(name),
 		State: model.StatePublic,
 	})
 }

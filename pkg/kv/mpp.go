@@ -40,7 +40,9 @@ const (
 
 	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
 	MppVersionV2
-	// MppVersionV3
+
+	// MppVersionV3 supports TiFlash version [v9.0, ~], support new serdes format of strings
+	MppVersionV3
 
 	mppVersionMax
 

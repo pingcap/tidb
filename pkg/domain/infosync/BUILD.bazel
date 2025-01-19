@@ -71,7 +71,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/keyspace",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -80,5 +80,33 @@
       "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
       "explain select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
     ]
+  },
+  {
+    "name": "TestVectorSearchHeavyFunction",
+    "cases": [
+      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_dims(vec) limit 10",
+      "explain select id from t1 order by vec_l2_norm(vec) limit 10",
+      "explain select id from t1 order by MOD(a, 3) limit 10",
+
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_l1_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_l2_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_negative_inner_product(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_dims(vec) as d from t1 order by d limit 10",
+      "explain select id, vec_l2_norm(vec) as d from t1 order by d limit 10",
+      "explain select id, MOD(a, 3) as d from t1 order by d limit 10",
+
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+      "explain select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+      "explain select * from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+      "explain select * from t1 order by vec_dims(vec) limit 10",
+      "explain select * from t1 order by vec_l2_norm(vec) limit 10",
+      "explain select * from t1 order by MOD(a, 3) limit 10"
+    ]
   }
 ]

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -347,7 +346,7 @@ func TestDoDDLJobQuit(t *testing.T) {
 	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: ast.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -685,6 +684,7 @@ func TestRequestSource(t *testing.T) {
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				tikvrpc.AttachContext(req, req.Context)
 				requestSource := ""
 				readType := ""
 				switch r := req.Req.(type) {

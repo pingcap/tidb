@@ -13,7 +13,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

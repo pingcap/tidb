@@ -11,7 +11,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/config",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/streamhelper/config",
         "//pkg/parser/terror",
         "//pkg/util/logutil",
         "//pkg/util/tiflashcompute",

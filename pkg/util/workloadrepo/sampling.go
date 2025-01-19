@@ -44,9 +44,7 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 
 func (w *worker) startSample(ctx context.Context) func() {
 	return func() {
-		w.Lock()
-		w.samplingTicker = time.NewTicker(time.Duration(w.samplingInterval) * time.Second)
-		w.Unlock()
+		w.resetSamplingInterval(w.samplingInterval)
 
 		for {
 			select {
@@ -56,8 +54,8 @@ func (w *worker) startSample(ctx context.Context) func() {
 				// sample thread
 				var wg util.WaitGroupWrapper
 
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
+				for rtIdx := range w.workloadTables {
+					rt := &w.workloadTables[rtIdx]
 					if rt.tableType != samplingTable {
 						continue
 					}
@@ -73,10 +71,6 @@ func (w *worker) startSample(ctx context.Context) func() {
 }
 
 func (w *worker) resetSamplingInterval(newRate int32) {
-	if w.samplingTicker == nil {
-		return
-	}
-
 	if newRate == 0 {
 		w.samplingTicker.Stop()
 	} else {
@@ -95,7 +89,9 @@ func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 
 	if int32(n) != w.samplingInterval {
 		w.samplingInterval = int32(n)
-		w.resetSamplingInterval(w.samplingInterval)
+		if w.samplingTicker != nil {
+			w.resetSamplingInterval(w.samplingInterval)
+		}
 	}
 
 	return nil
