@@ -41,10 +41,11 @@ go_library(
 
 go_test(
     name = "workloadrepo_test",
-    timeout = "long",
+    timeout = "short",
     srcs = ["worker_test.go"],
     embed = [":workloadrepo"],
     flaky = True,
+    shard_count = 13,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
