@@ -507,7 +507,6 @@ func TestFlushPrivilegesPanic(t *testing.T) {
 }
 
 func TestDropPartitionStats(t *testing.T) {
-	t.Skip()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(t, store)
