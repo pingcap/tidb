@@ -1812,14 +1812,14 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 	if tiflashNetworkStats == nil {
 		return
 	}
-	var tikvExecDetail util.ExecDetails
+	var tikvExecDetail *util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw == nil {
 		tikvExecDetailRaw = &util.ExecDetails{}
 		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
 	}
 
-	tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
 	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
 

@@ -65,20 +65,6 @@ func mockTaskZoneInfoHelper(isRoot bool, taskZone string, tidbZone string, store
 	return helper
 }
 
-/*func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
-	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
-		for i := 0; i < slots; i++ {
-			sameZoneFlags = append(sameZoneFlags, true)
-		}
-		return true, sameZoneFlags
-	}
-	if h.isRoot && exec.Tp == tipb.ExecType_TypeExchangeSender {
-		sameZoneFlags = append(sameZoneFlags, len(h.tidbZone) == 0 || h.currentTaskZone == h.tidbZone)
-		return true, sameZoneFlags
-	}
-	return false, sameZoneFlags
-}*/
-
 func TestZoneHelperTryQuickFill(t *testing.T) {
 	slots := 3
 	allTiflashZoneInfo := make(map[string]string, slots)

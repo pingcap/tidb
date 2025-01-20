@@ -1432,7 +1432,10 @@ type TiFlashNetworkTrafficSummary struct {
 }
 
 // UpdateTiKVExecDetails update tikvDetails with TiFlashNetworkTrafficSummary's values
-func (networkTraffic *TiFlashNetworkTrafficSummary) UpdateTiKVExecDetails(tikvDetails util.ExecDetails) {
+func (networkTraffic *TiFlashNetworkTrafficSummary) UpdateTiKVExecDetails(tikvDetails *util.ExecDetails) {
+	if tikvDetails == nil {
+		return
+	}
 	tikvDetails.UnpackedBytesSentMPPCrossZone += int64(networkTraffic.interZoneSendBytes)
 	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.interZoneSendBytes)
 	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.innerZoneSendBytes)
