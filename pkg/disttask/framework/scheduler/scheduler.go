@@ -17,7 +17,6 @@ package scheduler
 import (
 	"context"
 	"math/rand"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -508,11 +507,11 @@ func (s *BaseScheduler) scheduleSubTask(
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(adjustedEligibleNodes)
-		if len(metas) == 1 {
-			// sort the adjustedEligibleNodes
-			sort.Strings(adjustedEligibleNodes)
-			pos = int(task.ID) % len(adjustedEligibleNodes)
-		}
+		//if len(metas) == 1 {
+		//	// sort the adjustedEligibleNodes
+		//	sort.Strings(adjustedEligibleNodes)
+		//	pos = int(task.ID) % len(adjustedEligibleNodes)
+		//}
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(

@@ -91,7 +91,7 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 		// that memory.MemTotal() will not fail.
 		return nil, err
 	}
-	totalCPU := cpu.GetCPUCount() * 1000
+	totalCPU := cpu.GetCPUCount()
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
