@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -220,11 +219,19 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		}
 
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-		snapshot := sctx.GetStore().GetSnapshot(kv.NewVersion(currentTs))
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		m := meta.NewReader(snapshot)
+		dbs := is.AllSchemas()
+		maxDBID := int64(0)
+		for _, db := range dbs {
+			if util.IsMemOrSysDB(db.Name.L) {
+				continue
+			}
+			if db.ID > maxDBID {
+				maxDBID = db.ID
+			}
+		}
 		tbls := make([]*model.TableInfo, 0, 1024)
-		if err := m.IterAllTables(func(info *model.TableInfo) error {
+		if err := meta.IterAllTables(pq.ctx, sctx.GetStore(), currentTs, 15, func(info *model.TableInfo) error {
 			// Ignore the memory and system database.
 			db, ok := is.SchemaByID(info.DBID)
 			if !ok || util.IsMemOrSysDB(db.Name.L) {
@@ -232,7 +239,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 			}
 			tbls = append(tbls, info)
 			return nil
-		}); err != nil {
+		}, maxDBID); err != nil {
 			return errors.Trace(err)
 		}
 
