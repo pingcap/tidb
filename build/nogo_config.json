@@ -351,6 +351,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code",
       ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
     },

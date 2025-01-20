@@ -17,7 +17,7 @@ package resourcegroup
 import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // MaxGroupNameLength is max length of the name of a resource group
@@ -49,17 +49,17 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		runaway.Rule.ProcessedKeys = options.Runaway.ProcessedKeys
 		runaway.Rule.RequestUnit = options.Runaway.RequestUnit
 		// Update the action settings.
-		if options.Runaway.Action == pmodel.RunawayActionNone {
+		if options.Runaway.Action == ast.RunawayActionNone {
 			return nil, ErrUnknownResourceGroupRunawayAction
 		}
 		runaway.Action = rmpb.RunawayAction(options.Runaway.Action)
-		if options.Runaway.Action == pmodel.RunawayActionSwitchGroup && len(options.Runaway.SwitchGroupName) == 0 {
+		if options.Runaway.Action == ast.RunawayActionSwitchGroup && len(options.Runaway.SwitchGroupName) == 0 {
 			return nil, ErrUnknownResourceGroupRunawaySwitchGroupName
 		}
 		// TODO: validate the switch group name to ensure it exists.
 		runaway.SwitchGroupName = options.Runaway.SwitchGroupName
 		// Update the watch settings.
-		if options.Runaway.WatchType != pmodel.WatchNone {
+		if options.Runaway.WatchType != ast.WatchNone {
 			runaway.Watch = &rmpb.RunawayWatch{}
 			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)
 			runaway.Watch.LastingDurationMs = options.Runaway.WatchDurationMs

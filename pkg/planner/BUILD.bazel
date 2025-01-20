@@ -11,7 +11,6 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/resolve",

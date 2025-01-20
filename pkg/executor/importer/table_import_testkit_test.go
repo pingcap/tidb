@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
@@ -80,17 +79,17 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
-	dbInfo, ok := do.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	dbInfo, ok := do.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
-				Name: pmodel.NewCIStr("t"),
+				Name: ast.NewCIStr("t"),
 			},
 			DBInfo: &model.DBInfo{
-				Name: pmodel.NewCIStr("test"),
+				Name: ast.NewCIStr("test"),
 				ID:   dbInfo.ID,
 			},
 		},

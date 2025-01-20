@@ -17,13 +17,11 @@ package ttlworker
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -199,17 +197,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		))
 	}
 
-	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
-	if _, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
+	sess, restoreSession, err := NewScanSession(rawSess, t.tbl, t.ExpireTime)
+	if err != nil {
 		return t.result(err)
 	}
+	defer restoreSession()
 
-	defer func() {
-		_, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency="+strconv.Itoa(origConcurrency))
-		terror.Log(err)
-	}()
-
-	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
 	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
 		return t.result(err)

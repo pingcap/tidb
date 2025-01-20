@@ -43,8 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -3228,7 +3228,7 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, ast.AllColumns.String())
 
 	// Check if tidb_opt_projection_push_down exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_opt_projection_push_down to Off since this is the old behavior before we introduce this variable.
@@ -3670,7 +3670,7 @@ func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	for _, db := range dbs {
 		for _, t := range db.TableInfos {
 			pi := t.GetPartitionInfo()
-			if pi == nil || pi.Type != model.PartitionTypeList {
+			if pi == nil || pi.Type != ast.PartitionTypeList {
 				continue
 			}
 			tbl, ok := is.TableByID(ctx, t.ID)
