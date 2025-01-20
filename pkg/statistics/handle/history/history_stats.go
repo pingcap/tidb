@@ -80,7 +80,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 	if !enforce {
 		for _, tableID := range tableIDs {
 			tbl, ok := sh.statsHandle.Get(tableID)
-			if !ok || !tbl.IsInitialized() {
+			if tableID == 0 || !ok || !tbl.IsInitialized() {
 				continue
 			}
 			filteredTableIDs = append(filteredTableIDs, tableID)

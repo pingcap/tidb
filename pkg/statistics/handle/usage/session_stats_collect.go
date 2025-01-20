@@ -191,12 +191,12 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
 		for _, update := range batchUpdates {
 			if !update.IsLocked {
+				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+					panic("panic when record historical stats meta")
+				})
 				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
 		}
-		failpoint.Inject("panic-when-record-historical-stats-meta", func() {
-			panic("panic when record historical stats meta")
-		})
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
 		if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
 			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
