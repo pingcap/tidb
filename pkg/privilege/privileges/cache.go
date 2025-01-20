@@ -2058,7 +2058,8 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the users' privilege info form kv storage.
 func (h *Handle) UpdateAll() error {
-	var priv MySQLPrivilege
+	logutil.BgLogger().Warn("update all called")
+	priv := newMySQLPrivilege()
 	err := priv.LoadAll(h.sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -2076,6 +2077,9 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
+	if len(userList) > 200 {
+		logutil.BgLogger().Warn("UpdateAllActive called with a log active user", zap.Int("len", len(userList)))
+	}
 
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
@@ -2089,6 +2093,9 @@ func (h *Handle) UpdateAllActive() error {
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
+	if len(userList) > 200 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
 	h.fullData.Store(false)
 	needReload := false
 	for _, user := range userList {
