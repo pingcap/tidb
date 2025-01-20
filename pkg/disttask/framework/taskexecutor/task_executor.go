@@ -50,7 +50,7 @@ var (
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
-	DetectParamModifyInterval = 10 * time.Second
+	DetectParamModifyInterval = 5 * time.Second
 )
 
 var (
