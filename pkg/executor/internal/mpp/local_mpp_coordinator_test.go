@@ -74,6 +74,9 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	sender := &tipb.Executor{
 		ExecutorId: &exchangeSenderID,
 		Tp:         tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: &tipb.ExchangeSender{
+			UpstreamCteTaskMeta: nil,
+		},
 	}
 	sameZoneFlags := make([]bool, 0, slots)
 	quickFill := false
@@ -123,6 +126,9 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	receiver := &tipb.Executor{
 		ExecutorId: &exchangeReceiverID,
 		Tp:         tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: &tipb.ExchangeReceiver{
+			OriginalCtePrdocuerTaskMeta: nil,
+		},
 	}
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(receiver, slots, sameZoneFlags)
 	require.False(t, quickFill)
