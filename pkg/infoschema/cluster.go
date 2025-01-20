@@ -42,6 +42,8 @@ const (
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
 	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
+	// ClusterTableTiDBStatementsStats is the string constant of the cluster statement stats table.
+	ClusterTableTiDBStatementsStats = "CLUSTER_TIDB_STATEMENTS_STATS"
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
@@ -54,6 +56,8 @@ const (
 	ClusterTableMemoryUsageOpsHistory = "CLUSTER_MEMORY_USAGE_OPS_HISTORY"
 	// ClusterTableTiDBIndexUsage is a table to show the usage stats of indexes across the whole cluster.
 	ClusterTableTiDBIndexUsage = "CLUSTER_TIDB_INDEX_USAGE"
+	// ClusterTableTiDBPlanCache is the plan cache status of tidb cluster.
+	ClusterTableTiDBPlanCache = "CLUSTER_TIDB_PLAN_CACHE"
 )
 
 // memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
@@ -63,12 +67,14 @@ var memTableToAllTiDBClusterTables = map[string]string{
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
 	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
+	TableTiDBStatementsStats:      ClusterTableTiDBStatementsStats,
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
 	TableTrxSummary:               ClusterTableTrxSummary,
 	TableMemoryUsage:              ClusterTableMemoryUsage,
 	TableMemoryUsageOpsHistory:    ClusterTableMemoryUsageOpsHistory,
 	TableTiDBIndexUsage:           ClusterTableTiDBIndexUsage,
+	TableTiDBPlanCache:            ClusterTableTiDBPlanCache,
 }
 
 // memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
@@ -108,8 +114,9 @@ func init() {
 	}
 }
 
-// isClusterTableByName used to check whether the table is a cluster memory table.
-func isClusterTableByName(dbName, tableName string) bool {
+// IsClusterTableByName used to check whether the table is a cluster memory table.
+// Export for PhysicalTableScan.ExplainID
+func IsClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:

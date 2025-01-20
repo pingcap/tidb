@@ -56,8 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -71,7 +70,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -287,6 +287,8 @@ type ControllerParam struct {
 	TaskType string
 }
 
+var componentName = caller.Component("lightning-importer")
+
 // NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
@@ -364,7 +366,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -408,6 +410,12 @@ func NewImportControllerWithPauser(
 		}
 		p.TaskType = taskType
 
+		// TODO: we should not need to check config here.
+		// Instead, we should perform the following during switch mode:
+		//  1. for each tikv, try to switch mode without any ranges.
+		//  2. if it returns normally, it means the store is using a raft-v1 engine.
+		//  3. if it returns the `partitioned-raft-kv only support switch mode with range set` error,
+		//     it means the store is a raft-v2 engine and we will include the ranges from now on.
 		isRaftKV2, err := common.IsRaftKV2(ctx, db)
 		if err != nil {
 			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
@@ -474,7 +482,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
 	)
 
 	rc := &Controller{
@@ -583,324 +591,21 @@ outside:
 	return errors.Trace(err)
 }
 
-type schemaStmtType int
-
-// String implements fmt.Stringer interface.
-func (stmtType schemaStmtType) String() string {
-	switch stmtType {
-	case schemaCreateDatabase:
-		return "restore database schema"
-	case schemaCreateTable:
-		return "restore table schema"
-	case schemaCreateView:
-		return "restore view schema"
-	}
-	return "unknown statement of schema"
-}
-
-const (
-	schemaCreateDatabase schemaStmtType = iota
-	schemaCreateTable
-	schemaCreateView
-)
-
-type schemaJob struct {
-	dbName   string
-	tblName  string // empty for create db jobs
-	stmtType schemaStmtType
-	stmts    []string
-}
-
-type restoreSchemaWorker struct {
-	ctx    context.Context
-	quit   context.CancelFunc
-	logger log.Logger
-	jobCh  chan *schemaJob
-	errCh  chan error
-	wg     sync.WaitGroup
-	db     *sql.DB
-	parser *parser.Parser
-	store  storage.ExternalStorage
-}
-
-func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
-	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	job.stmts = stmts
-	return worker.appendJob(job)
-}
-
-func (worker *restoreSchemaWorker) makeJobs(
-	dbMetas []*mydump.MDDatabaseMeta,
-	getDBs func(context.Context) ([]*model.DBInfo, error),
-	getTables func(context.Context, string) ([]*model.TableInfo, error),
-) error {
-	defer func() {
-		close(worker.jobCh)
-		worker.quit()
-	}()
-
-	if len(dbMetas) == 0 {
-		return nil
-	}
-
-	// 1. restore databases, execute statements concurrency
-
-	dbs, err := getDBs(worker.ctx)
-	if err != nil {
-		worker.logger.Warn("get databases from downstream failed", zap.Error(err))
-	}
-	dbSet := make(set.StringSet, len(dbs))
-	for _, db := range dbs {
-		dbSet.Insert(db.Name.L)
-	}
-
-	for _, dbMeta := range dbMetas {
-		// if downstream already has this database, we can skip ddl job
-		if dbSet.Exist(strings.ToLower(dbMeta.Name)) {
-			worker.logger.Info(
-				"database already exists in downstream, skip processing the source file",
-				zap.String("db", dbMeta.Name),
-			)
-			continue
-		}
-
-		sql := dbMeta.GetSchema(worker.ctx, worker.store)
-		err = worker.addJob(sql, &schemaJob{
-			dbName:   dbMeta.Name,
-			tblName:  "",
-			stmtType: schemaCreateDatabase,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	err = worker.wait()
-	if err != nil {
-		return err
-	}
-
-	// 2. restore tables, execute statements concurrency
-
-	for _, dbMeta := range dbMetas {
-		// we can ignore error here, and let check failed later if schema not match
-		tables, err := getTables(worker.ctx, dbMeta.Name)
-		if err != nil {
-			worker.logger.Warn("get tables from downstream failed", zap.Error(err))
-		}
-		tableSet := make(set.StringSet, len(tables))
-		for _, t := range tables {
-			tableSet.Insert(t.Name.L)
-		}
-		for _, tblMeta := range dbMeta.Tables {
-			if tableSet.Exist(strings.ToLower(tblMeta.Name)) {
-				// we already has this table in TiDB.
-				// we should skip ddl job and let SchemaValid check.
-				worker.logger.Info(
-					"table already exists in downstream, skip processing the source file",
-					zap.String("db", dbMeta.Name),
-					zap.String("table", tblMeta.Name),
-				)
-				continue
-			} else if tblMeta.SchemaFile.FileMeta.Path == "" {
-				return common.ErrSchemaNotExists.GenWithStackByArgs(dbMeta.Name, tblMeta.Name)
-			}
-			sql, err := tblMeta.GetSchema(worker.ctx, worker.store)
-			if err != nil {
-				return err
-			}
-			if sql != "" {
-				err = worker.addJob(sql, &schemaJob{
-					dbName:   dbMeta.Name,
-					tblName:  tblMeta.Name,
-					stmtType: schemaCreateTable,
-				})
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-	err = worker.wait()
-	if err != nil {
-		return err
-	}
-	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
-	for _, dbMeta := range dbMetas {
-		for _, viewMeta := range dbMeta.Views {
-			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
-			if sql != "" {
-				err = worker.addJob(sql, &schemaJob{
-					dbName:   dbMeta.Name,
-					tblName:  viewMeta.Name,
-					stmtType: schemaCreateView,
-				})
-				if err != nil {
-					return err
-				}
-				// we don't support restore views concurrency, cauz it maybe will raise a error
-				err = worker.wait()
-				if err != nil {
-					return err
-				}
-			}
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (worker *restoreSchemaWorker) doJob() {
-	var session *sql.Conn
-	defer func() {
-		if session != nil {
-			_ = session.Close()
-		}
-	}()
-loop:
-	for {
-		select {
-		case <-worker.ctx.Done():
-			// don't `return` or throw `worker.ctx.Err()`here,
-			// if we `return`, we can't mark cancelled jobs as done,
-			// if we `throw(worker.ctx.Err())`, it will be blocked to death
-			break loop
-		case job := <-worker.jobCh:
-			if job == nil {
-				// successful exit
-				return
-			}
-			var err error
-			if session == nil {
-				session, err = func() (*sql.Conn, error) {
-					return worker.db.Conn(worker.ctx)
-				}()
-				if err != nil {
-					worker.wg.Done()
-					worker.throw(err)
-					// don't return
-					break loop
-				}
-			}
-			logger := worker.logger.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
-			sqlWithRetry := common.SQLWithRetry{
-				Logger: worker.logger,
-				DB:     session,
-			}
-			for _, stmt := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
-				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
-				if err != nil {
-					// try to imitate IF NOT EXISTS behavior for parsing errors
-					exists := false
-					switch job.stmtType {
-					case schemaCreateDatabase:
-						var err2 error
-						exists, err2 = common.SchemaExists(worker.ctx, session, job.dbName)
-						if err2 != nil {
-							task.Error("failed to check database existence", zap.Error(err2))
-						}
-					case schemaCreateTable:
-						exists, _ = common.TableExists(worker.ctx, session, job.dbName, job.tblName)
-					}
-					if exists {
-						err = nil
-					}
-				}
-				task.End(zap.ErrorLevel, err)
-
-				if err != nil {
-					err = common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
-					worker.wg.Done()
-					worker.throw(err)
-					// don't return
-					break loop
-				}
-			}
-			worker.wg.Done()
-		}
-	}
-	// mark the cancelled job as `Done`, a little tricky,
-	// cauz we need make sure `worker.wg.Wait()` wouldn't blocked forever
-	for range worker.jobCh {
-		worker.wg.Done()
-	}
-}
-
-func (worker *restoreSchemaWorker) wait() error {
-	// avoid to `worker.wg.Wait()` blocked forever when all `doJob`'s goroutine exited.
-	// don't worry about goroutine below, it never become a zombie,
-	// cauz we have mechanism to clean cancelled jobs in `worker.jobCh`.
-	// means whole jobs has been send to `worker.jobCh` would be done.
-	waitCh := make(chan struct{})
-	go func() {
-		worker.wg.Wait()
-		close(waitCh)
-	}()
-	select {
-	case err := <-worker.errCh:
-		return err
-	case <-worker.ctx.Done():
-		return worker.ctx.Err()
-	case <-waitCh:
-		return nil
-	}
-}
-
-func (worker *restoreSchemaWorker) throw(err error) {
-	select {
-	case <-worker.ctx.Done():
-		// don't throw `worker.ctx.Err()` again, it will be blocked to death.
-		return
-	case worker.errCh <- err:
-		worker.quit()
-	}
-}
-
-func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
-	worker.wg.Add(1)
-	select {
-	case err := <-worker.errCh:
-		// cancel the job
-		worker.wg.Done()
-		return err
-	case <-worker.ctx.Done():
-		// cancel the job
-		worker.wg.Done()
-		return errors.Trace(worker.ctx.Err())
-	case worker.jobCh <- job:
-		return nil
-	}
-}
-
 func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// create table with schema file
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
-	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
-	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
-	childCtx, cancel := context.WithCancel(ctx)
-	p := parser.New()
-	p.SetSQLMode(rc.cfg.TiDB.SQLMode)
-	worker := restoreSchemaWorker{
-		ctx:    childCtx,
-		quit:   cancel,
-		logger: log.FromContext(ctx),
-		jobCh:  make(chan *schemaJob, concurrency),
-		errCh:  make(chan error),
-		db:     rc.db,
-		parser: p,
-		store:  rc.store,
-	}
-	for i := 0; i < concurrency; i++ {
-		go worker.doJob()
-	}
-	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteDBModels, rc.preInfoGetter.FetchRemoteTableModels)
-	logTask.End(zap.ErrorLevel, err)
+	logger := log.FromContext(ctx)
+	// the minimum 4 comes the fact that when connect to non-owner TiDB, the max
+	// QPS is 2 per connection due to polling every 500ms.
+	concurrency := max(2*rc.cfg.App.RegionConcurrency, 4)
+	// sql.DB is a connection pool, we set it to concurrency + 1(for job generator)
+	// to reuse connections, as we might call db.Conn/conn.Close many times.
+	// there's no API to get sql.DB.MaxIdleConns, so we revert to its default which is 2
+	rc.db.SetMaxIdleConns(concurrency + 1)
+	defer rc.db.SetMaxIdleConns(2)
+	schemaImp := mydump.NewSchemaImporter(logger, rc.cfg.TiDB.SQLMode, rc.db, rc.store, concurrency)
+	err := schemaImp.Run(ctx, rc.dbMetas)
 	if err != nil {
 		return err
 	}
@@ -940,8 +645,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
-	if err := rc.loadDesiredTableInfos(ctx); err != nil {
-		return err
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		if err := rc.loadDesiredTableInfos(ctx); err != nil {
+			return err
+		}
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
@@ -1474,7 +1181,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1654,7 +1361,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err := clientv3.New(clientv3.Config{
+		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
@@ -1786,19 +1493,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for i, fi := range tableMeta.DataFiles {
+				for _, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if m, ok := metric.FromContext(ctx); ok {
-							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
-						}
-						fi.FileMeta.Rows = numberRows
-						tableMeta.DataFiles[i] = fi
-					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
@@ -2217,6 +1913,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
+				if err := rc.checkPDTiDBFromSameCluster(ctx); err != nil {
+					return common.ErrCheckPDTiDBFromSameCluster.Wrap(err).GenWithStackByArgs()
+				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
 			if err := rc.checkCDCPiTR(ctx); err != nil {
@@ -2288,20 +1987,17 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
-	// We need to update the AllocBase every time we've finished a file.
-	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
-	// or integer primary key), which can only be obtained by reading all data.
-
-	var base int64
-	if t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
-	} else {
-		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
-	}
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
-			AllocBase: base,
+			AutoRandBase:  t.alloc.Get(autoid.AutoRandomType).Base(),
+			AutoIncrBase:  t.alloc.Get(autoid.AutoIncrementType).Base(),
+			AutoRowIDBase: t.alloc.Get(autoid.RowIDAllocType).Base(),
 		},
 	}
 	rc.saveCpCh <- saveCp{

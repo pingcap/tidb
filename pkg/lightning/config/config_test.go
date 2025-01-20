@@ -81,6 +81,30 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
+func TestStrictFormat(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+
+	cfg := NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.StrictFormat = true
+
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
+	t.Log(err.Error())
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	err = cfg.Adjust(context.Background())
+	require.NoError(t, err)
+}
+
 func TestPausePDSchedulerScope(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
@@ -385,6 +409,17 @@ func TestAdjustSecuritySection(t *testing.T) {
 			`,
 			expectedCA:     "",
 			hasTLS:         true,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "preferred"
+				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         true,
 			fallback2NoTLS: true,
 		},
 		{
@@ -393,6 +428,29 @@ func TestAdjustSecuritySection(t *testing.T) {
 				[tidb]
 				tls = "false"
 				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "false"
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca2.pem"
+				[tidb]
+				tls = "false"
 			`,
 			expectedCA:     "",
 			hasTLS:         false,
@@ -418,6 +476,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
 		}
 		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
+		// test to see if the security ca-path is affected when tls is false.
+		if cfg.TiDB.TLS == "false" {
+			beforeAjustCfg := NewConfig()
+			assignMinimalLegalValue(beforeAjustCfg)
+			beforeAjustCfg.TiDB.DistSQLScanConcurrency = 1
+			err = beforeAjustCfg.LoadFromTOML([]byte(tc.input))
+			require.NoError(t, err, comment)
+
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
+			require.Equal(t, "", cfg.TiDB.Security.CAPath, comment)
+			require.Equal(t, beforeAjustCfg.Security.CAPath, cfg.Security.CAPath, comment)
+		}
 	}
 	// test different tls config name
 	cfg := NewConfig()
@@ -645,7 +715,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		},
 		{
 			TOMLStr:      `max-error = "abcde"`,
-			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			ExpectErrStr: "toml: line 1 (last key \"max-error\"): invalid max-error 'abcde', should be an integer or a map of string:int64",
 			CaseName:     "Abnormal_String",
 		},
 		{
@@ -896,13 +966,13 @@ func TestTomlPostRestore(t *testing.T) {
 		[post-restore]
 		checksum = "req"
 	`))
-	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.checksum\"): invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		analyze = 123
 	`))
-	require.EqualError(t, err, "invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.analyze\"): invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
 
 	kvMap := map[string]PostOpLevel{
 		`"off"`:      OpLevelOff,
@@ -967,6 +1037,20 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestAdjustLogicalImportPrepStmt(t *testing.T) {
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, false, cfg.TikvImporter.LogicalImportPrepStmt)
+
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, true, cfg.TikvImporter.LogicalImportPrepStmt)
 }
 
 func TestAdjustConflictStrategy(t *testing.T) {
@@ -1042,16 +1126,21 @@ func TestAdjustMaxRecordRows(t *testing.T) {
 
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
+
+	cfg.Conflict.MaxRecordRows = -1
+	cfg.Conflict.Strategy = ReplaceOnDup
+	require.NoError(t, cfg.Adjust(ctx))
+	require.EqualValues(t, 10000, cfg.Conflict.MaxRecordRows)
+
+	cfg.Conflict.MaxRecordRows = -1
 	cfg.Conflict.Threshold = 9999
-
-	cfg.Conflict.MaxRecordRows = -1
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, int64(100), cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 9999, cfg.Conflict.MaxRecordRows)
 
-	cfg.Conflict.MaxRecordRows = -1
-	cfg.App.MaxError.Syntax.Store(1000)
+	cfg.Conflict.MaxRecordRows = 1000
+	cfg.Conflict.Threshold = 100
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, int64(1000), cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 100, cfg.Conflict.MaxRecordRows)
 }
 
 func TestRemoveAllowAllFiles(t *testing.T) {
@@ -1290,35 +1379,37 @@ func TestAdjustConflict(t *testing.T) {
 
 	require.NoError(t, dra.FromStringValue("REPLACE"))
 	cfg.Conflict.Strategy = dra
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
-	require.Equal(t, int64(math.MaxInt64), cfg.Conflict.Threshold)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 10000, cfg.Conflict.Threshold)
 
 	require.NoError(t, dra.FromStringValue("IGNORE"))
 	cfg.Conflict.Strategy = dra
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.Conflict.Strategy = ErrorOnDup
 	cfg.Conflict.Threshold = 1
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.threshold cannot be set when use conflict.strategy = "error"`)
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter), `conflict.threshold cannot be set when use conflict.strategy = "error"`)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.MaxRecordRows = -1
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
-	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	cfg.Conflict.MaxRecordRows = 2
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.max-record-rows (2) cannot be larger than conflict.threshold (1)`)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 }
 
 func TestAdjustBlockSize(t *testing.T) {

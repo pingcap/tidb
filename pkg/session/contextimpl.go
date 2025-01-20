@@ -15,9 +15,8 @@
 package session
 
 import (
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/plannersession"
 )
 
 var _ planctx.PlanContext = &planContextImpl{}
@@ -27,25 +26,13 @@ var _ planctx.PlanContext = &planContextImpl{}
 // the `session` here to make it safe for casting.
 type planContextImpl struct {
 	*session
-	*planctximpl.PlanCtxExtendedImpl
+	*plannersession.PlanCtxExtended
 }
 
 // NewPlanContextImpl creates a new PlanContextImpl.
 func newPlanContextImpl(s *session) *planContextImpl {
 	return &planContextImpl{
-		session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
-	}
-}
-
-type expressionContextImpl struct {
-	*session
-	*exprctximpl.ExprCtxExtendedImpl
-}
-
-func newExpressionContextImpl(s *session) *expressionContextImpl {
-	return &expressionContextImpl{
-		session:             s,
-		ExprCtxExtendedImpl: exprctximpl.NewExprExtendedImpl(s),
+		session:         s,
+		PlanCtxExtended: plannersession.NewPlanCtxExtended(s),
 	}
 }

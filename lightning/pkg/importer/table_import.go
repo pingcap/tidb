@@ -47,7 +47,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -92,7 +92,7 @@ func NewTableImporter(
 	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocatorsWithBase(tableInfo.Core.SepAutoInc(), cp.AutoRandBase, cp.AutoIncrBase, cp.AutoRowIDBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -143,12 +143,15 @@ func (tr *TableImporter) importTable(
 		}
 
 		// fetch the max chunk row_id max value as the global max row_id
-		rowIDMax := int64(0)
+		requiredRowIDCnt := int64(0)
 		for _, engine := range cp.Engines {
-			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
-				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
+			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > requiredRowIDCnt {
+				requiredRowIDCnt = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		tr.logger.Info("estimated required row id count",
+			zap.String("table", tr.tableName),
+			zap.Int64("count", requiredRowIDCnt))
 		versionStr, err := version.FetchVersion(ctx, rc.db)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -163,7 +166,7 @@ func (tr *TableImporter) importTable(
 				return false, err
 			}
 
-			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, requiredRowIDCnt)
 			if err != nil {
 				return false, err
 			}
@@ -187,22 +190,31 @@ func (tr *TableImporter) importTable(
 		}
 		web.BroadcastTableCheckpoint(tr.tableName, cp)
 
-		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+		// rebase the allocator based on the max ID from table info.
+		ti := tr.tableInfo.Core
+		if ti.ContainsAutoRandomBits() {
+			cp.AutoRandBase = max(cp.AutoRandBase, ti.AutoRandID)
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AutoRandBase, false); err != nil {
 				return false, err
 			}
 		} else {
-			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+			if ti.GetAutoIncrementColInfo() != nil && ti.SepAutoInc() {
+				cp.AutoIncrBase = max(cp.AutoIncrBase, ti.AutoIncID)
+				if err := tr.alloc.Get(autoid.AutoIncrementType).Rebase(context.Background(), cp.AutoIncrBase, false); err != nil {
+					return false, err
+				}
+			}
+			cp.AutoRowIDBase = max(cp.AutoRowIDBase, ti.AutoIncID)
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AutoRowIDBase, false); err != nil {
 				return false, err
 			}
 		}
 		rc.saveCpCh <- saveCp{
 			tableName: tr.tableName,
 			merger: &checkpoints.RebaseCheckpointMerger{
-				AllocBase: cp.AllocBase,
+				AutoRandBase:  cp.AutoRandBase,
+				AutoIncrBase:  cp.AutoIncrBase,
+				AutoRowIDBase: cp.AutoRowIDBase,
 			},
 		}
 	}
@@ -645,10 +657,9 @@ func (tr *TableImporter) preprocessEngine(
 	hasAutoIncrementAutoID := common.TableHasAutoRowID(tr.tableInfo.Core) &&
 		tr.tableInfo.Core.AutoRandomBits == 0 && tr.tableInfo.Core.ShardRowIDBits == 0 &&
 		tr.tableInfo.Core.Partition == nil
-	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: hasAutoIncrementAutoID,
-		TableName:  tr.tableName,
-	}
+	dataWriterCfg := &backend.LocalWriterConfig{}
+	dataWriterCfg.Local.IsKVSorted = hasAutoIncrementAutoID
+	dataWriterCfg.TiDB.TableName = tr.tableName
 
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
@@ -758,7 +769,9 @@ ChunkLoop:
 			break
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName})
+		writerCfg := &backend.LocalWriterConfig{}
+		writerCfg.TiDB.TableName = tr.tableName
+		indexWriter, err := indexEngine.LocalWriter(ctx, writerCfg)
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
 			setError(err)
@@ -953,26 +966,30 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		tblInfo := tr.tableInfo.Core
 		var err error
+		// TODO why we have to rebase id for tidb backend??? remove it later.
 		if tblInfo.ContainsAutoRandomBits() {
 			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle.
-			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
-			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
-			// allocator, even if the table has NO auto-increment column.
-			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
-
-			if err == nil && isLocalBackend(rc.cfg) {
+			if isLocalBackend(rc.cfg) {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+					autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
+					autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
+				}, tr, tr.dbInfo.ID, tr.tableInfo.Core)
+			} else {
+				// only alter auto increment id iff table contains auto-increment column or generated handle.
+				// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+				// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+				// allocator, even if the table has NO auto-increment column.
+				newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+				err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
 			}
 		}
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -1184,7 +1201,9 @@ func getChunkCompressedSizeForParquet(
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

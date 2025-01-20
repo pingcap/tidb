@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -45,6 +45,45 @@ func newBaseFuncDesc(ctx expression.BuildContext, name string, args []expression
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
 	err := b.TypeInfer(ctx)
 	return b, err
+}
+
+// Hash64 implements the base.Hasher interface.
+func (a *baseFuncDesc) Hash64(h base.Hasher) {
+	h.HashString(a.Name)
+	h.HashInt(len(a.Args))
+	for _, arg := range a.Args {
+		arg.Hash64(h)
+	}
+	if a.RetTp != nil {
+		h.HashByte(base.NotNilFlag)
+		a.RetTp.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implements the base.Equals interface.
+func (a *baseFuncDesc) Equals(other any) bool {
+	a2, ok := other.(*baseFuncDesc)
+	if !ok {
+		return false
+	}
+	if a == nil {
+		return a2 == nil
+	}
+	if a2 == nil {
+		return false
+	}
+	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
+	if !ok {
+		return false
+	}
+	for i, arg := range a.Args {
+		if !arg.Equals(a2.Args[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *baseFuncDesc) equal(ctx expression.EvalContext, other *baseFuncDesc) bool {
@@ -70,12 +109,12 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	return &clone
 }
 
-// String implements the fmt.Stringer interface.
-func (a *baseFuncDesc) String() string {
+// StringWithCtx returns the string within given context.
+func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -94,9 +133,9 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncApproxPercentile:
 		return a.typeInfer4ApproxPercentile(ctx.GetEvalCtx())
 	case ast.AggFuncSum:
-		a.typeInfer4Sum()
+		a.typeInfer4Sum(ctx.GetEvalCtx())
 	case ast.AggFuncAvg:
-		a.typeInfer4Avg(ctx.GetEvalCtx().GetDivPrecisionIncrement())
+		a.typeInfer4Avg(ctx.GetEvalCtx())
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
@@ -149,7 +188,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
@@ -158,7 +197,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 		return fmt.Errorf("Percentage value %d is out of range [1, 100]", percent)
 	}
 
-	switch a.Args[0].GetType().GetType() {
+	switch a.Args[0].GetType(ctx).GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	case mysql.TypeDouble, mysql.TypeFloat:
@@ -166,14 +205,14 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetFlen(mysql.MaxDecimalWidth)
-		a.RetTp.SetDecimal(a.Args[0].GetType().GetDecimal())
+		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
 		if a.RetTp.GetDecimal() < 0 || a.RetTp.GetDecimal() > mysql.MaxDecimalScale {
 			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
-		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp = a.Args[0].GetType(ctx).Clone()
 	default:
-		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp = a.Args[0].GetType(ctx).Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
@@ -181,22 +220,22 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 
 // typeInfer4Sum should return a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
-func (a *baseFuncDesc) typeInfer4Sum() {
-	switch a.Args[0].GetType().GetType() {
+func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
+	switch a.Args[0].GetType(ctx).GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType().GetFlen() + 21)
+		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType(ctx).GetFlen() + 21)
 		a.RetTp.SetDecimal(0)
-		if a.Args[0].GetType().GetFlen() < 0 {
+		if a.Args[0].GetType(ctx).GetFlen() < 0 {
 			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), 0, 22)
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), 0, 22)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
-		a.RetTp.SetDecimal(a.Args[0].GetType().GetDecimal())
+		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
 	default:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
@@ -209,7 +248,7 @@ func (a *baseFuncDesc) typeInfer4Sum() {
 // compatible with mysql.
 func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 	if avgRetType.GetType() == mysql.TypeNewDecimal {
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+		a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
 	}
 }
 
@@ -220,20 +259,21 @@ func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) 
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
-func (a *baseFuncDesc) typeInfer4Avg(divPrecIncre int) {
-	switch a.Args[0].GetType().GetType() {
+func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
+	divPrecIncre := ctx.GetDivPrecisionIncrement()
+	switch a.Args[0].GetType(ctx).GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
-		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetType())
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType(ctx).GetType())
 		a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), divPrecIncre, divPrecIncre)
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), divPrecIncre, divPrecIncre)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
-		a.RetTp.SetDecimal(a.Args[0].GetType().GetDecimal())
+		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
 	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
@@ -256,7 +296,7 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 	a.RetTp.SetDecimal(0)
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 	for i := 0; i < len(a.Args)-1; i++ {
-		if tp := a.Args[i].GetType(); tp.GetType() == mysql.TypeNewDecimal {
+		if tp := a.Args[i].GetType(ctx.GetEvalCtx()); tp.GetType() == mysql.TypeNewDecimal {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
@@ -264,7 +304,7 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
 	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
-	if argIsScalaFunc && a.Args[0].GetType().GetType() == mysql.TypeFloat {
+	if argIsScalaFunc && a.Args[0].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
 		// field in the "Datum". If we do not wrap a cast-as-double function on a.Args[0],
 		// error would happen when extracting the evaluation of a.Args[0] to a ProjectionExec.
@@ -274,10 +314,10 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
 		types.SetBinChsClnFlag(tp)
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
-	a.RetTp = a.Args[0].GetType()
+	a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx())
 	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
 		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
-		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx()).Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	// issue #13027, #13961
@@ -422,15 +462,17 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		castFunc = expression.WrapWithCastAsDuration
 	case types.ETJson:
 		castFunc = expression.WrapWithCastAsJSON
+	case types.ETVectorFloat32:
+		castFunc = expression.WrapWithCastAsVectorFloat32
 	default:
-		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
+		panic(fmt.Sprintf("unsupported type %s during evaluation", retTp.EvalType()))
 	}
 	for i := range a.Args {
 		// Do not cast the second args of these functions, as they are simply non-negative numbers.
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
-		if a.Args[i].GetType().GetType() == mysql.TypeNull {
+		if a.Args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
 			continue
 		}
 		a.Args[i] = castFunc(ctx, a.Args[i])

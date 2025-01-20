@@ -36,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -327,7 +328,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
-	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
 	resp, err = ts.PostStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
@@ -454,11 +455,10 @@ func TestDebugRoutes(t *testing.T) {
 		"/debug/pprof/block?debug=1",
 		"/debug/pprof/threadcreate?debug=1",
 		"/debug/pprof/cmdline",
-		"/debug/pprof/profile",
+		"/debug/pprof/profile?seconds=5",
 		"/debug/pprof/mutex?debug=1",
 		"/debug/pprof/symbol",
 		"/debug/pprof/trace",
-		"/debug/pprof/profile",
 		"/debug/gogc",
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",
@@ -593,6 +593,7 @@ func TestGetSchemaStorage(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	h.FlushStats()
 
@@ -612,7 +613,7 @@ func TestGetSchemaStorage(t *testing.T) {
 
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	require.Equal(t, []int64{3, 18, 54, 0, 6, 0}, []int64{
+	require.Equal(t, []int64{3, 16, 48, 0, 0, 0}, []int64{
 		tables[0].TableRows,
 		tables[0].AvgRowLength,
 		tables[0].DataLength,

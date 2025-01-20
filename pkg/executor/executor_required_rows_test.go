@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -214,7 +215,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
+	ctx.BindDomain(domain.NewMockDomain())
 	return ctx
 }
 
@@ -393,8 +394,9 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 
@@ -481,8 +483,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		filters:      filters,
+		selectionExecutorContext: newSelectionExecutorContext(ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		filters:                  filters,
 	}
 }
 
@@ -599,9 +602,10 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		numWorkers:    int64(numWorkers),
-		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		projectionExecutorContext: newProjectionExecutorContext(ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		numWorkers:                int64(numWorkers),
+		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 	}
 }
 
@@ -694,8 +698,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
-		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
+	joinTypes := []logicalop.JoinType{logicalop.RightOuterJoin, logicalop.LeftOuterJoin,
+		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -717,8 +721,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == plannercore.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == logicalop.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 
@@ -733,7 +737,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
 	b := newExecutorBuilder(ctx, nil)

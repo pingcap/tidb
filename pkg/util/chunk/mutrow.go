@@ -113,6 +113,8 @@ func zeroValForType(tp *types.FieldType) any {
 		return types.Enum{}
 	case mysql.TypeJSON:
 		return types.CreateBinaryJSON(nil)
+	case mysql.TypeTiDBVectorFloat32:
+		return types.ZeroVectorFloat32
 	default:
 		return nil
 	}
@@ -155,6 +157,8 @@ func makeMutRowColumn(in any) *Column {
 		col.data[0] = x.TypeCode
 		copy(col.data[1:], x.Value)
 		return col
+	case types.VectorFloat32:
+		return makeMutRowBytesColumn(x.ZeroCopySerialize())
 	case types.Duration:
 		col := newMutRowFixedLenColumn(8)
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(x.Duration)
@@ -278,6 +282,8 @@ func (mr MutRow) SetValue(colIdx int, val any) {
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.BinaryJSON:
 		setMutRowJSON(col, x)
+	case types.VectorFloat32:
+		setMutRowBytes(col, x.ZeroCopySerialize())
 	}
 	col.nullBitmap[0] = 1
 }
@@ -311,6 +317,8 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *d.GetMysqlDecimal()
 	case types.KindMysqlJSON:
 		setMutRowJSON(col, d.GetMysqlJSON())
+	case types.KindVectorFloat32:
+		setMutRowBytes(col, d.GetVectorFloat32().ZeroCopySerialize())
 	case types.KindMysqlEnum:
 		e := d.GetMysqlEnum()
 		setMutRowNameValue(col, e.Name, e.Value)

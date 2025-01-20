@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "github.com/gogo/protobuf@v1.3.2/gogoproto/gogo.proto";
 
 option go_package = "checkpointspb";
 option (gogoproto.goproto_getters_all) = false;
@@ -40,13 +40,21 @@ message TaskCheckpointModel {
 message TableCheckpointModel {
     bytes hash = 1;
     uint32 status = 3;
-    int64 alloc_base = 4;
+    // previously we use 4 to store alloc_base, but now it's deleted, reverse 4
+    // to avoid reusing it.
+    reserved 4;
     map<sint32, EngineCheckpointModel> engines = 8;
     int64 tableID = 9;
     uint64 kv_bytes = 10;
     uint64 kv_kvs = 11;
     fixed64 kv_checksum = 12;
     bytes table_info = 13;
+    // used to record the max auto random ID without the sharding bits that has been used.
+    int64 autoRandBase = 14;
+    // used to record the max auto increment ID that has been used.
+    int64 autoIncrBase = 15;
+    // used to record the max auto row ID that has been used.
+    int64 autoRowIDBase = 16;
 }
 
 message EngineCheckpointModel {

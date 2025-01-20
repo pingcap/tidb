@@ -69,13 +69,13 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[1].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1}, sm.task2Index)
 	require.Empty(t, sm.reservedSlots)
-	// higher rank task can preempt lower rank task
+	// high ranking task can preempt lower rank task
 	task9 := task
 	task9.ID = 9
 	task9.Concurrency = 16
 	_, ok = sm.canReserve(&task9)
 	require.True(t, ok)
-	// 4 slots are reserved for high rank tasks, so cannot reserve.
+	// 4 slots are reserved for high ranking tasks, so cannot reserve.
 	task11 := task
 	task11.ID = 11
 	_, ok = sm.canReserve(&task11)
@@ -107,7 +107,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[2].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1, 40: 2}, sm.task2Index)
 	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
-	// higher rank task stop task 15 to run
+	// high ranking task stop task 15 to run
 	task15 := task
 	task15.ID = 15
 	task15.Concurrency = 16
@@ -183,7 +183,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 
 	nodeMgr := newNodeManager("")
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	nodeMgr.managedNodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
+	nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "tidb-1", Role: ""}, {ID: "tidb-2", Role: ""}, {ID: "tidb-3", Role: ""}})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
@@ -202,7 +202,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// some node scaled in, should be reflected
-	nodeMgr.managedNodes.Store(&[]string{"tidb-1"})
+	nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "tidb-1", Role: ""}})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,

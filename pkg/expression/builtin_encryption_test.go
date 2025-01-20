@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -496,6 +497,25 @@ func TestMD5Hash(t *testing.T) {
 	}
 	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+}
+
+func MD5HashOld(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return fmt.Sprintf("%x", sum)
+}
+
+func MD5HashNew(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return hex.EncodeToString(sum[:])
+}
+
+func BenchmarkMD5Hash(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		MD5HashOld("abc")
+		//MD5HashNew("abc")
+	}
 }
 
 func TestRandomBytes(t *testing.T) {

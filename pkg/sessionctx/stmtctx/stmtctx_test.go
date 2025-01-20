@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
@@ -61,10 +62,12 @@ func TestCopTasksDetails(t *testing.T) {
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
 	require.Equal(t, time.Second*101/2, d.AvgProcessTime)
+	require.Equal(t, time.Second*101/2*100, d.TotProcessTime)
 	require.Equal(t, time.Second*91, d.P90ProcessTime)
 	require.Equal(t, time.Second*100, d.MaxProcessTime)
 	require.Equal(t, "100", d.MaxProcessAddress)
 	require.Equal(t, time.Millisecond*101/2, d.AvgWaitTime)
+	require.Equal(t, time.Millisecond*101/2*100, d.TotWaitTime)
 	require.Equal(t, time.Millisecond*91, d.P90WaitTime)
 	require.Equal(t, time.Millisecond*100, d.MaxWaitTime)
 	require.Equal(t, "100", d.MaxWaitAddress)
@@ -177,21 +180,21 @@ func TestWeakConsistencyRead(t *testing.T) {
 }
 
 func TestMarshalSQLWarn(t *testing.T) {
-	warns := []stmtctx.SQLWarn{
+	warns := []contextutil.SQLWarn{
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.New("any error"),
 		},
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.Trace(errors.New("any error")),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown"),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   errors.Trace(variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown")),
 		},
 	}
@@ -208,7 +211,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 	// We only need that the results of `show warnings` are the same.
 	bytes, err := json.Marshal(warns)
 	require.NoError(t, err)
-	var newWarns []stmtctx.SQLWarn
+	var newWarns []contextutil.SQLWarn
 	err = json.Unmarshal(bytes, &newWarns)
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
@@ -260,6 +263,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.ProcessTime
 	}
+	require.Equal(t, d.TotProcessTime, timeSum)
 	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
 	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
 	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
@@ -272,6 +276,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.WaitTime
 	}
+	require.Equal(t, d.TotWaitTime, timeSum)
 	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
 	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
 	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)
@@ -332,7 +337,7 @@ func TestNewStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
@@ -344,7 +349,7 @@ func TestNewStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 }
 
@@ -404,7 +409,7 @@ func TestResetStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
@@ -461,6 +466,32 @@ func TestErrCtx(t *testing.T) {
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+}
+
+func TestReservedRowIDAlloc(t *testing.T) {
+	var reserved stmtctx.ReservedRowIDAlloc
+	// no reserved by default
+	require.True(t, reserved.Exhausted())
+	id, ok := reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
+	// reset some ids
+	reserved.Reset(12, 15)
+	require.False(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(13), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(14), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(15), id)
+	// exhausted
+	require.True(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
 }
 
 func BenchmarkErrCtx(b *testing.B) {

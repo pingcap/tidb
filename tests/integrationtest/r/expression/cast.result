@@ -69,15 +69,15 @@ select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as 
 cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
 NULL	NULL	NULL	NULL	NULL
 select cast(col1 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col2 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col3 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col4 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
-Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too-big precision 31 specified for 'CAST'. Maximum is 6.
 drop table if exists t;
 create table t(a varchar(50));
 insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
@@ -118,3 +118,78 @@ select null as a union all select 'a' as a;
 a
 NULL
 a
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+c0
+1
+select t0.c0 > -1.194192591e9 from t0;
+t0.c0 > -1.194192591e9
+1
+select t0.c0 < -1.194192591e9 from t0;
+t0.c0 < -1.194192591e9
+0
+select -1.194192591e9 > t0.c0 from t0;
+-1.194192591e9 > t0.c0
+0
+select -1.194192591e9 < t0.c0 from t0;
+-1.194192591e9 < t0.c0
+1
+select t0.c0 > 1.194192591e9 from t0;
+t0.c0 > 1.194192591e9
+0
+select t0.c0 < 1.194192591e9 from t0;
+t0.c0 < 1.194192591e9
+1
+select 1.194192591e9 > t0.c0 from t0;
+1.194192591e9 > t0.c0
+1
+select 1.194192591e9 < t0.c0 from t0;
+1.194192591e9 < t0.c0
+0
+drop table if exists test;
+CREATE TABLE `test` (
+`id` bigint(20) NOT NULL,
+`update_user` varchar(32) DEFAULT NULL,
+PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into test values(1,'张三');
+insert into test values(2,'李四');
+insert into test values(3,'张三');
+insert into test values(4,'李四');
+select * from test order by cast(update_user as char character set gbk) desc , id limit 3;
+id	update_user
+1	张三
+3	张三
+2	李四
+drop table test;
+CREATE TABLE `test` (
+`id` bigint NOT NULL,
+`update_user` varchar(32) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into test values(1,'张三');
+insert into test values(2,'李四');
+insert into test values(3,'张三');
+insert into test values(4,'李四');
+select * from test order by cast(update_user as char) desc , id limit 3;
+id	update_user
+2	李四
+4	李四
+1	张三
+drop table if exists test;
+create table test(a bit(24));
+insert into test values('中');
+select a from test where '中' like convert(a, char);
+a
+中
+select a from test where false not like convert(a, char);
+a
+中
+select a from test where false like convert(a, char);
+a
+truncate table test;
+insert into test values(0xffffff);
+select a from test where false not like convert(a, char);
+Error 1105 (HY000): Cannot convert string '\xFF\xFF\xFF' from binary to utf8mb4

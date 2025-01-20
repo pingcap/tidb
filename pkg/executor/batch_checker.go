@@ -16,14 +16,12 @@ package executor
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -33,13 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type keyValueWithDupInfo struct {
-	newKey       kv.Key
-	dupErr       error
-	commonHandle bool
+	newKey kv.Key
+	dupErr error
 }
 
 type toBeCheckedRow struct {
@@ -98,7 +96,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
-		t, err = p.GetPartitionByRow(ctx.GetExprCtx(), row)
+		t, err = p.GetPartitionByRow(ctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -126,26 +124,37 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
-		fn := func() string {
-			var str string
-			var err error
-			if t.Meta().IsCommonHandle {
-				data := make([]types.Datum, len(handleCols))
-				for i, col := range handleCols {
-					data[i] = row[col.Offset]
-				}
-				str, err = formatDataForDupError(data)
-			} else {
-				str, err = row[handleCols[0].Offset].ToString()
-			}
-			if err != nil {
-				return kv.GetDuplicateErrorHandleString(handle)
-			}
-			return str
-		}
 		handleKey = &keyValueWithDupInfo{
 			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), t.Meta().Name.String()+".PRIMARY"),
+		}
+
+		var keyCols []string
+		var err error
+		if t.Meta().IsCommonHandle {
+			data := make([]types.Datum, len(handleCols))
+			for i, col := range handleCols {
+				data[i] = row[col.Offset]
+			}
+			keyCols, err = dataToStrings(data)
+		} else {
+			var s string
+			s, err = row[handleCols[0].Offset].ToString()
+			keyCols = []string{s}
+		}
+		if err != nil {
+			var handleData []types.Datum
+			handleData, err = handle.Data()
+			if err == nil {
+				keyCols, err = dataToStrings(handleData)
+			}
+		}
+
+		if err == nil {
+			handleKey.dupErr = kv.GenKeyExistsErr(keyCols, t.Meta().Name.String()+".PRIMARY")
+		} else {
+			logutil.BgLogger().Warn("get key string failed",
+				zap.Error(err), zap.Stringer("handle", handle))
+			handleKey.dupErr = kv.ErrKeyExists
 		}
 	}
 
@@ -208,14 +217,13 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			if v.Meta().State != model.StatePublic && v.Meta().BackfillState != model.BackfillStateInapplicable {
 				_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
 			}
-			colValStr, err1 := formatDataForDupError(colVals)
+			colStrVals, err1 := dataToStrings(colVals)
 			if err1 != nil {
 				return nil, err1
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-				newKey:       key,
-				dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
-				commonHandle: t.Meta().IsCommonHandle,
+				newKey: key,
+				dupErr: kv.GenKeyExistsErr(colStrVals, v.TableMeta().Name.String()+"."+v.Meta().Name.String()),
 			})
 		}
 	}
@@ -250,16 +258,16 @@ func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, 
 	return handle, nil
 }
 
-func formatDataForDupError(data []types.Datum) (string, error) {
+func dataToStrings(data []types.Datum) ([]string, error) {
 	strs := make([]string, 0, len(data))
 	for _, datum := range data {
 		str, err := datum.ToString()
 		if err != nil {
-			return "", errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		strs = append(strs, str)
 	}
-	return strings.Join(strs, "-"), nil
+	return strs, nil
 }
 
 // getOldRow gets the table record row from storage for batch check.
@@ -272,7 +280,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

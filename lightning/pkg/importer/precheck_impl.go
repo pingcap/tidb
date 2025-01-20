@@ -17,7 +17,9 @@ package importer
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -39,10 +41,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -274,7 +277,6 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		store := store
 		stores[store.Store.ID] = &store
 	}
 	tableCount := 0
@@ -356,7 +358,6 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 	}
 	stores := make([]*pdhttp.StoreInfo, 0, len(storesInfo.Stores))
 	for _, store := range storesInfo.Stores {
-		store := store
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
@@ -837,7 +838,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1283,9 +1284,16 @@ outer:
 	theResult.Severity = precheck.Warn
 	if hasUniqueField && len(rows) > 1 {
 		theResult.Severity = precheck.Critical
-	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
-		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
-		theResult.Severity = precheck.Critical
+	} else {
+		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		if !ok {
+			// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
+			theResult.Severity = precheck.Critical
+		}
 	}
 	return theResult, nil
 }
@@ -1295,10 +1303,14 @@ func checkFieldCompatibility(
 	ignoreCols map[string]struct{},
 	values []types.Datum,
 	logger log.Logger,
-) bool {
-	se := kv.NewSessionCtx(&encode.SessionOptions{
+) (bool, error) {
+	se, err := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
 	for i, col := range tbl.Columns {
 		// do not check ignored columns
 		if _, ok := ignoreCols[col.Name.L]; ok {
@@ -1307,15 +1319,14 @@ func checkFieldCompatibility(
 		if i >= len(values) {
 			break
 		}
-		_, err := table.CastValue(se, values[i], col, true, false)
+		_, err := table.CastColumnValue(se.GetExprCtx(), values[i], col, true, false)
 		if err != nil {
 			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))
-			return false
+			return false, nil
 		}
 	}
-
-	return true
+	return true, nil
 }
 
 type tableEmptyCheckItem struct {
@@ -1424,4 +1435,75 @@ loop:
 func hasDefault(col *model.ColumnInfo) bool {
 	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
+}
+
+// pdTiDBFromSameClusterCheckItem provides two sources of PD addresses and use
+// util.CheckIfSameCluster to check if they are from the same cluster.
+//
+// The first source stands for PD leader's all etcd client URL addresses in most
+// time, the second source stands for all PD nodes' first etcd client URL
+// addresses.
+//
+// If we can't reach PD leader, the first source will be replaced by the PD
+// address set in lightning's task configuration, or in TiDB's configuration.
+// Then it may have false alert if PD has multiple endpoints and above
+// configuration uses one of them, while etcd information uses another one, and
+// there are no common addresses passed to util.CheckIfSameCluster.
+type pdTiDBFromSameClusterCheckItem struct {
+	db            *sql.DB
+	pdAddrsGetter func(context.Context) []string
+}
+
+// NewPDTiDBFromSameClusterCheckItem creates a new pdTiDBFromSameClusterCheckItem.
+func NewPDTiDBFromSameClusterCheckItem(
+	db *sql.DB,
+	pdAddrsGetter func(context.Context) []string,
+) precheck.Checker {
+	return &pdTiDBFromSameClusterCheckItem{
+		db:            db,
+		pdAddrsGetter: pdAddrsGetter,
+	}
+}
+
+func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
+		Item:     i.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+		Message:  "PD and TiDB in configuration are from the same cluster",
+	}
+
+	pdLeaderAddrsGetter := func(ctx context.Context) ([]string, error) {
+		addrs := i.pdAddrsGetter(ctx)
+		for idx, addrURL := range addrs {
+			u, err2 := url.Parse(addrURL)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
+			addrs[idx] = u.Host
+		}
+		return addrs, nil
+	}
+
+	sameCluster, pdAddrs, pdAddrsFromTiDB, err := util.CheckIfSameCluster(
+		ctx, pdLeaderAddrsGetter, util.GetPDsAddrWithoutScheme(i.db),
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if sameCluster {
+		return theResult, nil
+	}
+
+	theResult.Passed = false
+	theResult.Message = fmt.Sprintf(
+		"PD and TiDB in configuration are not from the same cluster, "+
+			"PD addresses read from PD are: %v, PD addresses read from TiDB are %v",
+		pdAddrs, pdAddrsFromTiDB,
+	)
+	return theResult, nil
+}
+
+func (*pdTiDBFromSameClusterCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckPDTiDBFromSameCluster
 }

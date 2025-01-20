@@ -26,34 +26,45 @@ import (
 // panickingAllocator is an ID allocator which panics on all operations except Rebase
 type panickingAllocator struct {
 	autoid.Allocator
-	base *int64
+	base atomic.Int64
 	ty   autoid.AllocatorType
 }
 
-// NewPanickingAllocators creates a PanickingAllocator shared by all allocation types.
+// NewPanickingAllocators creates a PanickingAllocator with default base values.
+func NewPanickingAllocators(sepAutoInc bool) autoid.Allocators {
+	return NewPanickingAllocatorsWithBase(sepAutoInc, 0, 0, 0)
+}
+
+// NewPanickingAllocatorsWithBase creates a PanickingAllocator shared by all allocation types.
 // we use this to collect the max id(either _tidb_rowid or auto_increment id or auto_random) used
 // during import, and we will use this info to do ALTER TABLE xxx AUTO_RANDOM_BASE or AUTO_INCREMENT
 // on post-process phase.
-// we share the same base among all allocators, so the AllocatorType doesn't matter here.
-func NewPanickingAllocators(base int64) autoid.Allocators {
-	sharedBase := &base
-	return autoid.NewAllocators(
-		false,
-		&panickingAllocator{base: sharedBase, ty: autoid.RowIDAllocType},
-		&panickingAllocator{base: sharedBase, ty: autoid.AutoIncrementType},
-		&panickingAllocator{base: sharedBase, ty: autoid.AutoRandomType},
-	)
+func NewPanickingAllocatorsWithBase(sepAutoInc bool, autoRandBase, autoIncrBase, autoRowIDBase int64) autoid.Allocators {
+	allocs := make([]autoid.Allocator, 0, 3)
+	for _, t := range []struct {
+		Type autoid.AllocatorType
+		Base int64
+	}{
+		{Type: autoid.AutoRandomType, Base: autoRandBase},
+		{Type: autoid.AutoIncrementType, Base: autoIncrBase},
+		{Type: autoid.RowIDAllocType, Base: autoRowIDBase},
+	} {
+		pa := &panickingAllocator{ty: t.Type}
+		pa.base.Store(t.Base)
+		allocs = append(allocs, pa)
+	}
+	return autoid.NewAllocators(sepAutoInc, allocs...)
 }
 
 // Rebase implements the autoid.Allocator interface
 func (alloc *panickingAllocator) Rebase(_ context.Context, newBase int64, _ bool) error {
 	// CAS
 	for {
-		oldBase := atomic.LoadInt64(alloc.base)
+		oldBase := alloc.base.Load()
 		if newBase <= oldBase {
 			break
 		}
-		if atomic.CompareAndSwapInt64(alloc.base, oldBase, newBase) {
+		if alloc.base.CompareAndSwap(oldBase, newBase) {
 			break
 		}
 	}
@@ -62,7 +73,7 @@ func (alloc *panickingAllocator) Rebase(_ context.Context, newBase int64, _ bool
 
 // Base implements the autoid.Allocator interface
 func (alloc *panickingAllocator) Base() int64 {
-	return atomic.LoadInt64(alloc.base)
+	return alloc.base.Load()
 }
 
 func (alloc *panickingAllocator) GetType() autoid.AllocatorType {

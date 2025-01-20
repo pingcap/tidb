@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
@@ -80,12 +80,12 @@ func TestGetPreInfoGenerateTableInfo(t *testing.T) {
 	createTblSQL := fmt.Sprintf("create table `%s`.`%s` (a varchar(16) not null, b varchar(8) default 'DEFA')", schemaName, tblName)
 	tblInfo, err := newTableInfo(createTblSQL, 1)
 	require.Nil(t, err)
-	require.Equal(t, model.NewCIStr(tblName), tblInfo.Name)
+	require.Equal(t, ast.NewCIStr(tblName), tblInfo.Name)
 	require.Equal(t, len(tblInfo.Columns), 2)
-	require.Equal(t, model.NewCIStr("a"), tblInfo.Columns[0].Name)
+	require.Equal(t, ast.NewCIStr("a"), tblInfo.Columns[0].Name)
 	require.Nil(t, tblInfo.Columns[0].DefaultValue)
 	require.False(t, hasDefault(tblInfo.Columns[0]))
-	require.Equal(t, model.NewCIStr("b"), tblInfo.Columns[1].Name)
+	require.Equal(t, ast.NewCIStr("b"), tblInfo.Columns[1].Name)
 	require.NotNil(t, tblInfo.Columns[1].DefaultValue)
 
 	createTblSQL = fmt.Sprintf("create table `%s`.`%s` (a varchar(16), b varchar(8) default 'DEFAULT_BBBBB')", schemaName, tblName) // default value exceeds the length
@@ -753,15 +753,21 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 }
 
 func TestGetPreInfoIsTableEmpty(t *testing.T) {
-	ctx := context.TODO()
+	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	_, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
-	require.ErrorContains(t, err, "pd HTTP client is required when using local backend")
-	lnConfig.TikvImporter.Backend = config.BackendTiDB
 	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"))
+	err = targetGetter.CheckVersionRequirements(ctx)
+	require.ErrorContains(t, err, "pd HTTP client is required for component version check in local backend")
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
+	targetGetter, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 

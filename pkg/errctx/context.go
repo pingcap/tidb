@@ -39,7 +39,7 @@ type LevelMap [errGroupCount]Level
 // Context defines how to handle an error
 type Context struct {
 	levelMap    LevelMap
-	warnHandler contextutil.WarnHandler
+	warnHandler contextutil.WarnAppender
 }
 
 // LevelMap returns the `levelMap` of the context.
@@ -89,11 +89,23 @@ func (ctx *Context) AppendWarning(err error) {
 	}
 }
 
+// AppendNote appends the error to warning with level 'Note'. If the inner `warnHandler` is nil, do nothing.
+func (ctx *Context) AppendNote(err error) {
+	intest.Assert(ctx.warnHandler != nil)
+	if w := ctx.warnHandler; w != nil {
+		// warnHandler should always not be nil, check fn != nil here to just make code safe.
+		w.AppendNote(err)
+	}
+}
+
 // HandleError handles the error according to the contextutil. See the comment of `HandleErrorWithAlias` for detailed logic.
 //
 // It also allows using `errors.ErrorGroup`, in this case, it'll handle each error in order, and return the first error
 // it founds.
 func (ctx *Context) HandleError(err error) error {
+	if err == nil {
+		return nil
+	}
 	// The function of handling `errors.ErrorGroup` is placed in `HandleError` but not in `HandleErrorWithAlias`, because
 	// it's hard to give a proper error and warn alias for an error group.
 	if errs, ok := err.(errors.ErrorGroup); ok {
@@ -156,12 +168,12 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 }
 
 // NewContext creates an error context to handle the errors and warnings
-func NewContext(handler contextutil.WarnHandler) Context {
+func NewContext(handler contextutil.WarnAppender) Context {
 	return NewContextWithLevels(LevelMap{}, handler)
 }
 
 // NewContextWithLevels creates an error context to handle the errors and warnings
-func NewContextWithLevels(levels LevelMap, handler contextutil.WarnHandler) Context {
+func NewContextWithLevels(levels LevelMap, handler contextutil.WarnAppender) Context {
 	intest.Assert(handler != nil)
 	return Context{
 		warnHandler: handler,
@@ -184,6 +196,8 @@ const (
 	ErrGroupDupKey
 	// ErrGroupBadNull is the group of bad null errors
 	ErrGroupBadNull
+	// ErrGroupNoDefault is the group of no default value errors
+	ErrGroupNoDefault
 	// ErrGroupDividedByZero is the group of divided by zero errors
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
@@ -211,6 +225,8 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+		},
+		ErrGroupNoDefault: {
 			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {

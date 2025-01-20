@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -106,7 +107,7 @@ type localMppCoordinator struct {
 	ctx          context.Context
 	sessionCtx   sessionctx.Context
 	is           infoschema.InfoSchema
-	originalPlan plannercore.PhysicalPlan
+	originalPlan base.PhysicalPlan
 	reqMap       map[int64]*mppRequestReport
 
 	cancelFunc context.CancelFunc
@@ -151,7 +152,7 @@ type localMppCoordinator struct {
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, plan base.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
 	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
@@ -174,14 +175,22 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 		reqMap:          make(map[int64]*mppRequestReport),
 	}
 
-	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
-		coord.reportExecutionInfo = true
+	value := sctx.GetSessionVars().StmtCtx.GetPlan()
+	if value != nil {
+		if p, ok := value.(base.Plan); ok {
+			pp := getActualPhysicalPlan(p)
+			if pp != nil {
+				if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
+					coord.reportExecutionInfo = true
+				}
+			}
+		}
 	}
 	return coord
 }
 
 func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) error {
-	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -334,15 +343,54 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 	return nil
 }
 
+func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
+	if plan == nil {
+		return nil
+	}
+	if pp, ok := plan.(base.PhysicalPlan); ok {
+		return pp
+	}
+	switch x := plan.(type) {
+	case *plannercore.Explain:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.SelectInto:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.Insert:
+		return x.SelectPlan
+	case *plannercore.ImportInto:
+		return x.SelectPlan
+	case *plannercore.Update:
+		return x.SelectPlan
+	case *plannercore.Delete:
+		return x.SelectPlan
+	case *plannercore.Execute:
+		return getActualPhysicalPlan(x.Plan)
+	}
+	return nil
+}
+
 // DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
-// Currently, return true if plan contains limit operator
-func needReportExecutionSummary(plan plannercore.PhysicalPlan) bool {
+// Currently, return true if there is a limit operator in the path from current TableReader to root
+func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
 	switch x := plan.(type) {
 	case *plannercore.PhysicalLimit:
-		return true
+		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
+	case *plannercore.PhysicalTableReader:
+		if foundLimit {
+			return x.GetTablePlan().ID() == destTablePlanID
+		}
+	case *plannercore.PhysicalShuffleReceiverStub:
+		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
+	case *plannercore.PhysicalCTE:
+		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
+			return true
+		}
+		if x.RecurPlan != nil {
+			return needReportExecutionSummary(x.RecurPlan, destTablePlanID, foundLimit)
+		}
 	default:
 		for _, child := range x.Children() {
-			if needReportExecutionSummary(child) {
+			if needReportExecutionSummary(child, destTablePlanID, foundLimit) {
 				return true
 			}
 		}
@@ -498,9 +546,6 @@ func (c *localMppCoordinator) cancelMppTasks() {
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
 	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
 	if err != nil {
-		if stream != nil {
-			stream.Close()
-		}
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
 			c.sendError(derr.ErrTiFlashServerTimeout)
@@ -595,7 +640,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
@@ -604,7 +649,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),

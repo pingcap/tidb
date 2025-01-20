@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -42,7 +42,7 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.IsCommonHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
@@ -52,8 +52,10 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv.NewSession(sessionOpts, log.L())
-	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
+	sctx, err := kv.NewSession(sessionOpts, log.L())
+	require.NoError(t, err)
+	txn := sctx.Txn()
+	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
 	require.Len(t, paris.Pairs, 2)
@@ -81,7 +83,7 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
@@ -91,8 +93,11 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv.NewSession(sessionOpts, log.L())
-	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
+	sctx, err := kv.NewSession(sessionOpts, log.L())
+	require.NoError(t, err)
+	txn := sctx.Txn()
+	require.NoError(t, err)
+	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
 	require.Len(t, paris.Pairs, 2)

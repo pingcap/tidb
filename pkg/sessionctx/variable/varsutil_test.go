@@ -251,31 +251,12 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
 
-	err = v.SetSystemVar(TiDBDDLReorgWorkerCount, "4") // wrong scope global only
-	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
-
 	err = v.SetSystemVar(TiDBRetryLimit, "3")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRetryLimit)
 	require.NoError(t, err)
 	require.Equal(t, "3", val)
 	require.Equal(t, int64(3), v.RetryLimit)
-
-	require.Equal(t, "", v.EnableTablePartition)
-	err = v.SetSystemVar(TiDBEnableTablePartition, "on")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableTablePartition)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.Equal(t, "ON", v.EnableTablePartition)
-
-	require.False(t, v.EnableListTablePartition)
-	err = v.SetSystemVar(TiDBEnableListTablePartition, "on")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableListTablePartition)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, v.EnableListTablePartition)
 
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, v.TiDBOptJoinReorderThreshold)
 	err = v.SetSystemVar(TiDBOptJoinReorderThreshold, "5")
@@ -290,13 +271,13 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
-	require.True(t, v.LowResolutionTSO)
+	require.True(t, v.lowResolutionTSO)
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "0")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
-	require.False(t, v.LowResolutionTSO)
+	require.False(t, v.lowResolutionTSO)
 
 	require.Equal(t, 0.9, v.CorrelationThreshold)
 	err = v.SetSystemVar(TiDBOptCorrelationThreshold, "0")
@@ -496,21 +477,10 @@ func TestValidate(t *testing.T) {
 		{EnforceGtidConsistency, "OFF", false},
 		{EnforceGtidConsistency, "ON", false},
 		{EnforceGtidConsistency, "WARN", false},
-		{QueryCacheType, "OFF", false},
-		{QueryCacheType, "ON", false},
-		{QueryCacheType, "DEMAND", false},
-		{QueryCacheType, "3", true},
 		{SecureAuth, "1", false},
 		{SecureAuth, "3", true},
 		{MyISAMUseMmap, "ON", false},
 		{MyISAMUseMmap, "OFF", false},
-		{TiDBEnableTablePartition, "ON", false},
-		{TiDBEnableTablePartition, "OFF", false},
-		{TiDBEnableTablePartition, "AUTO", false},
-		{TiDBEnableTablePartition, "UN", true},
-		{TiDBEnableListTablePartition, "ON", false},
-		{TiDBEnableListTablePartition, "OFF", false},
-		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", false},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -574,9 +544,6 @@ func TestValidate(t *testing.T) {
 		value string
 		error bool
 	}{
-		{TiDBEnableListTablePartition, "ON", false},
-		{TiDBEnableListTablePartition, "OFF", false},
-		{TiDBEnableListTablePartition, "list", true},
 		{TiDBIsolationReadEngines, "", true},
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
@@ -584,8 +551,6 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
@@ -626,8 +591,6 @@ func TestValidateStmtSummary(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {

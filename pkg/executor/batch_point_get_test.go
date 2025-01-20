@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -201,7 +202,7 @@ func TestCacheSnapShot(t *testing.T) {
 }
 
 func TestPointGetForTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -211,6 +212,11 @@ func TestPointGetForTemporaryTable(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,1)")
 	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
 		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	isV2, _ := infoschema.IsV2(dom.InfoSchema())
+	if isV2 {
+		t.Skip("This test can not run under infoschema v2, because the later would always visit network")
+	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
 	defer func() {

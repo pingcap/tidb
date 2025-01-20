@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/collector"
 )
 
@@ -88,6 +88,12 @@ func NewSample(queryTotal uint64, kvReqTotal uint64, rowAccess uint64, tableTota
 
 type indexUsage map[GlobalIndexID]Sample
 
+var indexUsagePool = sync.Pool{
+	New: func() any {
+		return make(indexUsage)
+	},
+}
+
 func (m indexUsage) updateByKey(id GlobalIndexID, sample Sample) {
 	item := m[id]
 	item.QueryTotal += sample.QueryTotal
@@ -127,7 +133,7 @@ type Collector struct {
 // NewCollector create an index usage collector
 func NewCollector() *Collector {
 	iuc := &Collector{
-		indexUsage: make(indexUsage),
+		indexUsage: indexUsagePool.Get().(indexUsage),
 	}
 	iuc.collector = collector.NewGlobalCollector[indexUsage](iuc.merge)
 
@@ -154,12 +160,16 @@ func (c *Collector) merge(delta indexUsage) {
 	defer c.Unlock()
 
 	c.indexUsage.merge(delta)
+
+	// return the `delta` to the pool
+	clear(delta)
+	indexUsagePool.Put(delta)
 }
 
 // SpawnSessionCollector creates a new session collector attached to this global collector
 func (c *Collector) SpawnSessionCollector() *SessionIndexUsageCollector {
 	return &SessionIndexUsageCollector{
-		indexUsage: make(indexUsage),
+		indexUsage: indexUsagePool.Get().(indexUsage),
 		collector:  c.collector.SpawnSession(),
 	}
 }
@@ -219,7 +229,7 @@ func (s *SessionIndexUsageCollector) Report() {
 		return
 	}
 	if s.collector.SendDelta(s.indexUsage) {
-		s.indexUsage = make(indexUsage)
+		s.indexUsage = indexUsagePool.Get().(indexUsage)
 	}
 }
 
@@ -230,7 +240,7 @@ func (s *SessionIndexUsageCollector) Flush() {
 		return
 	}
 	s.collector.SendDeltaSync(s.indexUsage)
-	s.indexUsage = make(indexUsage)
+	s.indexUsage = indexUsagePool.Get().(indexUsage)
 }
 
 // StmtIndexUsageCollector removes the duplicates index for recording `QueryTotal` in session collector
@@ -268,4 +278,12 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 	}
 
 	s.sessionCollector.Update(tableID, indexID, sample)
+}
+
+// Reset resets the recorded index in the collector to avoid re-allocating for each statement.
+func (s *StmtIndexUsageCollector) Reset() {
+	s.Lock()
+	defer s.Unlock()
+
+	clear(s.recordedIndex)
 }

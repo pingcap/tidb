@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -44,35 +44,100 @@ func TestBuildDupTask(t *testing.T) {
 	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	// Test build duplicate detecting task.
 	testCases := []struct {
-		sessOpt       *encode.SessionOptions
-		hasTableRange bool
+		sessOpt          *encode.SessionOptions
+		hasTableRange    bool
+		expectedIndexIDs []int64
 	}{
-		{&encode.SessionOptions{}, true},
-		{&encode.SessionOptions{IndexID: info.Indices[0].ID}, false},
-		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false},
+		{&encode.SessionOptions{}, true, nil},
+		{&encode.SessionOptions{IndexID: info.Indices[0].ID}, false, []int64{info.Indices[0].ID}},
+		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false, []int64{info.Indices[1].ID}},
 	}
 	for _, tc := range testCases {
-		dupMgr, err := local.NewDupeDetector(tbl, "t", nil, nil, keyspace.CodecV1, nil,
-			tc.sessOpt, 4, log.FromContext(context.Background()), "test", "lightning")
+		dupMgr, err := local.NewDupeDetector(
+			tbl,
+			"t",
+			nil,
+			nil,
+			keyspace.CodecV1,
+			nil,
+			tc.sessOpt,
+			4,
+			log.FromContext(context.Background()),
+			"test",
+			"lightning",
+		)
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)
 		var hasRecordKey bool
+		var gotIndexIDs []int64
 		for _, task := range tasks {
-			tableID, _, isRecordKey, err := tablecodec.DecodeKeyHead(task.StartKey)
+			tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(task.StartKey)
 			require.NoError(t, err)
 			require.Equal(t, info.ID, tableID)
 			if isRecordKey {
 				hasRecordKey = true
+			} else {
+				gotIndexIDs = append(gotIndexIDs, indexID)
 			}
 		}
 		require.Equal(t, tc.hasTableRange, hasRecordKey)
+		require.Equal(t, tc.expectedIndexIDs, gotIndexIDs)
 	}
+
+	// test non-unique index is skipped
+	node, _, err = p.ParseSQL(`CREATE TABLE t (
+		a INT, b INT, c INT,
+		PRIMARY KEY(a) NONCLUSTERED,
+		INDEX idx1(b),
+		UNIQUE INDEX idx2(c));`)
+	require.NoError(t, err)
+	info, err = ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err = tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+	require.Len(t, tbl.Meta().Indices, 3)
+	require.Equal(t, "primary", tbl.Meta().Indices[0].Name.L)
+	require.Equal(t, "idx2", tbl.Meta().Indices[2].Name.L)
+	expectedIndexIDs := []int64{info.Indices[0].ID, info.Indices[2].ID}
+
+	dupMgr, err := local.NewDupeDetector(
+		tbl,
+		"t",
+		nil,
+		nil,
+		keyspace.CodecV1,
+		nil,
+		&encode.SessionOptions{},
+		4,
+		log.FromContext(context.Background()),
+		"test",
+		"lightning",
+	)
+	require.NoError(t, err)
+	tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
+	require.NoError(t, err)
+
+	var hasRecordKey bool
+	var gotIndexIDs []int64
+	for _, task := range tasks {
+		tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(task.StartKey)
+		require.NoError(t, err)
+		require.Equal(t, info.ID, tableID)
+		if isRecordKey {
+			hasRecordKey = true
+		} else {
+			gotIndexIDs = append(gotIndexIDs, indexID)
+		}
+	}
+	require.True(t, hasRecordKey)
+	require.Equal(t, expectedIndexIDs, gotIndexIDs)
 }
 
 func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.StmtNode) (table.Table, *lkv.Pairs) {
@@ -80,7 +145,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -94,7 +159,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -114,12 +179,11 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		types.NewStringDatum("3.csv"),
 		types.NewIntDatum(103),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
 	return tbl, encoder.SessionCtx.TakeKvPairs()
 }

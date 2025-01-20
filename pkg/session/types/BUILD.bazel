@@ -10,6 +10,7 @@ go_library(
         "//pkg/extension",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+        "//pkg/planner/core/resolve",
         "//pkg/privilege/conn",
         "//pkg/session/txninfo",
         "//pkg/sessionctx",

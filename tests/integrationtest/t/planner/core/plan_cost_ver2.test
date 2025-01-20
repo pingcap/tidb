@@ -2,7 +2,7 @@
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-analyze table t;
+analyze table t all columns;
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1;
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1000000000;
 

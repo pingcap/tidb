@@ -18,12 +18,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -72,7 +74,7 @@ func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceReceivedCommand records the received command from the client to the debug trace.
-func DebugTraceReceivedCommand(s PlanContext, cmd byte, stmtNode ast.StmtNode) {
+func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNode) {
 	sessionVars := s.GetSessionVars()
 	trace := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := new(receivedCmdInfo)
@@ -105,8 +107,8 @@ func DebugTraceReceivedCommand(s PlanContext, cmd byte, stmtNode ast.StmtNode) {
 	if len(binaryParams) > 0 {
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
-			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
-			execInfo.BinaryParamsInfo[i].Value = param.String()
+			execInfo.BinaryParamsInfo[i].Type = param.GetType(s.GetExprCtx().GetEvalCtx()).String()
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(s.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable)
 		}
 	}
 }
@@ -135,7 +137,7 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceTryBinding records the hint that might be chosen to the debug trace.
-func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
+func DebugTraceTryBinding(s planctx.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
@@ -145,7 +147,7 @@ func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 }
 
 // DebugTraceBestBinding records the chosen hint to the debug trace.
-func DebugTraceBestBinding(s context.PlanContext, binding *hint.HintsSet) {
+func DebugTraceBestBinding(s planctx.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
@@ -172,7 +174,7 @@ type getStatsTblInfo struct {
 }
 
 func debugTraceGetStatsTbl(
-	s PlanContext,
+	s base.PlanContext,
 	tblInfo *model.TableInfo,
 	pid int64,
 	handleIsNil,
@@ -234,26 +236,26 @@ type accessPathForDebugTrace struct {
 	CountAfterIndex  float64
 }
 
-func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDebugTrace) {
+func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.AccessPath, out *accessPathForDebugTrace) {
 	if path.Index != nil {
 		out.IndexName = path.Index.Name.O
 	}
-	out.AccessConditions = expression.ExprsToStringsForDisplay(path.AccessConds)
-	out.IndexFilters = expression.ExprsToStringsForDisplay(path.IndexFilters)
-	out.TableFilters = expression.ExprsToStringsForDisplay(path.TableFilters)
+	out.AccessConditions = expression.ExprsToStringsForDisplay(ctx, path.AccessConds)
+	out.IndexFilters = expression.ExprsToStringsForDisplay(ctx, path.IndexFilters)
+	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
 	out.CountAfterAccess = path.CountAfterAccess
 	out.CountAfterIndex = path.CountAfterIndex
 	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
 	for i, partialPath := range path.PartialIndexPaths {
-		convertAccessPathForDebugTrace(partialPath, &out.PartialPaths[i])
+		convertAccessPathForDebugTrace(ctx, partialPath, &out.PartialPaths[i])
 	}
 }
 
-func debugTraceAccessPaths(s PlanContext, paths []*util.AccessPath) {
+func debugTraceAccessPaths(s base.PlanContext, paths []*util.AccessPath) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
 	for i, partialPath := range paths {
-		convertAccessPathForDebugTrace(partialPath, &traceInfo[i])
+		convertAccessPathForDebugTrace(s.GetExprCtx().GetEvalCtx(), partialPath, &traceInfo[i])
 	}
 	root.AppendStepWithNameToCurrentContext(traceInfo, "Access paths")
 }

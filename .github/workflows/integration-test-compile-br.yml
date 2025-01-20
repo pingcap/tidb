@@ -51,10 +51,10 @@ jobs:
         os: [macos-latest,  ubuntu-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v2.1.0
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -66,10 +66,10 @@ jobs:
     name: Compile for FreeBSD job
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2.1.0
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 

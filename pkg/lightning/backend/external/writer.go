@@ -357,15 +357,15 @@ type Writer struct {
 }
 
 // WriteRow implements ingest.Writer.
-func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
+func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
 
 	var rowID []byte
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
-	length := encodedKeyLen + len(idxVal) + lengthBytes*2
+	encodedKeyLen := keyAdapter.EncodedLen(key, rowID)
+	length := encodedKeyLen + len(val) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -378,12 +378,12 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(idxVal)))
-	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], idxKey, rowID)
-	copy(dataBuf[2*lengthBytes+encodedKeyLen:], idxVal)
+	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
+	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
+	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
-	w.kvSize += int64(encodedKeyLen + len(idxVal))
+	w.kvSize += int64(encodedKeyLen + len(val))
 	w.batchSize += uint64(length)
 	w.totalCnt += 1
 	return nil
@@ -463,7 +463,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	var dataFile, statFile string
 	for i := 0; i < flushKVsRetryTimes; i++ {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
-		if err == nil {
+		if err == nil || ctx.Err() != nil {
 			break
 		}
 		logger.Warn("flush sorted kv failed",
@@ -510,7 +510,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0
 	w.kvBuffer.Reset()
-	w.rc.reset()
 	w.batchSize = 0
 	w.currentSeq++
 	return nil
@@ -536,6 +535,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 			_ = statWriter.Close(ctx)
 		}
 	}()
+	w.rc.reset()
 	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return "", "", err

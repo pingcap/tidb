@@ -514,12 +514,12 @@ func TestShouldNotOptimizeExtensionFunc(t *testing.T) {
 		"my_func2()",
 	} {
 		ctx := mock.NewContext()
-		ctx.GetSessionVars().StmtCtx.UseCache = true
+		ctx.GetSessionVars().StmtCtx.EnablePlanCache()
 		expr, err := expression.ParseSimpleExpr(ctx, exprStr)
 		require.NoError(t, err)
 		scalar, ok := expr.(*expression.ScalarFunction)
 		require.True(t, ok)
 		require.Equal(t, expression.ConstNone, scalar.ConstLevel())
-		require.False(t, ctx.GetSessionVars().StmtCtx.UseCache)
+		require.False(t, ctx.GetSessionVars().StmtCtx.UseCache())
 	}
 }

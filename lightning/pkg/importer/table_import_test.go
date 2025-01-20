@@ -52,9 +52,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -408,7 +408,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
 
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc()), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -1194,7 +1194,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			store:               mockStore,
@@ -1331,7 +1331,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			taskMgr:             mockTaskMetaMgr{},
@@ -1424,7 +1424,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			checkTemplate:       template,
@@ -1444,7 +1444,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 
@@ -1559,12 +1559,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colA has the default value
-										Name:          model.NewCIStr("colA"),
+										Name:          ast.NewCIStr("colA"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colB doesn't have the default value
-										Name:      model.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1608,7 +1608,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          model.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1659,7 +1659,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          model.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1711,12 +1711,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          model.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colC doesn't have the default value
-										Name:      model.NewCIStr("colC"),
+										Name:      ast.NewCIStr("colC"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1767,12 +1767,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name:      model.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
-										Name:          model.NewCIStr("colC"),
+										Name:          ast.NewCIStr("colC"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1857,7 +1857,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          model.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1916,10 +1916,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: model.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: model.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -1975,10 +1975,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: model.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: model.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2023,10 +2023,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: model.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: model.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2071,10 +2071,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: model.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: model.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2136,14 +2136,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: model.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name:          model.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
-										Name: model.NewCIStr("colC"),
+										Name: ast.NewCIStr("colC"),
 									},
 								},
 							},
@@ -2259,11 +2259,11 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 					Core: &model.TableInfo{
 						Columns: []*model.ColumnInfo{
 							{
-								Name:      model.NewCIStr("colA"),
+								Name:      ast.NewCIStr("colA"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 							{
-								Name:      model.NewCIStr("colB"),
+								Name:      ast.NewCIStr("colB"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},

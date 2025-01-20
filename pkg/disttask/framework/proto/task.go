@@ -15,31 +15,12 @@
 package proto
 
 import (
+	"cmp"
+	"fmt"
 	"time"
 )
 
-// task state machine
-//
-// Note: if a task fails during running, it will end with `reverted` state.
-// The `failed` state is used to mean the framework cannot run the task, such as
-// invalid task type, scheduler init error(fatal), etc.
-//
-//	                            ┌────────┐
-//	                ┌───────────│resuming│◄────────┐
-//	                │           └────────┘         │
-//	┌──────┐        │           ┌───────┐       ┌──┴───┐
-//	│failed│        │ ┌────────►│pausing├──────►│paused│
-//	└──────┘        │ │         └───────┘       └──────┘
-//	   ▲            ▼ │
-//	┌──┴────┐     ┌───┴───┐     ┌────────┐
-//	│pending├────►│running├────►│succeed │
-//	└──┬────┘     └──┬┬───┘     └────────┘
-//	   │             ││         ┌─────────┐     ┌────────┐
-//	   │             │└────────►│reverting├────►│reverted│
-//	   │             ▼          └─────────┘     └────────┘
-//	   │          ┌──────────┐    ▲
-//	   └─────────►│cancelling├────┘
-//	              └──────────┘
+// see doc.go for more details.
 const (
 	TaskStatePending    TaskState = "pending"
 	TaskStateRunning    TaskState = "running"
@@ -51,6 +32,7 @@ const (
 	TaskStatePausing    TaskState = "pausing"
 	TaskStatePaused     TaskState = "paused"
 	TaskStateResuming   TaskState = "resuming"
+	TaskStateModifying  TaskState = "modifying"
 )
 
 type (
@@ -66,6 +48,11 @@ func (t TaskType) String() string {
 
 func (s TaskState) String() string {
 	return string(s)
+}
+
+// CanMoveToModifying checks if current state can move to 'modifying' state.
+func (s TaskState) CanMoveToModifying() bool {
+	return s == TaskStatePending || s == TaskStateRunning || s == TaskStatePaused
 }
 
 const (
@@ -93,6 +80,11 @@ type TaskBase struct {
 	// Concurrency controls the max resource usage of the task, i.e. the max number
 	// of slots the task can use on each node.
 	Concurrency int
+	// TargetScope indicates that the task should be running on tidb nodes which
+	// contain the tidb_service_scope=TargetScope label.
+	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
+	// if there is no such nodes, will try nodes of "" scope.
+	TargetScope string
 	CreateTime  time.Time
 }
 
@@ -110,35 +102,22 @@ func (t *TaskBase) CompareTask(other *Task) int {
 // Compare compares two tasks by task rank.
 // returns < 0 represents rank of t is higher than 'other'.
 func (t *TaskBase) Compare(other *TaskBase) int {
-	if t.Priority != other.Priority {
-		return t.Priority - other.Priority
+	if r := cmp.Compare(t.Priority, other.Priority); r != 0 {
+		return r
 	}
-	if t.CreateTime != other.CreateTime {
-		if t.CreateTime.Before(other.CreateTime) {
-			return -1
-		}
-		return 1
+	if r := t.CreateTime.Compare(other.CreateTime); r != 0 {
+		return r
 	}
-	return int(t.ID - other.ID)
+	return cmp.Compare(t.ID, other.ID)
 }
 
-// Task represents the task of distributed framework.
-// A task is abstracted as multiple steps that runs in sequence, each step contains
-// multiple sub-tasks that runs in parallel, such as:
-//
-//	task
-//	├── step1
-//	│   ├── subtask1
-//	│   ├── subtask2
-//	│   └── subtask3
-//	└── step2
-//	    ├── subtask1
-//	    ├── subtask2
-//	    └── subtask3
-//
-// tasks are run in the order of rank, and the rank is defined by:
-//
-//	priority asc, create_time asc, id asc.
+// String implements fmt.Stringer interface.
+func (t *TaskBase) String() string {
+	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, concurrency: %d, target scope: %s, create time: %s}",
+		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.Concurrency, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
+}
+
+// Task represents the task of distributed framework, see doc.go for more details.
 type Task struct {
 	TaskBase
 	// SchedulerID is not used now.
@@ -149,8 +128,10 @@ type Task struct {
 	// changed in below case, and framework will update the task meta in the storage.
 	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
 	// 	- on task cleanup, we might do some redaction on the meta.
-	Meta  []byte
-	Error error
+	// 	- on task 'modifying', params inside the meta can be changed.
+	Meta        []byte
+	Error       error
+	ModifyParam ModifyParam
 }
 
 var (

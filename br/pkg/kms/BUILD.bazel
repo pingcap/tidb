@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "aws",
+    srcs = [
+        "aws.go",
+        "common.go",
+        "gcp.go",
+        "kms.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/kms",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_aws_aws_sdk_go//aws/session",
+        "@com_github_aws_aws_sdk_go//service/kms",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_pingcap_log//:log",
+        "@com_google_cloud_go_kms//apiv1",
+        "@com_google_cloud_go_kms//apiv1/kmspb",
+        "@org_golang_google_api//option",
+        "@org_golang_google_protobuf//types/known/wrapperspb",
+        "@org_uber_go_zap//:zap",
+    ],
+)

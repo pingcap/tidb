@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -219,19 +221,20 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err)
 		require.Equal(t, tt.best, plannercore.ToString(p), comment)
 		// extract FD to every OP
-		p.(plannercore.LogicalPlan).ExtractFD()
-		require.Equal(t, tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+		p.(base.LogicalPlan).ExtractFD()
+		require.Equal(t, tt.fd, plannercore.FDToString(p.(base.LogicalPlan)), comment)
 	}
 }
 
@@ -318,19 +321,20 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		require.Equal(t, tt.best, plannercore.ToString(p), comment)
 		// extract FD to every OP
-		p.(plannercore.LogicalPlan).ExtractFD()
-		require.Equal(t, tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+		p.(base.LogicalPlan).ExtractFD()
+		require.Equal(t, tt.fd, plannercore.FDToString(p.(base.LogicalPlan)), comment)
 	}
 }
 
@@ -366,18 +370,19 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		require.Equal(t, tt.best, plannercore.ToString(p), comment)
 		// extract FD to every OP
-		p.(plannercore.LogicalPlan).ExtractFD()
-		require.Equal(t, tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+		p.(base.LogicalPlan).ExtractFD()
+		require.Equal(t, tt.fd, plannercore.FDToString(p.(base.LogicalPlan)), comment)
 	}
 }

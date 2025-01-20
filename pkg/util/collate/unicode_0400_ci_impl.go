@@ -29,6 +29,10 @@ const (
 type unicode0400Impl struct {
 }
 
+func (unicode0400Impl) Clone() unicode0400Impl {
+	return unicode0400Impl{}
+}
+
 func (unicode0400Impl) Preprocess(s string) string {
 	return truncateTailingSpace(s)
 }

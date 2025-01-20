@@ -501,7 +501,7 @@ func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
 	return h.workers[0]
 }
 
-// Close make finished flag ture
+// Close make finished flag true
 func (h *planReplayerTaskDumpHandle) Close() {
 	close(h.taskCH)
 }
@@ -571,7 +571,7 @@ type PlanReplayerDumpTask struct {
 
 	// variables used to dump the plan
 	StartTS           uint64
-	SessionBindings   []bindinfo.Bindings
+	SessionBindings   [][]*bindinfo.Binding
 	EncodedPlan       string
 	SessionVars       *variable.SessionVars
 	ExecStmts         []ast.StmtNode

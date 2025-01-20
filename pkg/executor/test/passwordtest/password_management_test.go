@@ -218,7 +218,7 @@ func TestPasswordManagement(t *testing.T) {
 
 	rootTK.MustExec(`set global validate_password.enable = OFF`)
 	rootTK.MustExec(`update mysql.user set Password_last_changed = date_sub(Password_last_changed,interval '3 0:0:1' DAY_SECOND)  where user = 'u2' and host = '%'`)
-	err = domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	err = domain.GetDomain(rootTK.Session()).NotifyUpdateAllUsersPrivilege()
 	require.NoError(t, err)
 	// Password expires and takes effect.
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, sha1Password("Uu3@22222"), nil, nil)
@@ -723,7 +723,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_count')," +
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')," +
 		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= %? and host = %?"
-	err := domain.GetDomain(rootTK.Session()).NotifyUpdatePrivilege()
+	err := domain.GetDomain(rootTK.Session()).NotifyUpdateAllUsersPrivilege()
 	require.NoError(t, err)
 	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil, nil)
@@ -858,6 +858,46 @@ func TestPasswordExpiredAndTacking(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil, nil))
 }
 
+// TestPasswordMySQLCompatibility is to test compatibility with the output of what MySQL outputs on SHOW CREATE USER.
+func TestPasswordMySQLCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// MySQL 8.0.37
+	//
+	// This is using mysql_native_password as that's common with this version, however it is not the default.
+	//
+	// CREATE USER 'test80037'@'%' IDENTIFIED WITH 'mysql_native_password' BY 'secret';
+	// SHOW CREATE USER 'test80037'@'%';
+	tk.MustExec(
+		"CREATE USER `test80037`@`%` " +
+			"IDENTIFIED WITH 'mysql_native_password' AS '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7' " +
+			"REQUIRE NONE " +
+			"PASSWORD EXPIRE DEFAULT " +
+			"ACCOUNT UNLOCK " +
+			"PASSWORD HISTORY DEFAULT " +
+			"PASSWORD REUSE INTERVAL DEFAULT " +
+			"PASSWORD REQUIRE CURRENT DEFAULT",
+	)
+
+	// MySQL 8.4.0
+	//
+	// NOT using mysql_native_password here as that is disabled by default in this version.
+	//
+	// CREATE USER 'test80400'@'%';
+	// SHOW CREATE USER 'test80400'@'%';
+	tk.MustExec(
+		"CREATE USER `test80400`@`%` " +
+			"IDENTIFIED WITH 'caching_sha2_password' " +
+			"REQUIRE NONE " +
+			"PASSWORD EXPIRE DEFAULT " +
+			"ACCOUNT UNLOCK " +
+			"PASSWORD HISTORY DEFAULT " +
+			"PASSWORD REUSE INTERVAL DEFAULT " +
+			"PASSWORD REQUIRE CURRENT DEFAULT",
+	)
+}
+
 func loginFailedAncCheck(t *testing.T, store kv.Storage, user, host, password string, failedLoginCount int64, autoAccountLocked string) {
 	tk := testkit.NewTestKit(t, store)
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(password), nil, nil))
@@ -884,7 +924,7 @@ func changeAutoLockedLastChanged(tk *testkit.TestKit, ds, user string) {
 	changeTime := time.Now().Add(d).Format(time.UnixDate)
 	SQL = fmt.Sprintf(SQL, changeTime, user)
 	tk.MustExec(SQL)
-	domain.GetDomain(tk.Session()).NotifyUpdatePrivilege()
+	domain.GetDomain(tk.Session()).NotifyUpdateAllUsersPrivilege()
 }
 
 func checkUserUserAttributes(tk *testkit.TestKit, user, host, row string) {

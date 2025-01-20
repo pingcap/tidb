@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
@@ -42,17 +43,16 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // compressionRatio is the tikv/tiflash's compression ratio
@@ -94,7 +94,7 @@ type TargetInfoGetter interface {
 	// FetchRemoteDBModels fetches the database structures from the remote target.
 	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 	// FetchRemoteTableModels fetches the table structures from the remote target.
-	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error)
 	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 	CheckVersionRequirements(ctx context.Context) error
 	// IsTableEmpty checks whether the specified table on the target DB contains data or not.
@@ -143,9 +143,6 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		if pdHTTPCli == nil {
-			return nil, common.ErrUnknown.GenWithStack("pd HTTP client is required when using local backend")
-		}
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
@@ -165,8 +162,12 @@ func (g *TargetInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*mode
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
-func (g *TargetInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return g.backend.FetchRemoteTableModels(ctx, schemaName)
+func (g *TargetInfoGetterImpl) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	return g.backend.FetchRemoteTableModels(ctx, schemaName, tableNames)
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
@@ -368,6 +369,10 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 
 func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
+	tableNames := make([]string, 0, len(dbSrcFileMeta.Tables))
+	for _, tableFileMeta := range dbSrcFileMeta.Tables {
+		tableNames = append(tableNames, tableFileMeta.Name)
+	}
 	failpoint.Inject(
 		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
 		func(v failpoint.Value) {
@@ -381,7 +386,7 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 			failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
 		},
 	)
-	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
+	currentTableInfosMap, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName, tableNames)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
 			dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(dbName)
@@ -397,10 +402,6 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 get_struct_from_src:
-	currentTableInfosMap := make(map[string]*model.TableInfo)
-	for _, tblInfo := range currentTableInfosFromDB {
-		currentTableInfosMap[tblInfo.Name.L] = tblInfo
-	}
 	resultInfos := make([]*model.TableInfo, len(dbSrcFileMeta.Tables))
 	for i, tableFileMeta := range dbSrcFileMeta.Tables {
 		if curTblInfo, ok := currentTableInfosMap[strings.ToLower(tableFileMeta.Name)]; ok {
@@ -431,15 +432,15 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 		log.L().Error(errMsg, zap.Error(err), zap.String("sql", createTblSQL))
 		return nil, errors.Trace(err)
 	}
-	sctx := mock.NewContext()
 	createTableStmt, ok := astNode.(*ast.CreateTableStmt)
 	if !ok {
 		return nil, errors.New("cannot transfer the parsed SQL as an CREATE TABLE statement")
 	}
-	info, err := ddl.MockTableInfo(sctx, createTableStmt, tableID)
+	info, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createTableStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	info.ID = tableID
 	info.State = model.StatePublic
 	return info, nil
 }
@@ -464,7 +465,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -613,11 +616,13 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -803,8 +808,12 @@ func (p *PreImportInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*m
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return p.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
+func (p *PreImportInfoGetterImpl) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	return p.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName, tableNames)
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.

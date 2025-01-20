@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -503,7 +504,7 @@ func TestJSONContains(t *testing.T) {
 	}
 	for _, cs := range cases {
 		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
-		require.True(t, types.ErrInvalidJSONData.Equal(err))
+		require.True(t, ErrInvalidTypeForJSON.Equal(err))
 	}
 }
 
@@ -1341,4 +1342,101 @@ func TestJSONMergePatch(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+}
+
+func TestJSONSchemaValid(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONSchemaValid]
+	tbl := []struct {
+		Input    any
+		Expected any
+	}{
+		// nulls
+		{[]any{nil, `{}`}, nil},
+		{[]any{`{}`, nil}, nil},
+		{[]any{nil, nil}, nil},
+
+		// empty
+		{[]any{`{}`, `{}`}, 1},
+
+		// required
+		{[]any{`{"required": ["a","b"]}`, `{"a": 5}`}, 0},
+		{[]any{`{"required": ["a","b"]}`, `{"a": 5, "b": 6}`}, 1},
+
+		// type
+		{[]any{`{"type": ["string"]}`, `{}`}, 0},
+		{[]any{`{"type": ["string"]}`, `"foobar"`}, 1},
+		{[]any{`{"type": ["object"]}`, `{}`}, 1},
+		{[]any{`{"type": ["object"]}`, `"foobar"`}, 0},
+
+		// properties, type
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{}`}, 1},
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{"a": "foobar"}`}, 0},
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{"a": 5}`}, 1},
+
+		// properties, minimum
+		{[]any{`{"properties": {"a": {"type": "number", "minimum": 6}}}`, `{"a": 5}`}, 0},
+
+		// properties, pattern
+		{[]any{`{"properties": {"a": {"type": "string", "pattern": "^a"}}}`, `{"a": "abc"}`}, 1},
+		{[]any{`{"properties": {"a": {"type": "string", "pattern": "^a"}}}`, `{"a": "cba"}`}, 0},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, tt := range dtbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		if tt["Expected"][0].IsNull() {
+			require.True(t, d.IsNull())
+		} else {
+			testutil.DatumEqual(
+				t, tt["Expected"][0], d,
+				fmt.Sprintf("JSON_SCHEMA_VALID(%s,%s) = %d (expected: %d)",
+					tt["Input"][0].GetString(),
+					tt["Input"][1].GetString(),
+					d.GetInt64(),
+					tt["Expected"][0].GetInt64(),
+				),
+			)
+		}
+	}
+}
+
+// TestJSONSchemaValidCache is to test if the cached schema is used
+func TestJSONSchemaValidCache(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONSchemaValid]
+	tbl := []struct {
+		Input    any
+		Expected any
+	}{
+		{[]any{`{}`, `{}`}, 1},
+	}
+	dtbl := tblToDtbl(tbl)
+
+	for _, tt := range dtbl {
+		// Get the function and eval once, ensuring it is cached
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+
+		// Disable the cache function
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh", `return(true)`))
+
+		// This eval should use the cache and not call the function.
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+
+		// Now get a new cache by getting the function again.
+		f, err = fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+
+		// Empty cache, we call the function. This should return an error.
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.Error(t, err)
+	}
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh"))
 }

@@ -1,0 +1,451 @@
+[
+  {
+    "Name": "TestRangeDerivation",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  (a1>1) or (a1=1 and b1 >= 10) -- simple DNF on (a1,b1) ",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3366.67 cop[tikv] table:t1 range:[1 10,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1>1) or (a1=1 and b1 >= 10)) and (c1 > 10) -- -- same as previous example with another conjunct",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─Selection 1118.52 cop[tikv]  gt(test.t1.c1, 10)",
+          "      └─TableRangeScan 3366.67 cop[tikv] table:t1 range:[1 10,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  (a1>1) or (a1=1 and b1 > 10) -- simple DNF on (a1,b1) with open interval",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3366.67 cop[tikv] table:t1 range:(1 10,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1>1) or (a1=1 and b1 > 10)) and (c1 > 10) -- same as previous example with another conjunct",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─Selection 1118.52 cop[tikv]  gt(test.t1.c1, 10)",
+          "      └─TableRangeScan 3366.67 cop[tikv] table:t1 range:(1 10,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1<10) or (a1=10 and b1 < 20)) -- upper bound on (a1,b1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3356.57 cop[tikv] table:t1 range:[-inf,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20)) -- upper and lower bound on (a1,b1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 1403.26 cop[tikv] table:t1 range:(1 10,1 +inf], (1,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c = 3 -- IN list",
+        "Plan": [
+          "Selection 0.00 root  eq(test.t.c, 3)",
+          "└─Batch_Point_Get 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b>0 and b<2;",
+        "Plan": [
+          "IndexReader 0.25 root  index:Selection",
+          "└─Selection 0.25 cop[tikv]  eq(test.tuk.b, 1)",
+          "  └─IndexRangeScan 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a,b,c  from tuk where a>3 and b=4 order by a,c;",
+        "Plan": [
+          "IndexReader 3.33 root  index:Selection",
+          "└─Selection 3.33 cop[tikv]  eq(test.tuk.b, 4)",
+          "  └─IndexRangeScan 3333.33 cop[tikv] table:tuk, index:a(a, b, c) range:(3,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  (a1>'1') or (a1='1' and b1 >= '10') -- simple DNF on (a1,b1) ",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3366.67 cop[tikv] table:t1char range:[\"1\" \"10\",\"1\" +inf], (\"1\",+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1>'1') or (a1='1' and b1 >= '10')) and (c1 > '10') -- -- same as previous example with another conjunct",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─Selection 1118.52 cop[tikv]  gt(test.t1char.c1, 10)",
+          "      └─TableRangeScan 3366.67 cop[tikv] table:t1char range:[\"1\" \"10\",\"1\" +inf], (\"1\",+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  (a1>'1') or (a1='1' and b1 > '10') -- simple DNF on (a1,b1) with open interval",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3366.67 cop[tikv] table:t1char range:(\"1\" \"10\",\"1\" +inf], (\"1\",+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1>'1') or (a1='1' and b1 > '10')) and (c1 > '10') -- same as previous example with another conjunct",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─Selection 1118.52 cop[tikv]  gt(test.t1char.c1, 10)",
+          "      └─TableRangeScan 3366.67 cop[tikv] table:t1char range:(\"1\" \"10\",\"1\" +inf], (\"1\",+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1<'10') or (a1='10' and b1 < '20')) -- upper bound on (a1,b1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 3356.57 cop[tikv] table:t1char range:[-inf,\"10\"), [\"10\" -inf,\"10\" \"20\"), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where ((a1>'1') or (a1='1' and b1 > '10')) and ((a1<'10') or (a1='10' and b1 < '20')) -- upper and lower bound on (a1,b1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+          "    └─TableRangeScan 1403.26 cop[tikv] table:t1char range:(\"1\" \"10\",\"1\" +inf], (\"1\",\"10\"), [\"10\" -inf,\"10\" \"20\"), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestRangeIntersection",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 3366.67 cop[tikv] table:t1, index:pkx(a1, b1) range:(1 10,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "595"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1<10) or (a1=10 and b1 < 20));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 3356.57 cop[tikv] table:t1, index:pkx(a1, b1) range:[-inf,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "516"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20));",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 316.57 cop[tikv] table:t1, index:pkx(a1, b1) range:(1 10,1 +inf], (1,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "471"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1,b1) > (1,10) and (a1,b1) < (10,20); -- row format of previous test",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 316.57 cop[tikv] table:t1, index:pkx(a1, b1) range:(1 10,1 +inf], (1,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "471"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 >= 10)) and ((a1<10) or (a1=10 and b1 <= 20));",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 316.57 cop[tikv] table:t1, index:pkx(a1, b1) range:[1 10,1 +inf], (1,10), [10 -inf,10 20], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "473"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1,b1) >= (1,10) and (a1,b1) <= (10,20); -- row format of previous test",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 316.57 cop[tikv] table:t1, index:pkx(a1, b1) range:[1 10,1 +inf], (1,10), [10 -inf,10 20], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "473"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1>1 and a1 < 10) or (a1=1 and b1>10) or (a1=10 and b1<20);",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 316.57 cop[tikv] table:t1, index:pkx(a1, b1) range:(1 10,1 +inf], (1,10), [10 -inf,10 20), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "471"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1>1) or (a1=1 and b1 > 10));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─Selection 3335.56 cop[tikv]  or(gt(test.t11.a1, 1), and(eq(test.t11.a1, 1), gt(test.t11.b1, 10)))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "595"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1<10) or (a1=10 and b1 < 20));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─Selection 3325.55 cop[tikv]  or(lt(test.t11.a1, 10), and(eq(test.t11.a1, 10), lt(test.t11.b1, 20)))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "516"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─Selection 1109.26 cop[tikv]  or(gt(test.t11.a1, 1), and(eq(test.t11.a1, 1), gt(test.t11.b1, 10))), or(lt(test.t11.a1, 10), and(eq(test.t11.a1, 10), lt(test.t11.b1, 20)))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "471"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where (a1>1 and a1 < 10) or (a1=1 and b1>10) or (a1=10 and b1<20);",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─Selection 256.49 cop[tikv]  or(and(gt(test.t11.a1, 1), lt(test.t11.a1, 10)), or(and(eq(test.t11.a1, 1), gt(test.t11.b1, 10)), and(eq(test.t11.a1, 10), lt(test.t11.b1, 20))))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "471"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "IndexReader 0.67 root  index:IndexRangeScan",
+          "└─IndexRangeScan 0.67 cop[tikv] table:t, index:PKK(a, b, c) range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2 3",
+          "2 2 5"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from t where c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "IndexReader 0.00 root  index:Selection",
+          "└─Selection 0.00 cop[tikv]  gt(test.t.c, 2)",
+          "  └─IndexRangeScan 0.00 cop[tikv] table:t, index:PKK(a, b, c) range:[1 1 1,1 1 1], [2 2 3,2 2 3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "IndexReader 0.00 root  index:Selection",
+          "└─Selection 0.00 cop[tikv]  gt(test.t.c, 2), or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "  └─IndexRangeScan 0.00 cop[tikv] table:t, index:PKK(a, b, c) range:[1 1 1,1 1 1], [2 2 3,2 2 3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from tt where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "TableReader 0.67 root  data:TableRangeScan",
+          "└─TableRangeScan 0.67 cop[tikv] table:tt range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 2 3",
+          "2 2 5"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from tt where c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "Selection 0.67 root  gt(test.tt.c, 2)",
+          "└─Batch_Point_Get 2.00 root table:tt, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t,PKX) */ * from tt where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "Selection 0.00 root  gt(test.tt.c, 2), or(and(eq(test.tt.a, 1), eq(test.tt.b, 1)), and(eq(test.tt.a, 2), eq(test.tt.b, 2)))",
+          "└─Batch_Point_Get 2.00 root table:tt, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(tablename,PKK) */ count(*) from tablename where (primary_key > '1primary_key_start' or (primary_key = '1primary_key_start' and secondary_key > '3secondary_key_start') or (primary_key = '1primary_key_start' and secondary_key = '3secondary_key_start' and timestamp >= '1707885658544000000')) and (primary_key < '2primary_key_end' or (primary_key = '2primary_key_end' and secondary_key < '4secondary_key_end') or (primary_key = '2primary_key_end' and secondary_key = '4secondary_key_end' and timestamp <= '2707885658544000000'));",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─TableRangeScan 1403.45 cop[tikv] table:tablename range:[\"1primary_key_start\" \"3secondary_key_start\" 1707885658544000000,\"1primary_key_start\" \"3secondary_key_start\" +inf], (\"1primary_key_start\" \"3secondary_key_start\",\"1primary_key_start\" +inf], (\"1primary_key_start\",\"2primary_key_end\"), [\"2primary_key_end\" -inf,\"2primary_key_end\" \"4secondary_key_end\"), [\"2primary_key_end\" \"4secondary_key_end\" -inf,\"2primary_key_end\" \"4secondary_key_end\" 2707885658544000000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(tablename,PKK) */ count(*) from tablename where (primary_key,secondary_key,timestamp) >= ('1primary_key_start','3secondary_key_start','1707885658544000000') and (primary_key,secondary_key,timestamp) <= ('2primary_key_end','4secondary_key_end','2707885658544000000');",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─TableRangeScan 1403.45 cop[tikv] table:tablename range:[\"1primary_key_start\" \"3secondary_key_start\" 1707885658544000000,\"1primary_key_start\" \"3secondary_key_start\" +inf], (\"1primary_key_start\" \"3secondary_key_start\",\"1primary_key_start\" +inf], (\"1primary_key_start\",\"2primary_key_end\"), [\"2primary_key_end\" -inf,\"2primary_key_end\" \"4secondary_key_end\"), [\"2primary_key_end\" \"4secondary_key_end\" -inf,\"2primary_key_end\" \"4secondary_key_end\" 2707885658544000000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ USE_INDEX(t,PK) */ a FROM tnull WHERE a IN (42) OR (a IS TRUE AND a IS NULL);",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:tnull, index:PK(a) range:[42,42], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT id7 FROM tkey_string WHERE id7 > 'large' AND id7 < 'x-small';",
+        "Plan": [
+          "TableReader 30.00 root partition:p1,p3 data:Selection",
+          "└─Selection 30.00 cop[tikv]  gt(test.tkey_string.id7, \"large\"), lt(test.tkey_string.id7, \"x-small\")",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tkey_string keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "medium",
+          "small",
+          "x-large"
+        ]
+      },
+      {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44, 70, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 43.33 root  1->Column#5",
+          "└─IndexReader 54.17 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 54.17 cop[tikv] table:t_inlist_test, index:twoColIndex(a1, b1) range:(70 41,70 +inf], [76,76], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44,45) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 6.71 root  1->Column#5",
+          "└─TableDual 6.71 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (70, 73, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 53.33 root  1->Column#5",
+          "└─IndexReader 53.33 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 53.33 cop[tikv] table:t_inlist_test, index:twoColIndex(a1, b1) range:(70 41,70 +inf], [73,73], [76,76], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (0, 20)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─TableDual 1122.61 root  rows:0"
+        ],
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (2, 20) and b1 <5",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─Selection 373.08 cop[tikv]  lt(test.t1.b1, 5), or(gt(test.t1.a1, 1), and(eq(test.t1.a1, 1), gt(test.t1.b1, 10))), or(lt(test.t1.a1, 2), and(eq(test.t1.a1, 2), lt(test.t1.b1, 20)))",
+          "      └─IndexRangeScan 466.35 cop[tikv] table:t1, index:pkx(a1, b1) range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "14"
+        ]
+      },
+      {
+        "SQL": "select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (4, 20) and a1 < 0",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─TableDual 373.08 root  rows:0"
+        ],
+        "Result": [
+          "0"
+        ]
+      }
+    ]
+  }
+]

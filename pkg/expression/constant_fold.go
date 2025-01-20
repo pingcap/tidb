@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -41,9 +42,9 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
 
-	charset, collate := expr.GetType().GetCharset(), expr.GetType().GetCollate()
-	e.GetType().SetCharset(charset)
-	e.GetType().SetCollate(collate)
+	charset, collate := expr.GetType(ctx.GetEvalCtx()).GetCharset(), expr.GetType(ctx.GetEvalCtx()).GetCollate()
+	e.GetType(ctx.GetEvalCtx()).SetCharset(charset)
+	e.GetType(ctx.GetEvalCtx()).SetCollate(collate)
 	e.SetRepertoire(expr.Repertoire())
 	return e
 }
@@ -65,7 +66,7 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 		}
 		return &Constant{Value: value, RetType: expr.RetType}, false
 	}
-	if mysql.HasNotNullFlag(arg0.GetType().GetFlag()) {
+	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		return NewZero(), false
 	}
 	return expr, false
@@ -105,8 +106,8 @@ func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool
 			// See https://github.com/pingcap/tidb/issues/51765. If the first argument can
 			// be folded into NULL, the collation of IFNULL should be the same as the second
 			// arguments.
-			expr.GetType().SetCharset(args[1].GetType().GetCharset())
-			expr.GetType().SetCollate(args[1].GetType().GetCollate())
+			expr.GetType(ctx.GetEvalCtx()).SetCharset(args[1].GetType(ctx.GetEvalCtx()).GetCharset())
+			expr.GetType(ctx.GetEvalCtx()).SetCollate(args[1].GetType(ctx.GetEvalCtx()).GetCollate())
 
 			return foldedExpr, isConstant
 		}
@@ -137,7 +138,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			foldedExpr, isDeferred := foldConstant(ctx, args[i+1])
 			isDeferredConst = isDeferredConst || isDeferred
 			if _, isConst := foldedExpr.(*Constant); isConst {
-				foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
+				foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 				return foldedExpr, isDeferredConst
 			}
 			return foldedExpr, isDeferredConst
@@ -150,7 +151,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 		foldedExpr, isDeferred := foldConstant(ctx, args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
 		if _, isConst := foldedExpr.(*Constant); isConst {
-			foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
+			foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 			return foldedExpr, isDeferredConst
 		}
 		return foldedExpr, isDeferredConst
@@ -204,7 +205,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 					constArgs[i] = NewOne()
 				}
 			}
-			dummyScalarFunc, err := NewFunctionBase(ctx, x.FuncName.L, x.GetType(), constArgs...)
+			dummyScalarFunc, err := NewFunctionBase(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), constArgs...)
 			if err != nil {
 				return expr, isDeferredConst
 			}
@@ -250,8 +251,14 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		return &Constant{Value: value, RetType: retType}, false
 	case *Constant:
 		if x.ParamMarker != nil {
+			val, err := x.ParamMarker.GetUserVar(ctx.GetEvalCtx())
+			intest.AssertNoError(err, "fail to get param")
+			if err != nil {
+				logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+				return expr, true
+			}
 			return &Constant{
-				Value:        x.ParamMarker.GetUserVar(),
+				Value:        val,
 				RetType:      x.RetType,
 				DeferredExpr: x.DeferredExpr,
 				ParamMarker:  x.ParamMarker,

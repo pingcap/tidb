@@ -27,7 +27,7 @@ go_test(
         "txn_rc_tso_optimize_test.go",
     ],
     flaky = True,
-    shard_count = 24,
+    shard_count = 25,
     deps = [
         ":sessiontxn",
         "//pkg/domain",
@@ -35,8 +35,8 @@ go_test(
         "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessiontxn/internal",
         "//pkg/sessiontxn/isolation",

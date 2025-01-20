@@ -6,10 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/generatedexpr",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
-        "//pkg/parser/model",
         "//pkg/util",
         "@com_github_pingcap_errors//:errors",
     ],

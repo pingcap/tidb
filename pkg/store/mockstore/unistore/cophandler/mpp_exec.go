@@ -313,7 +313,10 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			}
 		}
 	}
-	if e.physTblIDColIdx != nil {
+
+	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
+	// The following if statement is to fill in the tid when we needed it.
+	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
 		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
@@ -545,7 +548,12 @@ func (e *topNExec) open() error {
 	if e.dummy {
 		return nil
 	}
-
+	evaluatorSuite := expression.NewEvaluatorSuite(e.conds, true)
+	fieldTypes := make([]*types.FieldType, 0, len(e.conds))
+	for i := 0; i < len(e.conds); i++ {
+		fieldTypes = append(fieldTypes, e.conds[i].GetType(e.sctx.GetExprCtx().GetEvalCtx()))
+	}
+	evalChk := chunk.NewEmptyChunk(fieldTypes)
 	for {
 		chk, err = e.children[0].next()
 		if err != nil {
@@ -556,14 +564,17 @@ func (e *topNExec) open() error {
 		}
 		e.execSummary.updateOnlyRows(chk.NumRows())
 		numRows := chk.NumRows()
+
+		err := evaluatorSuite.Run(e.sctx.GetExprCtx().GetEvalCtx(), true, chk, evalChk)
+		if err != nil {
+			return err
+		}
+
 		for i := 0; i < numRows; i++ {
-			row := chk.GetRow(i)
-			for j, cond := range e.conds {
-				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
-				if err != nil {
-					return err
-				}
-				d.Copy(&e.row.key[j])
+			row := evalChk.GetRow(i)
+			tmpDatums := row.GetDatumRow(fieldTypes)
+			for j := 0; j < len(tmpDatums); j++ {
+				tmpDatums[j].Copy(&e.row.key[j])
 			}
 			if e.heap.tryToAddRow(e.row) {
 				e.row.data[0] = make([]byte, 4)
@@ -573,6 +584,7 @@ func (e *topNExec) open() error {
 				e.row = newTopNSortRow(len(e.conds))
 			}
 		}
+		evalChk.Reset()
 		e.recv = append(e.recv, chk)
 	}
 	sort.Sort(&e.heap.topNSorter)
@@ -654,6 +666,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 		} else if !(chk != nil && chk.NumRows() != 0) {
 			return nil, nil
 		}
+		e.execSummary.updateOnlyRows(chk.NumRows())
 		if e.exchangeTp == tipb.ExchangeType_Hash {
 			rows := chk.NumRows()
 			targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
@@ -754,6 +767,9 @@ func (e *exchRecvExec) next() (*chunk.Chunk, error) {
 		defer func() {
 			e.chk = nil
 		}()
+	}
+	if e.chk != nil {
+		e.execSummary.updateOnlyRows(e.chk.NumRows())
 	}
 	return e.chk, nil
 }
@@ -972,6 +988,7 @@ func (e *joinExec) next() (*chunk.Chunk, error) {
 		if e.idx < len(e.reservedRows) {
 			idx := e.idx
 			e.idx++
+			e.execSummary.updateOnlyRows(e.reservedRows[idx].Chunk().NumRows())
 			return e.reservedRows[idx].Chunk(), nil
 		}
 		eof, err := e.fetchRows()
@@ -1118,6 +1135,7 @@ func (e *selExec) open() error {
 
 func (e *selExec) next() (*chunk.Chunk, error) {
 	ret := chunk.NewChunkWithCapacity(e.getFieldTypes(), DefaultBatchSize)
+	var selected []bool
 	for !ret.IsFull() {
 		chk, err := e.children[0].next()
 		if err != nil {
@@ -1126,31 +1144,13 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 		if chk == nil || chk.NumRows() == 0 {
 			break
 		}
-		numRows := chk.NumRows()
-		for rows := 0; rows < numRows; rows++ {
-			row := chk.GetRow(rows)
-			passCheck := true
-			for _, cond := range e.conditions {
-				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-
-				if d.IsNull() {
-					passCheck = false
-				} else {
-					isBool, err := d.ToBool(e.sctx.GetSessionVars().StmtCtx.TypeCtx())
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					passCheck = isBool != 0
-				}
-				if !passCheck {
-					break
-				}
-			}
-			if passCheck {
-				ret.AppendRow(row)
+		selected, err := expression.VectorizedFilter(e.sctx.GetExprCtx().GetEvalCtx(), true, e.conditions, chunk.NewIterator4Chunk(chk), selected)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i := 0; i < len(selected); i++ {
+			if selected[i] {
+				ret.AppendRow(chk.GetRow(i))
 				e.execSummary.updateOnlyRows(1)
 			}
 		}

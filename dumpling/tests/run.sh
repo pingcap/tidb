@@ -38,11 +38,11 @@ function run_case_by_fullpath() {
     # run in verbose mode?
     echo "Verbose mode = $VERBOSE"
     if [ "$VERBOSE" = "true" ]; then
-      PATH="tests/_utils:$PATH" \
+      PATH="dumpling/tests/_utils:$PATH" \
         PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }' \
         bash -x "$script"
     else
-      PATH="tests/_utils:$PATH" \
+      PATH="dumpling/tests/_utils:$PATH" \
         bash +x "$script"
     fi
     echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> TEST: $script Passed Cleaning up test output dir: $DUMPLING_OUTPUT_DIR"

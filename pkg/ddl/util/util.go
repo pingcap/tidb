@@ -19,18 +19,20 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -47,7 +49,7 @@ const (
 	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %?`
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
-	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 	// KeyOpDefaultTimeout is the default timeout for each key operation.
 	KeyOpDefaultTimeout = 2 * time.Second
 	// KeyOpRetryInterval is the interval between two key operations.
@@ -55,6 +57,7 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	// /tidb/ddl/all_schema_by_job_versions/<job-id>/<tidb-id> ---> <schema-version>
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -184,41 +187,38 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391
 	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
+	return loadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
 }
 
 // LoadDDLVars loads ddl variable from mysql.global_variables.
 func LoadDDLVars(ctx sessionctx.Context) error {
-	return LoadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
+	return loadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
 
-// LoadGlobalVars loads global variable from mysql.global_variables.
-func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+// loadGlobalVars loads global variable from mysql.global_variables.
+func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
-	if _, ok := sctx.(*mock.Context); !ok {
-		e := sctx.GetRestrictedSQLExecutor()
-		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
-		paramNames := make([]any, 0, len(varNames))
-		for i, name := range varNames {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buf.WriteString("%?")
-			paramNames = append(paramNames, name)
+	e := sctx.GetRestrictedSQLExecutor()
+	var buf strings.Builder
+	buf.WriteString(loadGlobalVarsSQL)
+	paramNames := make([]any, 0, len(varNames))
+	for i, name := range varNames {
+		if i > 0 {
+			buf.WriteString(", ")
 		}
-		buf.WriteString(")")
-		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range rows {
-			varName := row.GetString(0)
-			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
-				return err
-			}
+		buf.WriteString("%?")
+		paramNames = append(paramNames, name)
+	}
+	buf.WriteString(")")
+	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		varName := row.GetString(0)
+		varValue := row.GetString(1)
+		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -283,7 +283,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("category", "ddl"), zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
 }
@@ -305,7 +305,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 		resp, err = etcdCli.Get(childCtx, key)
 		if err != nil {
 			cancel()
-			logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+			logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 			time.Sleep(KeyOpRetryInterval)
 			continue
 		}
@@ -330,7 +330,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 
-		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -354,7 +354,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -402,4 +402,22 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// All nodes should have the same type of engine
 	raftVersion := rows[0].GetString(0)
 	return raftVersion == raftKv2, nil
+}
+
+// FolderNotEmpty returns true only when the folder is not empty.
+func FolderNotEmpty(path string) bool {
+	entries, _ := os.ReadDir(path)
+	return len(entries) > 0
+}
+
+// GenKeyExistsErr builds a ErrKeyExists error.
+func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
+	if err != nil {
+		logutil.DDLLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
+	}
+	return kv.GenKeyExistsErr(valueStr, indexName)
 }

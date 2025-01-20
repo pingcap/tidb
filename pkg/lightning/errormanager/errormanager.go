@@ -19,7 +19,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
+	"sync"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -50,15 +52,18 @@ const (
 		CREATE SCHEMA IF NOT EXISTS %s;
 	`
 
-	syntaxErrorTableName = "syntax_error_v1"
-	typeErrorTableName   = "type_error_v1"
+	syntaxErrorTableName = "syntax_error_v2"
+	typeErrorTableName   = "type_error_v2"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName = "conflict_error_v2"
-	// DupRecordTable is the table name to record duplicate data that displayed to user.
-	DupRecordTable = "conflict_records"
+	ConflictErrorTableName = "conflict_error_v4"
+	// DupRecordTableName is the table name to record duplicate data that displayed to user.
+	DupRecordTableName = "conflict_records_v2"
+	// ConflictViewName is the view name for presenting the union information of ConflictErrorTable and DupRecordTable.
+	ConflictViewName = "conflict_view"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
+			id 	    	bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -71,6 +76,7 @@ const (
 
 	createTypeErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + typeErrorTableName + ` (
+			id		    bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -83,25 +89,28 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
-			is_data_kv  tinyint(1) NOT NULL,
+			kv_type     tinyint(1) NOT NULL COMMENT '0 for index kv, 1 for data kv, 2 for additionally inserted data kv',
 			INDEX (task_id, table_name),
 			INDEX (index_name),
-			INDEX (table_name, index_name)
+			INDEX (table_name, index_name),
+			INDEX (kv_type)
 		);
 	`
 
-	createDupRecordTable = `
-		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTable + ` (
+	createDupRecordTableName = `
+		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -114,6 +123,30 @@ const (
 		);
 	`
 
+	createConflictV1View = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
+			raw_key, raw_value, raw_handle, raw_row, kv_type, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
+			FROM %s.` + ConflictErrorTableName + `;
+	`
+
+	createConflictV2View = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 1 AS is_precheck_conflict, task_id, create_time, table_name, NULL AS index_name, NULL AS key_data,
+			row_data, NULL AS raw_key, NULL AS raw_value, NULL AS raw_handle, NULL AS raw_row, NULL AS kv_type, path,
+			offset, error, row_id FROM %s.` + DupRecordTableName + `;
+	`
+
+	createConflictV1V2View = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
+			raw_key, raw_value, raw_handle, raw_row, kv_type, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
+			FROM %s.` + ConflictErrorTableName + `
+			UNION ALL SELECT 1 AS is_precheck_conflict, task_id, create_time, table_name, NULL AS index_name, NULL AS key_data,
+			row_data, NULL AS raw_key, NULL AS raw_value, NULL AS raw_handle, NULL AS raw_row, NULL AS kv_type, path,
+			offset, error, row_id FROM %s.` + DupRecordTableName + `;
+	`
+
 	insertIntoTypeError = `
 		INSERT INTO %s.` + typeErrorTableName + `
 		(task_id, table_name, path, offset, error, row_data)
@@ -122,7 +155,7 @@ const (
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, kv_type)
 		VALUES
 	`
 
@@ -130,33 +163,34 @@ const (
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, kv_type)
 		VALUES
 	`
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
-		SELECT raw_key, index_name, raw_value, raw_handle
+		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 0
-		ORDER BY raw_key;
+		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT raw_key, raw_value
+		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 1
-		ORDER BY raw_key;
+		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = "" and row_data = "";
+		WHERE kv_type = 2
+		LIMIT ?;
 	`
 
 	insertIntoDupRecord = `
-		INSERT INTO %s.` + DupRecordTable + `
+		INSERT INTO %s.` + DupRecordTableName + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
 		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
@@ -250,10 +284,10 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
 	if em.conflictV1Enabled {
-		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorTable})
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 	if em.conflictV2Enabled {
-		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
+		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTableName})
 	}
 
 	// No need to create task info schema if no error is allowed.
@@ -264,6 +298,23 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	for _, sql := range sqls {
 		// trim spaces for unit test pattern matching
 		err := exec.Exec(ctx, sql[0], strings.TrimSpace(common.SprintfWithIdentifiers(sql[1], em.schema)))
+		if err != nil {
+			return err
+		}
+	}
+
+	if em.conflictV1Enabled && em.conflictV2Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV1V2View, em.schema, em.schema, em.schema)))
+		if err != nil {
+			return err
+		}
+	} else if em.conflictV1Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV1View, em.schema, em.schema)))
+		if err != nil {
+			return err
+		}
+	} else if em.conflictV2Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictV2View, em.schema, em.schema)))
 		if err != nil {
 			return err
 		}
@@ -464,26 +515,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	tableName string,
 	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
-	fnDeleteKey func(ctx context.Context, key []byte) error,
+	fnDeleteKeys func(ctx context.Context, key [][]byte) error,
 ) error {
 	if em.db == nil {
 		return nil
 	}
-
-	sessionOpts := encode.SessionOptions{
-		// TODO: need to find the correct value for SQLMode
-		SQLMode: mysql.ModeStrictAllTables,
-	}
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-		Logger:         em.logger,
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	g, gCtx := errgroup.WithContext(ctx)
 
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -491,170 +527,305 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		HideQueryLog: redact.NeedRedact(),
 	}
 
-	pool.ApplyOnErrorGroup(g, func() error {
-		// TODO: provide a detailed document to explain the algorithm and link it here
-		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
-		// check index KV
-		indexKvRows, err := em.db.QueryContext(
-			gCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
-			tableName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer indexKvRows.Close()
-		for indexKvRows.Next() {
-			var rawKey, rawValue, rawHandle []byte
-			var indexName string
-			if err := indexKvRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
-				return errors.Trace(err)
-			}
-			em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
-				zap.Binary("raw_key", rawKey),
-				zap.String("index_name", indexName),
-				zap.Binary("raw_value", rawValue),
-				zap.Binary("raw_handle", rawHandle))
+	const rowLimit = 1000
+	indexTaskCh := make(chan [2]int64)
+	indexTaskWg := &sync.WaitGroup{}
+	indexG, indexGCtx := errgroup.WithContext(ctx)
 
-			// get the latest value of rawKey from downstream TiDB
-			latestValue, err := fnGetLatest(gCtx, rawKey)
-			if tikverr.IsErrNotFound(err) {
-				continue
+	go func() {
+		//nolint:staticcheck
+		//lint:ignore SA2000
+		indexTaskWg.Add(1)
+		indexTaskCh <- [2]int64{0, math.MaxInt64}
+		indexTaskWg.Wait()
+		close(indexTaskCh)
+	}()
+
+	// TODO: provide a detailed document to explain the algorithm and link it here
+	// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
+	// check index KV
+	for t := range indexTaskCh {
+		start, end := t[0], t[1]
+		pool.ApplyOnErrorGroup(indexG, func() error {
+			defer indexTaskWg.Done()
+
+			sessionOpts := encode.SessionOptions{
+				// TODO: need to find the correct value for SQLMode
+				SQLMode: mysql.ModeStrictAllTables,
 			}
+			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         em.logger,
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
-			// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
-			if bytes.Equal(rawValue, latestValue) {
-				continue
-			}
+			var handleKeys [][]byte
+			var insertRows [][2][]byte
+			for start < end {
+				indexKvRows, err := em.db.QueryContext(
+					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
+					tableName, start, end, rowLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-			// rawHandle is the row key of the data KV that needs to be deleted
-			// get the latest value of the row key of the data KV that needs to be deleted
-			overwritten, err := fnGetLatest(gCtx, rawHandle)
-			// if the latest value cannot be found, that means the data KV has been deleted
-			if tikverr.IsErrNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
+				var lastRowID int64
+				for indexKvRows.Next() {
+					var rawKey, rawValue, rawHandle []byte
+					var indexName string
+					if err := indexKvRows.Scan(&lastRowID, &rawKey, &indexName, &rawValue, &rawHandle); err != nil {
+						return errors.Trace(err)
+					}
+					em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
+						zap.Binary("raw_key", rawKey),
+						zap.String("index_name", indexName),
+						zap.Binary("raw_value", rawValue),
+						zap.Binary("raw_handle", rawHandle))
 
-			overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-				tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !tbl.Meta().HasClusteredIndex() {
-				// for nonclustered PK, need to append handle to decodedData for AddRecord
-				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
-			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
-			if err != nil {
-				return errors.Trace(err)
-			}
+					// get the latest value of rawKey from downstream TiDB
+					latestValue, err := fnGetLatest(indexGCtx, rawKey)
+					if tikverr.IsErrNotFound(err) {
+						continue
+					}
+					if err != nil {
+						return errors.Trace(err)
+					}
 
-			// find out all the KV pairs that are contained in the data KV
-			kvPairs := encoder.SessionCtx.TakeKvPairs()
+					// if the latest value of rawKey equals to rawValue, that means this index KV is maintained in downstream TiDB
+					// if not, that means this index KV has been overwritten, and its corresponding data KV needs to be deleted
+					if bytes.Equal(rawValue, latestValue) {
+						continue
+					}
 
-			for _, kvPair := range kvPairs.Pairs {
-				em.logger.Debug("got encoded KV",
-					logutil.Key("key", kvPair.Key),
-					zap.Binary("value", kvPair.Val),
-					logutil.Key("rawKey", rawKey),
-					zap.Binary("rawValue", rawValue))
+					// rawHandle is the row key of the data KV that needs to be deleted
+					// get the latest value of the row key of the data KV that needs to be deleted
+					overwritten, err := fnGetLatest(indexGCtx, rawHandle)
+					// if the latest value cannot be found, that means the data KV has been deleted
+					if tikverr.IsErrNotFound(err) {
+						continue
+					}
+					if err != nil {
+						return errors.Trace(err)
+					}
 
-				// If rawKey equals to KV pair's key and rawValue equals to KV pair's value,
-				// this latest data KV of the index KV needs to be deleted;
-				// if not, this latest data KV of the index KV was inserted by other rows,
-				// so it is unrelated to the index KV that needs to be deleted, we cannot delete it.
+					overwrittenHandle, err := tablecodec.DecodeRowKey(rawHandle)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
+						tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if !tbl.Meta().HasClusteredIndex() {
+						// for nonclustered PK, need to append handle to decodedData for AddRecord
+						decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
+					}
+					_, err = encoder.AddRecord(decodedData)
+					if err != nil {
+						return errors.Trace(err)
+					}
 
-				// An example is:
-				// (pk, uk)
-				// (1, a)
-				// (1, b)
-				// (2, a)
+					// find out all the KV pairs that are contained in the data KV
+					kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-				// (1, a) is overwritten by (2, a). We found a->1 is an overwritten index KV,
-				// and we are considering if its data KV with key "1" can be deleted.
-				// We got the latest value of key "1" which is (1, b),
-				// and encode it to get all KV pairs which is [1->b, b->1].
-				// Only if there is a->1 we dare to delete data KV with key "1".
+					for _, kvPair := range kvPairs.Pairs {
+						em.logger.Debug("got encoded KV",
+							logutil.Key("key", kvPair.Key),
+							zap.Binary("value", kvPair.Val),
+							logutil.Key("rawKey", rawKey),
+							zap.Binary("rawValue", rawValue))
 
-				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
-					if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
-						func(c context.Context, txn *sql.Tx) error {
-							sb := &strings.Builder{}
-							_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
-							if err2 != nil {
-								return errors.Trace(err2)
+						// If rawKey equals to KV pair's key and rawValue equals to KV pair's value,
+						// this latest data KV of the index KV needs to be deleted;
+						// if not, this latest data KV of the index KV was inserted by other rows,
+						// so it is unrelated to the index KV that needs to be deleted, we cannot delete it.
+
+						// An example is:
+						// (pk, uk)
+						// (1, a)
+						// (1, b)
+						// (2, a)
+
+						// (1, a) is overwritten by (2, a). We found a->1 is an overwritten index KV,
+						// and we are considering if its data KV with key "1" can be deleted.
+						// We got the latest value of key "1" which is (1, b),
+						// and encode it to get all KV pairs which is [1->b, b->1].
+						// Only if there is a->1 we dare to delete data KV with key "1".
+
+						if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
+							handleKeys = append(handleKeys, rawHandle)
+							var insertRow [2][]byte
+							insertRow[0] = rawHandle
+							insertRow[1] = overwritten
+							insertRows = append(insertRows, insertRow)
+							break
+						}
+					}
+				}
+				if err := indexKvRows.Err(); err != nil {
+					_ = indexKvRows.Close()
+					return errors.Trace(err)
+				}
+				if err := indexKvRows.Close(); err != nil {
+					return errors.Trace(err)
+				}
+				if len(handleKeys) == 0 {
+					break
+				}
+				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
+					return errors.Trace(err)
+				}
+				if err := exec.Transact(ctx, "insert data conflict record for conflict detection 'replace' mode",
+					func(c context.Context, txn *sql.Tx) error {
+						sb := &strings.Builder{}
+						_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+						if err2 != nil {
+							return errors.Trace(err2)
+						}
+						var sqlArgs []any
+						for i, insertRow := range insertRows {
+							if i > 0 {
+								sb.WriteByte(',')
 							}
-							var sqlArgs []any
 							sb.WriteString(sqlValuesConflictErrorData)
 							sqlArgs = append(sqlArgs,
 								em.taskID,
 								tableName,
 								nil,
 								nil,
-								rawHandle,
-								overwritten,
-								1,
+								insertRow[0],
+								insertRow[1],
+								2,
 							)
-							_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
-							return errors.Trace(err)
-						}); err != nil {
+						}
+						_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 						return errors.Trace(err)
-					}
-					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
-						return errors.Trace(err)
-					}
-					break
-				}
-			}
-		}
-		if err := indexKvRows.Err(); err != nil {
-			return errors.Trace(err)
-		}
-
-		// check data KV
-		dataKvRows, err := em.db.QueryContext(
-			gCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
-			tableName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer dataKvRows.Close()
-
-		var previousRawKey, latestValue []byte
-		var mustKeepKvPairs *kv.Pairs
-
-		for dataKvRows.Next() {
-			var rawKey, rawValue []byte
-			if err := dataKvRows.Scan(&rawKey, &rawValue); err != nil {
-				return errors.Trace(err)
-			}
-			em.logger.Debug("got group raw_key, raw_value from table",
-				logutil.Key("raw_key", rawKey),
-				zap.Binary("raw_value", rawValue))
-
-			if !bytes.Equal(rawKey, previousRawKey) {
-				previousRawKey = rawKey
-				// get the latest value of rawKey from downstream TiDB
-				latestValue, err = fnGetLatest(gCtx, rawKey)
-				if err != nil && !tikverr.IsErrNotFound(err) {
+					}); err != nil {
 					return errors.Trace(err)
 				}
-				if latestValue != nil {
+				start = lastRowID + 1
+				// If the remaining tasks cannot be processed at once, split the task
+				// into two subtasks and send one of them to the other idle worker if possible.
+				if end-start > rowLimit {
+					mid := start + (end-start)/2
+					indexTaskWg.Add(1)
+					select {
+					case indexTaskCh <- [2]int64{mid, end}:
+						end = mid
+					default:
+						indexTaskWg.Done()
+					}
+				}
+				handleKeys = handleKeys[:0]
+			}
+			return nil
+		})
+	}
+	if err := indexG.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+
+	dataTaskCh := make(chan [2]int64)
+	dataTaskWg := &sync.WaitGroup{}
+	dataG, dataGCtx := errgroup.WithContext(ctx)
+
+	go func() {
+		//nolint:staticcheck
+		//lint:ignore SA2000
+		dataTaskWg.Add(1)
+		dataTaskCh <- [2]int64{0, math.MaxInt64}
+		dataTaskWg.Wait()
+		close(dataTaskCh)
+	}()
+
+	// check data KV
+	for t := range dataTaskCh {
+		start, end := t[0], t[1]
+		pool.ApplyOnErrorGroup(dataG, func() error {
+			defer dataTaskWg.Done()
+
+			sessionOpts := encode.SessionOptions{
+				// TODO: need to find the correct value for SQLMode
+				SQLMode: mysql.ModeStrictAllTables,
+			}
+			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         em.logger,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			var handleKeys [][]byte
+			for start < end {
+				dataKvRows, err := em.db.QueryContext(
+					dataGCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
+					tableName, start, end, rowLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				var lastRowID int64
+				var previousRawKey, latestValue []byte
+				var mustKeepKvPairs *kv.Pairs
+
+				for dataKvRows.Next() {
+					var rawKey, rawValue []byte
+					if err := dataKvRows.Scan(&lastRowID, &rawKey, &rawValue); err != nil {
+						return errors.Trace(err)
+					}
+					em.logger.Debug("got group raw_key, raw_value from table",
+						logutil.Key("raw_key", rawKey),
+						zap.Binary("raw_value", rawValue))
+
+					if !bytes.Equal(rawKey, previousRawKey) {
+						previousRawKey = rawKey
+						// get the latest value of rawKey from downstream TiDB
+						latestValue, err = fnGetLatest(dataGCtx, rawKey)
+						if err != nil && !tikverr.IsErrNotFound(err) {
+							return errors.Trace(err)
+						}
+						if latestValue != nil {
+							handle, err := tablecodec.DecodeRowKey(rawKey)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
+								tbl.Meta(), handle, tbl.Cols(), latestValue)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							if !tbl.Meta().HasClusteredIndex() {
+								// for nonclustered PK, need to append handle to decodedData for AddRecord
+								decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
+							}
+							_, err = encoder.AddRecord(decodedData)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							// calculate the new mustKeepKvPairs corresponding to the new rawKey
+							// find out all the KV pairs that are contained in the data KV
+							mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
+						}
+					}
+
+					// if the latest value of rawKey equals to rawValue, that means this data KV is maintained in downstream TiDB
+					// if not, that means this data KV has been deleted due to overwritten index KV
+					if bytes.Equal(rawValue, latestValue) {
+						continue
+					}
+
 					handle, err := tablecodec.DecodeRowKey(rawKey)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-						tbl.Meta(), handle, tbl.Cols(), latestValue)
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
+						tbl.Meta(), handle, tbl.Cols(), rawValue)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -662,80 +833,82 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+					_, err = encoder.AddRecord(decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					// calculate the new mustKeepKvPairs corresponding to the new rawKey
+
 					// find out all the KV pairs that are contained in the data KV
-					mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
-				}
-			}
+					kvPairs := encoder.SessionCtx.TakeKvPairs()
+					for _, kvPair := range kvPairs.Pairs {
+						em.logger.Debug("got encoded KV",
+							logutil.Key("key", kvPair.Key),
+							zap.Binary("value", kvPair.Val))
+						kvLatestValue, err := fnGetLatest(dataGCtx, kvPair.Key)
+						if tikverr.IsErrNotFound(err) {
+							continue
+						}
+						if err != nil {
+							return errors.Trace(err)
+						}
 
-			// if the latest value of rawKey equals to rawValue, that means this data KV is maintained in downstream TiDB
-			// if not, that means this data KV has been deleted due to overwritten index KV
-			if bytes.Equal(rawValue, latestValue) {
-				continue
-			}
+						// if the value of the KV pair is not equal to the latest value of the key of the KV pair
+						// that means the value of the KV pair has been overwritten, so it needs no extra operation
+						if !bytes.Equal(kvLatestValue, kvPair.Val) {
+							continue
+						}
 
-			handle, err := tablecodec.DecodeRowKey(rawKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-				tbl.Meta(), handle, tbl.Cols(), rawValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !tbl.Meta().HasClusteredIndex() {
-				// for nonclustered PK, need to append handle to decodedData for AddRecord
-				decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
-			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
-			if err != nil {
-				return errors.Trace(err)
-			}
+						// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
+						// if not, delete the KV pair
+						if mustKeepKvPairs != nil {
+							isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
+								return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
+							})
+							if isContained {
+								continue
+							}
+						}
 
-			// find out all the KV pairs that are contained in the data KV
-			kvPairs := encoder.SessionCtx.TakeKvPairs()
-			for _, kvPair := range kvPairs.Pairs {
-				em.logger.Debug("got encoded KV",
-					logutil.Key("key", kvPair.Key),
-					zap.Binary("value", kvPair.Val))
-				kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
-				if tikverr.IsErrNotFound(err) {
-					continue
-				}
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				// if the value of the KV pair is not equal to the latest value of the key of the KV pair
-				// that means the value of the KV pair has been overwritten, so it needs no extra operation
-				if !bytes.Equal(kvLatestValue, kvPair.Val) {
-					continue
-				}
-
-				// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
-				// if not, delete the KV pair
-				if mustKeepKvPairs != nil {
-					isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
-						return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
-					})
-					if isContained {
-						continue
+						handleKeys = append(handleKeys, kvPair.Key)
 					}
 				}
-
-				if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
+				if err := dataKvRows.Err(); err != nil {
+					_ = dataKvRows.Close()
 					return errors.Trace(err)
 				}
+				if err := dataKvRows.Close(); err != nil {
+					return errors.Trace(err)
+				}
+				if len(handleKeys) == 0 {
+					break
+				}
+				if err := fnDeleteKeys(dataGCtx, handleKeys); err != nil {
+					return errors.Trace(err)
+				}
+				start = lastRowID + 1
+				// If the remaining tasks cannot be processed at once, split the task
+				// into two subtasks and send one of them to the other idle worker if possible.
+				if end-start > rowLimit {
+					mid := start + (end-start)/2
+					dataTaskWg.Add(1)
+					select {
+					case dataTaskCh <- [2]int64{mid, end}:
+						end = mid
+					default:
+						dataTaskWg.Done()
+					}
+				}
+				handleKeys = handleKeys[:0]
 			}
-		}
-		if err := dataKvRows.Err(); err != nil {
-			return errors.Trace(err)
-		}
+			return nil
+		})
+	}
+	if err := dataG.Wait(); err != nil {
+		return errors.Trace(err)
+	}
 
+	hasRow := true
+	for {
 		// delete the additionally inserted rows for nonclustered PK
 		if err := exec.Transact(ctx, "delete additionally inserted rows for conflict detection 'replace' mode",
 			func(c context.Context, txn *sql.Tx) error {
@@ -744,16 +917,27 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				_, err := txn.ExecContext(c, sb.String())
-				return errors.Trace(err)
+				result, err := txn.ExecContext(c, sb.String(), rowLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				affected, err := result.RowsAffected()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if affected == 0 {
+					hasRow = false
+				}
+				return nil
 			}); err != nil {
 			return errors.Trace(err)
 		}
+		if !hasRow {
+			break
+		}
+	}
 
-		return nil
-	})
-
-	return errors.Trace(g.Wait())
+	return nil
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
@@ -904,13 +1088,9 @@ func (em *ErrorManager) LogErrorDetails() {
 		// TODO: add charset table name
 		em.logger.Warn(fmtErrMsg(errCnt, "data charset", ""))
 	}
-	if errCnt := em.conflictError(); errCnt > 0 {
-		if em.conflictV1Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		}
-		if em.conflictV2Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
-		}
+	errCnt := em.conflictError()
+	if errCnt > 0 && (em.conflictV1Enabled || em.conflictV2Enabled) {
+		em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictViewName))
 	}
 }
 
@@ -927,10 +1107,10 @@ func (em *ErrorManager) Output() string {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
 	t.SetColumnConfigs([]table.ColumnConfig{
-		{Name: "#", WidthMax: 6},
-		{Name: "Error Type", WidthMax: 20},
-		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 42},
+		{Name: "#"},
+		{Name: "Error Type"},
+		{Name: "Error Count"},
+		{Name: "Error Data Table"},
 	})
 	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}
@@ -952,11 +1132,8 @@ func (em *ErrorManager) Output() string {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
-		if em.conflictV1Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		}
-		if em.conflictV2Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
+		if em.conflictV1Enabled || em.conflictV2Enabled {
+			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictViewName)})
 		}
 	}
 

@@ -15,15 +15,18 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -122,7 +125,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 		`0 0 select * from t where a<3;`))
 }
 
-func TestSlowQueryPrepared(t *testing.T) {
+func TestSlowQueryMisc(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
@@ -158,6 +161,21 @@ func TestSlowQueryPrepared(t *testing.T) {
 	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
 		"where query like 'select%sleep%' order by time desc limit 1").
 		Check(testkit.Rows("select `sleep` ( ? ) , ?;"))
+
+	// Test 3 kinds of stale-read query.
+	tk.MustExec("create table test.t_stale_read (a int)")
+	time.Sleep(time.Second + time.Millisecond*10)
+	tk.MustExec("set tidb_redact_log=0;")
+	tk.MustExec("set @@tidb_read_staleness='-1'")
+	tk.MustQuery("select a from test.t_stale_read")
+	tk.MustExec("set @@tidb_read_staleness='0'")
+	t1 := time.Now()
+	tk.MustQuery(fmt.Sprintf("select a from test.t_stale_read as of timestamp '%s'", t1.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t1.Format("2006-1-2 15:04:05")))
+	tk.MustQuery("select a from test.t_stale_read")
+	tk.MustExec("commit")
+	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
+		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
@@ -286,6 +304,13 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < now();").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2022-04-29 17:50:00'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '2010-01-02 15:04:05'").Check(testkit.Rows("0"))
+
+	// test the time zone change cases, see issue: https://github.com/pingcap/tidb/issues/58452
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustExec("set @@time_zone='+10:00'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
 }
 
 func TestIssue37066(t *testing.T) {
@@ -388,7 +413,7 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, h set('11', '22', '33')," +
 		"primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 

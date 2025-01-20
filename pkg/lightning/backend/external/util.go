@@ -61,7 +61,6 @@ func seekPropsOffsets(
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := range paths {
-		i := i
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {

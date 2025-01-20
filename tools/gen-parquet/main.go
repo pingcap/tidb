@@ -36,7 +36,7 @@ var (
 func genParquetFile(dir, name string, count int) error {
 	type Test struct {
 		I int32  `parquet:"name=iVal, type=INT32"`
-		S string `parquet:"name=s, type=UTF8, encoding=PLAIN_DICTIONARY"`
+		S string `parquet:"name=s, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	}
 
 	w, err := local.NewLocalFileWriter(filepath.Join(dir, name))

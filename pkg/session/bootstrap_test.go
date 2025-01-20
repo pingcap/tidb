@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,10 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -35,8 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -91,7 +97,7 @@ func TestBootstrap(t *testing.T) {
 	MustExec(t, se, "USE test")
 	MustExec(t, se, "drop table if exists t")
 	MustExec(t, se, "create table t (id int)")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	se.Close()
 
 	se, err = CreateSession4Test(store)
@@ -153,9 +159,9 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.exprctx = newExpressionContextImpl(se)
+		se.exprctx = sessionexpr.NewExprContext(se)
 		se.pctx = newPlanContextImpl(se)
-		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
+		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.txn.init()
@@ -167,9 +173,12 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, err)
 		err = InitDDLJobTables(store, meta.BackfillTableVersion)
 		require.NoError(t, err)
+		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
-		domain.BindDomain(se, dom)
+		require.NoError(t, dom.Start(ddl.Bootstrap))
+		se.dom = dom
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -239,7 +248,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ver, err := m.CheckDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
@@ -248,6 +257,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	m.SetDDLTables(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	// TODO(lance6716): remove it after tidb_ddl_notifier GA
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -260,6 +271,42 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	MustExec(t, se, "select * from mysql.tidb_background_subtask")
 	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()
+}
+
+func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	ver, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
+
+	// downgrade DDL table version
+	m.SetDDLTables(meta.BackfillTableVersion)
+	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// to upgrade session for create ddl notifier table
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+
+	se = CreateSessionAndSetID(t, store)
+	MustExec(t, se, "select * from mysql.tidb_ddl_notifier")
+	dom.Close()
+}
+
+func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
+	if ver <= version195 {
+		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
+		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
+	}
 }
 
 // TestUpgrade tests upgrading
@@ -292,15 +339,17 @@ func TestUpgrade(t *testing.T) {
 	// downgrade meta bootstrap version
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(1))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	MustExec(t, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	MustExec(t, se1, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
 	MustExec(t, se1, `commit`)
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
+	revertVersionAndVariables(t, se1, 0)
 	// Make sure the version is downgraded.
 	r = MustExecToRecodeSet(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
@@ -365,15 +414,15 @@ func TestIssue17979_1(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(58))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, "update mysql.tidb set variable_value='58' where variable_name='tidb_server_version'")
+	revertVersionAndVariables(t, seV3, 58)
 	MustExec(t, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(58), ver)
@@ -401,15 +450,15 @@ func TestIssue17979_2(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(59))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, "update mysql.tidb set variable_value=59 where variable_name='tidb_server_version'")
+	revertVersionAndVariables(t, seV3, 59)
 	MustExec(t, seV3, "delete from mysql.tidb where variable_name='default_iim_action'")
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(59), ver)
@@ -443,15 +492,15 @@ func TestIssue20900_2(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(52))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, "update mysql.tidb set variable_value=52 where variable_name='tidb_server_version'")
+	revertVersionAndVariables(t, seV3, 52)
 	MustExec(t, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(52), ver)
@@ -482,12 +531,11 @@ func TestANSISQLMode(t *testing.T) {
 	MustExec(t, se, "USE mysql")
 	MustExec(t, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
 	MustExec(t, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	se.Close()
 
 	// Do some clean up, BootstrapSession will not create a new domain otherwise.
 	dom.Close()
-	domap.Delete(store)
 
 	// Set ANSI sql_mode and bootstrap again, to cover a bugfix.
 	// Once we have a SQL like that:
@@ -591,16 +639,16 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	seV67 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(67))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
+	revertVersionAndVariables(t, seV67, 67)
 	MustExec(t, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
 	require.Equal(t, uint64(1), seV67.GetSessionVars().StmtCtx.AffectedRows())
 	MustExec(t, seV67, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV67)
 	require.NoError(t, err)
 	require.Equal(t, int64(67), ver)
@@ -683,15 +731,15 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver300))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	revertVersionAndVariables(t, seV3, ver300)
 	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
@@ -726,7 +774,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -758,20 +806,20 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver300))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	revertVersionAndVariables(t, seV3, ver300)
 	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
 
-	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	// We are now in 3.0.0, check tidb_enable_index_merge should not exist.
 	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
@@ -817,15 +865,15 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	seV4 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver400))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+	revertVersionAndVariables(t, seV4, ver400)
 	MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
 	MustExec(t, seV4, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver400), ver)
@@ -936,15 +984,15 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	seV630 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver94))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV630, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver94))
+	revertVersionAndVariables(t, seV630, ver94)
 	MustExec(t, seV630, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptRangeMaxSize))
 	MustExec(t, seV630, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV630)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver94), ver)
@@ -994,15 +1042,15 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	seV660 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver134))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV660, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver134))
+	revertVersionAndVariables(t, seV660, ver134)
 	MustExec(t, seV660, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptAdvancedJoinHint))
 	MustExec(t, seV660, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV660)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver134), ver)
@@ -1046,7 +1094,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1072,7 +1120,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
-	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersionWithCache(store))
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1096,7 +1144,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 6.5+.
@@ -1104,15 +1152,15 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	seV3 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver300))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	revertVersionAndVariables(t, seV3, ver300)
 	MustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
 	MustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
@@ -1124,6 +1172,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
 
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1155,15 +1204,15 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			seV61 := CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			err = m.FinishBootstrap(int64(ver61))
 			require.NoError(t, err)
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
-			MustExec(t, seV61, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver61))
+			revertVersionAndVariables(t, seV61, ver61)
 			MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBCostModelVersion))
 			MustExec(t, seV61, "commit")
-			unsetStoreBootstrapped(store.UUID())
+			store.SetOption(StoreBootstrappedKey, nil)
 			ver, err := getBootstrapVersion(seV61)
 			require.NoError(t, err)
 			require.Equal(t, int64(ver61), ver)
@@ -1215,7 +1264,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.3 to 6.5+.
@@ -1223,15 +1272,15 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	seV63 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver63))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV63, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver63))
+	revertVersionAndVariables(t, seV63, ver63)
 	MustExec(t, seV63, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBEnableGCAwareMemoryTrack))
 	MustExec(t, seV63, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV63)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver63), ver)
@@ -1247,6 +1296,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, "1", row.GetString(1))
 
 	// Upgrade to 6.5.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1268,7 +1318,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
@@ -1276,15 +1326,15 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	seV132 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver132))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV132, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver132))
+	revertVersionAndVariables(t, seV132, ver132)
 	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBServerMemoryLimit))
 	MustExec(t, seV132, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV132)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver132), ver)
@@ -1300,6 +1350,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	require.Equal(t, "0", row.GetString(1))
 
 	// Upgrade to 6.5.1+.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1321,7 +1372,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
@@ -1329,15 +1380,15 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	seV132 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver132))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV132, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver132))
+	revertVersionAndVariables(t, seV132, ver132)
 	MustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "70%", variable.TiDBServerMemoryLimit))
 	MustExec(t, seV132, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV132)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver132), ver)
@@ -1353,6 +1404,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	require.Equal(t, "70%", row.GetString(1))
 
 	// Upgrade to 6.5.1+.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1374,7 +1426,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.3.0 to 6.6.0.
@@ -1382,18 +1434,18 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	seV630 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver630))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV630, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver630))
+	revertVersionAndVariables(t, seV630, ver630)
 	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnableForeignKey))
 	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.ForeignKeyChecks))
 	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnableHistoricalStats))
 	MustExec(t, seV630, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "OFF", variable.TiDBEnablePlanReplayerCapture))
 	MustExec(t, seV630, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV630)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver630), ver)
@@ -1413,6 +1465,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	}
 
 	// Upgrade to 6.6.0.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1447,15 +1500,15 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 			seV65 := CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			err = m.FinishBootstrap(int64(ver65))
 			require.NoError(t, err)
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
-			MustExec(t, seV65, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver65))
+			revertVersionAndVariables(t, seV65, ver65)
 			MustExec(t, seV65, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBStoreBatchSize))
 			MustExec(t, seV65, "commit")
-			unsetStoreBootstrapped(store.UUID())
+			store.SetOption(StoreBootstrappedKey, nil)
 			ver, err := getBootstrapVersion(seV65)
 			require.NoError(t, err)
 			require.Equal(t, int64(ver65), ver)
@@ -1506,7 +1559,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1515,14 +1568,14 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	seV135 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver135))
 	require.NoError(t, err)
-	MustExec(t, seV135, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver135))
+	revertVersionAndVariables(t, seV135, ver135)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV135)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver135), ver)
@@ -1533,6 +1586,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled"))
 	})
 	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV135)
@@ -1544,7 +1598,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1553,14 +1607,14 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	resetTo139 := func(s sessiontypes.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err = m.FinishBootstrap(int64(ver139))
 		require.NoError(t, err)
-		MustExec(t, s, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver139))
+		revertVersionAndVariables(t, s, ver139)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 
-		unsetStoreBootstrapped(store.UUID())
+		store.SetOption(StoreBootstrappedKey, nil)
 		ver, err := getBootstrapVersion(s)
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
@@ -1570,6 +1624,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err := getBootstrapVersion(s)
@@ -1590,7 +1645,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// bootstrap to 5.4
@@ -1598,15 +1653,15 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	seV54 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver54))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV54, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver54))
+	revertVersionAndVariables(t, seV54, ver54)
 	MustExec(t, seV54, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableNonPreparedPlanCache))
 	MustExec(t, seV54, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV54)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver54), ver)
@@ -1619,6 +1674,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	require.Equal(t, 0, chk.NumRows())
 
 	// Upgrade to 7.0
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1649,7 +1705,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.1 to 6.5+.
@@ -1657,15 +1713,15 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	seV61 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver61))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV61, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver61))
+	revertVersionAndVariables(t, seV61, ver61)
 	MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBStatsLoadPseudoTimeout))
 	MustExec(t, seV61, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV61)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver61), ver)
@@ -1681,6 +1737,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	require.Equal(t, "0", row.GetString(1))
 
 	// Upgrade to 6.5.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1702,22 +1759,22 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	ver137 := version137
 	seV137 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver137))
 	require.NoError(t, err)
-	MustExec(t, seV137, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver137))
+	revertVersionAndVariables(t, seV137, ver137)
 	MustExec(t, seV137, "update mysql.GLOBAL_VARIABLES set variable_value='OFF' where variable_name='tidb_enable_null_aware_anti_join'")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV137)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver137), ver)
@@ -1732,6 +1789,7 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	require.Equal(t, "OFF", row.GetString(1))
 
 	// Upgrade to version 138.
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1751,7 +1809,7 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer143(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1760,18 +1818,19 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 	seV142 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver142))
 	require.NoError(t, err)
-	MustExec(t, seV142, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver142))
+	revertVersionAndVariables(t, seV142, ver142)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV142)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver142), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV142)
@@ -1782,7 +1841,7 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 
 func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 7.0 to 7.1.
@@ -1790,15 +1849,15 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	seV70 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver70))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	MustExec(t, seV70, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver70))
+	revertVersionAndVariables(t, seV70, ver70)
 	MustExec(t, seV70, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBLoadBasedReplicaReadThreshold))
 	MustExec(t, seV70, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV70)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver70), ver)
@@ -1814,6 +1873,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	require.Equal(t, "0", row.GetString(1))
 
 	// Upgrade to 7.1.
+	do.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1835,7 +1895,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 
 func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// bootstrap as version143
@@ -1843,17 +1903,18 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 	seV143 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver143))
 	require.NoError(t, err)
-	MustExec(t, seV143, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver143))
+	revertVersionAndVariables(t, seV143, ver143)
 	// simulate a real ver143 where `tidb_plan_cache_invalidation_on_fresh_stats` doesn't exist yet
 	MustExec(t, seV143, "delete from mysql.GLOBAL_VARIABLES where variable_name='tidb_plan_cache_invalidation_on_fresh_stats'")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 
 	// upgrade to ver144
+	do.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1881,7 +1942,7 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 }
 
 func TestTiDBUpgradeToVer145(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1890,18 +1951,19 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 	seV144 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver144))
 	require.NoError(t, err)
-	MustExec(t, seV144, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver144))
+	revertVersionAndVariables(t, seV144, ver144)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV144)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver144), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV144)
@@ -1911,7 +1973,7 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer170(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1919,18 +1981,19 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	seV169 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver169))
 	require.NoError(t, err)
-	MustExec(t, seV169, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver169))
+	revertVersionAndVariables(t, seV169, ver169)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV169)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver169), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV169)
@@ -1941,7 +2004,7 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 
 func TestTiDBBindingInListToVer175(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// bootstrap as version174
@@ -1949,13 +2012,13 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	seV174 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver174))
 	require.NoError(t, err)
-	MustExec(t, seV174, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver174))
+	revertVersionAndVariables(t, seV174, ver174)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 
 	// create some bindings at version174
 	MustExec(t, seV174, "use test")
@@ -1993,6 +2056,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
 
 	// upgrade to ver175
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -2023,7 +2087,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer176(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -2031,18 +2095,19 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	seV175 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver175))
 	require.NoError(t, err)
-	MustExec(t, seV175, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver175))
+	revertVersionAndVariables(t, seV175, ver175)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV175)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver175), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV175)
@@ -2053,7 +2118,7 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer177(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -2061,18 +2126,19 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	seV176 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver176))
 	require.NoError(t, err)
-	MustExec(t, seV176, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver176))
+	revertVersionAndVariables(t, seV176, ver176)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV176)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver176), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV176)
@@ -2089,7 +2155,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ddlTableVer, err := m.CheckDDLTableVersion()
 	require.NoError(t, err)
 
@@ -2107,12 +2173,12 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 
 func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ddlTableVer, err := m.CheckDDLTableVersion()
 	require.NoError(t, err)
 
@@ -2121,17 +2187,18 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	seV177 := CreateSessionAndSetID(t, store)
 	err = m.FinishBootstrap(int64(ver177))
 	require.NoError(t, err)
-	MustExec(t, seV177, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver177))
+	revertVersionAndVariables(t, seV177, ver177)
 	// remove the ddl_table_version entry from mysql.tidb table
 	MustExec(t, seV177, fmt.Sprintf("delete from mysql.tidb where VARIABLE_NAME='%s'", tidbDDLTableVersion))
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV177)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver177), ver)
 
 	// upgrade to current version
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -2152,7 +2219,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 
 func TestTiDBUpgradeToVer179(t *testing.T) {
 	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -2160,18 +2227,19 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 	seV178 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver178))
 	require.NoError(t, err)
-	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	revertVersionAndVariables(t, seV178, ver178)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV178)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver178), ver)
 
+	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV178)
@@ -2190,7 +2258,7 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 }
 
 func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
-	store, _ := CreateStoreAndBootstrap(t)
+	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -2198,15 +2266,15 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	seV178 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(ver178))
 	require.NoError(t, err)
-	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	revertVersionAndVariables(t, seV178, ver178)
 	MustExec(t, seV178, injectQuery)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	unsetStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, nil)
 	ver, err := getBootstrapVersion(seV178)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver178), ver)
@@ -2219,8 +2287,7 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 		rs()
 	}()
 
-	var dom *domain.Domain
-
+	do.Close()
 	fatal2panic := false
 	fc := func() {
 		defer func() {
@@ -2228,15 +2295,62 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 				fatal2panic = true
 			}
 		}()
-		dom, _ = BootstrapSession(store)
+		_, _ = BootstrapSession(store)
 	}
 	fc()
-
-	if fatal {
-		dom = domain.GetDomain(seV178)
-	}
+	var dom *domain.Domain
+	dom, err = domap.Get(store)
+	require.NoError(t, err)
 	dom.Close()
 	require.Equal(t, fatal, fatal2panic)
+}
+
+func TestTiDBUpgradeToVer209(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	// simulate a real ver198 where `tidb_resource_control_strict_mode` doesn't exist yet
+	MustExec(t, seV198, "delete from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// upgrade to ver209
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// the value in the table is set to OFF automatically
+	res := MustExecToRecodeSet(t, seCurVer, "select * from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, "OFF", row.GetString(1))
+
+	// the global variable is also OFF
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_resource_control_strict_mode")
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, int64(0), row.GetInt64(0))
+	require.Equal(t, false, variable.EnableResourceControlStrictMode.Load())
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
@@ -2262,5 +2376,330 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 	})
 	t.Run("test dist task other", func(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
+	})
+}
+
+func TestTiDBUpgradeToVer211(t *testing.T) {
+	ctx := context.Background()
+	store, do := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver210 := version210
+	seV210 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver210))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV210, ver210)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV210)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver210), ver)
+	MustExec(t, seV210, "alter table mysql.tidb_background_subtask_history drop column summary;")
+
+	do.Close()
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV210)
+	require.NoError(t, err)
+	require.Less(t, int64(ver210), ver)
+
+	seV210.(*session).dom = dom
+	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NoError(t, r.Close())
+
+	dom.Close()
+}
+
+func TestTiDBHistoryTableConsistent(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	se := CreateSessionAndSetID(t, store)
+	query := `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask' order by ordinal_position)
+	               = (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask_history' order by ordinal_position);`
+	r := MustExecToRecodeSet(t, se, query)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	query = `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task' order by ordinal_position)
+	              = (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task_history' order by ordinal_position);`
+	r = MustExecToRecodeSet(t, se, query)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	dom.Close()
+}
+
+func TestTiDBUpgradeToVer212(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// upgrade to ver212
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// the columns are changed automatically
+	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
+}
+
+func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 6.5.0 to 8.4+ or above.
+	ver650 := 109
+	seV7 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver650))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV7, ver650)
+	MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableINLJoinInnerMultiPattern))
+	MustExec(t, seV7, "commit")
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV7)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver650), ver)
+
+	// We are now in 6.5.0, check tidb_enable_inl_join_inner_multi_pattern should not exist.
+	res := MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableINLJoinInnerMultiPattern))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in version no lower than 8.4, tidb_enable_inl_join_inner_multi_pattern be off.
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_enable_inl_join_inner_multi_pattern")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(0), row.GetInt64(0))
+}
+
+func TestKeyspaceEtcdNamespace(t *testing.T) {
+	keyspaceMeta := keyspacepb.KeyspaceMeta{}
+	keyspaceMeta.Id = 2
+	keyspaceMeta.Name = "test_ks_name2"
+	makeStore(t, &keyspaceMeta, true)
+}
+
+func TestNullKeyspaceEtcdNamespace(t *testing.T) {
+	makeStore(t, nil, false)
+}
+
+func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix bool) {
+	integration.BeforeTestExternal(t)
+	var store kv.Storage
+	var err error
+	if keyspaceMeta != nil {
+		store, err = mockstore.NewMockStore(
+			mockstore.WithKeyspaceMeta(keyspaceMeta),
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+		)
+	} else {
+		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	}
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	// Build a mockEtcdBackend.
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
+	etcdClient := cluster.RandClient()
+
+	require.NoError(t, err)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	checkETCDNameSpace(t, dom, isHasPrefix)
+}
+
+func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
+	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(dom.Store().GetCodec())
+	testKeyWithoutPrefix := "/testkey"
+	testVal := "test"
+	var expectTestKey string
+	if isHasPrefix {
+		expectTestKey = namespacePrefix + testKeyWithoutPrefix
+	} else {
+		expectTestKey = testKeyWithoutPrefix
+	}
+
+	// Put key value into etcd.
+	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
+	require.NoError(t, err)
+
+	// Use expectTestKey to get the key from etcd.
+	getResp, err := dom.UnprefixedEtcdCli().Get(context.Background(), expectTestKey)
+	require.NoError(t, err)
+	require.Equal(t, len(getResp.Kvs), 1)
+
+	if isHasPrefix {
+		getResp, err = dom.UnprefixedEtcdCli().Get(context.Background(), testKeyWithoutPrefix)
+		require.NoError(t, err)
+		require.Equal(t, 0, len(getResp.Kvs))
+	}
+}
+
+type mockEtcdBackend struct {
+	kv.Storage
+	pdAddrs []string
+}
+
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
+
+func TestTiDBUpgradeToVer240(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver239 := version239
+	seV239 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver239))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV239, ver239)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
+	res := MustExecToRecodeSet(t, seV239, "show create table mysql.analyze_jobs")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+
+	// Check that the indexes still exist after upgrading to the new version and that no errors occurred during the upgrade.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, "show create table mysql.analyze_jobs")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+}
+
+// testExampleAFunc is a example func for TestGetFuncName
+func testExampleAFunc(s sessiontypes.Session, i int64) {}
+
+// testExampleBFunc is a example func for TestGetFuncName
+func testExampleBFunc(s sessiontypes.Session, i int64) {}
+
+func TestGetFuncName(t *testing.T) {
+	// Test case 1: Pass a valid function
+	t.Run("Valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleAFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleAFunc" {
+			t.Errorf("Expected function name 'testExampleAFunc', got: %s", name)
+		}
+	})
+
+	// Test case 2: Pass another valid function
+	t.Run("Another valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleBFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleBFunc" {
+			t.Errorf("Expected function name 'testExampleBFunc', got: %s", name)
+		}
+	})
+
+	// Test case 3: Pass nil as the function
+	t.Run("Nil function", func(t *testing.T) {
+		name, err := getFunctionName(nil)
+		if err == nil {
+			t.Fatalf("Expected an error, got nil")
+		}
+		if name != "" {
+			t.Errorf("Expected empty function name, got: %s", name)
+		}
+		if err.Error() != "function is nil" {
+			t.Errorf("Expected error 'function is nil', got: %v", err)
+		}
 	})
 }

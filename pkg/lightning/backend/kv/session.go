@@ -19,29 +19,20 @@ package kv
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
 
@@ -282,62 +273,20 @@ func (*transaction) MayFlush() error {
 	return nil
 }
 
-type planCtxImpl struct {
-	*Session
-	*planctximpl.PlanCtxExtendedImpl
-}
-
-type exprCtxImpl struct {
-	*Session
-	*exprctximpl.ExprCtxExtendedImpl
-}
-
-// Session is a trimmed down Session type which only wraps our own trimmed-down
-// transaction type and provides the session variables to the TiDB library
-// optimized for Lightning.
+// Session is used to provide context for lightning.
 type Session struct {
-	sessionctx.Context
-	planctx.EmptyPlanContextExtended
 	txn     transaction
-	Vars    *variable.SessionVars
-	exprCtx *exprCtxImpl
-	planctx *planCtxImpl
-	tblctx  *tbctximpl.TableContextImpl
-	// currently, we only set `CommonAddRecordCtx`
-	values map[fmt.Stringer]any
+	exprCtx *litExprContext
+	tblCtx  *litTableMutateContext
 }
 
-// NewSessionCtx creates a new trimmed down Session matching the options.
-func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx.Context {
-	return NewSession(options, logger)
-}
-
-// NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
-	s := &Session{
-		values: make(map[fmt.Stringer]any, 1),
-	}
-	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars(s)
-	vars.SkipUTF8Check = true
-	vars.StmtCtx.InInsertStmt = true
-	vars.StmtCtx.BatchCheck = true
-	vars.SQLMode = sqlMode
-
-	typeFlags := vars.StmtCtx.TypeFlags().
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
-			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
-	vars.StmtCtx.SetTypeFlags(typeFlags)
-
-	errLevels := vars.StmtCtx.ErrLevels()
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
-	errLevels[errctx.ErrGroupDividedByZero] =
-		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
-	vars.StmtCtx.SetErrLevels(errLevels)
-
+// NewSession creates a new Session.
+func NewSession(options *encode.SessionOptions, logger log.Logger) (*Session, error) {
+	sysVars := make(map[string]string, len(options.SysVars))
 	if options.SysVars != nil {
+		// This sessVars is only used to do validations.
+		sessVars := variable.NewSessionVars(nil)
+		// To keep compatible with the old versions, we should to skip errors caused by illegal system variables.
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
 			// lc_time_names is a read-only variable for now, but might be implemented later,
@@ -349,37 +298,52 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 				logger.Debug("skip read-only variable", zap.String("key", k))
 				continue
 			}
-			if err := vars.SetSystemVar(k, v); err != nil {
+			if err := sessVars.SetSystemVar(k, v); err != nil {
 				logger.DPanic("new session: failed to set system var",
 					log.ShortError(err),
 					zap.String("key", k))
+				continue
 			}
+			sysVars[k] = v
 		}
 	}
-	vars.StmtCtx.SetTimeZone(vars.Location())
-	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
-		logger.Warn("new session: failed to set timestamp",
-			log.ShortError(err))
-	}
-	vars.TxnCtx = nil
-	s.Vars = vars
-	s.exprCtx = &exprCtxImpl{
-		Session:             s,
-		ExprCtxExtendedImpl: exprctximpl.NewExprExtendedImpl(s),
-	}
-	s.planctx = &planCtxImpl{
-		Session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
-	}
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprCtx)
-	s.txn.kvPairs = &Pairs{}
 
-	return s
+	exprCtx, err := newLitExprContext(options.SQLMode, sysVars, options.Timestamp)
+	if err != nil {
+		return nil, err
+	}
+
+	tblCtx, err := newLitTableMutateContext(exprCtx, sysVars)
+	if err != nil {
+		return nil, err
+	}
+
+	s := &Session{
+		exprCtx: exprCtx,
+		tblCtx:  tblCtx,
+	}
+	s.txn.kvPairs = &Pairs{}
+	return s, nil
+}
+
+// GetExprCtx returns the expression context
+func (s *Session) GetExprCtx() exprctx.ExprContext {
+	return s.exprCtx
+}
+
+// Txn returns the internal txn.
+func (s *Session) Txn() kv.Transaction {
+	return &s.txn
+}
+
+// GetTableCtx returns the table MutateContext.
+func (s *Session) GetTableCtx() tblctx.MutateContext {
+	return s.tblCtx
 }
 
 // TakeKvPairs returns the current Pairs and resets the buffer.
-func (se *Session) TakeKvPairs() *Pairs {
-	memBuf := &se.txn.MemBuf
+func (s *Session) TakeKvPairs() *Pairs {
+	memBuf := &s.txn.MemBuf
 	pairs := memBuf.kvPairs
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
@@ -389,57 +353,19 @@ func (se *Session) TakeKvPairs() *Pairs {
 	return pairs
 }
 
-// Txn implements the sessionctx.Context interface
-func (se *Session) Txn(_ bool) (kv.Transaction, error) {
-	return &se.txn, nil
+// SetUserVarVal sets the value of a user variable.
+func (s *Session) SetUserVarVal(name string, dt types.Datum) {
+	s.exprCtx.setUserVarVal(name, dt)
 }
 
-// GetSessionVars implements the sessionctx.Context interface
-func (se *Session) GetSessionVars() *variable.SessionVars {
-	return se.Vars
+// UnsetUserVar unsets a user variable.
+func (s *Session) UnsetUserVar(varName string) {
+	s.exprCtx.unsetUserVar(varName)
 }
 
-// GetPlanCtx returns the PlanContext.
-func (se *Session) GetPlanCtx() planctx.PlanContext {
-	return se.planctx
-}
-
-// GetExprCtx returns the expression context of the session.
-func (se *Session) GetExprCtx() exprctx.ExprContext {
-	return se.exprCtx
-}
-
-// GetTableCtx returns the table.MutateContext
-func (se *Session) GetTableCtx() tbctx.MutateContext {
-	return se.tblctx
-}
-
-// SetValue saves a value associated with this context for key.
-func (se *Session) SetValue(key fmt.Stringer, value any) {
-	se.values[key] = value
-}
-
-// Value returns the value associated with this context for key.
-func (se *Session) Value(key fmt.Stringer) any {
-	return se.values[key]
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
-
-// GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
-	return nil
-}
-
-// GetStmtStats implements the sessionctx.Context interface.
-func (*Session) GetStmtStats() *stmtstats.StatementStats {
-	return nil
-}
-
-// Close implements the sessionctx.Context interface
-func (se *Session) Close() {
-	memBuf := &se.txn.MemBuf
+// Close closes the session
+func (s *Session) Close() {
+	memBuf := &s.txn.MemBuf
 	if memBuf.buf != nil {
 		memBuf.buf.destroy()
 		memBuf.buf = nil

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -152,6 +153,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	levels := stmtCtx.ErrLevels()
 	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
@@ -210,7 +212,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -257,7 +261,7 @@ sendReaderInfoLoop:
 	return err
 }
 
-func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
+func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) {
 	stmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 	numWarnings := uint64(stmtCtx.WarningCount())
 	numRecords := stmtCtx.RecordRows()
@@ -273,7 +277,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
+	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {
 		n += copy(warns[n:], colAssignExprWarnings)
@@ -288,7 +292,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx().GetPlanCtx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -344,7 +348,7 @@ type encodeWorker struct {
 	colAssignExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
-	exprWarnings []stmtctx.SQLWarn
+	exprWarnings []contextutil.SQLWarn
 	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
@@ -355,7 +359,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,
@@ -644,6 +648,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	case ast.OnDuplicateKeyHandlingIgnore:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
 		for i, row := range rows[0:cnt] {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
@@ -652,9 +661,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, dupKeyCheck)
 			} else {
-				err = w.addRecord(ctx, row)
+				err = w.addRecord(ctx, row, dupKeyCheck)
 			}
 			if err != nil {
 				return err
@@ -667,11 +676,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 }
 
-func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row)
+	return w.addRecord(ctx, row, dupKeyCheck)
 }
 
 // GetInfilePath get infile path.

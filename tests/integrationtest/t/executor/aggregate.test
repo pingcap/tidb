@@ -21,8 +21,7 @@ SELECT a, MIN(b), MAX(b) FROM t GROUP BY a;
 
 # TestAggPushDown
 drop table if exists t;
-create table t (a int, b int, c int);
-alter table t add index idx(a, b, c);
+create table t (a int, b int, c int, index idx(a, b, c));
 select count(a) from t group by a;
 select count(a) from t;
 insert t values(0,0,0);
