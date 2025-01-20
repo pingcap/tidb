@@ -466,6 +466,11 @@ func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 	}
 }
 
+// ModifyMeta implements scheduler.Extension interface.
+func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
+}
+
 // nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo

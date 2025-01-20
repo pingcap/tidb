@@ -405,6 +405,7 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 	task := s.getTaskClone()
 	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
 	recreateScheduler := false
+	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
 	for _, m := range task.ModifyParam.Modifications {
 		if m.Type == proto.ModifyConcurrency {
 			if task.Concurrency == int(m.To) {
@@ -416,9 +417,16 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 			recreateScheduler = true
 			task.Concurrency = int(m.To)
 		} else {
-			// will implement other modification types later.
-			s.logger.Warn("unsupported modification type", zap.Stringer("type", m.Type))
+			metaModifies = append(metaModifies, m)
 		}
+	}
+	if len(metaModifies) > 0 {
+		s.logger.Info("modify task meta", zap.Stringers("modifies", metaModifies))
+		newMeta, err := s.ModifyMeta(task.Meta, metaModifies)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		task.Meta = newMeta
 	}
 	if err := s.taskMgr.ModifiedTask(s.ctx, task); err != nil {
 		return false, errors.Trace(err)

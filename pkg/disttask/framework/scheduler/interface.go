@@ -131,6 +131,12 @@ type Extension interface {
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// ModifyMeta is used to modify the task meta when the task is in modifying
+	// state, it should return new meta after applying the modifications to the
+	// old meta.
+	// Note: the application side only need to modify meta, no need to do notify,
+	// task executor will do it later.
+	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
 // Param is used to pass parameters when creating scheduler.
