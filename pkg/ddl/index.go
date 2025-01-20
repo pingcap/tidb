@@ -2704,6 +2704,7 @@ func modifyTaskParamLoop(
 			continue
 		}
 		if !currTask.State.CanMoveToModifying() {
+			// user might modify param again while another modify is ongoing.
 			logger.Info("task state is not suitable for modifying, will retry later",
 				zap.String("state", currTask.State.String()))
 			continue

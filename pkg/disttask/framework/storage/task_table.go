@@ -78,7 +78,8 @@ var (
 )
 
 // Manager is the interface for task manager.
-// we expose the methods that's needed by application side to make test easier.
+// those methods are used by application side, we expose them through interface
+// to make tests easier.
 type Manager interface {
 	GetCPUCountOfNode(ctx context.Context) (int, error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
