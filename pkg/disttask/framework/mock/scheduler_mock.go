@@ -130,6 +130,21 @@ func (mr *MockSchedulerMockRecorder) IsRetryableErr(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableErr", reflect.TypeOf((*MockScheduler)(nil).IsRetryableErr), arg0)
 }
 
+// ModifyMeta mocks base method.
+func (m *MockScheduler) ModifyMeta(arg0 []byte, arg1 []proto.Modification) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifyMeta", arg0, arg1)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ModifyMeta indicates an expected call of ModifyMeta.
+func (mr *MockSchedulerMockRecorder) ModifyMeta(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifyMeta", reflect.TypeOf((*MockScheduler)(nil).ModifyMeta), arg0, arg1)
+}
+
 // OnDone mocks base method.
 func (m *MockScheduler) OnDone(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task) error {
 	m.ctrl.T.Helper()

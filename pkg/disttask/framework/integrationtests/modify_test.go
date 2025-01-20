@@ -31,7 +31,6 @@ import (
 )
 
 type collectedRuntimeInfo struct {
-	// not used right now, will support modify task specific params in later PR.
 	currentTask  *proto.Task
 	subtaskInfos []subtaskRuntimeInfo
 }
@@ -309,5 +308,40 @@ func TestModifyTaskConcurrency(t *testing.T) {
 			{Step: proto.StepTwo, Concurrency: 7},
 			{Step: proto.StepTwo, Concurrency: 7},
 		}, runtimeInfo.subtaskInfos)
+	})
+
+	t.Run("modify pending task meta, only check the scheduler part", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		var once sync.Once
+		modifySyncCh := make(chan struct{})
+		var theTask *proto.Task
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
+			once.Do(func() {
+				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, 3, "", []byte("init"))
+				require.NoError(t, err)
+				require.Equal(t, 3, task.Concurrency)
+				require.EqualValues(t, []byte("init"), task.Meta)
+				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+					PrevState: proto.TaskStatePending,
+					Modifications: []proto.Modification{
+						{Type: proto.ModifyMaxWriteSpeed, To: 123},
+					},
+				}))
+				theTask = task
+				gotTask, err := c.TaskMgr.GetTaskBaseByID(c.Ctx, theTask.ID)
+				require.NoError(t, err)
+				require.Equal(t, proto.TaskStateModifying, gotTask.State)
+				require.Equal(t, 3, gotTask.Concurrency)
+				<-modifySyncCh
+			})
+		})
+		modifySyncCh <- struct{}{}
+		// finish subtasks
+		for i := 0; i < 5; i++ {
+			subtaskCh <- struct{}{}
+		}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+		require.EqualValues(t, []byte("modify_max_write_speed=123"), runtimeInfo.currentTask.Meta)
 	})
 }
