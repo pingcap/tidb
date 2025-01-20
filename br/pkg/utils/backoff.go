@@ -347,7 +347,6 @@ func NewDiskCheckBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(resetTSRetryTime),
 		WithDelayTime(resetTSWaitInterval),
-		WithMaxDelayTime(resetTSMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("disk check")),
 		WithRetryErrorFunc(isRetryErrFunc),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -358,7 +357,6 @@ func NewRecoveryBackoffStrategy(isRetryErrFunc func(error) bool) BackoffStrategy
 	return NewBackoffStrategy(
 		WithRemainingAttempts(recoveryMaxAttempts),
 		WithDelayTime(recoveryDelayTime),
-		WithMaxDelayTime(recoveryMaxDelayTime),
 		WithErrorContext(NewZeroRetryContext("recovery")),
 		WithRetryErrorFunc(isRetryErrFunc),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -369,7 +367,6 @@ func NewFlashBackBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(FlashbackRetryTime),
 		WithDelayTime(FlashbackWaitInterval),
-		WithMaxDelayTime(FlashbackMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("flashback")),
 		WithRetryErrorFunc(alwaysTrueFunc()),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
@@ -380,7 +377,6 @@ func NewChecksumBackoffStrategy() BackoffStrategy {
 	return NewBackoffStrategy(
 		WithRemainingAttempts(ChecksumRetryTime),
 		WithDelayTime(ChecksumWaitInterval),
-		WithMaxDelayTime(ChecksumMaxWaitInterval),
 		WithErrorContext(NewZeroRetryContext("checksum")),
 		WithRetryErrorFunc(alwaysTrueFunc()),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
