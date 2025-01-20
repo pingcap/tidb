@@ -160,11 +160,6 @@ func (m *ColAndIdxExistenceMap) ColNum() int {
 	return len(m.colAnalyzed)
 }
 
-// IdxNum returns the number of indices in the map.
-func (m *ColAndIdxExistenceMap) IdxNum() int {
-	return len(m.idxAnalyzed)
-}
-
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
@@ -353,20 +348,6 @@ func (t *Table) DelCol(id int64) {
 func (t *Table) DelIdx(id int64) {
 	delete(t.indices, id)
 	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
-}
-
-// CleanUpStats reset the stats of the table to no stats.
-func (t *Table) CleanUpStats() {
-	t.columns = make(map[int64]*Column, len(t.columns))
-	t.indices = make(map[int64]*Index, len(t.indices))
-	for i := range t.ColAndIdxExistenceMap.colAnalyzed {
-		t.ColAndIdxExistenceMap.colAnalyzed[i] = false
-	}
-	for i := range t.ColAndIdxExistenceMap.idxAnalyzed {
-		t.ColAndIdxExistenceMap.idxAnalyzed[i] = false
-	}
-	t.LastAnalyzeVersion = 0
-	t.StatsVer = Version0
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
