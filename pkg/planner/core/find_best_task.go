@@ -725,22 +725,25 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
-	lhsPseudo, rhsPseudo := statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
-	if statsTbl != nil && len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if !lhsFullScan && lhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-				lhsPseudo = false // We have statistics for the lhs index
-			} else {
-				lhsPseudo = true
+	if statsTbl != nil {
+		lhsPseudo, rhsPseudo, tablePseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+		if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+			if !lhsFullScan && lhs.path.Index != nil {
+				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+					lhsPseudo = false // We have statistics for the lhs index
+				} else {
+					lhsPseudo = true
+				}
 			}
-		}
-		if !rhsFullScan && rhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-				rhsPseudo = false // We have statistics on the rhs index
-			} else {
-				rhsPseudo = true
+			if !rhsFullScan && rhs.path.Index != nil {
+				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+					rhsPseudo = false // We have statistics on the rhs index
+				} else {
+					rhsPseudo = true
+				}
 			}
 		}
 	}
@@ -751,7 +754,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	if (lhsPseudo != rhsPseudo || ((lhsPseudo || rhsPseudo) && !statsTbl.HistColl.Pseudo)) && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+	if (lhsPseudo != rhsPseudo || ((lhsPseudo || rhsPseudo) && !tablePseudo)) && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
