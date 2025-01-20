@@ -2257,11 +2257,11 @@
     "Cases": [
       {
         "SQL": "select max(a) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg"
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
       },
       {
         "SQL": "select min(a) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->StreamAgg"
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
       },
       {
         "SQL": "select min(c_str) from t;",
@@ -2277,7 +2277,7 @@
       },
       {
         "SQL": "select max(a), min(a) from t;",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg->IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->StreamAgg}"
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
@@ -2289,7 +2289,7 @@
       },
       {
         "SQL": "select max(a), max(c), min(f) from t",
-        "Best": "LeftHashJoin{LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a true],0,1))->TopN([test.t.a true],0,1)->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(a), max(b) from t",

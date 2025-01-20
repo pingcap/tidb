@@ -1046,7 +1046,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
 	}
 	switch partOptions.Interval.IntervalExpr.TimeUnit {
-	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitDayMinute, ast.TimeUnitSecond:
+	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitMinute, ast.TimeUnitSecond:
 	default:
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
 	}
@@ -3334,7 +3334,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -3398,7 +3398,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			}
 		}
 		tblInfo.Partition.DDLState = model.StateWriteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.2 / float64(math.MaxUint64))
 		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback2")
@@ -3419,7 +3419,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		job.SchemaState = model.StateWriteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -3711,42 +3711,15 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 	rh := newReorgHandler(sess.NewSession(sctx))
 	reorgTblInfo := tbl.Meta().Clone()
 	var elements []*meta.Element
-	isClustered := tbl.Meta().PKIsHandle || tbl.Meta().IsCommonHandle
-	if isClustered {
-		indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
-		for _, index := range tbl.Meta().Indices {
-			if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
-				// Skip old replaced indexes, but rebuild all other indexes
-				continue
-			}
-			indices = append(indices, index)
+	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
+	for _, index := range tbl.Meta().Indices {
+		if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
+			// Skip old replaced indexes, but rebuild all other indexes
+			continue
 		}
-		elements = BuildElements(tbl.Meta().Columns[0], indices)
-	} else {
-		// Non-clustered tables needs to generate new _tidb_rowid for each row, since
-		// there might be duplicates due to EXCHANGE PARTITION.
-		// That means that we can not first copy all table records and then
-		// recreate all indexes, since we cannot determine if a table record
-		// has been copied or not, since its _tidb_rowid handle has been recreated
-		// in the new partition.
-		// So we will read a batch of records from one partition at a time,
-		// do a BatchGet for all the record keys in the new partitions,
-		// to see if any of the records is already there with the same handle/_tidb_rowid
-		// which means they were double written and does not need to be copied.
-		// use AddRecord for all non-matching records.
-		// TODO: if there is an issue where we will retry the same batch and we have committed
-		// backfilled records and indexes without committing the updated reorgInfo start/end key,
-		// then the DDL can fail due to duplicate key.
-		reorgTblInfo.Indices = reorgTblInfo.Indices[:0]
-		for _, index := range tbl.Meta().Indices {
-			if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
-				// Skip old replaced indexes, but rebuild all other indexes
-				continue
-			}
-			reorgTblInfo.Indices = append(reorgTblInfo.Indices, index)
-		}
-		elements = BuildElements(tbl.Meta().Columns[0], reorgTblInfo.Indices)
+		indices = append(indices, index)
 	}
+	elements = BuildElements(tbl.Meta().Columns[0], indices)
 	reorgTbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, reorgTblInfo)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -3793,7 +3766,6 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 
 type reorgPartitionWorker struct {
 	*backfillCtx
-	records int
 	// Static allocated to limit memory allocations
 	rowRecords        []*rowRecord
 	rowDecoder        *decoder.RowDecoder
@@ -3805,15 +3777,11 @@ type reorgPartitionWorker struct {
 	// and check if the old _tidb_rowid was already written or not.
 	// If the old _tidb_rowid already exists, then the row is already backfilled (double written)
 	// and can be skipped. Otherwise, we will insert it and generate index entries.
-	rows [][]types.Datum
-	// The original _tidb_rowids, used to check if already backfilled (double written).
 	oldKeys []kv.Key
-	// partition ids of the new rows
-	newPids []int64
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
-	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false, false)
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -3869,54 +3837,55 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
-		if !isClustered {
-			// non-clustered table, we need to replace the _tidb_rowid handles since
-			// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
-			// Meaning we need to check here if a record was double written to the new partition,
-			// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
-			// and we should skip it.
-			var found map[string][]byte
+		failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
+		// For non-clustered tables, we need to replace the _tidb_rowid handles since
+		// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
+		// Meaning we need to check here if a record was double written to the new partition,
+		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
+		// and if so, skip it.
+		var found map[string][]byte
+		if len(w.oldKeys) > 0 {
+			// we must check if old IDs already been written,
+			// i.e. double written by StateWriteOnly or StateWriteReorganization.
+			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
+			found, err = txn.BatchGet(ctx, w.oldKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		for i, prr := range w.rowRecords {
+			taskCtx.scanCount++
+			key := prr.key
+
+			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if len(w.oldKeys) > 0 {
-				// we must check if old IDs already been written,
-				// i.e. double written by StateWriteOnly or StateWriteReorganization.
-				// The good thing is that we can then also skip the index generation for that row and we don't need to
-				// check if duplicate index entries was already copied either!
-				// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
-				found, err = txn.BatchGet(ctx, w.oldKeys)
+				if _, ok := found[string(w.oldKeys[i])]; ok {
+					// Already filled, i.e. double written earlier by concurrent DML
+					continue
+				}
+
+				// Check if we can lock the old key, since there can still be concurrent update
+				// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
+				// transaction and succeed when committing, then another transaction did update
+				// the same key, and we will fail and retry. When retrying, this key would be found
+				// through BatchGet and skipped.
+				err = txn.LockKeys(context.Background(), new(kv.LockCtx), w.oldKeys[i])
 				if err != nil {
 					return errors.Trace(err)
 				}
-			}
 
-			for i := 0; i < w.records; i++ {
-				taskCtx.scanCount++
-
-				if len(w.oldKeys) > 0 {
-					if _, ok := found[string(w.oldKeys[i])]; ok {
-						// Alredy filled
-						continue
-					}
-					tbl := w.reorgedTbl.GetPartition(w.newPids[i])
-					if tbl == nil {
-						return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-					}
-					// TODO: is this looking up each index entry at a time or in an optimistic way and only checks
-					// at commit time?
-					// AddRecord will assign a new _tidb_rowid, since we don't provide one.
-					_, err = tbl.AddRecord(w.tblCtx, txn, w.rows[i])
-					if err != nil {
-						return errors.Trace(err)
-					}
-					taskCtx.addedCount++
+				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
+				// Generate new _tidb_rowid.
+				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				if err != nil {
+					return errors.Trace(err)
 				}
+
+				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
+				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
 			}
-			return nil
-		}
-		// Clustered table, use tried implementation
-		for _, prr := range w.rowRecords {
-			taskCtx.scanCount++
-			err = txn.Set(prr.key, prr.vals)
+			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3931,15 +3900,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
-	w.records = 0
 	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
-	if !isClustered {
-		if cap(w.rows) < w.batchCnt {
-			w.rows = make([][]types.Datum, w.batchCnt)
-		}
-	}
 	w.oldKeys = w.oldKeys[:0]
-	w.newPids = w.newPids[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
@@ -3957,7 +3919,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
-			if taskDone || w.records >= w.batchCnt {
+			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
 			}
 
@@ -3966,51 +3928,26 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
-			if isClustered {
-				// Set all partitioning columns and calculate which partition to write to
-				for colID, offset := range w.writeColOffsetMap {
-					d, ok := w.rowMap[colID]
-					if !ok {
-						return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-					}
-					tmpRow[offset] = d
+			// Set all partitioning columns and calculate which partition to write to
+			for colID, offset := range w.writeColOffsetMap {
+				d, ok := w.rowMap[colID]
+				if !ok {
+					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
-			} else {
-				// _tidb_rowid needs to be regenerated, due to EXCHANGE PARTITION, meaning we cannot
-				// delay the index generation, but need to check if the current _tidb_rowid already exists
-				// in the new partition or not, before we write the newly generated one.
-				// and later in the caller of this function write both Record and all indexes
-
-				// Set all columns and calculate which partition to write to
-				// We will later copy the row, so use all writable columns
-				for _, col := range w.reorgedTbl.WritableCols() {
-					d, ok := w.rowMap[col.ID]
-					if !ok {
-						return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-					}
-					tmpRow[col.Offset] = d
-				}
+				tmpRow[offset] = d
 			}
 			p, err := w.reorgedTbl.GetPartitionByRow(w.exprCtx.GetEvalCtx(), tmpRow)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if isClustered {
-				newKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
-				newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-				w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
-				w.records++
-			} else {
-				if cap(w.rows[w.records]) < len(tmpRow) {
-					w.rows[w.records] = make([]types.Datum, len(tmpRow))
-				}
-				copy(w.rows[w.records], tmpRow)
-				w.newPids = append(w.newPids, p.GetPhysicalID())
+			newKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
+			newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
+			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
 
-				oldKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
+			if !isClustered {
+				oldKey := newKey[:tablecodec.TableSplitKeyLen]
 				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
 				w.oldKeys = append(w.oldKeys, oldKey)
-				w.records++
 			}
 
 			w.cleanRowMap()
@@ -4022,7 +3959,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			return true, nil
 		})
 
-	if w.records == 0 {
+	if len(w.rowRecords) == 0 {
 		taskDone = true
 	}
 
@@ -4065,11 +4002,8 @@ func (w *worker) reorgPartitionDataAndIndex(
 	//   - Transactions on different TiDB nodes/domains may see different states of the table/partitions
 	//   - We cannot have multiple partition ids for a unique index entry.
 
-	isClustered := t.Meta().PKIsHandle || t.Meta().IsCommonHandle
-
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		// if non-clustered table it will also create its indexes!
 		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -4128,14 +4062,10 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
-		// Now build all the indexes in the new partitions
-		// apart from non-clustered index tables, where new partitions already
-		// created its indexes together with the table records.
-		if isClustered {
-			err = w.addTableIndex(ctx, t, reorgInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		// Now build all the indexes in the new partitions.
+		err = w.addTableIndex(ctx, t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		// All indexes are up-to-date for new partitions,
 		// now we only need to add the existing non-touched partitions
