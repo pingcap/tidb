@@ -684,6 +684,7 @@ func TestRequestSource(t *testing.T) {
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				tikvrpc.AttachContext(req, req.Context)
 				requestSource := ""
 				readType := ""
 				switch r := req.Req.(type) {
