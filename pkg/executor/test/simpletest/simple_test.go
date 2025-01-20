@@ -528,40 +528,48 @@ partition by range (a) (
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
-	checkPartitionStats := func(names ...string) {
-		rs := tk.MustQuery("show stats_meta").Rows()
-		require.Equal(t, len(names), len(rs))
-		for i := range names {
-			require.Equal(t, names[i], rs[i][2].(string))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalID := tblInfo.ID
+	p0ID := tblInfo.Partition.Definitions[0].ID
+	p1ID := tblInfo.Partition.Definitions[1].ID
+	globalpID := tblInfo.Partition.Definitions[2].ID
+
+	checkPartitionStats := func(existingOnes ...int64) {
+		strs := make([]string, 0, len(existingOnes))
+		for _, id := range existingOnes {
+			strs = append(strs, strconv.FormatInt(id, 10))
 		}
+		tk.MustQuery("select table_id from mysql.stats_histograms where stats_ver > 0 group by table_id order by table_id").Check(testkit.Rows(strs...))
 	}
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1681|'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."))
-	checkPartitionStats("global", "p1", "global")
+	checkPartitionStats(globalID, p1ID, globalpID)
 
-	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
+	err = tk.ExecToErr("drop stats test_drop_gstats partition abcde")
 	require.Error(t, err)
 	require.Equal(t, "can not found the specified partition name abcde in the table definition", err.Error())
 
 	tk.MustExec("drop stats test_drop_gstats partition global")
-	checkPartitionStats("global", "p1")
+	checkPartitionStats(globalID, p1ID)
 
 	tk.MustExec("drop stats test_drop_gstats global")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1287|'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead"))
-	checkPartitionStats("p1")
+	checkPartitionStats(p1ID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
-	checkPartitionStats("global")
+	checkPartitionStats(globalID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats")
 	checkPartitionStats()
