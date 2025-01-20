@@ -107,7 +107,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, nextStep proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
