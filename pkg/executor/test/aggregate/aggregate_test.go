@@ -424,7 +424,6 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec("create database list_partition_agg")
 	tk.MustExec("use list_partition_agg")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
 		`, partition p1 values in ` + genListPartition(20, 40) +

@@ -19,11 +19,16 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,6 +60,7 @@ func TestImportKVFiles(t *testing.T) {
 		startTS,
 		restoreTS,
 		false,
+		nil, nil,
 	)
 	require.True(t, berrors.ErrInvalidArgument.Equal(err))
 }
@@ -196,4 +202,76 @@ func TestFilterFilesByRegion(t *testing.T) {
 		require.Equal(t, err, c.err)
 		require.Equal(t, subfile, c.subfiles)
 	}
+}
+
+type fakeImportClient struct {
+	importclient.ImporterClient
+}
+
+func (client *fakeImportClient) ClearFiles(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.ClearRequest,
+) (*import_sstpb.ClearResponse, error) {
+	return &import_sstpb.ClearResponse{Error: &import_sstpb.Error{Message: req.Prefix}}, nil
+}
+
+func (client *fakeImportClient) CloseGrpcClient() error { return nil }
+
+func (client *fakeImportClient) ApplyKVFile(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.ApplyRequest,
+) (*import_sstpb.ApplyResponse, error) {
+	if len(req.Metas) == 0 {
+		return &import_sstpb.ApplyResponse{}, berrors.ErrKVRangeIsEmpty
+	}
+	return &import_sstpb.ApplyResponse{}, nil
+}
+
+func prepareData() (*restoreutils.RewriteRules, []*logclient.LogDataFileInfo) {
+	rewriteRules := &restoreutils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(2),
+				OldKeyPrefix: tablecodec.GenTablePrefix(1),
+			},
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(511),
+				OldKeyPrefix: tablecodec.GenTablePrefix(767),
+			},
+		},
+	}
+
+	encodeKeyFiles := []*logclient.LogDataFileInfo{
+		{
+			DataFileInfo: &backuppb.DataFileInfo{
+				Path:     "bakcup.log",
+				StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
+				EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
+			},
+		},
+	}
+
+	return rewriteRules, encodeKeyFiles
+}
+
+func TestFileImporter(t *testing.T) {
+	ctx := context.Background()
+	metaClient := initTestClient(false)
+	mockImportClient := &fakeImportClient{}
+	importer := logclient.NewLogFileImporter(metaClient, mockImportClient, nil)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	err := importer.ClearFiles(ctx, metaClient.GetPDClient(), "test")
+	require.NoError(t, err)
+
+	rewriteRules, encodeKeyFiles := prepareData()
+	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, true, nil, nil)
+	require.NoError(t, err)
+
+	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, false, nil, nil)
+	require.NoError(t, err)
 }

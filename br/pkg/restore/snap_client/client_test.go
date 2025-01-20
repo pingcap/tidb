@@ -34,8 +34,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,13 +48,13 @@ var mc *mock.Cluster
 func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	client.SetBatchDdlSize(1)
@@ -65,10 +66,10 @@ func TestCreateTables(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: model.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -77,7 +78,7 @@ func TestCreateTables(t *testing.T) {
 			},
 		}
 	}
-	rules, newTables, err := client.CreateTables(m.Domain, tables, 0)
+	rules, newTables, err := client.CreateTablesTest(m.Domain, tables, 0)
 	require.NoError(t, err)
 	// make sure tables and newTables have same order
 	for i, tbl := range tables {
@@ -118,7 +119,7 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -148,14 +149,14 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: model.NewCIStr("user_db")}}}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -165,14 +166,14 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.SetCharset("binary")
@@ -180,10 +181,10 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 		DB: dbSchema,
 		Info: &model.TableInfo{
 			ID:   int64(1),
-			Name: model.NewCIStr("t"),
+			Name: ast.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{{
 				ID:        1,
-				Name:      model.NewCIStr("id"),
+				Name:      ast.NewCIStr("id"),
 				FieldType: *intField,
 				State:     model.StatePublic,
 			}},
@@ -191,7 +192,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 			Collate: "utf8mb4_bin",
 		},
 	}
-	_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
+	_, _, err = client.CreateTablesTest(cluster.Domain, []*metautil.Table{table}, 0)
 	require.NoError(t, err)
 
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
@@ -200,7 +201,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -308,12 +309,12 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	// 1. The cost of concurrent communication is expected to be less than the cost of serial communication.
 	client := snapclient.NewRestoreClient(
-		utiltest.NewFakePDClient(mockStores, false, nil), nil, nil, utiltest.DefaultTestKeepaliveCfg)
+		split.NewFakePDClient(mockStores, false, nil), nil, nil, split.DefaultTestKeepaliveCfg)
 	ctx := context.Background()
 
 	recordStores = NewRecordStores()
 	start := time.Now()
-	err := snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
+	err := snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 10)
 	cost := time.Since(start)
 	require.NoError(t, err)
 
@@ -333,10 +334,10 @@ func TestSetSpeedLimit(t *testing.T) {
 	recordStores = NewRecordStores()
 	mockStores[5].Id = SET_SPEED_LIMIT_ERROR // setting a fault store
 	client = snapclient.NewRestoreClient(
-		utiltest.NewFakePDClient(mockStores, false, nil), nil, nil, utiltest.DefaultTestKeepaliveCfg)
+		split.NewFakePDClient(mockStores, false, nil), nil, nil, split.DefaultTestKeepaliveCfg)
 
 	// Concurrency needs to be less than the number of stores
-	err = snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
+	err = snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 2)
 	require.Error(t, err)
 	t.Log(err)
 

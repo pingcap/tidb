@@ -74,6 +74,7 @@ func (b *builtinLogicOrSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk,
 }
 
 func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	beforeArg0Warns := ctx.WarningCount()
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -85,13 +86,11 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	defer b.bufAllocator.put(buf)
 
-	beforeWarns := ctx.WarningCount()
+	beforeArg1Warns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf)
-	afterWarns := ctx.WarningCount()
-	if err != nil || afterWarns > beforeWarns {
-		if afterWarns > beforeWarns {
-			ctx.TruncateWarnings(beforeWarns)
-		}
+	afterArg1Warns := ctx.WarningCount()
+	if err != nil || afterArg1Warns > beforeArg1Warns {
+		ctx.TruncateWarnings(beforeArg0Warns)
 		return b.fallbackEvalInt(ctx, input, result)
 	}
 
@@ -368,7 +367,7 @@ func (b *builtinLogicAndSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk
 
 func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-
+	beforeArg0Warns := ctx.WarningCount()
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -379,13 +378,11 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer b.bufAllocator.put(buf1)
 
-	beforeWarns := ctx.WarningCount()
+	beforeArg1Warns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf1)
-	afterWarns := ctx.WarningCount()
-	if err != nil || afterWarns > beforeWarns {
-		if afterWarns > beforeWarns {
-			ctx.TruncateWarnings(beforeWarns)
-		}
+	afterArg1Warns := ctx.WarningCount()
+	if err != nil || afterArg1Warns > beforeArg1Warns {
+		ctx.TruncateWarnings(beforeArg0Warns)
 		return b.fallbackEvalInt(ctx, input, result)
 	}
 

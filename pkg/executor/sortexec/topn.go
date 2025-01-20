@@ -65,6 +65,9 @@ type TopNExec struct {
 	isSpillTriggeredInStage2ForTest bool
 
 	Concurrency int
+
+	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	ColumnIdxsUsedByChild []int
 }
 
 // Open implements the Executor Open interface.
@@ -106,12 +109,15 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			e.resultChannel,
 			e.memTracker,
 			e.diskTracker,
-			exec.RetTypes(e),
+			exec.RetTypes(e.Children(0)),
 			workers,
 			e.Concurrency,
+			&e.Ctx().GetSessionVars().SQLKiller,
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	} else {
+		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0, nil)
 	}
 
 	return exec.Open(ctx, e.Children(0))
@@ -237,7 +243,12 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok || row.err != nil {
 				return row.err
 			}
-			req.AppendRow(row.row)
+			// Be careful, if inline projection occurs.
+			// TopN's schema may be not match child executor's output columns.
+			// We should extract only the required columns from child's executor.
+			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+			// cauz it may destroy the correctness of executor's `keyColumns`.
+			req.AppendRowsByColIdxs([]chunk.Row{row.row}, e.ColumnIdxsUsedByChild)
 		}
 	}
 	return nil
@@ -261,8 +272,16 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
-	e.buildKeyColumns()
+	err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+	if err != nil {
+		return err
+	}
+
+	err = e.buildKeyColumns()
+	if err != nil {
+		return err
+	}
+
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))

@@ -81,6 +81,8 @@ func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
 type WarnAppender interface {
 	// AppendWarning appends a warning
 	AppendWarning(err error)
+	// AppendNote appends a warning with level 'Note'.
+	AppendNote(msg error)
 }
 
 // WarnHandler provides a handler to append and get warnings.
@@ -162,6 +164,13 @@ func NewStaticWarnHandlerWithHandler(h WarnHandler) *StaticWarnHandler {
 		newHandler.warnings = h.CopyWarnings(newHandler.warnings)
 	}
 	return newHandler
+}
+
+// Reset resets the warnings of this handler.
+func (h *StaticWarnHandler) Reset() {
+	if h.warnings != nil {
+		h.warnings = h.warnings[:0]
+	}
 }
 
 // AppendWarning implements the StaticWarnHandler.AppendWarning.
@@ -271,6 +280,8 @@ type ignoreWarn struct{}
 
 func (*ignoreWarn) AppendWarning(_ error) {}
 
+func (*ignoreWarn) AppendNote(_ error) {}
+
 func (*ignoreWarn) WarningCount() int { return 0 }
 
 func (*ignoreWarn) TruncateWarnings(_ int) []SQLWarn { return nil }
@@ -281,15 +292,19 @@ func (*ignoreWarn) CopyWarnings(_ []SQLWarn) []SQLWarn { return nil }
 var IgnoreWarn WarnHandler = &ignoreWarn{}
 
 type funcWarnAppender struct {
-	fn func(err error)
+	fn func(level string, err error)
 }
 
 func (r *funcWarnAppender) AppendWarning(err error) {
-	r.fn(err)
+	r.fn(WarnLevelWarning, err)
+}
+
+func (r *funcWarnAppender) AppendNote(err error) {
+	r.fn(WarnLevelNote, err)
 }
 
 // NewFuncWarnAppenderForTest creates a `WarnHandler` which will use the function to handle warn
 // To have a better performance, it's not suggested to use this function in production.
-func NewFuncWarnAppenderForTest(fn func(err error)) WarnAppender {
+func NewFuncWarnAppenderForTest(fn func(level string, err error)) WarnAppender {
 	return &funcWarnAppender{fn}
 }

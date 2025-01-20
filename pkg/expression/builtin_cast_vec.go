@@ -21,6 +21,7 @@ import (
 	"strings"
 	gotime "time"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -767,13 +768,13 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 		}
 
 		if !unsigned {
-			i64s[i], err = types.ConvertFloatToInt(f64s[i], types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			i64s[i], err = types.ConvertFloatToInt(f64s[i], types.IntegerSignedLowerBound(mysql.TypeLonglong), types.IntegerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		} else if b.inUnion && f64s[i] < 0 {
 			i64s[i] = 0
 		} else {
 			var uintVal uint64
 			tc := typeCtx(ctx)
-			uintVal, err = types.ConvertFloatToUint(tc.Flags(), f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			uintVal, err = types.ConvertFloatToUint(tc.Flags(), f64s[i], types.IntegerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 			i64s[i] = int64(uintVal)
 		}
 		if types.ErrOverflow.Equal(err) {
@@ -916,7 +917,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
-					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, perrors.RedactLogDisable))
 					err = ec.HandleErrorWithAlias(err, err, warnErr)
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
@@ -1148,7 +1149,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 				result.AppendJSON(types.CreateBinaryJSON(nums[i] != 0))
 			}
 		}
-	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {
 				result.AppendNull()

@@ -253,7 +253,7 @@ type CopTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	physPlanPartInfo PhysPlanPartInfo
+	physPlanPartInfo *PhysPlanPartInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
@@ -345,7 +345,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
@@ -370,7 +370,6 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		p.PlanPartInfo = t.physPlanPartInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
-		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
@@ -378,6 +377,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
 		}
+		t.handleRootTaskConds(ctx, newTask)
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
@@ -394,7 +394,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)

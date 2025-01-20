@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/metrics",
         "//pkg/resourcemanager/util",
         "//pkg/util",
         "//pkg/util/syncutil",

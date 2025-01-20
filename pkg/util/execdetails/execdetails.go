@@ -28,6 +28,7 @@ import (
 
 	"github.com/influxdata/tdigest"
 	"github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -69,6 +70,16 @@ type P90Summary struct {
 	WaitTimePercentile    Percentile[DurationWithAddr]
 
 	BackoffInfo map[string]*P90BackoffSummary
+}
+
+// CopExecDetails contains cop execution detail information.
+type CopExecDetails struct {
+	ScanDetail    util.ScanDetail
+	TimeDetail    util.TimeDetail
+	CalleeAddress string
+	BackoffTime   time.Duration
+	BackoffSleep  map[string]time.Duration
+	BackoffTimes  map[string]int
 }
 
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
@@ -236,10 +247,10 @@ func (d ExecDetails) String() string {
 				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
 		}
 		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
-			parts = append(parts, CommitPrimaryRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
-				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
-				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
-				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}")
+			parts = append(parts, CommitPrimaryRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.CommitPrimary.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.CommitPrimary.Region, 10)+
+				", store: "+commitDetails.Mu.CommitPrimary.StoreAddr+
+				", "+commitDetails.Mu.CommitPrimary.ExecDetails.String()+"}")
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
@@ -349,10 +360,10 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
 		}
 		if commitDetails.Mu.CommitPrimary.ReqTotalTime > 0 {
-			fields = append(fields, zap.String(CommitPrimaryRPCDetailStr, "{total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
-				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestPrewrite.Region, 10)+
-				", store: "+commitDetails.Mu.SlowestPrewrite.StoreAddr+
-				", "+commitDetails.Mu.SlowestPrewrite.ExecDetails.String()+"}"))
+			fields = append(fields, zap.String(CommitPrimaryRPCDetailStr, "{total:"+strconv.FormatFloat(commitDetails.Mu.CommitPrimary.ReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.CommitPrimary.Region, 10)+
+				", store: "+commitDetails.Mu.CommitPrimary.StoreAddr+
+				", "+commitDetails.Mu.CommitPrimary.ExecDetails.String()+"}"))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
@@ -415,6 +426,27 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 	}
 }
 
+// MergeCopExecDetails merges a CopExecDetails into self.
+func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime time.Duration) {
+	if details == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execDetails.CopTime += copTime
+	s.execDetails.BackoffTime += details.BackoffTime
+	s.execDetails.RequestCount++
+	s.mergeScanDetail(&details.ScanDetail)
+	s.mergeTimeDetail(details.TimeDetail)
+	detail := &DetailsNeedP90{
+		BackoffSleep:  details.BackoffSleep,
+		BackoffTimes:  details.BackoffTimes,
+		CalleeAddress: details.CalleeAddress,
+		TimeDetail:    details.TimeDetail,
+	}
+	s.detailsSummary.Merge(detail)
+}
+
 // mergeScanDetail merges scan details into self.
 func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
@@ -468,20 +500,15 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.detailsSummary.NumCopTasks
-	d := &CopTasksDetails{
-		NumCopTasks:       n,
-		MaxBackoffTime:    make(map[string]time.Duration),
-		AvgBackoffTime:    make(map[string]time.Duration),
-		P90BackoffTime:    make(map[string]time.Duration),
-		TotBackoffTime:    make(map[string]time.Duration),
-		TotBackoffTimes:   make(map[string]int),
-		MaxBackoffAddress: make(map[string]string),
-	}
 	if n == 0 {
-		return d
+		return nil
 	}
-	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
-	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
+	d := &CopTasksDetails{NumCopTasks: n}
+	d.TotProcessTime = s.execDetails.TimeDetail.ProcessTime
+	d.AvgProcessTime = d.TotProcessTime / time.Duration(n)
+
+	d.TotWaitTime = s.execDetails.TimeDetail.WaitTime
+	d.AvgWaitTime = d.TotWaitTime / time.Duration(n)
 
 	d.P90ProcessTime = time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
 	d.MaxProcessTime = s.detailsSummary.ProcessTimePercentile.GetMax().D
@@ -491,6 +518,14 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	d.MaxWaitTime = s.detailsSummary.WaitTimePercentile.GetMax().D
 	d.MaxWaitAddress = s.detailsSummary.WaitTimePercentile.GetMax().Addr
 
+	if len(s.detailsSummary.BackoffInfo) > 0 {
+		d.MaxBackoffTime = make(map[string]time.Duration)
+		d.AvgBackoffTime = make(map[string]time.Duration)
+		d.P90BackoffTime = make(map[string]time.Duration)
+		d.TotBackoffTime = make(map[string]time.Duration)
+		d.TotBackoffTimes = make(map[string]int)
+		d.MaxBackoffAddress = make(map[string]string)
+	}
 	for backoff, items := range s.detailsSummary.BackoffInfo {
 		if items == nil {
 			continue
@@ -507,6 +542,25 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	return d
 }
 
+// CopTasksSummary returns some summary information of cop-tasks for statement summary.
+func (s *SyncExecDetails) CopTasksSummary() *CopTasksSummary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.detailsSummary.NumCopTasks
+	if n == 0 {
+		return nil
+	}
+	return &CopTasksSummary{
+		NumCopTasks:       n,
+		MaxProcessAddress: s.detailsSummary.ProcessTimePercentile.GetMax().Addr,
+		MaxProcessTime:    s.detailsSummary.ProcessTimePercentile.GetMax().D,
+		TotProcessTime:    s.execDetails.TimeDetail.ProcessTime,
+		MaxWaitAddress:    s.detailsSummary.WaitTimePercentile.GetMax().Addr,
+		MaxWaitTime:       s.detailsSummary.WaitTimePercentile.GetMax().D,
+		TotWaitTime:       s.execDetails.TimeDetail.WaitTime,
+	}
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
@@ -515,11 +569,13 @@ type CopTasksDetails struct {
 	P90ProcessTime    time.Duration
 	MaxProcessAddress string
 	MaxProcessTime    time.Duration
+	TotProcessTime    time.Duration
 
 	AvgWaitTime    time.Duration
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+	TotWaitTime    time.Duration
 
 	MaxBackoffTime    map[string]time.Duration
 	MaxBackoffAddress map[string]string
@@ -529,9 +585,20 @@ type CopTasksDetails struct {
 	TotBackoffTimes   map[string]int
 }
 
+// CopTasksSummary collects some summary information of cop-tasks for statement summary.
+type CopTasksSummary struct {
+	NumCopTasks       int
+	MaxProcessAddress string
+	MaxProcessTime    time.Duration
+	TotProcessTime    time.Duration
+	MaxWaitAddress    string
+	MaxWaitTime       time.Duration
+	TotWaitTime       time.Duration
+}
+
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.
 func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
-	if d.NumCopTasks == 0 {
+	if d == nil || d.NumCopTasks == 0 {
 		return
 	}
 	fields = make([]zap.Field, 0, 10)
@@ -548,11 +615,18 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 }
 
 type basicCopRuntimeStats struct {
-	storeType string
-	BasicRuntimeStats
-	threads    int32
-	totalTasks int32
-	procTimes  Percentile[Duration]
+	loop      int32
+	rows      int64
+	threads   int32
+	procTimes Percentile[Duration]
+	// executor extra infos
+	tiflashStats *TiflashStats
+}
+
+// TiflashStats contains tiflash execution stats.
+type TiflashStats struct {
+	scanContext TiFlashScanContext
+	waitSummary TiFlashWaitSummary
 }
 
 type canGetFloat64 interface {
@@ -679,24 +753,40 @@ func (p *Percentile[valueType]) Sum() float64 {
 
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
-	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads) + e.BasicRuntimeStats.tiflashScanContext.String()
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString("time:")
+	buf.WriteString(FormatDuration(time.Duration(e.procTimes.sumVal)))
+	buf.WriteString(", loops:")
+	buf.WriteString(strconv.Itoa(int(e.loop)))
+	if e.tiflashStats != nil {
+		buf.WriteString(", threads:")
+		buf.WriteString(strconv.Itoa(int(e.threads)))
+		buf.WriteString(", ")
+		if e.tiflashStats.waitSummary.CanBeIgnored() {
+			buf.WriteString(e.tiflashStats.scanContext.String())
+		} else {
+			buf.WriteString(e.tiflashStats.waitSummary.String())
+			buf.WriteString(", ")
+			buf.WriteString(e.tiflashStats.scanContext.String())
+		}
 	}
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats := &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{tiflashScanContext: e.tiflashScanContext.Clone()},
-		threads:           e.threads,
-		storeType:         e.storeType,
-		totalTasks:        e.totalTasks,
-		procTimes:         e.procTimes,
+		loop:      e.loop,
+		rows:      e.rows,
+		threads:   e.threads,
+		procTimes: e.procTimes,
 	}
-	stats.loop.Store(e.loop.Load())
-	stats.consume.Store(e.consume.Load())
-	stats.rows.Store(e.rows.Load())
+	if e.tiflashStats != nil {
+		stats.tiflashStats = &TiflashStats{
+			scanContext: e.tiflashStats.scanContext.Clone(),
+			waitSummary: e.tiflashStats.waitSummary.Clone(),
+		}
+	}
 	return stats
 }
 
@@ -706,17 +796,99 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.loop.Add(tmp.loop.Load())
-	e.consume.Add(tmp.consume.Load())
-	e.rows.Add(tmp.rows.Load())
+	e.loop += tmp.loop
+	e.rows += tmp.rows
 	e.threads += tmp.threads
-	e.totalTasks += tmp.totalTasks
-	if tmp.procTimes.Size() == 0 {
-		e.procTimes.Add(Duration(tmp.consume.Load()))
-	} else {
+	if tmp.procTimes.Size() > 0 {
 		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
-	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
+	if tmp.tiflashStats != nil {
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{}
+		}
+		e.tiflashStats.scanContext.Merge(tmp.tiflashStats.scanContext)
+		e.tiflashStats.waitSummary.Merge(tmp.tiflashStats.waitSummary)
+	}
+}
+
+// mergeExecSummary likes Merge, but it merges ExecutorExecutionSummary directly.
+func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
+	e.loop += (int32(*summary.NumIterations))
+	e.rows += (int64(*summary.NumProducedRows))
+	e.threads += int32(summary.GetConcurrency())
+	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
+	if tiflashScanContext := summary.GetTiflashScanContext(); tiflashScanContext != nil {
+		var regionsOfInstance map[string]uint64
+		if len(tiflashScanContext.GetRegionsOfInstance()) > 0 {
+			regionsOfInstance = make(map[string]uint64)
+			for _, instance := range tiflashScanContext.GetRegionsOfInstance() {
+				regionsOfInstance[instance.GetInstanceId()] = instance.GetRegionNum()
+			}
+		}
+		tmp := TiFlashScanContext{
+			dmfileDataScannedRows:     tiflashScanContext.GetDmfileDataScannedRows(),
+			dmfileDataSkippedRows:     tiflashScanContext.GetDmfileDataSkippedRows(),
+			dmfileMvccScannedRows:     tiflashScanContext.GetDmfileMvccScannedRows(),
+			dmfileMvccSkippedRows:     tiflashScanContext.GetDmfileMvccSkippedRows(),
+			dmfileLmFilterScannedRows: tiflashScanContext.GetDmfileLmFilterScannedRows(),
+			dmfileLmFilterSkippedRows: tiflashScanContext.GetDmfileLmFilterSkippedRows(),
+			totalDmfileRsCheckMs:      tiflashScanContext.GetTotalDmfileRsCheckMs(),
+			totalDmfileReadMs:         tiflashScanContext.GetTotalDmfileReadMs(),
+			totalBuildSnapshotMs:      tiflashScanContext.GetTotalBuildSnapshotMs(),
+			localRegions:              tiflashScanContext.GetLocalRegions(),
+			remoteRegions:             tiflashScanContext.GetRemoteRegions(),
+			totalLearnerReadMs:        tiflashScanContext.GetTotalLearnerReadMs(),
+			disaggReadCacheHitBytes:   tiflashScanContext.GetDisaggReadCacheHitBytes(),
+			disaggReadCacheMissBytes:  tiflashScanContext.GetDisaggReadCacheMissBytes(),
+			segments:                  tiflashScanContext.GetSegments(),
+			readTasks:                 tiflashScanContext.GetReadTasks(),
+			deltaRows:                 tiflashScanContext.GetDeltaRows(),
+			deltaBytes:                tiflashScanContext.GetDeltaBytes(),
+			mvccInputRows:             tiflashScanContext.GetMvccInputRows(),
+			mvccInputBytes:            tiflashScanContext.GetMvccInputBytes(),
+			mvccOutputRows:            tiflashScanContext.GetMvccOutputRows(),
+			totalBuildBitmapMs:        tiflashScanContext.GetTotalBuildBitmapMs(),
+			totalBuildInputStreamMs:   tiflashScanContext.GetTotalBuildInputstreamMs(),
+			staleReadRegions:          tiflashScanContext.GetStaleReadRegions(),
+			minLocalStreamMs:          tiflashScanContext.GetMinLocalStreamMs(),
+			maxLocalStreamMs:          tiflashScanContext.GetMaxLocalStreamMs(),
+			minRemoteStreamMs:         tiflashScanContext.GetMinRemoteStreamMs(),
+			maxRemoteStreamMs:         tiflashScanContext.GetMaxRemoteStreamMs(),
+			regionsOfInstance:         regionsOfInstance,
+
+			totalVectorIdxLoadFromS3:           tiflashScanContext.GetTotalVectorIdxLoadFromS3(),
+			totalVectorIdxLoadFromDisk:         tiflashScanContext.GetTotalVectorIdxLoadFromDisk(),
+			totalVectorIdxLoadFromCache:        tiflashScanContext.GetTotalVectorIdxLoadFromCache(),
+			totalVectorIdxLoadTimeMs:           tiflashScanContext.GetTotalVectorIdxLoadTimeMs(),
+			totalVectorIdxSearchTimeMs:         tiflashScanContext.GetTotalVectorIdxSearchTimeMs(),
+			totalVectorIdxSearchVisitedNodes:   tiflashScanContext.GetTotalVectorIdxSearchVisitedNodes(),
+			totalVectorIdxSearchDiscardedNodes: tiflashScanContext.GetTotalVectorIdxSearchDiscardedNodes(),
+			totalVectorIdxReadVecTimeMs:        tiflashScanContext.GetTotalVectorIdxReadVecTimeMs(),
+			totalVectorIdxReadOthersTimeMs:     tiflashScanContext.GetTotalVectorIdxReadOthersTimeMs(),
+		}
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{
+				scanContext: tmp,
+			}
+		} else {
+			e.tiflashStats.scanContext.Merge(tmp)
+		}
+	}
+	if tiflashWaitSummary := summary.GetTiflashWaitSummary(); tiflashWaitSummary != nil {
+		tmp := TiFlashWaitSummary{
+			executionTime:           *summary.TimeProcessedNs,
+			minTSOWaitTime:          tiflashWaitSummary.GetMinTSOWaitNs(),
+			pipelineBreakerWaitTime: tiflashWaitSummary.GetPipelineBreakerWaitNs(),
+			pipelineQueueWaitTime:   tiflashWaitSummary.GetPipelineQueueWaitNs(),
+		}
+		if e.tiflashStats == nil {
+			e.tiflashStats = &TiflashStats{
+				waitSummary: tmp,
+			}
+		} else {
+			e.tiflashStats.waitSummary.Merge(tmp)
+		}
+	}
 }
 
 // Tp implements the RuntimeStats interface.
@@ -731,144 +903,83 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string]*basicCopRuntimeStats
-	scanDetail *util.ScanDetail
-	timeDetail *util.TimeDetail
-	// do not use kv.StoreType because it will meet cycle import error
-	storeType string
-	sync.Mutex
-}
-
-// RecordOneCopTask records a specific cop tasks's execution detail.
-func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
-	crs.Lock()
-	defer crs.Unlock()
-
-	if crs.stats[address] == nil {
-		crs.stats[address] = &basicCopRuntimeStats{
-			storeType: crs.storeType,
-		}
-	}
-	data := &basicCopRuntimeStats{
-		storeType: crs.storeType,
-		BasicRuntimeStats: BasicRuntimeStats{
-			tiflashScanContext: TiFlashScanContext{
-				dmfileDataScannedRows:     summary.GetTiflashScanContext().GetDmfileDataScannedRows(),
-				dmfileDataSkippedRows:     summary.GetTiflashScanContext().GetDmfileDataSkippedRows(),
-				dmfileMvccScannedRows:     summary.GetTiflashScanContext().GetDmfileMvccScannedRows(),
-				dmfileMvccSkippedRows:     summary.GetTiflashScanContext().GetDmfileMvccSkippedRows(),
-				dmfileLmFilterScannedRows: summary.GetTiflashScanContext().GetDmfileLmFilterScannedRows(),
-				dmfileLmFilterSkippedRows: summary.GetTiflashScanContext().GetDmfileLmFilterSkippedRows(),
-				totalDmfileRsCheckMs:      summary.GetTiflashScanContext().GetTotalDmfileRsCheckMs(),
-				totalDmfileReadMs:         summary.GetTiflashScanContext().GetTotalDmfileReadMs(),
-				totalBuildSnapshotMs:      summary.GetTiflashScanContext().GetTotalBuildSnapshotMs(),
-				localRegions:              summary.GetTiflashScanContext().GetLocalRegions(),
-				remoteRegions:             summary.GetTiflashScanContext().GetRemoteRegions(),
-				totalLearnerReadMs:        summary.GetTiflashScanContext().GetTotalLearnerReadMs(),
-				disaggReadCacheHitBytes:   summary.GetTiflashScanContext().GetDisaggReadCacheHitBytes(),
-				disaggReadCacheMissBytes:  summary.GetTiflashScanContext().GetDisaggReadCacheMissBytes(),
-				segments:                  summary.GetTiflashScanContext().GetSegments(),
-				readTasks:                 summary.GetTiflashScanContext().GetReadTasks(),
-				deltaRows:                 summary.GetTiflashScanContext().GetDeltaRows(),
-				deltaBytes:                summary.GetTiflashScanContext().GetDeltaBytes(),
-				mvccInputRows:             summary.GetTiflashScanContext().GetMvccInputRows(),
-				mvccInputBytes:            summary.GetTiflashScanContext().GetMvccInputBytes(),
-				mvccOutputRows:            summary.GetTiflashScanContext().GetMvccOutputRows(),
-				lmSkipRows:                summary.GetTiflashScanContext().GetLmSkipRows(),
-				totalBuildBitmapMs:        summary.GetTiflashScanContext().GetTotalBuildBitmapMs(),
-				totalBuildInputStreamMs:   summary.GetTiflashScanContext().GetTotalBuildInputstreamMs(),
-				staleReadRegions:          summary.GetTiflashScanContext().GetStaleReadRegions(),
-				minLocalStreamMs:          summary.GetTiflashScanContext().GetMinLocalStreamMs(),
-				maxLocalStreamMs:          summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
-				minRemoteStreamMs:         summary.GetTiflashScanContext().GetMinRemoteStreamMs(),
-				maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxRemoteStreamMs(),
-				regionsOfInstance:         make(map[string]uint64),
-			}}, threads: int32(summary.GetConcurrency()),
-		totalTasks: 1,
-	}
-	for _, instance := range summary.GetTiflashScanContext().GetRegionsOfInstance() {
-		data.BasicRuntimeStats.tiflashScanContext.regionsOfInstance[instance.GetInstanceId()] = instance.GetRegionNum()
-	}
-	data.BasicRuntimeStats.loop.Store(int32(*summary.NumIterations))
-	data.BasicRuntimeStats.consume.Store(int64(*summary.TimeProcessedNs))
-	data.BasicRuntimeStats.rows.Store(int64(*summary.NumProducedRows))
-	crs.stats[address].Merge(data)
+	stats      basicCopRuntimeStats
+	scanDetail util.ScanDetail
+	timeDetail util.TimeDetail
+	storeType  kv.StoreType
 }
 
 // GetActRows return total rows of CopRuntimeStats.
-func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
-	for _, instanceStats := range crs.stats {
-		totalRows += instanceStats.rows.Load()
-	}
-	return totalRows
+func (crs *CopRuntimeStats) GetActRows() int64 {
+	return crs.stats.rows
 }
 
 // GetTasks return total tasks of CopRuntimeStats
-func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
-	for _, instanceStats := range crs.stats {
-		totalTasks += instanceStats.totalTasks
-	}
-	return totalTasks
+func (crs *CopRuntimeStats) GetTasks() int32 {
+	return int32(crs.stats.procTimes.size)
 }
 
-// MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
-	totalTiFlashScanContext = TiFlashScanContext{
-		regionsOfInstance: make(map[string]uint64),
-	}
-	for _, instanceStats := range crs.stats {
-		procTimes.MergePercentile(&instanceStats.procTimes)
-		totalTime += time.Duration(instanceStats.consume.Load())
-		totalLoops += instanceStats.loop.Load()
-		totalThreads += instanceStats.threads
-		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
-		totalTasks += instanceStats.totalTasks
-	}
-	return
-}
+var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
-	if len(crs.stats) == 0 {
-		return ""
-	}
-
-	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalTiFlashScanContext := crs.MergeBasicStats()
-	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
-	isTiFlashCop := crs.storeType == "tiflash"
-
+	procTimes := crs.stats.procTimes
+	totalTasks := procTimes.size
+	isTiFlashCop := crs.storeType == kv.TiFlash
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	if totalTasks == 1 {
-		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
-		if isTiFlashCop {
-			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
-			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(", " + totalTiFlashScanContext.String())
+	{
+		printTiFlashSpecificInfo := func() {
+			if isTiFlashCop {
+				buf.WriteString(", ")
+				buf.WriteString("threads:")
+				buf.WriteString(strconv.Itoa(int(crs.stats.threads)))
+				buf.WriteString("}")
+				if crs.stats.tiflashStats != nil {
+					if !crs.stats.tiflashStats.waitSummary.CanBeIgnored() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.waitSummary.String())
+					}
+					if !crs.stats.tiflashStats.scanContext.Empty() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.scanContext.String())
+					}
+				}
+			} else {
+				buf.WriteString("}")
 			}
-		} else {
-			buf.WriteString("}")
 		}
-	} else {
-		fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
-			FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
-		if isTiFlashCop {
-			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
-			if !totalTiFlashScanContext.Empty() {
-				buf.WriteString(", " + totalTiFlashScanContext.String())
-			}
-		} else {
-			buf.WriteString("}")
+		if totalTasks == 1 {
+			buf.WriteString(crs.storeType.Name())
+			buf.WriteString("_task:{time:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0))))
+			buf.WriteString(", loops:")
+			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
+			printTiFlashSpecificInfo()
+		} else if totalTasks > 0 {
+			buf.WriteString(crs.storeType.Name())
+			buf.WriteString("_task:{proc max:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())))
+			buf.WriteString(", min:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())))
+			buf.WriteString(", avg: ")
+			buf.WriteString(FormatDuration(time.Duration(int64(procTimes.Sum()) / int64(totalTasks))))
+			buf.WriteString(", p80:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.8))))
+			buf.WriteString(", p95:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.95))))
+			buf.WriteString(", iters:")
+			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
+			buf.WriteString(", tasks:")
+			buf.WriteString(strconv.Itoa(totalTasks))
+			printTiFlashSpecificInfo()
 		}
 	}
 	if !isTiFlashCop {
-		if crs.scanDetail != nil {
-			detail := crs.scanDetail.String()
-			if detail != "" {
-				buf.WriteString(", ")
-				buf.WriteString(detail)
-			}
+		detail := crs.scanDetail.String()
+		if detail != "" {
+			buf.WriteString(", ")
+			buf.WriteString(detail)
 		}
-		if crs.timeDetail != nil {
+		if crs.timeDetail != zeroTimeDetail {
 			timeDetailStr := crs.timeDetail.String()
 			if timeDetailStr != "" {
 				buf.WriteString(", ")
@@ -890,6 +1001,8 @@ const (
 	TpSnapshotRuntimeStats
 	// TpHashJoinRuntimeStats is the tp for HashJoinRuntimeStats.
 	TpHashJoinRuntimeStats
+	// TpHashJoinRuntimeStatsV2 is the tp for hashJoinRuntimeStatsV2.
+	TpHashJoinRuntimeStatsV2
 	// TpIndexLookUpJoinRuntimeStats is the tp for IndexLookUpJoinRuntimeStats.
 	TpIndexLookUpJoinRuntimeStats
 	// TpRuntimeStatsWithSnapshot is the tp for RuntimeStatsWithSnapshot.
@@ -951,7 +1064,6 @@ type TiFlashScanContext struct {
 	mvccInputRows             uint64
 	mvccInputBytes            uint64
 	mvccOutputRows            uint64
-	lmSkipRows                uint64
 	totalBuildBitmapMs        uint64
 	totalBuildInputStreamMs   uint64
 	staleReadRegions          uint64
@@ -960,6 +1072,16 @@ type TiFlashScanContext struct {
 	minRemoteStreamMs         uint64
 	maxRemoteStreamMs         uint64
 	regionsOfInstance         map[string]uint64
+
+	totalVectorIdxLoadFromS3           uint64
+	totalVectorIdxLoadFromDisk         uint64
+	totalVectorIdxLoadFromCache        uint64
+	totalVectorIdxLoadTimeMs           uint64
+	totalVectorIdxSearchTimeMs         uint64
+	totalVectorIdxSearchVisitedNodes   uint64
+	totalVectorIdxSearchDiscardedNodes uint64
+	totalVectorIdxReadVecTimeMs        uint64
+	totalVectorIdxReadOthersTimeMs     uint64
 }
 
 // Clone implements the deep copy of * TiFlashshScanContext
@@ -986,7 +1108,6 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		mvccInputRows:             context.mvccInputRows,
 		mvccInputBytes:            context.mvccInputBytes,
 		mvccOutputRows:            context.mvccOutputRows,
-		lmSkipRows:                context.lmSkipRows,
 		totalBuildBitmapMs:        context.totalBuildBitmapMs,
 		totalBuildInputStreamMs:   context.totalBuildInputStreamMs,
 		staleReadRegions:          context.staleReadRegions,
@@ -995,6 +1116,16 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		minRemoteStreamMs:         context.minRemoteStreamMs,
 		maxRemoteStreamMs:         context.maxRemoteStreamMs,
 		regionsOfInstance:         make(map[string]uint64),
+
+		totalVectorIdxLoadFromS3:           context.totalVectorIdxLoadFromS3,
+		totalVectorIdxLoadFromDisk:         context.totalVectorIdxLoadFromDisk,
+		totalVectorIdxLoadFromCache:        context.totalVectorIdxLoadFromCache,
+		totalVectorIdxLoadTimeMs:           context.totalVectorIdxLoadTimeMs,
+		totalVectorIdxSearchTimeMs:         context.totalVectorIdxSearchTimeMs,
+		totalVectorIdxSearchVisitedNodes:   context.totalVectorIdxSearchVisitedNodes,
+		totalVectorIdxSearchDiscardedNodes: context.totalVectorIdxSearchDiscardedNodes,
+		totalVectorIdxReadVecTimeMs:        context.totalVectorIdxReadVecTimeMs,
+		totalVectorIdxReadOthersTimeMs:     context.totalVectorIdxReadOthersTimeMs,
 	}
 	for k, v := range context.regionsOfInstance {
 		newContext.regionsOfInstance[k] = v
@@ -1003,6 +1134,15 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 }
 
 func (context *TiFlashScanContext) String() string {
+	var output []string
+	if context.totalVectorIdxLoadFromS3+context.totalVectorIdxLoadFromDisk+context.totalVectorIdxLoadFromCache > 0 {
+		var items []string
+		items = append(items, fmt.Sprintf("load:{total:%dms,from_s3:%d,from_disk:%d,from_cache:%d}", context.totalVectorIdxLoadTimeMs, context.totalVectorIdxLoadFromS3, context.totalVectorIdxLoadFromDisk, context.totalVectorIdxLoadFromCache))
+		items = append(items, fmt.Sprintf("search:{total:%dms,visited_nodes:%d,discarded_nodes:%d}", context.totalVectorIdxSearchTimeMs, context.totalVectorIdxSearchVisitedNodes, context.totalVectorIdxSearchDiscardedNodes))
+		items = append(items, fmt.Sprintf("read:{vec_total:%dms,others_total:%dms}", context.totalVectorIdxReadVecTimeMs, context.totalVectorIdxReadOthersTimeMs))
+		output = append(output, "vector_idx:{"+strings.Join(items, ",")+"}")
+	}
+
 	regionBalanceInfo := "none"
 	if len(context.regionsOfInstance) > 0 {
 		maxNum := uint64(0)
@@ -1031,12 +1171,12 @@ func (context *TiFlashScanContext) String() string {
 	if context.minRemoteStreamMs != 0 || context.maxRemoteStreamMs != 0 {
 		remoteStreamInfo = fmt.Sprintf("min_remote_stream:%dms, max_remote_stream:%dms, ", context.minRemoteStreamMs, context.maxRemoteStreamMs)
 	}
+
 	// note: "tot" is short for "total"
-	return fmt.Sprintf("tiflash_scan:{"+
+	output = append(output, fmt.Sprintf("tiflash_scan:{"+
 		"mvcc_input_rows:%d, "+
 		"mvcc_input_bytes:%d, "+
 		"mvcc_output_rows:%d, "+
-		"lm_skip_rows:%d, "+
 		"local_regions:%d, "+
 		"remote_regions:%d, "+
 		"tot_learner_read:%dms, "+
@@ -1065,7 +1205,6 @@ func (context *TiFlashScanContext) String() string {
 		context.mvccInputRows,
 		context.mvccInputBytes,
 		context.mvccOutputRows,
-		context.lmSkipRows,
 		context.localRegions,
 		context.remoteRegions,
 		context.totalLearnerReadMs,
@@ -1089,7 +1228,9 @@ func (context *TiFlashScanContext) String() string {
 		context.totalDmfileRsCheckMs,
 		context.totalDmfileReadMs,
 		dmfileDisaggInfo,
-	)
+	))
+
+	return strings.Join(output, ", ")
 }
 
 // Merge make sum to merge the information in TiFlashScanContext
@@ -1115,10 +1256,19 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.mvccInputRows += other.mvccInputRows
 	context.mvccInputBytes += other.mvccInputBytes
 	context.mvccOutputRows += other.mvccOutputRows
-	context.lmSkipRows += other.lmSkipRows
 	context.totalBuildBitmapMs += other.totalBuildBitmapMs
 	context.totalBuildInputStreamMs += other.totalBuildInputStreamMs
 	context.staleReadRegions += other.staleReadRegions
+
+	context.totalVectorIdxLoadFromS3 += other.totalVectorIdxLoadFromS3
+	context.totalVectorIdxLoadFromDisk += other.totalVectorIdxLoadFromDisk
+	context.totalVectorIdxLoadFromCache += other.totalVectorIdxLoadFromCache
+	context.totalVectorIdxLoadTimeMs += other.totalVectorIdxLoadTimeMs
+	context.totalVectorIdxSearchTimeMs += other.totalVectorIdxSearchTimeMs
+	context.totalVectorIdxSearchVisitedNodes += other.totalVectorIdxSearchVisitedNodes
+	context.totalVectorIdxSearchDiscardedNodes += other.totalVectorIdxSearchDiscardedNodes
+	context.totalVectorIdxReadVecTimeMs += other.totalVectorIdxReadVecTimeMs
+	context.totalVectorIdxReadOthersTimeMs += other.totalVectorIdxReadOthersTimeMs
 
 	if context.minLocalStreamMs == 0 || other.minLocalStreamMs < context.minLocalStreamMs {
 		context.minLocalStreamMs = other.minLocalStreamMs
@@ -1150,20 +1300,100 @@ func (context *TiFlashScanContext) Empty() bool {
 		context.dmfileLmFilterScannedRows == 0 &&
 		context.dmfileLmFilterSkippedRows == 0 &&
 		context.localRegions == 0 &&
-		context.remoteRegions == 0
+		context.remoteRegions == 0 &&
+		context.totalVectorIdxLoadFromDisk == 0 &&
+		context.totalVectorIdxLoadFromCache == 0 &&
+		context.totalVectorIdxLoadFromS3 == 0
+	return res
+}
+
+// TiFlashWaitSummary is used to express all kinds of wait information in tiflash
+type TiFlashWaitSummary struct {
+	// keep execution time to do merge work, always record the wait time with largest execution time
+	executionTime           uint64
+	minTSOWaitTime          uint64
+	pipelineBreakerWaitTime uint64
+	pipelineQueueWaitTime   uint64
+}
+
+// Clone implements the deep copy of * TiFlashWaitSummary
+func (waitSummary *TiFlashWaitSummary) Clone() TiFlashWaitSummary {
+	newSummary := TiFlashWaitSummary{
+		executionTime:           waitSummary.executionTime,
+		minTSOWaitTime:          waitSummary.minTSOWaitTime,
+		pipelineBreakerWaitTime: waitSummary.pipelineBreakerWaitTime,
+		pipelineQueueWaitTime:   waitSummary.pipelineQueueWaitTime,
+	}
+	return newSummary
+}
+
+// String dumps TiFlashWaitSummary info as string
+func (waitSummary *TiFlashWaitSummary) String() string {
+	if waitSummary.CanBeIgnored() {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("tiflash_wait: {")
+	empty := true
+	if waitSummary.minTSOWaitTime >= uint64(time.Millisecond) {
+		buf.WriteString("minTSO_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.minTSOWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+		empty = false
+	}
+	if waitSummary.pipelineBreakerWaitTime >= uint64(time.Millisecond) {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("pipeline_breaker_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.pipelineBreakerWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+		empty = false
+	}
+	if waitSummary.pipelineQueueWaitTime >= uint64(time.Millisecond) {
+		if !empty {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("pipeline_queue_wait: ")
+		buf.WriteString(strconv.FormatInt(time.Duration(waitSummary.pipelineQueueWaitTime).Milliseconds(), 10))
+		buf.WriteString("ms")
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// Merge make sum to merge the information in TiFlashWaitSummary
+func (waitSummary *TiFlashWaitSummary) Merge(other TiFlashWaitSummary) {
+	if waitSummary.executionTime < other.executionTime {
+		waitSummary.executionTime = other.executionTime
+		waitSummary.minTSOWaitTime = other.minTSOWaitTime
+		waitSummary.pipelineBreakerWaitTime = other.pipelineBreakerWaitTime
+		waitSummary.pipelineQueueWaitTime = other.pipelineQueueWaitTime
+	}
+}
+
+// CanBeIgnored check whether TiFlashWaitSummary can be ignored, not all tidb executors have significant tiflash wait summary
+func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
+	res := waitSummary.minTSOWaitTime < uint64(time.Millisecond) &&
+		waitSummary.pipelineBreakerWaitTime < uint64(time.Millisecond) &&
+		waitSummary.pipelineQueueWaitTime < uint64(time.Millisecond)
 	return res
 }
 
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
+	// the count of executors with the same id
+	executorCount atomic.Int32
 	// executor's Next() called times.
 	loop atomic.Int32
-	// executor consume time.
+	// executor consume time, including open, next, and close time.
 	consume atomic.Int64
+	// executor open time.
+	open atomic.Int64
+	// executor close time.
+	close atomic.Int64
 	// executor return row count.
 	rows atomic.Int64
-	// executor extra infos
-	tiflashScanContext TiFlashScanContext
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -1173,11 +1403,12 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
-	result := &BasicRuntimeStats{
-		tiflashScanContext: e.tiflashScanContext.Clone(),
-	}
+	result := &BasicRuntimeStats{}
+	result.executorCount.Store(e.executorCount.Load())
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
+	result.open.Store(e.open.Load())
+	result.close.Store(e.close.Load())
 	result.rows.Store(e.rows.Load())
 	return result
 }
@@ -1190,8 +1421,9 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	}
 	e.loop.Add(tmp.loop.Load())
 	e.consume.Add(tmp.consume.Load())
+	e.open.Add(tmp.open.Load())
+	e.close.Add(tmp.close.Load())
 	e.rows.Add(tmp.rows.Load())
-	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
 
 // Tp implements the RuntimeStats interface.
@@ -1246,6 +1478,18 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	e.rows.Add(int64(rowNum))
 }
 
+// RecordOpen records executor's open time.
+func (e *BasicRuntimeStats) RecordOpen(d time.Duration) {
+	e.consume.Add(int64(d))
+	e.open.Add(int64(d))
+}
+
+// RecordClose records executor's close time.
+func (e *BasicRuntimeStats) RecordClose(d time.Duration) {
+	e.consume.Add(int64(d))
+	e.close.Add(int64(d))
+}
+
 // SetRowNum sets the row num.
 func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 	e.rows.Store(rowNum)
@@ -1257,8 +1501,24 @@ func (e *BasicRuntimeStats) String() string {
 		return ""
 	}
 	var str strings.Builder
+	timePrefix := ""
+	if e.executorCount.Load() > 1 {
+		timePrefix = "total_"
+	}
+	totalTime := e.consume.Load()
+	openTime := e.open.Load()
+	closeTime := e.close.Load()
+	str.WriteString(timePrefix)
 	str.WriteString("time:")
-	str.WriteString(FormatDuration(time.Duration(e.consume.Load())))
+	str.WriteString(FormatDuration(time.Duration(totalTime)))
+	str.WriteString(", ")
+	str.WriteString(timePrefix)
+	str.WriteString("open:")
+	str.WriteString(FormatDuration(time.Duration(openTime)))
+	str.WriteString(", ")
+	str.WriteString(timePrefix)
+	str.WriteString("close:")
+	str.WriteString(FormatDuration(time.Duration(closeTime)))
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()
@@ -1301,6 +1561,7 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 // RegisterStats register execStat for a executor.
 func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
 	if !ok {
 		stats = NewRootRuntimeStats()
@@ -1316,22 +1577,31 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 		}
 	}
 	if !found {
-		stats.groupRss = append(stats.groupRss, info.Clone())
+		stats.groupRss = append(stats.groupRss, info)
 	}
-	e.mu.Unlock()
 }
 
-// GetBasicRuntimeStats gets basicRuntimeStats for a executor.
-func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
+// GetBasicRuntimeStats gets basicRuntimeStats for a executor
+// When rootStat/rootStat's basicRuntimeStats is nil, the behavior is decided by initNewExecutorStats argument:
+// 1. If true, it created a new one, and increase basicRuntimeStats' executorCount
+// 2. Else, it returns nil
+func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats bool) *BasicRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
-	if !ok {
+	if !ok && initNewExecutorStats {
 		stats = NewRootRuntimeStats()
 		e.rootStats[planID] = stats
 	}
-	if stats.basic == nil {
+	if stats == nil {
+		return nil
+	}
+
+	if stats.basic == nil && initNewExecutorStats {
 		stats.basic = &BasicRuntimeStats{}
+		stats.basic.executorCount.Add(1)
+	} else if stats.basic != nil && initNewExecutorStats {
+		stats.basic.executorCount.Add(1)
 	}
 	return stats.basic
 }
@@ -1348,6 +1618,17 @@ func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 	return runtimeStats
 }
 
+// GetPlanActRows returns the actual rows of the plan.
+func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	if !exists {
+		return 0
+	}
+	return runtimeStats.GetActRows()
+}
+
 // GetCopStats gets the CopRuntimeStats specified by planID.
 func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	e.mu.Lock()
@@ -1359,21 +1640,15 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
-// GetOrCreateCopStats gets the CopRuntimeStats specified by planID, if not exists a new one will be created.
-func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *CopRuntimeStats {
+// GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
+func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{
-			stats:      make(map[string]*basicCopRuntimeStats),
-			scanDetail: &util.ScanDetail{},
-			timeDetail: &util.TimeDetail{},
-			storeType:  storeType,
-		}
-		e.copStats[planID] = copStats
+		return 0, 0
 	}
-	return copStats
+	return copStats.GetTasks(), copStats.GetActRows()
 }
 
 func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
@@ -1386,30 +1661,63 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 	return 0, false
 }
 
-// RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) int {
+// RecordCopStats records a specific cop tasks's execution detail.
+func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{
+			timeDetail: time,
+			storeType:  storeType,
+		}
+		if scan != nil {
+			copStats.scanDetail = *scan
+		}
+		e.copStats[planID] = copStats
+	} else {
+		if scan != nil {
+			copStats.scanDetail.Merge(scan)
+		}
+		copStats.timeDetail.Merge(&time)
+	}
+	if summary != nil {
+		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
+		// summary, use it overwrite the planID
+		id, valid := getPlanIDFromExecutionSummary(summary)
+		if valid && id != planID {
+			planID = id
+			copStats, ok = e.copStats[planID]
+			if !ok {
+				copStats = &CopRuntimeStats{
+					storeType: storeType,
+				}
+				e.copStats[planID] = copStats
+			}
+		}
+		copStats.stats.mergeExecSummary(summary)
+	}
+	return planID
+}
+
+// RecordOneCopTask records a specific cop tasks's execution summary.
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
 		planID = id
 	}
-	copStats := e.GetOrCreateCopStats(planID, storeType)
-	copStats.RecordOneCopTask(address, summary)
-	return planID
-}
-
-// RecordScanDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *util.ScanDetail) {
-	copStats := e.GetOrCreateCopStats(planID, storeType)
-	copStats.scanDetail.Merge(detail)
-}
-
-// RecordTimeDetail records a specific cop tasks's time detail.
-func (e *RuntimeStatsColl) RecordTimeDetail(planID int, storeType string, detail *util.TimeDetail) {
-	copStats := e.GetOrCreateCopStats(planID, storeType)
-	if detail != nil {
-		copStats.timeDetail.Merge(detail)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{
+			storeType: storeType,
+		}
+		e.copStats[planID] = copStats
 	}
+	copStats.stats.mergeExecSummary(summary)
+	return planID
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
@@ -1473,20 +1781,23 @@ func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 
 // String implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) String() string {
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 8))
 	if len(e.concurrency) > 0 {
 		for i, concurrency := range e.concurrency {
 			if i > 0 {
-				result += ", "
+				buf.WriteString(", ")
 			}
 			if concurrency.concurrencyNum > 0 {
-				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteByte(':')
+				buf.WriteString(strconv.Itoa(concurrency.concurrencyNum))
 			} else {
-				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteString(":OFF")
 			}
 		}
 	}
-	return result
+	return buf.String()
 }
 
 // Merge implements the RuntimeStats interface.
@@ -1588,11 +1899,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			if len(e.Commit.Mu.PrewriteBackoffTypes) > 0 {
 				buf.WriteString(", prewrite type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.PrewriteBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.PrewriteBackoffTypes)
 			}
 			if len(e.Commit.Mu.CommitBackoffTypes) > 0 {
 				buf.WriteString(", commit type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.CommitBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.CommitBackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1670,7 +1981,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+				e.formatBackoff(buf, e.LockKeys.Mu.BackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1704,9 +2015,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
+func (*RuntimeStatsWithCommit) formatBackoff(buf *bytes.Buffer, backoffTypes []string) {
 	if len(backoffTypes) == 0 {
-		return ""
+		return
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
@@ -1719,7 +2030,14 @@ func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpArray = append(tpArray, tpStr)
 	}
 	slices.Sort(tpArray)
-	return fmt.Sprintf("%v", tpArray)
+	buf.WriteByte('[')
+	for i, tp := range tpArray {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(tp)
+	}
+	buf.WriteByte(']')
 }
 
 // FormatDuration uses to format duration, this function will prune precision before format duration.
@@ -1774,4 +2092,42 @@ func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSumma
 	}
 	ruDetails.Merge(newRUDetails)
 	return nil
+}
+
+// RURuntimeStats is a wrapper of util.RUDetails,
+// which implements the RuntimeStats interface.
+type RURuntimeStats struct {
+	*util.RUDetails
+}
+
+// String implements the RuntimeStats interface.
+func (e *RURuntimeStats) String() string {
+	if e.RUDetails != nil {
+		buf := bytes.NewBuffer(make([]byte, 0, 8))
+		buf.WriteString("RU:")
+		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		return buf.String()
+	}
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *RURuntimeStats) Clone() RuntimeStats {
+	return &RURuntimeStats{RUDetails: e.RUDetails.Clone()}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *RURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*RURuntimeStats); ok {
+		if e.RUDetails != nil {
+			e.RUDetails.Merge(tmp.RUDetails)
+		} else {
+			e.RUDetails = tmp.RUDetails.Clone()
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*RURuntimeStats) Tp() int {
+	return TpRURuntimeStats
 }

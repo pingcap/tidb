@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table"
@@ -71,15 +71,15 @@ type mockTable struct {
 	table.Table
 }
 
-func (mockTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (mockTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return kv.IntHandle(-1), errors.New("mock error")
 }
 
 func TestEncode(t *testing.T) {
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -159,10 +159,10 @@ func TestEncode(t *testing.T) {
 }
 
 func TestDecode(t *testing.T) {
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.`c1`", &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
@@ -200,7 +200,7 @@ func TestDecodeIndex(t *testing.T) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:   2,
-				Name: model.NewCIStr("test"),
+				Name: ast.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
 					{Offset: 0},
 					{Offset: 1},
@@ -210,13 +210,13 @@ func TestDecodeIndex(t *testing.T) {
 			},
 		},
 		Columns: []*model.ColumnInfo{
-			{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
+			{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{ID: 2, Name: ast.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
 		State:      model.StatePublic,
 		PKIsHandle: false,
 	}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	if err != nil {
 		fmt.Printf("error: %v", err.Error())
 	}
@@ -258,10 +258,10 @@ func TestDecodeIndex(t *testing.T) {
 func TestEncodeRowFormatV2(t *testing.T) {
 	// Test encoding in row format v2, as described in <https://github.com/pingcap/tidb/blob/master/docs/design/2018-07-19-row-format.md>.
 
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	rows := []types.Datum{
@@ -303,7 +303,7 @@ func TestEncodeTimestamp(t *testing.T) {
 	ty.AddFlag(mysql.NotNullFlag)
 	c1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("c1"),
+		Name:         ast.NewCIStr("c1"),
 		State:        model.StatePublic,
 		Offset:       0,
 		FieldType:    ty,
@@ -312,7 +312,7 @@ func TestEncodeTimestamp(t *testing.T) {
 	}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -341,7 +341,7 @@ func TestEncodeTimestamp(t *testing.T) {
 
 func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id double not null auto_increment, unique key `u_id` (`id`));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -405,7 +405,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		},
 	} {
 		tblInfo := mockTableInfo(t, testTblInfo.CreateStmt)
-		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 		require.NoError(t, err)
 
 		encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -457,7 +457,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 
 func TestEncodeExpressionColumn(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id varchar(40) not null DEFAULT uuid(), unique key `u_id` (`id`));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -502,7 +502,7 @@ func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
 
 func TestDefaultAutoRandoms(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
@@ -540,7 +540,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 
 func TestShardRowId(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (s varchar(16)) shard_row_id_bits = 3;")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
@@ -655,7 +655,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	tableInfo.State = model.StatePublic
 
 	// Construct the corresponding KV encoder.
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tableInfo.SepAutoInc(), 0), tableInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tableInfo.SepAutoInc()), tableInfo)
 	require.NoError(b, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,

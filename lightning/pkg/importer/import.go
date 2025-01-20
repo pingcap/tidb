@@ -56,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -70,7 +70,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -286,6 +287,8 @@ type ControllerParam struct {
 	TaskType string
 }
 
+var componentName = caller.Component("lightning-importer")
+
 // NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
@@ -363,7 +366,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -407,6 +410,12 @@ func NewImportControllerWithPauser(
 		}
 		p.TaskType = taskType
 
+		// TODO: we should not need to check config here.
+		// Instead, we should perform the following during switch mode:
+		//  1. for each tikv, try to switch mode without any ranges.
+		//  2. if it returns normally, it means the store is using a raft-v1 engine.
+		//  3. if it returns the `partitioned-raft-kv only support switch mode with range set` error,
+		//     it means the store is a raft-v2 engine and we will include the ranges from now on.
 		isRaftKV2, err := common.IsRaftKV2(ctx, db)
 		if err != nil {
 			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
@@ -473,7 +482,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
 	)
 
 	rc := &Controller{
@@ -587,7 +596,9 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logger := log.FromContext(ctx)
-	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
+	// the minimum 4 comes the fact that when connect to non-owner TiDB, the max
+	// QPS is 2 per connection due to polling every 500ms.
+	concurrency := max(2*rc.cfg.App.RegionConcurrency, 4)
 	// sql.DB is a connection pool, we set it to concurrency + 1(for job generator)
 	// to reuse connections, as we might call db.Conn/conn.Close many times.
 	// there's no API to get sql.DB.MaxIdleConns, so we revert to its default which is 2
@@ -634,8 +645,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
-	if err := rc.loadDesiredTableInfos(ctx); err != nil {
-		return err
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		if err := rc.loadDesiredTableInfos(ctx); err != nil {
+			return err
+		}
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
@@ -1168,7 +1181,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1348,7 +1361,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err := clientv3.New(clientv3.Config{
+		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
@@ -1480,19 +1493,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for i, fi := range tableMeta.DataFiles {
+				for _, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if m, ok := metric.FromContext(ctx); ok {
-							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
-						}
-						fi.FileMeta.Rows = numberRows
-						tableMeta.DataFiles[i] = fi
-					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
@@ -1911,6 +1913,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
+				if err := rc.checkPDTiDBFromSameCluster(ctx); err != nil {
+					return common.ErrCheckPDTiDBFromSameCluster.Wrap(err).GenWithStackByArgs()
+				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
 			if err := rc.checkCDCPiTR(ctx); err != nil {
@@ -1982,20 +1987,17 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
-	// We need to update the AllocBase every time we've finished a file.
-	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
-	// or integer primary key), which can only be obtained by reading all data.
-
-	var base int64
-	if t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
-	} else {
-		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
-	}
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
-			AllocBase: base,
+			AutoRandBase:  t.alloc.Get(autoid.AutoRandomType).Base(),
+			AutoIncrBase:  t.alloc.Get(autoid.AutoIncrementType).Base(),
+			AutoRowIDBase: t.alloc.Get(autoid.RowIDAllocType).Base(),
 		},
 	}
 	rc.saveCpCh <- saveCp{

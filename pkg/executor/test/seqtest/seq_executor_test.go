@@ -37,9 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -78,7 +79,7 @@ func TestEarlyClose(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("earlyclose"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -269,18 +270,18 @@ func TestShow(t *testing.T) {
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES|NO",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO|NO",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO|NO",
 	))
 
 	// For show like with escape
@@ -622,7 +623,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
@@ -630,7 +631,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("delete from t")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
@@ -759,6 +760,8 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
+	step := int64(10)
+	autoid.SetStep(step)
 	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
@@ -770,10 +773,6 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,tt")
@@ -786,7 +785,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
+	for i := 0; i < int(10); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
@@ -797,30 +796,34 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
 	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
 	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1", "21 <nil>"))
+	tk.MustExec("drop table tt")
+
+	tk.MustExec("create table tt(id int primary key auto_increment, c int) auto_id_cache = 1;")
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
 	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows(
-		"test1 t _tidb_rowid 1 _TIDB_ROWID",
-		"test1 t _tidb_rowid 1 AUTO_INCREMENT"))
+		"test1 t _tidb_rowid 1 _TIDB_ROWID"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -908,7 +911,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(7000)
+	kv.TxnTotalSizeLimit.Store(8000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1298,11 +1301,11 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/errorFetchBuildSideRowsMockOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+	}
 }
 
 func TestIssue18744(t *testing.T) {

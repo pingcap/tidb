@@ -183,6 +183,71 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 	}
 }
 
+func TestIssue53951(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE gholla_dummy1 (
+  id varchar(10) NOT NULL,
+  mark int,
+  deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+  account_id varchar(10) NOT NULL,
+  metastore_id varchar(10) NOT NULL,
+  is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+  PRIMARY KEY (account_id,metastore_id,id),
+  KEY isDeleted_accountId_metastoreId (is_deleted,account_id,metastore_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE gholla_dummy2 (
+  id varchar(10) NOT NULL,
+  mark int,
+  deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+  account_id varchar(10) NOT NULL,
+  metastore_id varchar(10) NOT NULL,
+  is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+  PRIMARY KEY (account_id,metastore_id,id),
+  KEY isDeleted_accountId_metastoreId (is_deleted,account_id,metastore_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; `)
+	tk.MustExec(`INSERT INTO gholla_dummy1 (id,mark,deleted_at,account_id,metastore_id) VALUES ('ABC', 1, '1970-01-01 01:00:01.000', 'ABC', 'ABC');`)
+	tk.MustExec(`INSERT INTO gholla_dummy2 (id,mark,deleted_at,account_id,metastore_id) VALUES ('ABC', 1, '1970-01-01 01:00:01.000', 'ABC', 'ABC');`)
+	tk.MustExec(`start transaction;`)
+	tk.MustExec(`update gholla_dummy2 set deleted_at = NOW(), mark=2 where account_id = 'ABC' and metastore_id = 'ABC' and id = 'ABC';`)
+	tk.MustQuery(`select
+  /*+ INL_JOIN(g1) */
+  g1.account_id,
+  g2.mark
+from
+  gholla_dummy1 g1 FORCE INDEX(isDeleted_accountId_metastoreId)
+STRAIGHT_JOIN
+  gholla_dummy2 g2 FORCE INDEX (PRIMARY)
+ON
+  g1.account_id = g2.account_id AND
+  g1.metastore_id = g2.metastore_id AND
+  g1.id = g2.id
+WHERE
+  g1.account_id = 'ABC' AND
+  g1.metastore_id = 'ABC' AND
+  g1.is_deleted = FALSE AND
+  g2.is_deleted = FALSE;`).Check(testkit.Rows()) // empty result, no error
+	tk.MustQuery(`select
+  /*+ INL_JOIN(g2) */
+  g1.account_id,
+  g2.mark
+from
+  gholla_dummy1 g1 FORCE INDEX(isDeleted_accountId_metastoreId)
+STRAIGHT_JOIN
+  gholla_dummy2 g2 FORCE INDEX (PRIMARY)
+ON
+  g1.account_id = g2.account_id AND
+  g1.metastore_id = g2.metastore_id AND
+  g1.id = g2.id
+WHERE
+  g1.account_id = 'ABC' AND
+  g1.metastore_id = 'ABC' AND
+  g1.is_deleted = FALSE AND
+  g2.is_deleted = FALSE;`).Check(testkit.Rows()) // empty result, no error
+	tk.MustExec(`rollback`)
+}
+
 func TestIssue28073(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -195,7 +260,7 @@ func TestIssue28073(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into t2 (c_int, c_str) values (2, 'romantic grothendieck')")
-	tk.MustQuery("select * from t2 left join t1 on t1.c_int = t2.c_int for update").Sort().Check(
+	tk.MustQuery("select * from t2 use index(primary) left join t1  use index(primary) on t1.c_int = t2.c_int for update").Sort().Check(
 		testkit.Rows(
 			"1 flamboyant mcclintock 1 flamboyant mcclintock",
 			"2 romantic grothendieck <nil> <nil>",
@@ -292,6 +357,21 @@ func TestIssue32422(t *testing.T) {
 	tk.MustQuery("select id from t use index(id) where id = 4").Check(testkit.Rows("4"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
+	tk.MustExec("rollback")
+}
+
+func TestSnapshotWithConcurrentWrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for j := 0; j < 16; j++ {
+		tk.MustExec("insert into t1 (b) select /*+ use_index(t1, b) */ id from t1;")
+	}
+	tk.MustQuery("select count(1) from t1").Check(testkit.Rows("524288")) // 8 * 2^16 rows
 	tk.MustExec("rollback")
 }
 

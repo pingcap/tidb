@@ -29,11 +29,13 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -55,7 +57,7 @@ func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
 }
 
@@ -205,12 +207,12 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	mockSchemas := make([]*backuppb.Schema, 0)
 	var dbID int64 = 1
 	for db, tables := range db2Tables {
-		dbName := model.NewCIStr(db)
+		dbName := ast.NewCIStr(db)
 		mockTblList := make([]*model.TableInfo, 0)
 		tblBytesList, statsBytesList := make([][]byte, 0), make([][]byte, 0)
 
 		for i, table := range tables {
-			tblName := model.NewCIStr(table)
+			tblName := ast.NewCIStr(table)
 			mockTbl := &model.TableInfo{
 				ID:   dbID*100 + int64(i),
 				Name: tblName,
@@ -232,10 +234,10 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 		}
 
 		mockDB := model.DBInfo{
-			ID:     dbID,
-			Name:   dbName,
-			Tables: mockTblList,
+			ID:   dbID,
+			Name: dbName,
 		}
+		mockDB.Deprecated.Tables = mockTblList
 		dbID++
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(t, err)
@@ -285,41 +287,4 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
-}
-
-func TestMapTableToFiles(t *testing.T) {
-	filesOfTable1 := []*backuppb.File{
-		{
-			Name:     "table1-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-		{
-			Name:     "table1-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-		{
-			Name:     "table1-3.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-	}
-	filesOfTable2 := []*backuppb.File{
-		{
-			Name:     "table2-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-		{
-			Name:     "table2-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-	}
-
-	result := MapTableToFiles(append(filesOfTable2, filesOfTable1...))
-
-	require.Equal(t, filesOfTable1, result[1])
-	require.Equal(t, filesOfTable2, result[2])
 }

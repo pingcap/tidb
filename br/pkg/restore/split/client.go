@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -195,14 +196,11 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
 				// backoff about 6s, or we give up scattering this region.
-				&ExponentialBackoffer{
-					Attempts:    7,
-					BaseBackoff: 100 * time.Millisecond,
-				})
+				utils.NewBackoffRetryAllErrorStrategy(7, 100*time.Millisecond, 2*time.Second))
 			return nil
 		}
 		return err
-	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+	}, utils.NewBackoffRetryAllErrorStrategy(3, 500*time.Millisecond, 2*time.Second))
 }
 
 func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
@@ -213,7 +211,7 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
+	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}
@@ -240,7 +238,7 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 }
 
 func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*RegionInfo, error) {
-	region, err := c.client.GetRegion(ctx, key)
+	region, err := c.client.GetRegion(ctx, key, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -254,7 +252,7 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*RegionInfo, erro
 }
 
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error) {
-	region, err := c.client.GetRegionByID(ctx, regionID)
+	region, err := c.client.GetRegionByID(ctx, regionID, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -581,8 +579,6 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		workerPool := tidbutil.NewWorkerPool(uint(c.splitConcurrency), "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {
-			region := region
-			splitKeys := splitKeys
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO(lance6716): add error handling to retry from scan or retry from split
 				newRegions, err2 := c.SplitWaitAndScatter(eCtx, region, splitKeys)
@@ -619,30 +615,12 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		}
 		slices.SortFunc(retrySplitKeys, bytes.Compare)
 		return lastSplitErr
-	}, newSplitBackoffer())
+	}, utils.NewBackoffRetryAllExceptStrategy(SplitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval, isNonRetryErrForSplit))
 	return ret, errors.Trace(err)
 }
 
-type splitBackoffer struct {
-	state utils.RetryState
-}
-
-func newSplitBackoffer() *splitBackoffer {
-	return &splitBackoffer{
-		state: utils.InitialRetryState(SplitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval),
-	}
-}
-
-func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
-	if berrors.ErrInvalidRange.Equal(err) {
-		bo.state.GiveUp()
-		return 0
-	}
-	return bo.state.ExponentialBackoff()
-}
-
-func (bo *splitBackoffer) Attempt() int {
-	return bo.state.Attempt()
+func isNonRetryErrForSplit(err error) bool {
+	return berrors.ErrInvalidRange.Equal(err)
 }
 
 func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
@@ -769,7 +747,8 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
-	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
+	//nolint:staticcheck
+	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -809,7 +788,7 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
+func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffStrategy utils.BackoffStrategy) {
 	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
 	for _, newRegion := range newRegions {
 		newRegionSet[newRegion.Region.Id] = newRegion
@@ -833,7 +812,7 @@ func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []
 			errs = multierr.Append(errs, err)
 		}
 		return errs
-	}, backoffer); err != nil {
+	}, backoffStrategy); err != nil {
 		log.Warn("Some regions haven't been scattered because errors.",
 			zap.Int("count", len(newRegionSet)),
 			// if all region are failed to scatter, the short error might also be verbose...

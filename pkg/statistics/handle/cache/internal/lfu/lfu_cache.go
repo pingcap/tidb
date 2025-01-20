@@ -75,14 +75,14 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 }
 
 // adjustMemCost adjusts the memory cost according to the total memory cost.
-// When the total memory cost is 0, the memory cost is set to half of the total memory.
+// When the total memory cost is 0, the memory cost is set to 20% of the total memory.
 func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	if totalMemCost == 0 {
 		memTotal, err := memory.MemTotal()
 		if err != nil {
 			return 0, err
 		}
-		return int64(memTotal / 2), nil
+		return int64(memTotal * 20 / 100), nil
 	}
 	return totalMemCost, nil
 }
@@ -126,15 +126,6 @@ func (s *LFU) Values() []*statistics.Table {
 	return result
 }
 
-// DropEvicted drop stats for table column/index
-func DropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() ||
-		item.GetEvictedStatus() == statistics.AllEvicted {
-		return
-	}
-	item.DropUnnecessaryData()
-}
-
 func (s *LFU) onReject(item *ristretto.Item) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -169,12 +160,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	for _, column := range table.Columns {
-		DropEvicted(column)
-	}
-	for _, indix := range table.Indices {
-		DropEvicted(indix)
-	}
+	table.DropEvicted()
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
@@ -207,6 +193,7 @@ func (s *LFU) onExit(val any) {
 	if s.closed.Load() {
 		return
 	}
+	s.triggerEvict()
 	// Subtract the memory usage of the table from the total memory usage.
 	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
@@ -263,4 +250,9 @@ func (s *LFU) Clear() {
 func (s *LFU) addCost(v int64) {
 	newv := s.cost.Add(v)
 	metrics.CostGauge.Set(float64(newv))
+}
+
+// TriggerEvict implements statsCacheInner
+func (s *LFU) TriggerEvict() {
+	s.triggerEvict()
 }

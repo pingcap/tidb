@@ -24,7 +24,7 @@ const (
 )
 
 type backOfferResettable interface {
-	utils.Backoffer
+	utils.BackoffStrategy
 	Reset()
 }
 
@@ -61,7 +61,7 @@ func (b *dumpChunkBackoffer) NextBackoff(err error) time.Duration {
 	return b.delayTime
 }
 
-func (b *dumpChunkBackoffer) Attempt() int {
+func (b *dumpChunkBackoffer) RemainingAttempts() int {
 	return b.attempt
 }
 
@@ -79,7 +79,7 @@ func (b *noopBackoffer) NextBackoff(_ error) time.Duration {
 	return time.Duration(0)
 }
 
-func (b *noopBackoffer) Attempt() int {
+func (b *noopBackoffer) RemainingAttempts() int {
 	return b.attempt
 }
 
@@ -128,7 +128,7 @@ func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-func (b *lockTablesBackoffer) Attempt() int {
+func (b *lockTablesBackoffer) RemainingAttempts() int {
 	return b.attempt
 }
 

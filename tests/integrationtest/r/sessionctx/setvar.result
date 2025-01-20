@@ -542,21 +542,21 @@ select /*+ set_var(tidb_opt_prefer_range_scan=0) */ @@tidb_opt_prefer_range_scan
 0
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 set @@tidb_opt_prefer_range_scan=default;
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 select /*+ set_var(tidb_opt_prefer_range_scan=1) */ @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
 1
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 set @@tidb_opt_prefer_range_scan=default;
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 select /*+ set_var(tidb_opt_enable_correlation_adjustment=0) */ @@tidb_opt_enable_correlation_adjustment;
 @@tidb_opt_enable_correlation_adjustment
 0
@@ -1142,21 +1142,21 @@ select /*+ set_var(tidb_opt_projection_push_down=0) */ @@tidb_opt_projection_pus
 0
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 set @@tidb_opt_projection_push_down=default;
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 select /*+ set_var(tidb_opt_projection_push_down=1) */ @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
 1
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 set @@tidb_opt_projection_push_down=default;
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 select /*+ set_var(tidb_enable_vectorized_expression=0) */ @@tidb_enable_vectorized_expression;
 @@tidb_enable_vectorized_expression
 0
@@ -1542,21 +1542,21 @@ select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=0) */ @@tidb_enable_
 0
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=1) */ @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
 1
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 select /*+ set_var(tidb_opt_enable_late_materialization=0) */ @@tidb_opt_enable_late_materialization;
 @@tidb_opt_enable_late_materialization
 0
@@ -1680,6 +1680,18 @@ select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisib
 select @@tidb_opt_use_invisible_indexes;
 @@tidb_opt_use_invisible_indexes
 0
+select /*+ set_var(tidb_hash_join_version=optimized) */ @@tidb_hash_join_version;
+@@tidb_hash_join_version
+optimized
+select @@tidb_hash_join_version;
+@@tidb_hash_join_version
+optimized
+select /*+ set_var(tidb_hash_join_version=legacy) */ @@tidb_hash_join_version;
+@@tidb_hash_join_version
+legacy
+select @@tidb_hash_join_version;
+@@tidb_hash_join_version
+optimized
 set @@global.max_execution_time=1000;
 select @@max_execution_time;
 @@max_execution_time

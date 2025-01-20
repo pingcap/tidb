@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t"),
+				Name: ast.NewCIStr("t"),
 			},
 			DisableTiKVImportMode: true,
 		},
@@ -91,7 +92,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.ImportSchedulerExt{}
+	ext := importinto.NewImportSchedulerForTest(false)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -199,7 +200,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			Format: "csv",
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name:  model.NewCIStr("t"),
+				Name:  ast.NewCIStr("t"),
 				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,
@@ -234,9 +235,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.ImportSchedulerExt{
-		GlobalSort: true,
-	}
+	ext := importinto.NewImportSchedulerForTest(true)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

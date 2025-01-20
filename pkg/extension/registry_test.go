@@ -347,3 +347,130 @@ func TestCustomAccessCheck(t *testing.T) {
 	tk2.MustExec("update t1 set v=32 where id<2")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 32"))
 }
+
+func TestAuthPluginValidation(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	require.NoError(t, extension.Register("test", extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+		{Name: ""},
+	})))
+	require.ErrorContains(t, extension.Setup(), "auth plugin name cannot be empty")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "plugin1",
+				ValidateAuthString: func(pwdHash string) bool {
+					return false
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+			},
+		})),
+	)
+	require.ErrorContains(t, extension.Setup(), "auth plugin AuthenticateUser function cannot be nil for plugin1")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "plugin1",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+			},
+		})),
+	)
+	require.ErrorContains(t, extension.Setup(), "auth plugin ValidateAuthString function cannot be nil for plugin1")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "plugin1",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				ValidateAuthString: func(pwdHash string) bool {
+					return true
+				},
+			},
+		})),
+	)
+	require.ErrorContains(t, extension.Setup(), "auth plugin GenerateAuthString function cannot be nil for plugin1")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "plugin1",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+				ValidateAuthString: func(pwdHash string) bool {
+					return true
+				},
+			},
+			{
+				Name: "plugin1",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+				ValidateAuthString: func(pwdHash string) bool {
+					return true
+				},
+			},
+		})),
+	)
+	require.ErrorContains(t, extension.Setup(), "has already been registered")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "mysql_native_password",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+				ValidateAuthString: func(pwdHash string) bool {
+					return true
+				},
+			},
+		})),
+	)
+	require.ErrorContains(t, extension.Setup(), "a reserved name for default auth plugins")
+
+	extension.Reset()
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
+				Name: "plugin1",
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
+					return nil
+				},
+				GenerateAuthString: func(pwd string) (string, bool) {
+					return pwd, true
+				},
+				ValidateAuthString: func(pwdHash string) bool {
+					return true
+				},
+			},
+		})),
+	)
+	require.NoError(t, extension.Setup())
+}

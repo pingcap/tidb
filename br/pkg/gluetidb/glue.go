@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -16,7 +17,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -40,14 +42,21 @@ func New() Glue {
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
-	return Glue{}
+	return Glue{
+		startDomainMu: &sync.Mutex{},
+	}
 }
 
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
 	glue.StdIOGlue
 
-	tikvGlue gluetikv.Glue
+	tikvGlue      gluetikv.Glue
+	startDomainMu *sync.Mutex
+}
+
+func WrapSession(se sessiontypes.Session) glue.Session {
+	return &tidbSession{se: se}
 }
 
 type tidbSession struct {
@@ -55,13 +64,13 @@ type tidbSession struct {
 }
 
 // GetDomain implements glue.Glue.
-func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	existDom, _ := session.GetDomain(nil)
-	initStatsSe, err := session.CreateSession(store)
+	initStatsSe, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	se, err := session.CreateSession(store)
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -84,8 +93,8 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 }
 
 // CreateSession implements glue.Glue.
-func (Glue) CreateSession(store kv.Storage) (glue.Session, error) {
-	se, err := session.CreateSession(store)
+func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -93,6 +102,30 @@ func (Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 		se: se,
 	}
 	return tiSession, nil
+}
+
+func (g Glue) startDomainAsNeeded(store kv.Storage) error {
+	g.startDomainMu.Lock()
+	defer g.startDomainMu.Unlock()
+	existDom, _ := session.GetDomain(nil)
+	if existDom != nil {
+		return nil
+	}
+	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
+		return errors.Trace(err)
+	}
+	dom, err := session.GetDomain(store)
+	if err != nil {
+		return err
+	}
+	return dom.Start(ddl.Normal)
+}
+
+func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+	if err := g.startDomainAsNeeded(store); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return session.CreateSession(store)
 }
 
 // Open implements glue.Glue.
@@ -122,7 +155,7 @@ func (g Glue) GetVersion() string {
 
 // UseOneShotSession implements glue.Glue.
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
-	se, err := session.CreateSession(store)
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -133,7 +166,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		se.Close()
 		log.Info("one shot session closed")
 	}()
-	// dom will be created during session.CreateSession.
+	// dom will be created during create session.
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -156,6 +189,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (Glue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
 }
 
 // GetSessionCtx implements glue.Glue
@@ -204,7 +241,7 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 
 // CreatePlacementPolicy implements glue.Session.
 func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
-	d := domain.GetDomain(gs.se).DDL()
+	d := domain.GetDomain(gs.se).DDLExecutor()
 	gs.se.SetValue(sessionctx.QueryString, gs.showCreatePlacementPolicy(policy))
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
@@ -212,13 +249,13 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTables(gs.se, tables, brComment, cs...))
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
-	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) CreateTable(_ context.Context, dbName ast.CIStr,
+	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
 }
 

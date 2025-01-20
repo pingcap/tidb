@@ -933,3 +933,91 @@ func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}
 }
+
+func TestPresplitIndexSpecialComments(t *testing.T) {
+	specialCmtFlag := format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] NONCLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", specialCmtFlag, "ALTER TABLE `t` ADD INDEX `idx`(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 100 */, ADD INDEX `idx2`(`b`) /*T![pre_split] PRE_SPLIT_REGIONS = (BY (1),(2),(3)) */"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestResourceGroupDDLStmtRestore(t *testing.T) {
+	createTestCases := []NodeRestoreTestCase{
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 BURSTABLE",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, BURSTABLE = TRUE",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg2 RU_PER_SEC = 600",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg2` RU_PER_SEC = 600",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg3 RU_PER_SEC = 100 PRIORITY = HIGH",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg3` RU_PER_SEC = 100, PRIORITY = HIGH",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 QUERY_LIMIT=(EXEC_ELAPSED='60s', ACTION=COOLDOWN)",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, QUERY_LIMIT = (EXEC_ELAPSED = '60s' ACTION = COOLDOWN)",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 QUERY_LIMIT=(ACTION=SWITCH_GROUP(rg2))",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, QUERY_LIMIT = (ACTION = SWITCH_GROUP(`rg2`))",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateResourceGroupStmt)
+	}
+	runNodeRestoreTest(t, createTestCases, "%s", extractNodeFunc)
+
+	alterTestCase := []NodeRestoreTestCase{
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=(EXEC_ELAPSED='60s', ACTION=KILL, WATCH=SIMILAR DURATION='10m')",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = (EXEC_ELAPSED = '60s' ACTION = KILL WATCH = SIMILAR DURATION = '10m')",
+		},
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=(EXEC_ELAPSED='1m', ACTION=SWITCH_GROUP(rg2), WATCH=SIMILAR DURATION='10m')",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = (EXEC_ELAPSED = '1m' ACTION = SWITCH_GROUP(`rg2`) WATCH = SIMILAR DURATION = '10m')",
+		},
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=NULL",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = NULL",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='br,ddl')",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = (TASK_TYPES = 'br,ddl')",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=NULL",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = NULL",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='')",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = (TASK_TYPES = '')",
+		},
+	}
+	extractNodeFunc = func(node Node) Node {
+		return node.(*AlterResourceGroupStmt)
+	}
+	runNodeRestoreTest(t, alterTestCase, "%s", extractNodeFunc)
+}

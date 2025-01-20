@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
+        "@com_github_hashicorp_go_version//:go-version",
         "@com_github_mgechev_revive//config",
         "@com_github_mgechev_revive//lint",
         "@com_github_mgechev_revive//rule",

@@ -15,6 +15,7 @@
 package utils_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -23,6 +24,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -279,4 +283,201 @@ func TestGetRewriteTableID(t *testing.T) {
 		newTableID := utils.GetRewriteTableID(oldTableID, rewriteRules)
 		require.Equal(t, tableID, newTableID)
 	}
+}
+
+func getNewKeyPrefix(key []byte, rewriteRules *utils.RewriteRules) kv.Key {
+	for _, rule := range rewriteRules.Data {
+		if bytes.HasPrefix(key, rule.GetOldKeyPrefix()) {
+			return rule.GetNewKeyPrefix()
+		}
+	}
+	return nil
+}
+
+func generateRewriteTableInfos() (newTableInfo, oldTableInfo *model.TableInfo) {
+	newTableInfo = &model.TableInfo{
+		ID: 1,
+		Indices: []*model.IndexInfo{
+			{
+				ID:   1,
+				Name: ast.NewCIStr("i1"),
+			},
+			{
+				ID:   2,
+				Name: ast.NewCIStr("i2"),
+			},
+		},
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{
+					ID:   100,
+					Name: ast.NewCIStr("p1"),
+				},
+				{
+					ID:   200,
+					Name: ast.NewCIStr("p2"),
+				},
+			},
+		},
+	}
+	oldTableInfo = &model.TableInfo{
+		ID: 2,
+		Indices: []*model.IndexInfo{
+			{
+				ID:   1,
+				Name: ast.NewCIStr("i1"),
+			},
+			{
+				ID:   2,
+				Name: ast.NewCIStr("i2"),
+			},
+		},
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{
+					ID:   101,
+					Name: ast.NewCIStr("p1"),
+				},
+				{
+					ID:   201,
+					Name: ast.NewCIStr("p2"),
+				},
+			},
+		},
+	}
+	return newTableInfo, oldTableInfo
+}
+
+func TestGetRewriteRules(t *testing.T) {
+	newTableInfo, oldTableInfo := generateRewriteTableInfos()
+
+	{
+		rewriteRules := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0, false)
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(101), rewriteRules), tablecodec.EncodeTablePrefix(100))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(201), rewriteRules), tablecodec.EncodeTablePrefix(200))
+	}
+
+	{
+		rewriteRules := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0, true)
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 2))
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(101), rewriteRules), tablecodec.GenTableRecordPrefix(100))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(101, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(100, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(101, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(100, 2))
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(201), rewriteRules), tablecodec.GenTableRecordPrefix(200))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(200, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(200, 2))
+	}
+}
+
+func TestGetRewriteRulesMap(t *testing.T) {
+	newTableInfo, oldTableInfo := generateRewriteTableInfos()
+
+	{
+		rewriteRules := utils.GetRewriteRulesMap(newTableInfo, oldTableInfo, 0, false)
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules[2]), tablecodec.EncodeTablePrefix(1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(101), rewriteRules[101]), tablecodec.EncodeTablePrefix(100))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(201), rewriteRules[201]), tablecodec.EncodeTablePrefix(200))
+	}
+
+	{
+		rewriteRules := utils.GetRewriteRulesMap(newTableInfo, oldTableInfo, 0, true)
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules[2]), tablecodec.GenTableRecordPrefix(1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules[2]), tablecodec.EncodeTableIndexPrefix(1, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules[2]), tablecodec.EncodeTableIndexPrefix(1, 2))
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(101), rewriteRules[101]), tablecodec.GenTableRecordPrefix(100))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(101, 1), rewriteRules[101]), tablecodec.EncodeTableIndexPrefix(100, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(101, 2), rewriteRules[101]), tablecodec.EncodeTableIndexPrefix(100, 2))
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(201), rewriteRules[201]), tablecodec.GenTableRecordPrefix(200))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 1), rewriteRules[201]), tablecodec.EncodeTableIndexPrefix(200, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 2), rewriteRules[201]), tablecodec.EncodeTableIndexPrefix(200, 2))
+	}
+}
+
+func TestGetRewriteRuleOfTable(t *testing.T) {
+	{
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 1, 2: 2}, false)
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
+	}
+
+	{
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 1, 2: 2}, true)
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 1))
+		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 2))
+	}
+}
+
+type fakeApplyFile struct {
+	StartKey []byte
+	EndKey   []byte
+}
+
+func (f fakeApplyFile) GetStartKey() []byte {
+	return f.StartKey
+}
+
+func (f fakeApplyFile) GetEndKey() []byte {
+	return f.EndKey
+}
+
+func rewriteKey(key kv.Key, rule *import_sstpb.RewriteRule) kv.Key {
+	if bytes.HasPrefix(key, rule.GetOldKeyPrefix()) {
+		return append(rule.GetNewKeyPrefix(), key[len(rule.GetNewKeyPrefix()):]...)
+	}
+	return nil
+}
+
+func TestFindMatchedRewriteRule(t *testing.T) {
+	rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 10}, true)
+	{
+		applyFile := fakeApplyFile{
+			StartKey: tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(100)),
+			EndKey:   tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(200)),
+		}
+		rule := utils.FindMatchedRewriteRule(applyFile, rewriteRules)
+		require.Equal(t, rewriteKey(tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(100)), rule),
+			tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(100)))
+	}
+
+	{
+		applyFile := fakeApplyFile{
+			StartKey: tablecodec.EncodeIndexSeekKey(2, 1, []byte("test-1")),
+			EndKey:   tablecodec.EncodeIndexSeekKey(2, 1, []byte("test-2")),
+		}
+		rule := utils.FindMatchedRewriteRule(applyFile, rewriteRules)
+		require.Equal(t, rewriteKey(tablecodec.EncodeIndexSeekKey(2, 1, []byte("test-1")), rule),
+			tablecodec.EncodeIndexSeekKey(1, 10, []byte("test-1")))
+	}
+
+	{
+		applyFile := fakeApplyFile{
+			StartKey: tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(100)),
+			EndKey:   tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(200)),
+		}
+		rule := utils.FindMatchedRewriteRule(applyFile, rewriteRules)
+		require.Nil(t, rule)
+	}
+
+	{
+		applyFile := fakeApplyFile{
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		}
+		rule := utils.FindMatchedRewriteRule(applyFile, rewriteRules)
+		require.Nil(t, rule)
+	}
+}
+
+func TestGetRewriteKeyWithDifferentTable(t *testing.T) {
+	applyFile := fakeApplyFile{
+		StartKey: tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(100)),
+		EndKey:   tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(200)),
+	}
+	_, _, err := utils.GetRewriteRawKeys(applyFile, nil)
+	require.Error(t, err)
+	_, _, err = utils.GetRewriteEncodedKeys(applyFile, nil)
+	require.Error(t, err)
 }

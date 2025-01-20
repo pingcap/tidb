@@ -103,7 +103,7 @@ strategy = ""
 # precheck-conflict-before-import = false
 # Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when the strategy is "replace" or "ignore". The default value is 10000. If you set a value larger than 10000, the import process might experience performance degradation.
 # threshold = 10000
-# Controls the maximum number of records in the `conflict_records` table. The default value is 10000.
+# Controls the maximum number of records in the `conflict_records_v2` table. The default value is 10000.
 # Starting from v8.1.0, there is no need to configure `max-record-rows` manually, because TiDB Lightning automatically assigns the value of `max-record-rows` with the value of `threshold`, regardless of the user input. `max-record-rows` will be deprecated in a future release.
 # In the physical import mode, if the strategy is "replace", the conflict records that are overwritten are recorded.
 # In the logical import mode, if the strategy is "ignore", the conflict records that are ignored are recorded; if the strategy is "replace", the conflict records are not recorded.
@@ -125,6 +125,7 @@ addr = "127.0.0.1:8287"
 # duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
+# If the configuration value is less than TiKV's region size, it will be adjusted to TiKV's region size.
 #region-split-size = '96MiB'
 # write key-values pairs to tikv batch size
 #send-kv-pairs = 32768
@@ -165,6 +166,8 @@ addr = "127.0.0.1:8287"
 # the rows will be split in a way to respect both settings.
 # This value may be decreased to reduce the stress on the cluster due to large transaction.
 #logical-import-batch-rows = 65536
+# logical-import-prep-stmt controls whether to use prepared statements in logical mode (TiDB backend).
+#logical-import-prep-stmt = false
 
 [mydumper]
 # block size of file reading

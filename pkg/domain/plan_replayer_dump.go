@@ -31,10 +31,10 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -90,13 +90,13 @@ type tableNameExtractor struct {
 	ctx      context.Context
 	executor sqlexec.RestrictedSQLExecutor
 	is       infoschema.InfoSchema
-	curDB    model.CIStr
+	curDB    ast.CIStr
 	names    map[tableNamePair]struct{}
 	cteNames map[string]struct{}
 	err      error
 }
 
-func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
+func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, error) {
 	r := make(map[tableNamePair]struct{})
 	for tablePair := range tne.names {
 		if tablePair.IsView {
@@ -108,8 +108,33 @@ func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
 		if !ok {
 			r[tablePair] = struct{}{}
 		}
+		// if the table has a foreign key, we need to add the referenced table to the list
+		err := findFK(tne.is, tablePair.DBName, tablePair.TableName, r)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return r
+	return r, nil
+}
+
+func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+	if err != nil {
+		return err
+	}
+	for _, fk := range tblInfo.Meta().ForeignKeys {
+		key := tableNamePair{
+			DBName:    fk.RefSchema.L,
+			TableName: fk.RefTable.L,
+			IsView:    false,
+		}
+		tableMap[key] = struct{}{}
+		err := findFK(is, key.DBName, key.TableName, tableMap)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -156,7 +181,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	if !isView {
 		return false, nil
 	}
-	viewTbl, err := tne.is.TableByName(schema, table)
+	viewTbl, err := tne.is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return false, err
 	}
@@ -275,7 +300,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	// Retrieve current DB
-	dbName := model.NewCIStr(sessionVars.CurrentDB)
+	dbName := ast.NewCIStr(sessionVars.CurrentDB)
 	do := GetDomain(sctx)
 
 	// Retrieve all tables
@@ -439,16 +464,17 @@ func dumpMeta(zw *zip.Writer) error {
 	return nil
 }
 
-func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	bf, err := zw.Create(PlanReplayerTiFlashReplicasFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	is := GetDomain(ctx).InfoSchema()
+	is := GetDomain(sctx).InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
-		dbName := model.NewCIStr(pair.DBName)
-		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(dbName, tableName)
+		dbName := ast.NewCIStr(pair.DBName)
+		tableName := ast.NewCIStr(pair.TableName)
+		t, err := is.TableByName(ctx, dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -495,11 +521,12 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
 	statsHandle := do.StatsHandle()
 	is := do.InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
@@ -512,13 +539,15 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		for _, indice := range tblStats.Indices {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
-		}
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
+			return false
+		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		for _, col := range tblStats.Columns {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
-		}
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
+			return false
+		})
 	}
 	return nil
 }
@@ -593,7 +622,7 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
+func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
 		for _, hint := range bindData {
@@ -756,7 +785,7 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 
 // extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB ast.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: sctx.GetRestrictedSQLExecutor(),
@@ -771,13 +800,13 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
-	return tableExtractor.getTablesAndViews(), nil
+	return tableExtractor.getTablesAndViews()
 }
 
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}

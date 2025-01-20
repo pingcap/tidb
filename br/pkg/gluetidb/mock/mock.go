@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
@@ -79,14 +80,14 @@ func (*mockSession) CreatePlacementPolicy(_ context.Context, _ *model.PolicyInfo
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableInfo,
-	_ ...ddl.CreateTableWithInfoConfigurier) error {
+	_ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (*mockSession) CreateTable(_ context.Context, _ model.CIStr,
-	_ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*mockSession) CreateTable(_ context.Context, _ ast.CIStr,
+	_ *model.TableInfo, _ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -158,4 +159,8 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 		se: m.se,
 	}
 	return fn(glueSession)
+}
+
+func (*MockGlue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
 }

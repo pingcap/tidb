@@ -27,8 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -95,11 +94,12 @@ func getRegionIDByKey(tikvStore helper.Storage, encodedKey []byte) uint64 {
 
 // Reporter is a helper to generate report.
 type Reporter struct {
-	HandleEncode func(handle kv.Handle) kv.Key
-	IndexEncode  func(idxRow *RecordData) kv.Key
-	Tbl          *model.TableInfo
-	Idx          *model.IndexInfo
-	Sctx         sessionctx.Context
+	HandleEncode    func(handle kv.Handle) kv.Key
+	IndexEncode     func(idxRow *RecordData) kv.Key
+	Tbl             *model.TableInfo
+	Idx             *model.IndexInfo
+	EnableRedactLog string
+	Storage         any
 }
 
 // DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
@@ -187,7 +187,7 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
 func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+	rmode := r.EnableRedactLog
 
 	const maxFullHandleCnt = 50
 	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
@@ -199,7 +199,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
 	}
 	if rmode != errors.RedactLogEnable {
-		store, ok := r.Sctx.GetStore().(helper.Storage)
+		store, ok := r.Storage.(helper.Storage)
 		if ok {
 			for i, hd := range missHd {
 				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), redact.String(rmode, GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl)))))
@@ -216,7 +216,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 
 // ReportAdminCheckInconsistentWithColInfo reports inconsistent when the value of index row is different from record row.
 func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, handle kv.Handle, colName string, idxDat, tblDat fmt.Stringer, err error, idxRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+	rmode := r.EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
@@ -226,7 +226,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		zap.Stringer("rowDatum", redact.Stringer(rmode, tblDat)),
 	}
 	if rmode != errors.RedactLogEnable {
-		store, ok := r.Sctx.GetStore().(helper.Storage)
+		store, ok := r.Storage.(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
 			fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
@@ -253,7 +253,7 @@ func (r *RecordData) String() string {
 
 // ReportAdminCheckInconsistent reports inconsistent when single index row not found in record rows.
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+	rmode := r.EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
@@ -262,7 +262,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
 	}
 	if rmode != errors.RedactLogEnable {
-		store, ok := r.Sctx.GetStore().(helper.Storage)
+		store, ok := r.Storage.(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
 			if idxRow != nil {

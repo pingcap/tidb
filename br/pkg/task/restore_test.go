@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -18,18 +19,23 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/task"
 	utiltest "github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	pdhttp "github.com/tikv/pd/client/http"
 )
+
+const pb uint64 = units.PB
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
@@ -53,7 +59,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		},
 	}
 
-	pdClient := utiltest.NewFakePDClient(mockStores, false, nil)
+	pdClient := split.NewFakePDClient(mockStores, false, nil)
 
 	tables := make([]*metautil.Table, 4)
 	for i := 0; i < len(tables); i++ {
@@ -65,10 +71,10 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 
 		tables[i] = &metautil.Table{
-			DB: &model.DBInfo{Name: model.NewCIStr("test")},
+			DB: &model.DBInfo{Name: ast.NewCIStr("test")},
 			Info: &model.TableInfo{
 				ID:             int64(i),
-				Name:           model.NewCIStr("test" + strconv.Itoa(i)),
+				Name:           ast.NewCIStr("test" + strconv.Itoa(i)),
 				TiFlashReplica: tiflashReplica,
 			},
 		}
@@ -109,7 +115,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	tables := make([]*metautil.Table, 4)
@@ -120,10 +126,10 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: model.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -131,7 +137,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 				Collate: "utf8mb4_bin",
 			},
 		}
-		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.OnExistIgnore)
+		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.WithOnExist(ddl.OnExistIgnore))
 		require.NoError(t, err)
 	}
 
@@ -149,7 +155,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 		Query:      "",
 		BinlogInfo: &model.HistoryInfo{
 			TableInfo: &model.TableInfo{
-				Name:           model.NewCIStr("test1"),
+				Name:           ast.NewCIStr("test1"),
 				IsCommonHandle: true,
 			},
 		},
@@ -277,9 +283,9 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoErrorf(t, err, "Finially flush backupmeta failed", err)
 	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
-	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
+	dbInfo, ok := infoSchema.SchemaByName(ast.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("test_db"), ast.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -342,9 +348,9 @@ func TestFilterDDLJobsV2(t *testing.T) {
 
 	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
-	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
+	dbInfo, ok := infoSchema.SchemaByName(ast.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("test_db"), ast.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -416,4 +422,104 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	for i, ddlJob := range ddlJobs {
 		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
+}
+
+func TestCheckDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+		{
+			Type: model.ActionReorganizePartition,
+		},
+	}
+
+	filteredDDlJobs := task.FilterDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule)
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionSetTiFlashReplica,
+		model.ActionAddPrimaryKey,
+		model.ActionUpdateTiFlashReplicaStatus,
+		model.ActionCreateTable,
+		model.ActionLockTable,
+		model.ActionUnlockTable,
+		model.ActionCreateSchema,
+	}
+
+	require.Equal(t, len(expectedDDLTypes), len(filteredDDlJobs))
+	expectedDDLJobs := make([]*model.Job, 0, len(expectedDDLTypes))
+	for i, ddlJob := range filteredDDlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		expectedDDLJobs = append(expectedDDLJobs, ddlJob)
+	}
+
+	require.NoError(t, task.CheckDDLJobByRules(expectedDDLJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+	require.Error(t, task.CheckDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+}
+
+// NOTICE: Once there is a new backfilled type ddl, BR needs to ensure that it is correctly cover by the rules:
+func TestMonitorTheIncrementalUnsupportDDLType(t *testing.T) {
+	require.Equal(t, int(5), ddl.BackupFillerTypeCount())
+}
+
+func TestTikvUsage(t *testing.T) {
+	files := []*backuppb.File{
+		{Name: "F1", Size_: 1 * pb},
+		{Name: "F2", Size_: 2 * pb},
+		{Name: "F3", Size_: 3 * pb},
+		{Name: "F4", Size_: 4 * pb},
+		{Name: "F5", Size_: 5 * pb},
+	}
+	replica := uint64(3)
+	storeCnt := uint64(6)
+	total := uint64(0)
+	for _, f := range files {
+		total += f.GetSize_()
+	}
+	ret := task.EstimateTikvUsage(files, replica, storeCnt)
+	require.Equal(t, total*replica/storeCnt, ret)
+}
+
+func TestTiflashUsage(t *testing.T) {
+	tables := []*metautil.Table{
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
+			Files: []*backuppb.File{{Size_: 1 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
+			Files: []*backuppb.File{{Size_: 2 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
+			Files: []*backuppb.File{{Size_: 3 * pb}}},
+	}
+
+	var storeCnt uint64 = 3
+	ret := task.EstimateTiflashUsage(tables, storeCnt)
+	require.Equal(t, 8*pb/3, ret)
+}
+
+func TestCheckTikvSpace(t *testing.T) {
+	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500PB"}}
+	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
 }

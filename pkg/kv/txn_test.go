@@ -38,10 +38,10 @@ func mustBackOff(t *testing.T, cnt uint, sleep int) {
 
 func TestRetryExceedCountError(t *testing.T) {
 	defer func(cnt uint) {
-		maxRetryCnt = cnt
-	}(maxRetryCnt)
+		MaxRetryCnt = cnt
+	}(MaxRetryCnt)
 
-	maxRetryCnt = 5
+	MaxRetryCnt = 5
 	ctx := WithInternalSourceType(context.Background(), InternalTxnOthers)
 	err := RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return nil

@@ -174,3 +174,74 @@ This option is instrumental in handling session events.
 **WithBootstrapSQL**
 
 `WithBootstrapSQL` customizes the bootstrap logic with a string containing SQL statements for bootstrapping. Note that `WithBootstrapSQL` and `WithBootstrap` are mutually exclusive, allowing the use of only one.
+
+### Authentication Plugin
+
+It is possible to implement authentication plugins for TiDB using the extension framework. The framework allows TiDB users to create their own authentication and privilege verification schemes. See `docs/design/2024-05-10-extension-authentication-plugin.md` for design.
+
+See below for a basic example:
+
+```go
+import (
+	"errors"
+
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+)
+
+func createAuthPlugin() *extension.AuthPlugin {
+	return &extension.AuthPlugin{
+		// Name of the plugin: `CREATE USER <username> IDENTIFIED WITH my_auth_plugin AS <pwd>`
+		Name: "my_auth_plugin",
+		// MySQL clients will use the `mysql_native_password` plugin
+		RequiredClientSidePlugin: "mysql_native_password",
+		AuthenticateUser: func(request extension.AuthenticateRequest) error {
+			// Allow login as long as there is an input password
+			if len(request.InputAuthString) > 0 {
+				return nil
+			}
+			return errors.New("no password")
+		},
+		GenerateAuthString: func(pwd string) (string, bool) {
+			// As long as password is not empty, allow it
+			return pwd, pwd != ""
+		},
+		ValidateAuthString: func(pwdHash string) bool {
+			// As long as password is not empty, allow it
+			return pwdHash != ""
+		},
+	}
+}
+
+func init() {
+	plugin := createAuthPlugin()
+	// Can load a list of auth plugins
+	authPlugins := []*extension.AuthPlugin{plugin}
+	err := extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authPlugins),
+		// Register the plugin name as a system variable
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope: variable.ScopeGlobal,
+				Name:  "extension_authentication_plugin",
+				Value: mysql.AuthNativePassword,
+				Type:  variable.TypeEnum,
+				// Add `my_auth_plugin` and the names of other auth plugins here
+				PossibleValues: []string{plugin.Name},
+			},
+		}),
+	)
+	terror.MustNil(err)
+}
+```
+Once this auth plugin is loaded, users can run statements such as:
+```sql
+CREATE USER u1 IDENTIFIED WITH my_auth_plugin AS <pwd>;
+CREATE USER u2 IDENTIFIED WITH my_auth_plugin BY <pwd>;
+```
+where the authentication and privilege checks of `u1` and `u2` will be done by the logic in `my_auth_plugin`.
+
+For other attributes of `extension.AuthPlugin`, refer to `extension/auth.go`.

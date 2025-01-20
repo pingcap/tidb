@@ -203,15 +203,15 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	fields := make([]zap.Field, 0, 6)
 	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
 	if record.isServerMemoryLimitSet {
-		fields = append(fields, zap.Any("tidb_server_memory_limit", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+		fields = append(fields, zap.Uint64("tidb_server_memory_limit", record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64("tidb-server memory usage", memUsage))
 	} else {
-		fields = append(fields, zap.Any("system memory total", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("system memory usage", memUsage))
-		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
+		fields = append(fields, zap.Uint64("system memory total", record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64("system memory usage", memUsage))
+		fields = append(fields, zap.Uint64("tidb-server memory usage", instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
-	fields = append(fields, zap.Any("record path", record.baseRecordDir))
+	fields = append(fields, zap.Float64("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
+	fields = append(fields, zap.String("record path", record.baseRecordDir))
 	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {

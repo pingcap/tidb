@@ -231,6 +231,11 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		sessVars := p.sctx.GetSessionVars()
+		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
+		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
+			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
+		}
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),

@@ -72,6 +72,8 @@ type Collator interface {
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
+	// Clone returns a copy of the collator.
+	Clone() Collator
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.
@@ -165,7 +167,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 		return binCollatorInstanceSliceWithLen1
 	}
 	collators := make([]Collator, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		collators[i] = binCollatorInstance
 	}
 	return collators
@@ -369,6 +371,11 @@ func IsBinCollation(collate string) bool {
 	// TODO: define a constant to reference collations
 }
 
+// IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+func IsPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
+}
+
 // CollationToProto converts collation from string to int32(used by protocol).
 func CollationToProto(c string) int32 {
 	if coll, err := charset.GetCollationByName(c); err == nil {
@@ -382,6 +389,18 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+// CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
+// only return true for binCollator and derivedBinCollator
+func CanUseRawMemAsKey(c Collator) bool {
+	if _, ok := c.(*binCollator); ok {
+		return true
+	}
+	if _, ok := c.(*derivedBinCollator); ok {
+		return true
+	}
+	return false
 }
 
 // ProtoToCollation converts collation from int32(used by protocol) to string.

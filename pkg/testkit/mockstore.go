@@ -17,6 +17,7 @@
 package testkit
 
 import (
+	"context"
 	"flag"
 	"os"
 	"sync"
@@ -24,9 +25,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -50,11 +55,13 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		var err error
 		store, err := d.Open("tikv://" + *WithTiKV)
 		require.NoError(t, err)
-
+		config.GetGlobalConfig().Store = config.StoreTypeTiKV
+		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		var dom *domain.Domain
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
+			ddl.CloseOwnerManager()
 			err := store.Close()
 			require.NoError(t, err)
 			view.Stop()
@@ -151,16 +158,6 @@ func (d *DistExecutionContext) TriggerOwnerChange() {
 	}
 }
 
-// AddDomain add 1 domain which is not ddl owner.
-func (d *DistExecutionContext) AddDomain() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Millisecond)
-	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
-	dom.DDL().OwnerManager().RetireOwner()
-	d.domains = append(d.domains, dom)
-}
-
 // Close cleanup running goroutines, release resources used.
 func (d *DistExecutionContext) Close() {
 	d.t.Cleanup(func() {
@@ -188,13 +185,13 @@ func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
 }
 
-// GetDomainCnt get domain count.
-func (d *DistExecutionContext) GetDomainCnt() int {
-	return len(d.domains)
-}
-
 // NewDistExecutionContext create DistExecutionContext for testing.
 func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext {
+	return NewDistExecutionContextWithLease(t, serverNum, 500*time.Millisecond)
+}
+
+// NewDistExecutionContextWithLease create DistExecutionContext for testing.
+func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Duration) *DistExecutionContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -203,7 +200,7 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 	var domInfo []string
 	for i := 0; i < serverNum; i++ {
-		dom := bootstrap4DistExecution(t, store, 500*time.Millisecond)
+		dom := bootstrap4DistExecution(t, store, lease)
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })
 		}
@@ -280,4 +277,15 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
 	return schematracker.UnwrapStorage(store), dom
+}
+
+// SetTiFlashReplica is to set TiFlash replica
+func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName string) {
+	is := dom.InfoSchema()
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
 }

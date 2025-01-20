@@ -19,7 +19,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/planner/context",
+        "//pkg/planner/planctx",
         "//pkg/planner/util",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

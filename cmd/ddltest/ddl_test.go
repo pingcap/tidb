@@ -33,10 +33,12 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -95,12 +97,13 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
-
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -118,6 +121,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+	ddl.CloseOwnerManager()
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())
@@ -491,7 +495,7 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 }
 
 func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), ast.NewCIStr("test_ddl"), ast.NewCIStr(name))
 	require.NoError(t, err)
 	return tbl
 }
@@ -1157,5 +1161,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
+	_ = store.Register(config.StoreTypeTiKV, tidbdriver.TiKVDriver{})
 }

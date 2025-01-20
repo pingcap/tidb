@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -37,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-binlog"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -120,7 +119,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
 			InfoSchema: p.infoSchema,
-			ShardStep:  int(sessVars.ShardAllocateStep),
 			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		},
 	}
@@ -295,6 +293,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	sessVars.GetRowIDShardGenerator().SetShardStep(int(sessVars.ShardAllocateStep))
 	sessVars.TxnCtxMu.Unlock()
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()
@@ -517,6 +516,19 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 	}
 
 	txn.SetOption(kv.SessionID, p.sctx.GetSessionVars().ConnectionID)
+
+	// backgroundGoroutineWaitGroup is pre-initialized before the closure to avoid accessing `p.sctx` in the closure,
+	// which may cause unexpected race condition.
+	backgroundGoroutineWaitGroup := p.sctx.GetCommitWaitGroup()
+	lifecycleHooks := transaction.LifecycleHooks{
+		Pre: func() {
+			backgroundGoroutineWaitGroup.Add(1)
+		},
+		Post: func() {
+			backgroundGoroutineWaitGroup.Done()
+		},
+	}
+	txn.SetOption(kv.BackgroundGoroutineLifecycleHooks, lifecycleHooks)
 }
 
 func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
@@ -531,9 +543,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		if len(sessVars.TxnCtx.TemporaryTables) > 0 {
 			return errors.New("pipelined dml with temporary tables is not allowed")
-		}
-		if sessVars.BinlogClient != nil {
-			return errors.New("pipelined dml with binlog is not allowed")
 		}
 		if sessVars.CDCWriteSource != 0 {
 			return errors.New("pipelined dml with CDC source is not allowed")
@@ -587,24 +596,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	if sessVars.BinlogClient != nil {
-		prewriteValue := binloginfo.GetPrewriteValue(p.sctx, false)
-		if prewriteValue != nil {
-			prewriteData, err := prewriteValue.Marshal()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			info := &binloginfo.BinlogInfo{
-				Data: &binlog.Binlog{
-					Tp:            binlog.BinlogType_Prewrite,
-					PrewriteValue: prewriteData,
-				},
-				Client: sessVars.BinlogClient,
-			}
-			txn.SetOption(kv.BinlogInfo, info)
-		}
-	}
-
 	var txnSource uint64
 	if val := txn.GetOption(kv.TxnSource); val != nil {
 		txnSource, _ = val.(uint64)
@@ -650,7 +641,7 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}
 
-	if sctx.GetSessionVars().LowResolutionTSO {
+	if sctx.GetSessionVars().UseLowResolutionTSO() {
 		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)
 	}
 	return oracleStore.GetTimestampAsync(ctx, option)

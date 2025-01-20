@@ -18,10 +18,12 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	clikv "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type handleRange struct {
@@ -589,8 +593,6 @@ func TestRequestBuilder7(t *testing.T) {
 		{kv.ReplicaReadFollower, "Follower"},
 		{kv.ReplicaReadMixed, "Mixed"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
 			dctx := NewDistSQLContextForTest()
 			dctx.ReplicaReadType = replicaRead.replicaReadType
@@ -676,6 +678,33 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 	require.Equal(t, expect, actual)
 }
 
+func TestRequestBuilderMaxExecutionTime(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	dctx.MaxExecutionTime = 100
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(dctx).
+		Build()
+	require.NoError(t, err)
+	expect := &kv.Request{
+		Tp:                0,
+		StartTs:           0x0,
+		Data:              []uint8(nil),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		MemTracker:        (*memory.Tracker)(nil),
+		SchemaVar:         0,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		MaxExecutionTime:  100,
+		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
+	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	actual.ResourceGroupTagger = nil
+	require.Equal(t, expect, actual)
+}
+
 func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
@@ -731,8 +760,6 @@ func TestScanLimitConcurrency(t *testing.T) {
 		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
 		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		tt := tt
 		t.Run(tt.src, func(t *testing.T) {
 			firstExec := &tipb.Executor{Tp: tt.tp}
 			switch tt.tp {
@@ -851,4 +878,43 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 	require.Equal(t, []kv.KeyRange{
 		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
 	}, ranges)
+}
+
+func TestRequestBuilderHandle(t *testing.T) {
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
+
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	tableID := int64(15)
+	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(DefaultDistSQLContext).
+		SetResourceGroupTagger(resourceTagBuilder).
+		Build()
+	require.NoError(t, err)
+	ranges := make([]*coprocessor.KeyRange, 0, actual.KeyRanges.TotalRangeNum())
+	actual.KeyRanges.ForEachPartition(
+		func(innerRanges []kv.KeyRange) {
+			for _, ran := range innerRanges {
+				ranges = append(ranges, (*coprocessor.KeyRange)(unsafe.Pointer(&ran)))
+			}
+		})
+
+	copReq := coprocessor.Request{
+		Tp:      actual.Tp,
+		StartTs: actual.StartTs,
+		Data:    actual.Data,
+		Ranges:  ranges,
+	}
+	var seed uint32
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdCop, &copReq, clikv.ReplicaReadLeader, &seed)
+	actual.ResourceGroupTagger.Build(req)
+
+	// the request should have the resource group tag, and the tag should contain the table id
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(req.ResourceGroupTag)
+	require.NoError(t, err)
+	require.Equal(t, tag.TableId, tableID)
 }

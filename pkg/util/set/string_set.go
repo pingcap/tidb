@@ -85,3 +85,10 @@ func (s StringSet) Empty() bool {
 func (s StringSet) Clear() {
 	maps.Clear(s)
 }
+
+// IterateWith iterate items in StringSet and pass it to `fn`.
+func (s StringSet) IterateWith(fn func(string)) {
+	for k := range s {
+		fn(k)
+	}
+}

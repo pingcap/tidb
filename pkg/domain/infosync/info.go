@@ -37,14 +37,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -126,6 +126,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	infoCache             infoschemaMinTS
 }
 
 // ServerInfo is server static information.
@@ -137,7 +138,6 @@ type ServerInfo struct {
 	Port           uint              `json:"listening_port"`
 	StatusPort     uint              `json:"status_port"`
 	Lease          string            `json:"lease"`
-	BinlogStatus   string            `json:"binlog_status"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
@@ -192,6 +192,21 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 	globalInfoSyncer.Store(is)
 }
 
+// SetPDHttpCliForTest sets the pdhttp.Client for testing.
+// Please do not use it in the production environment.
+func SetPDHttpCliForTest(cli pdhttp.Client) func() {
+	syncer := globalInfoSyncer.Load()
+	originalCli := syncer.pdHTTPCli
+	syncer.pdHTTPCli = cli
+	return func() {
+		syncer.pdHTTPCli = originalCli
+	}
+}
+
+type infoschemaMinTS interface {
+	GetAndResetRecentInfoSchemaTS(now uint64) uint64
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -201,6 +216,7 @@ func GlobalInfoSyncerInit(
 	pdCli pd.Client, pdHTTPCli pdhttp.Client,
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
+	infoCache infoschemaMinTS,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -214,6 +230,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		infoCache:         infoCache,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -313,7 +330,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -536,6 +553,7 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
+// an "empty" bundle means delete bundle if a bundle with such ID exists.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
 	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
 		var err error
@@ -770,6 +788,16 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
+
+		if info.CursorTracker != nil {
+			info.CursorTracker.RangeCursor(func(c cursor.Handle) bool {
+				startTS := c.GetState().StartTS
+				if startTS > startTSLowerLimit && startTS < minStartTS {
+					minStartTS = startTS
+				}
+				return true
+			})
+		}
 	}
 
 	for _, innerTS := range innerSessionStartTSList {
@@ -777,6 +805,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
+		}
+	}
+
+	if is.infoCache != nil {
+		schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
+		if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
+			minStartTS = schemaTS
 		}
 	}
 
@@ -847,11 +883,6 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.info.BinlogStatus = status.String()
-		err := is.StoreServerInfo(ctx)
-		return errors.Trace(err)
-	})
 	return is.StoreServerInfo(ctx)
 }
 
@@ -988,9 +1019,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{
-				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
-			}
+			info := &ServerInfo{}
 			err = info.Unmarshal(kv.Value)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -1013,7 +1042,6 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 		Port:           cfg.Port,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
-		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
 		ServerIDGetter: serverIDGetter,
@@ -1095,6 +1123,25 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SyncTiFlashTableSchema syncs TiFlash table schema.
+func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvStats, err := is.tiflashReplicaManager.GetStoresStat(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashStores = append(tiflashStores, store)
+		}
+	}
+	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tiflashStores)
+}
+
 // CalculateTiFlashProgress calculates TiFlash replica progress
 func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
@@ -1155,14 +1202,20 @@ func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
 }
 
-// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
-func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
+// DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
+func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
-	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRules", zap.Int64s("physicalTableIDs", physicalTableIDs))
+	rules := make([]*pdhttp.Rule, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		// make a rule with count 0 to delete the rule
+		rule := MakeNewRule(id, 0, nil)
+		rules = append(rules, &rule)
+	}
+	return is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules)
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.

@@ -20,16 +20,17 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -44,18 +45,16 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	internalutils "github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -70,15 +69,19 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
-	maxSplitKeysOnce      = 10240
+	resetSpeedLimitRetryTimes = 3
+	defaultDDLConcurrency     = 100
+	maxSplitKeysOnce          = 10240
 )
 
 const minBatchDdlSize = 1
 
 type SnapClient struct {
+	restorer restore.SstRestorer
+	importer *SnapFileImporter
+	// Use a closure to lazy load checkpoint runner
+	getRestorerFn func(*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer
 	// Tool clients used by SnapClient
-	fileImporter *SnapFileImporter
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
 
@@ -95,8 +98,7 @@ type SnapClient struct {
 	supportPolicy bool
 	workerPool    *tidbutil.WorkerPool
 
-	noSchema        bool
-	hasSpeedLimited bool
+	noSchema bool
 
 	databases map[string]*metautil.Database
 	ddlJobs   []*model.Job
@@ -151,8 +153,13 @@ type SnapClient struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
-	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	// restoreUUID is the UUID of this restore.
+	// restore from a checkpoint inherits the same restoreUUID.
+	restoreUUID uuid.UUID
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -171,6 +178,13 @@ func NewRestoreClient(
 	}
 }
 
+func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+	if rc.restorer == nil {
+		rc.restorer = rc.getRestorerFn(checkpointRunner)
+	}
+	return rc.restorer
+}
+
 func (rc *SnapClient) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
@@ -186,8 +200,10 @@ func (rc *SnapClient) Close() {
 	// close the connection, and it must be succeed when in SQL mode.
 	rc.closeConn()
 
-	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+	if rc.restorer != nil {
+		if err := rc.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
 	}
 
 	log.Info("Restore client closed")
@@ -281,7 +297,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMeta(txn))
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
 	})
 	if err != nil {
 		return err
@@ -303,25 +319,37 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 // storage.
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
+	g glue.Glue, store kv.Storage,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
-) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
-	var (
-		// checkpoint sets distinguished by range key
-		checkpointSetWithTableID = make(map[int64]map[string]struct{})
-
-		checkpointClusterConfig *pdutil.ClusterConfig
-
-		err error
-	)
+) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
+	// checkpoint sets distinguished by range key
+	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 	if !checkpointFirstRun {
+		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
+		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
+		}
+		rc.restoreUUID = meta.RestoreUUID
+
+		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		}
+
+		if meta.RestoredTS != rc.backupMeta.EndVersion {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			)
 		}
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
@@ -332,19 +360,19 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
-			checkpointSet[rangeKey.RangeKey] = struct{}{}
+			checkpointSet[v.RangeKey] = struct{}{}
 		})
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
-		// t2 is the latest time the checkpoint checksum persisted to the external storage.
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -357,18 +385,31 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		meta := &checkpoint.CheckpointMetadataForRestore{}
+		restoreID := uuid.New()
+		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
+			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoredTS:        rc.backupMeta.EndVersion,
+			RestoreUUID:       restoreID,
+		}
+		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
-	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	return checkpointSetWithTableID, checkpointClusterConfig, nil
 }
 
 func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
@@ -390,6 +431,35 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 		}
 	}
 	return dbPool, nil
+}
+
+func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	collector, err := newPiTRColl(ctx, deps)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !collector.enabled {
+		return nil
+	}
+	if rc.IsIncremental() {
+		// Even there were an error, don't return it to confuse the user...
+		_ = collector.close()
+		return errors.Annotatef(berrors.ErrStreamLogTaskExist, "it seems there is a log backup task exists, "+
+			"if an incremental restore were performed to such cluster, log backup cannot properly handle this, "+
+			"the restore will be aborted, you may stop the log backup task, then restore, finally restart the task")
+	}
+
+	collector.restoreUUID = rc.restoreUUID
+	if collector.restoreUUID == (uuid.UUID{}) {
+		collector.restoreUUID = uuid.New()
+		log.Warn("UUID not found(checkpoint not enabled?), generating a new UUID for backup.",
+			zap.Stringer("uuid", collector.restoreUUID))
+	}
+	rc.importer.beforeIngestCallbacks = append(rc.importer.beforeIngestCallbacks, collector.onBatch)
+	rc.importer.closeCallbacks = append(rc.importer.closeCallbacks, func(sfi *SnapFileImporter) error {
+		return collector.close()
+	})
+	return nil
 }
 
 // Init create db connection and domain for storage.
@@ -431,7 +501,30 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {
+func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+	return func(importer *SnapFileImporter, limit uint64) error {
+		eg, ectx := errgroup.WithContext(ctx)
+		for _, store := range stores {
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			finalStore := store
+			pool.ApplyOnErrorGroup(eg,
+				func() error {
+					err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
+		}
+		return eg.Wait()
+	}
+}
+
+func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
+	RawStartKey, RawEndKey []byte) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to get stores")
@@ -439,27 +532,92 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	rc.storeCount = len(stores)
 	rc.updateConcurrency()
 
+	var createCallBacks []func(*SnapFileImporter) error
+	var closeCallBacks []func(*SnapFileImporter) error
 	var splitClientOpts []split.ClientOptionalParameter
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return importer.SetRawRange(RawStartKey, RawEndKey)
+		})
 	}
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+	if rc.rateLimit != 0 {
+		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return setFn(importer, rc.rateLimit)
+		})
+		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+				resetErr = setFn(importer, 0)
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		})
+	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
-	return errors.Trace(err)
+
+	opt := NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
+	if isRawKvMode || isTxnKvMode {
+		mode := Raw
+		if isTxnKvMode {
+			mode = Txn
+		}
+		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
+		rc.importer, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Raw/Txn restore are not support checkpoint for now
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewSimpleSstRestorer(ctx, rc.importer, rc.workerPool, nil)
+		}
+	} else {
+		// or create a fileImporter with the cluster API version
+		rc.importer, err = NewSnapFileImporter(
+			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewMultiTablesRestorer(ctx, rc.importer, rc.workerPool, checkpointRunner)
+		}
+	}
+	return nil
 }
 
 func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *SnapClient) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader,
-	loadStats bool) error {
+	loadStats bool,
+	RawStartKey []byte,
+	RawEndKey []byte,
+) error {
 	if rc.needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
@@ -484,7 +642,7 @@ func (rc *SnapClient) InitBackupMeta(
 	rc.backupMeta = backupMeta
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
@@ -554,7 +712,7 @@ func (rc *SnapClient) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) 
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
 	return utils.WithRetry(ctx, func() error {
 		return pdCtrl.ResetTS(ctx, restoreTS)
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 }
 
 // GetDatabases returns all databases.
@@ -636,7 +794,7 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		return nil
 	}
 
-	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)), zap.Int("number of db", len(dbs)))
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {
@@ -672,12 +830,43 @@ func (rc *SnapClient) getRebasedTables() map[restore.UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+// CreateTables create tables, and generate their information.
+// this function will use workers as the same number of sessionPool,
+// leave sessionPool nil to send DDLs sequential.
+func (rc *SnapClient) CreateTables(
+	ctx context.Context,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]*CreatedTable, error) {
+	log.Info("start create tables", zap.Int("total count", len(tables)))
+	rc.generateRebasedTables(tables)
+
+	// try to restore tables in batch
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
+		tables, err := rc.createTablesBatch(ctx, tables, newTS)
+		if err == nil {
+			return tables, nil
+		} else if !utils.FallBack2CreateTable(err) {
+			return nil, errors.Trace(err)
+		}
+		// fall back to old create table (sequential create table)
+		log.Info("fall back to the sequential create table")
+	}
+
+	// restore tables in db pool
+	if len(rc.dbPool) > 0 {
+		return rc.createTablesSingle(ctx, rc.dbPool, tables, newTS)
+	}
+	// restore tables in one db
+	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, tables, newTS)
+}
+
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("client to create tables")
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
@@ -687,7 +876,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]CreatedTable, 0, len(tables))
+	cts := make([]*CreatedTable, 0, len(tables))
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -701,7 +890,7 @@ func (rc *SnapClient) createTables(
 				newTableInfo.IsCommonHandle)
 		}
 		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-		ct := CreatedTable{
+		ct := &CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
 			OldTable:    table,
@@ -712,11 +901,17 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
-func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
+	createdTables := struct {
+		sync.Mutex
+		tables []*CreatedTable
+	}{
+		tables: make([]*CreatedTable, 0, len(tables)),
+	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
 		end := min(lastSent+int(rc.batchDdlSize), len(tables))
@@ -735,21 +930,19 @@ func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*me
 				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
-			for _, ct := range cts {
-				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
-				rater.Inc()
-				rater.L().Info("table created",
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-			}
+			rater.Add(float64(len(cts)))
+			rater.L().Info("tables created", zap.Int("num", len(cts)))
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, cts...)
+			createdTables.Unlock()
 			return err
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
 }
 
 func (rc *SnapClient) createTable(
@@ -757,28 +950,28 @@ func (rc *SnapClient) createTable(
 	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
-) (CreatedTable, error) {
+) (*CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
 		err := db.CreateTable(ctx, table, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
-			return CreatedTable{}, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 	newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 	if err != nil {
-		return CreatedTable{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
-		return CreatedTable{}, errors.Annotatef(berrors.ErrRestoreModeMismatch,
+		return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 			"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 			restore.TransferBoolToValue(table.Info.IsCommonHandle),
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
 	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-	et := CreatedTable{
+	et := &CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
 		OldTable:    table,
@@ -786,30 +979,49 @@ func (rc *SnapClient) createTable(
 	return et, nil
 }
 
-func (rc *SnapClient) createTablesWithSoleDB(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
-	for _, t := range tables {
-		if err := createOneTable(ctx, rc.db, t); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (rc *SnapClient) createTablesWithDBPool(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
+func (rc *SnapClient) createTablesSingle(
+	ctx context.Context,
+	dbPool []*tidallocdb.DB,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
-	for _, t := range tables {
-		table := t
+	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
+	createdTables := struct {
+		sync.Mutex
+		tables []*CreatedTable
+	}{
+		tables: make([]*CreatedTable, 0, len(tables)),
+	}
+	for _, tbl := range tables {
+		table := tbl
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return createOneTable(ectx, db, table)
+			db := dbPool[id%uint64(len(dbPool))]
+			rt, err := rc.createTable(ectx, db, table, newTS)
+			if err != nil {
+				log.Error("create table failed",
+					zap.Error(err),
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name))
+				return errors.Trace(err)
+			}
+			rater.Inc()
+			rater.L().Info("table created",
+				zap.Stringer("table", table.Info.Name),
+				zap.Stringer("database", table.DB.Name))
+
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, rt)
+			createdTables.Unlock()
+			return nil
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
@@ -857,34 +1069,7 @@ func (rc *SnapClient) IsSkipCreateSQL() bool {
 // user may have created some users or made other changes.
 func (rc *SnapClient) CheckTargetClusterFresh(ctx context.Context) error {
 	log.Info("checking whether target cluster is fresh")
-	userDBs := restore.GetExistedUserDBs(rc.dom)
-	if len(userDBs) == 0 {
-		return nil
-	}
-
-	const maxPrintCount = 10
-	userTableOrDBNames := make([]string, 0, maxPrintCount+1)
-	addName := func(name string) bool {
-		if len(userTableOrDBNames) == maxPrintCount {
-			userTableOrDBNames = append(userTableOrDBNames, "...")
-			return false
-		}
-		userTableOrDBNames = append(userTableOrDBNames, name)
-		return true
-	}
-outer:
-	for _, db := range userDBs {
-		if !addName(db.Name.L) {
-			break outer
-		}
-		for _, tbl := range db.Tables {
-			if !addName(tbl.Name.L) {
-				break outer
-			}
-		}
-	}
-	log.Error("not fresh cluster", zap.Strings("user tables", userTableOrDBNames))
-	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
+	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
 // ExecDDLs executes the queries of the ddl jobs.
@@ -907,170 +1092,7 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	return nil
 }
 
-func (rc *SnapClient) ResetSpeedLimit(ctx context.Context) error {
-	rc.hasSpeedLimited = false
-	err := rc.setSpeedLimit(ctx, 0)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
-	if !rc.hasSpeedLimited {
-		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		eg, ectx := errgroup.WithContext(ctx)
-		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
-			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() error {
-					err := rc.fileImporter.SetDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
-		}
-
-		if err := eg.Wait(); err != nil {
-			return errors.Trace(err)
-		}
-		rc.hasSpeedLimited = true
-	}
-	return nil
-}
-
-func getFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
-}
-
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
-	return getFileRangeKey(f1) == getFileRangeKey(f2)
-}
-
-func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	idx := 1
-	for idx < len(files) {
-		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-			break
-		}
-		idx++
-	}
-
-	return files[:idx], files[idx:]
-}
-
-// RestoreSSTFiles tries to restore the files.
-func (rc *SnapClient) RestoreSSTFiles(
-	ctx context.Context,
-	tableIDWithFiles []TableIDWithFiles,
-	updateCh glue.Progress,
-) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx, rc.rateLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var rangeFiles []*backuppb.File
-	var leftFiles []*backuppb.File
-LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
-		rules := tableIDWithFile.RewriteRules
-		fileCount += len(files)
-		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-			if ectx.Err() != nil {
-				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-					zap.Int("remained", len(leftFiles)),
-					logutil.ShortError(ectx.Err()))
-				// We will fetch the error from the errgroup then (If there were).
-				// Also note if the parent context has been canceled or something,
-				// breaking here directly is also a reasonable behavior.
-				break LOOPFORTABLE
-			}
-			filesReplica := rangeFiles
-			rc.fileImporter.WaitUntilUnblock()
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import files done", logutil.Files(filesReplica),
-							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
-					}
-				}()
-				if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-					return errors.Trace(importErr)
-				}
-
-				// the data of this range has been import done
-				if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-					rangeKey := getFileRangeKey(filesReplica[0].Name)
-					// The checkpoint range shows this ranges of kvs has been restored into
-					// the table corresponding to the table-id.
-					if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, tableID, rangeKey); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				return nil
-			})
-		}
-	}
-
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
-	}
-	// Once the parent context canceled and there is no task running in the errgroup,
-	// we may break the for loop without error in the errgroup. (Will this happen?)
-	// At that time, return the error in the context here.
-	return ctx.Err()
-}
-
-func (rc *SnapClient) execChecksum(
+func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -1081,13 +1103,14 @@ func (rc *SnapClient) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1127,101 +1150,23 @@ func (rc *SnapClient) execChecksum(
 			}
 		}
 	}
-	table := tbl.OldTable
-	if item.Crc64xor != table.Crc64Xor ||
-		item.TotalKvs != table.TotalKvs ||
-		item.TotalBytes != table.TotalBytes {
+	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
+		item.TotalKvs == expectedChecksumStats.TotalKvs &&
+		item.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
+	logger.Info("success in validating checksum")
 	return nil
-}
-
-func (rc *SnapClient) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer func() {
-					log.Info("import sst files done", logutil.Files(files))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, restoreutils.EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// RestoreRaw tries to restore raw keys in the specified range.
-func (rc *SnapClient) RestoreRaw(
-	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
-) error {
-	start := time.Now()
-	defer func() {
-		elapsed := time.Since(start)
-		log.Info("Restore Raw",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Duration("take", elapsed))
-	}()
-	err := rc.fileImporter.SetRawRange(startKey, endKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = rc.WaitForFilesRestored(ctx, files, updateCh)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info(
-		"finish to restore raw range",
-		logutil.Key("startKey", startKey),
-		logutil.Key("endKey", endKey),
-	)
-	return nil
-}
-
-// SplitRanges implements TiKVRestorer. It splits region by
-// data range after rewrite.
-func (rc *SnapClient) SplitRanges(
-	ctx context.Context,
-	ranges []rtree.Range,
-	updateCh glue.Progress,
-	isRawKv bool,
-) error {
-	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
-	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	}))
-	if isRawKv {
-		splitClientOpts = append(splitClientOpts, split.WithRawKV())
-	}
-
-	splitter := internalutils.NewRegionSplitter(split.NewClient(
-		rc.pdClient,
-		rc.pdHTTPClient,
-		rc.tlsConf,
-		maxSplitKeysOnce,
-		rc.storeCount+1,
-		splitClientOpts...,
-	))
-
-	return splitter.ExecuteSplit(ctx, ranges)
 }

@@ -28,6 +28,6 @@ func TestParallelApplyWarnning(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int, key(a));")
 	tk.MustExec("create table t3(a int, b int, c int, key(a));")
 	tk.MustExec("set tidb_enable_parallel_apply=on;")
-	tk.MustQuery("select (select 1 from t2, t3 where t2.a=t3.a and t2.b > t1.b) from t1;")
+	tk.MustQuery("select (select /*+ inl_hash_join(t2, t3) */  1 from t2, t3 where t2.a=t3.a and t2.b > t1.b) from t1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Some apply operators can not be executed in parallel: *core.PhysicalIndexHashJoin doesn't support cloning"))
 }

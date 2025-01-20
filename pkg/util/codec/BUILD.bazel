@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/cascades/base",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/collate",
@@ -42,6 +43,7 @@ go_test(
         "//pkg/errctx",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/cascades/base",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/benchdaily",

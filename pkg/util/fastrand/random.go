@@ -36,7 +36,7 @@ func (r *wyrand) Next() uint64 {
 func Buf(size int) []byte {
 	buf := make([]byte, size)
 	r := wyrand(Uint32())
-	for i := 0; i < size; i++ {
+	for i := range size {
 		// This is similar to Uint32() % n, but faster.
 		// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
 		buf[i] = byte(uint32(uint64(uint32(r.Next())) * uint64(127) >> 32))

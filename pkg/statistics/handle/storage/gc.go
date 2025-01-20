@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -76,9 +77,12 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
-func GCStats(sctx sessionctx.Context,
+func GCStats(
+	sctx sessionctx.Context,
 	statsHandle types.StatsHandle,
-	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+	is infoschema.InfoSchema,
+	ddlLease time.Duration,
+) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := max(statsHandle.Lease(), ddlLease)
@@ -87,6 +91,10 @@ func GCStats(sctx sessionctx.Context,
 	if now < offset {
 		return nil
 	}
+
+	failpoint.Inject("injectGCStatsLastTSOffset", func(val failpoint.Value) {
+		offset = uint64(val.(int))
+	})
 
 	// Get the last gc time.
 	gcVer := now - offset
@@ -109,7 +117,7 @@ func GCStats(sctx sessionctx.Context,
 		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		_, existed := is.TableByID(row.GetInt64(0))
+		_, existed := is.TableByID(context.Background(), row.GetInt64(0))
 		if !existed {
 			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
 				return errors.Trace(err)
@@ -263,29 +271,36 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 }
 
 // gcTableStats GC this table's stats.
+// The GC of a table will be a two-phase process:
+// 1. Delete the column/index's stats from storage. Then other TiDB nodes will be aware that those stats are deleted.
+// 2. Then delete the record in stats_meta.
 func gcTableStats(sctx sessionctx.Context,
 	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
+	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// The table has already been deleted in stats and acknowledged to all tidb,
-	// we can safely remove the meta info now.
-	if len(rows) == 0 {
+	if !ok {
+		if len(rows) > 0 {
+			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
+			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("tableID", physicalID))
+			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
+				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+			})
+		}
+		// len(rows) == 0 => The table's stats is empty.
+		// The table has already been deleted in stats and acknowledged to all tidb,
+		// We can safely remove the meta info now.
 		_, _, err = util.ExecRows(sctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
+		return nil
 	}
-	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
-	if !ok {
-		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
-		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
-		})
-	}
+
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
 		isIndex, histID := row.GetInt64(0), row.GetInt64(1)

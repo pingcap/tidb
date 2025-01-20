@@ -9,7 +9,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
@@ -20,7 +19,6 @@ type Range struct {
 	StartKey []byte
 	EndKey   []byte
 	Files    []*backuppb.File
-	Size     uint64
 }
 
 // BytesAndKeys returns total bytes and keys in a range.
@@ -85,8 +83,64 @@ func (rg *Range) Less(than btree.Item) bool {
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
+// RangeStats represents a restore merge result.
+type RangeStats struct {
+	Range
+	Size  uint64
+	Count uint64
+}
+
+// Less impls btree.Item.
+func (rg *RangeStats) Less(ta *RangeStats) bool {
+	// rg.StartKey < than.StartKey
+	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
+}
+
+type RangeStatsTree struct {
+	*btree.BTreeG[*RangeStats]
+}
+
+func NewRangeStatsTree() RangeStatsTree {
+	return RangeStatsTree{
+		BTreeG: btree.NewG[*RangeStats](32, (*RangeStats).Less),
+	}
+}
+
+// InsertRange inserts ranges into the range tree.
+// It returns a non-nil range if there are soe overlapped ranges.
+func (rangeTree *RangeStatsTree) InsertRange(rg *Range, rangeSize, rangeCount uint64) *RangeStats {
+	out, _ := rangeTree.ReplaceOrInsert(&RangeStats{
+		Range: *rg,
+		Size:  rangeSize,
+		Count: rangeCount,
+	})
+	return out
+}
+
+// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
+func (rangeTree *RangeStatsTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []RangeStats {
+	var mergeTargetIndex int = -1
+	sortedRanges := make([]RangeStats, 0, rangeTree.Len())
+	rangeTree.Ascend(func(rg *RangeStats) bool {
+		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
+			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
+			mergeTargetIndex += 1
+			sortedRanges = append(sortedRanges, *rg)
+		} else {
+			// need to merge from rg to sortedRages[mergeTargetIndex]
+			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
+			sortedRanges[mergeTargetIndex].Size += rg.Size
+			sortedRanges[mergeTargetIndex].Count += rg.Count
+			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
+		}
+
+		return true
+	})
+	return sortedRanges
+}
+
 // NeedsMerge checks whether two ranges needs to be merged.
-func NeedsMerge(left, right *Range, splitSizeBytes, splitKeyCount uint64) bool {
+func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) bool {
 	leftBytes, leftKeys := left.BytesAndKeys()
 	rightBytes, rightKeys := right.BytesAndKeys()
 	if rightBytes == 0 {
@@ -98,8 +152,8 @@ func NeedsMerge(left, right *Range, splitSizeBytes, splitKeyCount uint64) bool {
 	if leftKeys+rightKeys > splitKeyCount {
 		return false
 	}
-	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
-	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
+	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(left.StartKey)
+	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(right.StartKey)
 
 	// Failed to decode the file key head... can this happen?
 	if err1 != nil || err2 != nil {
@@ -217,41 +271,6 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 	return out.(*Range)
 }
 
-// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
-func (rangeTree *RangeTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []Range {
-	var mergeTargetIndex int = -1
-	sortedRanges := make([]Range, 0, rangeTree.Len())
-	rangeTree.Ascend(func(item btree.Item) bool {
-		rg := item.(*Range)
-		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
-			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
-			mergeTargetIndex += 1
-			sortedRanges = append(sortedRanges, *rg)
-		} else {
-			// need to merge from rg to sortedRages[mergeTargetIndex]
-			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
-			sortedRanges[mergeTargetIndex].Size += rg.Size
-			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
-		}
-
-		return true
-	})
-	return sortedRanges
-}
-
-// GetSortedRanges collects and returns sorted ranges.
-func (rangeTree *RangeTree) GetSortedRanges() []Range {
-	sortedRanges := make([]Range, 0, rangeTree.Len())
-	rangeTree.Ascend(func(rg btree.Item) bool {
-		if rg == nil {
-			return false
-		}
-		sortedRanges = append(sortedRanges, *rg.(*Range))
-		return true
-	})
-	return sortedRanges
-}
-
 // GetIncompleteRange returns missing range covered by startKey and endKey.
 func (rangeTree *RangeTree) GetIncompleteRange(
 	startKey, endKey []byte,
@@ -259,7 +278,9 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
 		return []Range{}
 	}
-	incomplete := make([]Range, 0, 64)
+	// Don't use a large buffer, because it will cause memory issue.
+	// And the number of missing ranges is usually small.
+	incomplete := make([]Range, 0, 1)
 	requestRange := Range{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
 	pviot := &Range{StartKey: startKey}
@@ -297,10 +318,11 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 }
 
 type ProgressRange struct {
-	Res        RangeTree
-	Incomplete []Range
-	Origin     Range
-	GroupKey   string
+	Res      RangeTree
+	Origin   Range
+	GroupKey string
+	// only for statistic
+	Complete bool
 }
 
 // Less impls btree.Item.
@@ -313,13 +335,22 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 // All the progress ranges it sorted do not overlap.
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
+
+	completeCallBack func()
 }
 
 // NewProgressRangeTree returns an empty range tree.
 func NewProgressRangeTree() ProgressRangeTree {
 	return ProgressRangeTree{
 		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
+
+		completeCallBack: func() {},
 	}
+}
+
+// SetCallBack set the complete call back to update the progress.
+func (rangeTree *ProgressRangeTree) SetCallBack(callback func()) {
+	rangeTree.completeCallBack = callback
 }
 
 // find is a helper function to find an item that contains the range.
@@ -352,14 +383,13 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).
 func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
-	var ret *ProgressRange
-	rangeTree.Descend(func(pr *ProgressRange) bool {
-		if bytes.Compare(pr.Origin.StartKey, startKey) <= 0 {
-			ret = pr
-			return false
-		}
-		return true
-	})
+	startPr := &ProgressRange{
+		Origin: Range{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
+	ret := rangeTree.find(startPr)
 
 	if ret == nil {
 		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
@@ -374,49 +404,23 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	return ret, nil
 }
 
-type incompleteRangesFetcherItem struct {
-	pr       *ProgressRange
-	complete bool
-}
-
-type IncompleteRangesFetcher struct {
-	items []*incompleteRangesFetcherItem
-	left  int
-}
-
-func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
-	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
+	// about 64 MB memory if there are 1 million ranges
+	incompleteRanges := make([]Range, 0, rangeTree.Len())
 	rangeTree.Ascend(func(item *ProgressRange) bool {
-		items = append(items, &incompleteRangesFetcherItem{
-			pr:       item,
-			complete: false,
-		})
-		return true
-	})
-	return &IncompleteRangesFetcher{
-		items: items,
-		left:  len(items),
-	}
-}
-
-func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 64*len(iter.items))
-	for _, item := range iter.items {
-		if item.complete {
-			continue
-		}
-
-		incomplete := item.pr.Res.GetIncompleteRange(item.pr.Origin.StartKey, item.pr.Origin.EndKey)
+		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
+		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
+		// only for statistic.
+		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
 		if len(incomplete) == 0 {
-			item.complete = true
-			iter.left -= 1
-			continue
+			if !item.Complete {
+				item.Complete = true
+				rangeTree.completeCallBack()
+			}
+			return true
 		}
 		incompleteRanges = append(incompleteRanges, incomplete...)
-	}
+		return true
+	})
 	return incompleteRanges
-}
-
-func (iter *IncompleteRangesFetcher) Len() int {
-	return iter.left
 }

@@ -4,6 +4,7 @@ go_library(
     name = "metrics",
     srcs = [
         "bindinfo.go",
+        "br.go",
         "ddl.go",
         "distsql.go",
         "disttask.go",
@@ -12,6 +13,7 @@ go_library(
         "gc_worker.go",
         "globalsort.go",
         "import.go",
+        "infoschema.go",
         "log_backup.go",
         "meta.go",
         "metrics.go",

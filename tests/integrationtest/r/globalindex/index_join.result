@@ -1,7 +1,6 @@
-set tidb_enable_global_index=true;
 # Prepare data
 drop table if exists p;
-create table p (id int, c int, unique index idx(id)) partition by range (c) (
+create table p (id int, c int, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));
@@ -10,7 +9,7 @@ analyze table p;
 drop table if exists t;
 create table t (id int, c int);
 insert into t values (1, 3);
-analyze table t;
+analyze table t all columns;
 # TestGlobalIndexJoin
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
@@ -49,7 +48,7 @@ Projection	1.00	root	NULL	globalindex__index_join.p.id, globalindex__index_join.
   │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	1.00	root	partition:p1	NULL
-    ├─Selection(Build)	1.00	cop[tikv]	NULL	in(_tidb_pid, pid1), not(isnull(globalindex__index_join.p.id))
+    ├─Selection(Build)	1.00	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
     │ └─IndexRangeScan	1.00	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:p	keep order:false
 select * from p partition(p1) inner join t on p.id = t.id;
@@ -61,13 +60,13 @@ IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, outer key:globalindex__i
 │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
 └─IndexReader(Probe)	1.00	root	partition:p1	index:Selection
-  └─Selection	1.00	cop[tikv]	NULL	in(_tidb_pid, pid1), not(isnull(globalindex__index_join.p.id))
+  └─Selection	1.00	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
     └─IndexRangeScan	1.00	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
 select p.id from p partition(p1) inner join t on p.id = t.id;
 id
 # Prepare tables with clustered index
 drop table if exists p, t;
-create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id)) partition by range (c) (
+create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));
@@ -75,7 +74,7 @@ insert into p values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7);
 analyze table p;
 create table t (id int, c int);
 insert into t values (1, 3);
-analyze table t;
+analyze table t all columns;
 # TestGlobalIndexJoinForClusteredIndex
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
@@ -114,7 +113,7 @@ Projection	1.00	root	NULL	globalindex__index_join.p.id, globalindex__index_join.
   │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	1.00	root	partition:p1	NULL
-    ├─Selection(Build)	1.00	cop[tikv]	NULL	in(_tidb_pid, pid1), not(isnull(globalindex__index_join.p.id))
+    ├─Selection(Build)	1.00	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
     │ └─IndexRangeScan	1.00	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:p	keep order:false
 select * from p partition(p1) inner join t on p.id = t.id;
@@ -126,7 +125,7 @@ IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, outer key:globalindex__i
 │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
 └─IndexReader(Probe)	1.00	root	partition:p1	index:Selection
-  └─Selection	1.00	cop[tikv]	NULL	in(_tidb_pid, pid1), not(isnull(globalindex__index_join.p.id))
+  └─Selection	1.00	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
     └─IndexRangeScan	1.00	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
 select p.id from p partition(p1) inner join t on p.id = t.id;
 id
