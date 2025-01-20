@@ -64,8 +64,8 @@ FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) -name "*.go")
 UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common|tidb-binlog\/proto\/go-binlog"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
-FAILPOINT_ENABLE  := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable
-FAILPOINT_DISABLE := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable
+FAILPOINT_ENABLE  := find $$PWD/ -type d -mindepth 1 | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl enable
+FAILPOINT_DISABLE := find $$PWD/ -type d -mindepth 1 | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl disable
 
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
