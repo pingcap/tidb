@@ -108,7 +108,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {
 		return nil, err

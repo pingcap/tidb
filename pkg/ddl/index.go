@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"os"
 	"slices"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -1521,7 +1523,7 @@ func runReorgJobAndHandleErr(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
 			}, false)
-		return w.addTableIndex(jobCtx.stepCtx, tbl, reorgInfo)
+		return w.addTableIndex(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -2384,14 +2386,15 @@ func (w *worker) addPhysicalTableIndex(
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+	ctx := jobCtx.stepCtx
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(ctx, t, reorgInfo)
+			err := w.executeDistTask(jobCtx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -2466,11 +2469,12 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
 
+	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(w.workCtx)
@@ -2496,9 +2500,14 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 	if err != nil && err != storage.ErrTaskNotFound {
 		return err
 	}
+
+	var (
+		taskID                                            int64
+		lastConcurrency, lastBatchSize, lastMaxWriteSpeed int
+	)
 	if task != nil {
 		// It's possible that the task state is succeed but the ddl job is paused.
-		// When task in succeed state, we can skip the dist task execution/scheduing process.
+		// When task in succeed state, we can skip the dist task execution/scheduling process.
 		if task.State == proto.TaskStateSucceed {
 			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
@@ -2506,6 +2515,14 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 				zap.String("task-key", taskKey))
 			return nil
 		}
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return errors.Trace(err)
+		}
+		taskID = task.ID
+		lastConcurrency = task.Concurrency
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 		g.Go(func() error {
 			defer close(done)
 			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -2529,11 +2546,10 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 	} else {
 		job := reorgInfo.Job
 		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		cpuCount, err := handle.GetCPUCountOfNode(ctx)
+		concurrency, err := adjustConcurrency(ctx, workerCntLimit)
 		if err != nil {
 			return err
 		}
-		concurrency := min(workerCntLimit, cpuCount)
 		logutil.DDLLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
@@ -2551,9 +2567,19 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 			return err
 		}
 
+		task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+		if err != nil {
+			return err
+		}
+
+		taskID = task.ID
+		lastConcurrency = concurrency
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+
 		g.Go(func() error {
 			defer close(done)
-			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+			err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -2598,8 +2624,111 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 			}
 		}
 	})
+
+	g.Go(func() error {
+		return modifyTaskParamLoop(ctx, jobCtx.sysTblMgr, taskManager, done,
+			reorgInfo.Job.ID, taskID, lastConcurrency, lastBatchSize, lastMaxWriteSpeed)
+	})
+
 	err = g.Wait()
 	return err
+}
+
+func modifyTaskParamLoop(
+	ctx context.Context,
+	sysTblMgr systable.Manager,
+	taskManager *storage.TaskManager,
+	done chan struct{},
+	jobID, taskID int64,
+	lastConcurrency, lastBatchSize, lastMaxWriteSpeed int,
+) error {
+	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-ticker.C:
+		}
+
+		latestJob, err := sysTblMgr.GetJobByID(ctx, jobID)
+		if err != nil {
+			if goerrors.Is(err, systable.ErrNotFound) {
+				logutil.DDLLogger().Info("job not found, might already finished",
+					zap.Int64("job_id", jobID))
+				return nil
+			}
+			logutil.DDLLogger().Error("get job failed, will retry later",
+				zap.Int64("job_id", jobID), zap.Error(err))
+			continue
+		}
+
+		modifies := make([]proto.Modification, 0, 3)
+		workerCntLimit := latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		concurrency, err := adjustConcurrency(ctx, workerCntLimit)
+		if err != nil {
+			logutil.DDLLogger().Error("adjust concurrency failed", zap.Error(err))
+			continue
+		}
+		if concurrency != lastConcurrency {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyConcurrency,
+				To:   int64(concurrency),
+			})
+		}
+		batchSize := latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		if batchSize != lastBatchSize {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyBatchSize,
+				To:   int64(batchSize),
+			})
+		}
+		maxWriteSpeed := latestJob.ReorgMeta.GetMaxWriteSpeed()
+		if maxWriteSpeed != lastMaxWriteSpeed {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyMaxWriteSpeed,
+				To:   int64(maxWriteSpeed),
+			})
+		}
+		if len(modifies) == 0 {
+			continue
+		}
+		currTask, err := taskManager.GetTaskByID(ctx, taskID)
+		if err != nil {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
+				logutil.DDLLogger().Info("task not found, might already finished",
+					zap.Int64("task_id", taskID))
+				return nil
+			}
+			logutil.DDLLogger().Error("get task failed, will retry later",
+				zap.Int64("task_id", taskID), zap.Error(err))
+			continue
+		}
+		if !currTask.State.CanMoveToModifying() {
+			logutil.DDLLogger().Info("task state is not suitable for modifying, will retry later",
+				zap.Int64("task_id", taskID), zap.String("state", currTask.State.String()))
+			continue
+		}
+		if err = taskManager.ModifyTaskByID(ctx, taskID, &proto.ModifyParam{
+			PrevState:     currTask.State,
+			Modifications: modifies,
+		}); err != nil {
+			logutil.DDLLogger().Error("modify task failed", zap.Int64("task_id", taskID), zap.Error(err))
+			continue
+		}
+
+		lastConcurrency = concurrency
+		lastBatchSize = batchSize
+		lastMaxWriteSpeed = maxWriteSpeed
+	}
+}
+
+func adjustConcurrency(ctx context.Context, workerCnt int) (int, error) {
+	cpuCount, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return min(workerCnt, cpuCount), nil
 }
 
 // EstimateTableRowSizeForTest is used for test.

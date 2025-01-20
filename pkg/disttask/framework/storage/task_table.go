@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -55,25 +56,25 @@ var (
 	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = goerrors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
 	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound = goerrors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
-	ErrTaskAlreadyExists = errors.New("task already exists")
+	ErrTaskAlreadyExists = goerrors.New("task already exists")
 
 	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
-	ErrTaskStateNotAllow = errors.New("task state not allow to do the operation")
+	ErrTaskStateNotAllow = goerrors.New("task state not allow to do the operation")
 
 	// ErrTaskChanged is the error when task changed by other operation.
-	ErrTaskChanged = errors.New("task changed by other operation")
+	ErrTaskChanged = goerrors.New("task changed by other operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
-	ErrSubtaskNotFound = errors.New("subtask not found")
+	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
 
 // TaskExecInfo is the execution information of a task, on some exec node.

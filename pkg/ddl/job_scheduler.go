@@ -541,6 +541,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 		eventPublishStore:    s.eventPublishStore,
+		sysTblMgr:            s.sysTblMgr,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
@@ -588,7 +589,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
 	if err != nil {
 		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err
