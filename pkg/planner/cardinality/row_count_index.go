@@ -214,7 +214,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 	return false
 }
 
-// It uses the modifyCount to adjust the influence of modifications on the table.
+// It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
@@ -343,7 +343,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			if idx.StatsVer == statistics.Version2 {
 				c := coll.GetCol(idx.Histogram.ID)
 				// If this is single column predicate - use the column's information rather than index.
-				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range estimation.
+				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
@@ -419,12 +419,16 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	if histNDV <= 0 {
-		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
-		if modifyCount == 0 {
-			return 0
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
+		// The histogram wont have a NotNullCount - so it needs to be derived.
+		notNullCount := idx.Histogram.NotNullCount()
+		if notNullCount <= 0 {
+			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
 		}
-		return 1
+		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
 }
 
@@ -480,9 +484,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
 			// check avoids infinite recursion.
 			for _, idxID := range idxIDs {
-				if idxID == idx.Histogram.ID {
-					continue
-				}
 				idxStats := coll.GetIdx(idxID)
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
