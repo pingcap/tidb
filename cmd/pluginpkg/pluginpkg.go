@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -105,6 +106,9 @@ func main() {
 		log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
 		flag.Usage()
 	}
+	if _, err := os.Stat(pgoFile); errors.Is(err, os.ErrNotExist) {
+		pgoFile = ""
+	}
 
 	var manifest map[string]any
 	_, err = toml.DecodeFile(filepath.Join(pkgDir, "manifest.toml"), &manifest)
@@ -148,11 +152,16 @@ func main() {
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
-	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-pgo="+pgoFile,
+	flags := make([]string, 0, 4)
+	flags = append(flags, "build")
+	if pgoFile != "" {
+		flags = append(flags, "-pgo="+pgoFile)
+	}
+	flags = append(flags,
 		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
+	buildCmd := exec.CommandContext(ctx, "go", flags...)
 	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout
