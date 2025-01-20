@@ -5,8 +5,10 @@ package stream
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash/crc64"
+	"maps"
 	"math"
 	"path"
 	"slices"
@@ -14,10 +16,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -28,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -39,13 +45,14 @@ const (
 	baseTmp           = "BASE_TMP"
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
+	lockPrefix        = "v1/LOCK"
 
-	SupportedMigVersion = pb.MigrationVersion_M1
+	SupportedMigVersion = pb.MigrationVersion_M2
 )
 
 func NewMigration() *pb.Migration {
 	return &pb.Migration{
-		Version: pb.MigrationVersion_M1,
+		Version: pb.MigrationVersion_M2,
 		Creator: fmt.Sprintf("br;commit=%s;branch=%s", versioninfo.TiDBGitHash, versioninfo.TiDBGitBranch),
 	}
 }
@@ -204,7 +211,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
-	est := MigerationExtension(hst)
+	est := MigrationExtension(hst)
 	est.Hooks = updateFnHook{updateFn: updateFn}
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
@@ -342,45 +349,113 @@ func ReplaceMetadata(meta *pb.Metadata, filegroups []*pb.DataFileGroup) {
 	updateMetadataInternalStat(meta)
 }
 
-func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
-	rd := color.New(color.FgHiRed).Sprint
-	for i, c := range m.Compactions {
-		addCompactionToTable(c, table, i)
-	}
+type marshalMigrationContext struct {
+	context.Context
+	est MigrationExt
 
-	if len(m.EditMeta) > 0 {
-		totalDeletePhyFile := 0
-		totalDeleteLgcFile := 0
-		for _, edit := range m.EditMeta {
-			totalDeletePhyFile += len(edit.DeletePhysicalFiles)
-			for _, dl := range edit.DeleteLogicalFiles {
-				totalDeleteLgcFile += len(dl.Spans)
-			}
-		}
-		table.Add(
-			"edit-meta-files",
-			fmt.Sprintf("%s meta files will be edited.", rd(len(m.EditMeta))),
-		)
-		table.Add(
-			"delete-physical-file",
-			fmt.Sprintf("%s physical files will be deleted.", rd(totalDeletePhyFile)),
-		)
-		table.Add(
-			"delete-logical-file",
-			fmt.Sprintf("%s logical segments may be deleted, if possible.", rd(totalDeleteLgcFile)),
-		)
-	}
-	for i, c := range m.DestructPrefix {
-		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
-	}
-	table.Add("truncate-to", rd(m.TruncatedTo))
+	output   *glue.Table
+	keyspace []string
 }
 
-func addCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
-	withIdx := func(s string) string { return fmt.Sprintf("compactions[%d].%s", idx, s) }
-	table.Add(withIdx("name"), m.Name)
-	table.Add(withIdx("time"), fmt.Sprintf("%d ~ %d", m.CompactionFromTs, m.CompactionUntilTs))
-	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifacts, m.GeneratedFiles))
+func (m *marshalMigrationContext) emit(key, value string) {
+	bold := color.New(color.Bold).Sprintf
+	ks := new(strings.Builder)
+	for _, k := range m.keyspace {
+		ks.WriteString(k)
+		ks.WriteString("/")
+	}
+	ks.WriteString(key)
+
+	finalValue := bold(value)
+	m.output.Add(ks.String(), finalValue)
+}
+
+func (m *marshalMigrationContext) keyspaced(key []string, f func()) {
+	m.keyspace = append(m.keyspace, key...)
+	defer func() {
+		m.keyspace = m.keyspace[:len(m.keyspace)-len(key)]
+	}()
+
+	f()
+}
+
+func (m *marshalMigrationContext) addCompaction(c *pb.LogFileCompaction) {
+	m.emit("name", c.Name)
+	m.emit("time", fmt.Sprintf("%d ~ %d", c.CompactionFromTs, c.CompactionUntilTs))
+	m.emit("file", fmt.Sprintf("[%q, %q]", c.Artifacts, c.GeneratedFiles))
+}
+
+func (m *marshalMigrationContext) addMetaEdits(em []*pb.MetaEdit) {
+	if len(em) == 0 {
+		return
+	}
+
+	totalDeletePhyFile := 0
+	totalDeleteLgcFile := 0
+	for _, edit := range em {
+		totalDeletePhyFile += len(edit.DeletePhysicalFiles)
+		for _, dl := range edit.DeleteLogicalFiles {
+			totalDeleteLgcFile += len(dl.Spans)
+		}
+	}
+	m.emit("edit_meta_files", strconv.Itoa(len(em)))
+	m.emit("delete_physical_file", strconv.Itoa(totalDeletePhyFile))
+	m.emit("delete_logical_file", strconv.Itoa(totalDeleteLgcFile))
+}
+
+func (m *marshalMigrationContext) addTruncatedTo(tso uint64) {
+	if tso == 0 {
+		return
+	}
+	m.emit("truncated_to", strconv.FormatUint(tso, 10))
+	t := oracle.GetTimeFromTS(tso)
+	m.emit("truncated_to_in_rfc3339", t.Format(time.RFC3339))
+}
+
+func (m *marshalMigrationContext) addMigration(mig *pb.Migration) {
+	m.addTruncatedTo(mig.TruncatedTo)
+	for i, c := range mig.Compactions {
+		m.keyspaced([]string{"compactions", strconv.Itoa(i)}, func() {
+			m.addCompaction(c)
+		})
+	}
+	m.keyspaced([]string{"meta_edit"}, func() {
+		m.addMetaEdits(mig.EditMeta)
+	})
+	for i, d := range mig.DestructPrefix {
+		m.keyspaced([]string{"destruct_prefix", strconv.Itoa(i)}, func() {
+			m.emit("value", d)
+		})
+	}
+	for i, p := range mig.IngestedSstPaths {
+		m.keyspaced([]string{"extra_full_backup", strconv.Itoa(i)}, func() {
+			m.addIngestedSSTss(p)
+		})
+	}
+}
+
+func (m *marshalMigrationContext) addIngestedSSTss(path string) {
+	fullbk, err := readIngestedSSTs(m.Context, path, m.est.s)
+	if err != nil {
+		m.emit("err_during_reading", err.Error())
+		m.emit("meta_path", path)
+		return
+	}
+
+	m.emit("as_if_ts", strconv.FormatUint(fullbk.AsIfTs, 10))
+	m.emit("backup_uuid", hex.EncodeToString(fullbk.GetBackupUuid()))
+	m.emit("files_count", strconv.Itoa(len(fullbk.Files)))
+	m.emit("files_position", fullbk.FilesPrefixHint)
+}
+
+func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration, table *glue.Table) {
+	cx := marshalMigrationContext{
+		Context: ctx,
+		est:     m,
+		output:  table,
+	}
+
+	cx.addMigration(mig)
 }
 
 // MigrationExt is an extension to the `ExternalStorage` type.
@@ -516,7 +591,7 @@ func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                   
 func (NoHooks) HandingMetaEditDone()                                               {}
 
 // MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
-func MigerationExtension(s storage.ExternalStorage) MigrationExt {
+func MigrationExtension(s storage.ExternalStorage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
@@ -534,6 +609,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.TruncatedTo = max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
+	out.IngestedSstPaths = append(out.IngestedSstPaths, m1.GetIngestedSstPaths()...)
 	return out
 }
 
@@ -551,10 +627,14 @@ type MergeAndMigratedTo struct {
 // The term "migrate to" means, try to performance all possible operations
 // from a migration to the storage.
 type MigratedTo struct {
-	// Errors happen during executing the migration.
+	// Non-fatal errors happen during executing the migration.
 	Warnings []error
 	// The new BASE migration after the operation.
 	NewBase *pb.Migration
+}
+
+func (m *MigratedTo) Warn(err error) {
+	m.Warnings = append(m.Warnings, err)
 }
 
 // Migrations represents living migrations from the storage.
@@ -564,6 +644,11 @@ type Migrations struct {
 	// Appended migrations.
 	// They are sorted by their sequence numbers.
 	Layers []*OrderedMigration `json:"layers"`
+}
+
+// GetReadLock locks the storage and make sure there won't be other one modify this backup.
+func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (storage.RemoteLock, error) {
+	return storage.LockWith(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -591,8 +676,25 @@ func (o *OrderedMigration) unmarshalContent(b []byte) error {
 	return nil
 }
 
+type LoadOptions func(*loadConfig)
+
+type loadConfig struct {
+	notFoundIsErr bool
+}
+
+func MLNotFoundIsErr() LoadOptions {
+	return func(c *loadConfig) {
+		c.notFoundIsErr = true
+	}
+}
+
 // Load loads the current living migrations from the storage.
-func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
+func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations, error) {
+	cfg := loadConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	opt := &storage.WalkOption{
 		SubDir: m.prefix,
 	}
@@ -623,6 +725,9 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
 		return Migrations{}, collected.Err
+	}
+	if len(collected.Item) == 0 && cfg.notFoundIsErr {
+		return Migrations{}, errors.Annotatef(berrors.ErrMigrationNotFound, "in the storage %s", m.s.URI())
 	}
 	sort.Slice(collected.Item, func(i, j int) bool {
 		return collected.Item[i].SeqNum < collected.Item[j].SeqNum
@@ -656,11 +761,20 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 }
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
+	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+	if err != nil {
+		return 0, err
+	}
+	defer lock.UnlockOnCleanUp(ctx)
+
 	migs, err := m.Load(ctx)
 	if err != nil {
 		return 0, err
 	}
-	newSN := migs.Layers[len(migs.Layers)-1].SeqNum + 1
+	newSN := 1
+	if len(migs.Layers) > 0 {
+		newSN = migs.Layers[len(migs.Layers)-1].SeqNum + 1
+	}
 	name := path.Join(migrationPrefix, nameOf(mig, newSN))
 	data, err := mig.Marshal()
 	if err != nil {
@@ -700,6 +814,8 @@ type mergeAndMigrateToConfig struct {
 	interactiveCheck       func(context.Context, *pb.Migration) bool
 	alwaysRunTruncate      bool
 	appendPhantomMigration []pb.Migration
+
+	skipLockingInTest bool
 }
 
 type MergeAndMigrateToOpt func(*mergeAndMigrateToConfig)
@@ -707,6 +823,12 @@ type MergeAndMigrateToOpt func(*mergeAndMigrateToConfig)
 func MMOptInteractiveCheck(f func(context.Context, *pb.Migration) bool) MergeAndMigrateToOpt {
 	return func(c *mergeAndMigrateToConfig) {
 		c.interactiveCheck = f
+	}
+}
+
+func MMOptSkipLockingInTest() MergeAndMigrateToOpt {
+	return func(c *mergeAndMigrateToConfig) {
+		c.skipLockingInTest = true
 	}
 }
 
@@ -741,6 +863,18 @@ func (m MigrationExt) MergeAndMigrateTo(
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
+	}
+
+	if !config.skipLockingInTest {
+		lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+		if err != nil {
+			result.MigratedTo = MigratedTo{
+				Warnings: []error{
+					errors.Annotate(err, "failed to get the lock, nothing will happen"),
+				}}
+			return
+		}
+		defer lock.UnlockOnCleanUp(ctx)
 	}
 
 	migs, err := m.Load(ctx)
@@ -814,7 +948,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			}
 		}
 	}
-	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
+	result.MigratedTo = m.migrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
 
 	// Put the final BASE.
 	err = m.writeBase(ctx, result.NewBase)
@@ -824,7 +958,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	return
 }
 
-type MigrateToOpt func(*migToOpt)
+type migrateToOpt func(*migToOpt)
 
 type migToOpt struct {
 	skipTruncateLog bool
@@ -834,17 +968,17 @@ func MTSkipTruncateLog(o *migToOpt) {
 	o.skipTruncateLog = true
 }
 
-func MTMaybeSkipTruncateLog(cond bool) MigrateToOpt {
+func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 	if cond {
 		return MTSkipTruncateLog
 	}
 	return func(*migToOpt) {}
 }
 
-// MigrateTo migrates to a migration.
+// migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
 // to the new BASE, which can be retryed then.
-func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...MigrateToOpt) MigratedTo {
+func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
 		o(&opt)
@@ -853,18 +987,16 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	result := MigratedTo{
 		NewBase: NewMigration(),
 	}
-	// Fills: TruncatedTo, Compactions, DesctructPrefix.
+	m.processCompactions(ctx, mig, &result)
+	m.processDestroyPrefixes(ctx, mig, &result)
+	m.processExtFullBackup(ctx, mig, &result)
 	if !opt.skipTruncateLog {
-		m.doTruncating(ctx, mig, &result)
-	} else {
-		// Fast path: `truncate_to` wasn't updated, just copy the compactions and truncated to.
-		result.NewBase.Compactions = mig.Compactions
-		result.NewBase.TruncatedTo = mig.TruncatedTo
+		m.processTruncatedTo(ctx, mig, &result)
 	}
 
 	// We do skip truncate log first, so metas removed by truncating can be removed in this execution.
 	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
+	m.processMetaEdits(ctx, mig, &result)
 
 	return result
 }
@@ -881,9 +1013,8 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 	return m.s.Rename(ctx, path.Join(m.prefix, baseTmp), path.Join(m.prefix, baseMigrationName))
 }
 
-// doMetaEdits applies the modification to the meta files in the storage.
-// This will delete data files firstly. Make sure the new BASE was persisted before calling this.
-func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
+// processMetaEdits applies the modification to the meta files in the storage.
+func (m MigrationExt) processMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
 
 	handleAMetaEdit := func(medit *pb.MetaEdit) {
@@ -1068,8 +1199,29 @@ func (m MigrationExt) tryRemovePrefix(ctx context.Context, pfx string, out *Migr
 	}
 }
 
-// doTruncating tries to remove outdated compaction, filling the not-yet removed compactions to the new migration.
-func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+// processTruncatedTo tries to remove outdated compaction, filling the not-yet removed compactions to the new migration.
+func (m MigrationExt) processTruncatedTo(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	result.NewBase.TruncatedTo = mig.TruncatedTo
+	m.Hooks.StartLoadingMetaForTruncating()
+	mdSet := new(StreamMetadataSet)
+	mdSet.MetadataDownloadBatchSize = 128
+	shiftTS, err := mdSet.LoadUntilAndCalculateShiftTS(ctx, m.s, mig.TruncatedTo)
+	if err != nil {
+		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to open meta storage"))
+		return
+	}
+	m.Hooks.EndLoadingMetaForTruncating()
+
+	m.doTruncateLogs(ctx, mdSet, shiftTS, result)
+}
+
+func (m MigrationExt) processDestroyPrefixes(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	for _, pfx := range mig.DestructPrefix {
+		m.tryRemovePrefix(ctx, pfx, result)
+	}
+}
+
+func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
 	// NOTE: Execution of truncation wasn't implemented here.
 	// If we are going to truncate some files, for now we still need to use `br log truncate`.
 	for _, compaction := range mig.Compactions {
@@ -1082,23 +1234,140 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
 		}
 	}
-	for _, pfx := range mig.DestructPrefix {
-		m.tryRemovePrefix(ctx, pfx, result)
+}
+
+func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	groups := LoadIngestedSSTs(ctx, m.s, mig.IngestedSstPaths)
+	processGroup := func(outErr error, e IngestedSSTsGroup) (copyToNewMig bool, err error) {
+		if outErr != nil {
+			return true, outErr
+		}
+
+		if !e.GroupFinished() {
+			return true, nil
+		}
+
+		if e.GroupTS() >= mig.TruncatedTo {
+			return true, nil
+		}
+
+		for _, b := range e {
+			m.tryRemovePrefix(ctx, b.FilesPrefixHint, result)
+		}
+		return false, nil
 	}
+	for err, item := range iter.AsSeq(ctx, groups) {
+		copyToNewMig, err := processGroup(err, item)
+		if err != nil {
+			result.Warn(err)
+		}
+		if copyToNewMig {
+			for _, exb := range item {
+				result.NewBase.IngestedSstPaths = append(result.NewBase.IngestedSstPaths, exb.path)
+			}
+		}
+	}
+}
 
-	result.NewBase.TruncatedTo = mig.TruncatedTo
+type PathedIngestedSSTs struct {
+	*pb.IngestedSSTs
+	path string
+}
 
-	m.Hooks.StartLoadingMetaForTruncating()
-	mdSet := new(StreamMetadataSet)
-	mdSet.MetadataDownloadBatchSize = 128
-	shiftTS, err := mdSet.LoadUntilAndCalculateShiftTS(ctx, m.s, mig.TruncatedTo)
+type IngestedSSTsGroup []PathedIngestedSSTs
+
+func (ebs IngestedSSTsGroup) GroupFinished() bool {
+	for _, b := range ebs {
+		if b.Finished {
+			return true
+		}
+	}
+	return false
+}
+
+func (ebs IngestedSSTsGroup) GroupTS() uint64 {
+	for _, b := range ebs {
+		if b.Finished {
+			return b.AsIfTs
+		}
+	}
+	return math.MaxUint64
+}
+
+func LoadIngestedSSTs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	paths []string,
+) iter.TryNextor[IngestedSSTsGroup] {
+	fullBackupDirIter := iter.FromSlice(paths)
+	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
+		// name is the absolute path in external storage.
+		bkup, err := readIngestedSSTs(ctx, name, s)
+		failpoint.InjectCall("load-ingested-ssts-err", &err)
+		if err != nil {
+			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
+		}
+		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
+	})
+	extBackups, err := groupExtraBackups(ctx, backups)
 	if err != nil {
-		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to open meta storage"))
-		return
+		return iter.Fail[IngestedSSTsGroup](err)
 	}
-	m.Hooks.EndLoadingMetaForTruncating()
+	return iter.FromSlice(extBackups)
+}
 
-	m.doTruncateLogs(ctx, mdSet, shiftTS, result)
+func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]) ([]IngestedSSTsGroup, error) {
+	var (
+		collected = map[uuid.UUID]IngestedSSTsGroup{}
+		finished  = map[uuid.UUID]struct{}{}
+	)
+
+	for err, fbk := range iter.AsSeq(ctx, i) {
+		if err != nil {
+			return nil, err
+		}
+
+		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+				"the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
+		}
+		uid := uuid.UUID(fbk.BackupUuid)
+		log.Info("Collecting extra full backup",
+			zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
+
+		if _, ok := finished[uid]; ok {
+			log.Warn("Encountered a finished full backup.", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint))
+			return nil, errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"the extra full backup group %s at %s encounters an extra full backup meta after a finished one",
+				uid, fbk.FilesPrefixHint,
+			)
+		}
+
+		collected[uid] = append(collected[uid], fbk)
+		if fbk.Finished {
+			finished[uid] = struct{}{}
+		}
+	}
+
+	res := make([]IngestedSSTsGroup, 0, len(collected))
+	for v := range maps.Values(collected) {
+		res = append(res, v)
+	}
+	return res, nil
+}
+
+func readIngestedSSTs(ctx context.Context, name string, s storage.ExternalStorage) (*pb.IngestedSSTs, error) {
+	reader, err := s.ReadFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var backup pb.IngestedSSTs
+	if err := backup.Unmarshal(reader); err != nil {
+		return nil, err
+	}
+	return &backup, nil
 }
 
 func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {
@@ -1343,15 +1612,33 @@ func isEmptyMetadata(md *pb.Metadata) bool {
 	return len(md.FileGroups) == 0 && len(md.Files) == 0
 }
 
+/* Below are hash algorithms for hashing a component of the migration.
+ * Sadly there isn't a document describes the behavior of the algorithms.
+ * Perhaps we can standardlize them in the future.
+ * Maybe by defining a ordering-insensitive object hash algorithm for protocol buffer.
+ *
+ * Note: For now, the canon of the hash algorithm for a message should follow the following rules:
+ * - If a hash algorithm for a message exists both in TiKV and BR and conflicting, we
+ *   follow the implementation at where the message firstly creates (say, for compactions,
+ *   TiKV will be the canonical implementation. while for extra full backups, BR is canonical.).
+ * - For commonly used fields, follow the implementation in BR.
+ *
+ * Another note: nowadays, the hash of a migration is mainly used for detecting duplicated works,
+ * so the difference between hash algorithms won't result in something too bad...
+ */
+
 func hashMigration(m *pb.Migration) uint64 {
-	var crc64 uint64 = 0
+	var crc64Res uint64 = 0
 	for _, compaction := range m.Compactions {
-		crc64 ^= compaction.ArtifactsHash
+		crc64Res ^= compaction.ArtifactsHash
 	}
 	for _, metaEdit := range m.EditMeta {
-		crc64 ^= hashMetaEdit(metaEdit)
+		crc64Res ^= hashMetaEdit(metaEdit)
 	}
-	return crc64 ^ m.TruncatedTo
+	for _, extBkup := range m.IngestedSstPaths {
+		crc64Res ^= crc64.Checksum([]byte(extBkup), crc64.MakeTable(crc64.ISO))
+	}
+	return crc64Res ^ m.TruncatedTo
 }
 
 func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
@@ -1381,4 +1668,12 @@ func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
 
 func nameOf(mig *pb.Migration, sn int) string {
 	return fmt.Sprintf("%08d_%016X.mgrt", sn, hashMigration(mig))
+}
+
+func isEmptyMigration(mig *pb.Migration) bool {
+	return len(mig.Compactions) == 0 &&
+		len(mig.EditMeta) == 0 &&
+		len(mig.IngestedSstPaths) == 0 &&
+		len(mig.DestructPrefix) == 0 &&
+		mig.TruncatedTo == 0
 }
