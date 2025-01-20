@@ -865,7 +865,10 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
-	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows, variable.SlowLogUnpackedBytesSentKVTotal,
+		variable.SlowLogUnpackedBytesReceivedKVTotal, variable.SlowLogUnpackedBytesSentKVCrossZone, variable.SlowLogUnpackedBytesReceivedKVCrossZone,
+		variable.SlowLogUnpackedBytesSentMPPTotal, variable.SlowLogUnpackedBytesReceivedMPPTotal, variable.SlowLogUnpackedBytesSentMPPCrossZone,
+		variable.SlowLogUnpackedBytesReceivedMPPCrossZone:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
