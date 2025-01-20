@@ -231,7 +231,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 			}
 		}
 		tbls := make([]*model.TableInfo, 0, 1024)
-		if err := meta.IterAllTables(pq.ctx, sctx.GetStore(), currentTs, 15, func(info *model.TableInfo) error {
+		if err := meta.IterAllTables(context.Background(), sctx.GetStore(), currentTs, 15, func(info *model.TableInfo) error {
 			// Ignore the memory and system database.
 			db, ok := is.SchemaByID(info.DBID)
 			if !ok || util.IsMemOrSysDB(db.Name.L) {
