@@ -297,7 +297,7 @@ func TestSlowLogFormat(t *testing.T) {
 		PlanFromCache:     true,
 		PlanFromBinding:   true,
 		HasMoreResults:    true,
-		KVExecDetail:      tikvExecDetail,
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: 1 * time.Second,
 		ResultRows:        12345,
 		Succ:              true,
