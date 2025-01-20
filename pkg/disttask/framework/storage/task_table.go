@@ -77,6 +77,14 @@ var (
 	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
 
+// Manager is the interface for task manager.
+// we expose the methods that's needed by application side to make test easier.
+type Manager interface {
+	GetCPUCountOfNode(ctx context.Context) (int, error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error
+}
+
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
 	*proto.TaskBase

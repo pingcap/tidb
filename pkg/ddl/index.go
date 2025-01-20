@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -2546,7 +2547,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	} else {
 		job := reorgInfo.Job
 		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		concurrency, err := adjustConcurrency(ctx, workerCntLimit)
+		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
 			return err
 		}
@@ -2626,8 +2627,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	g.Go(func() error {
-		return modifyTaskParamLoop(ctx, jobCtx.sysTblMgr, taskManager, done,
+		modifyTaskParamLoop(ctx, jobCtx.sysTblMgr, taskManager, done,
 			reorgInfo.Job.ID, taskID, lastConcurrency, lastBatchSize, lastMaxWriteSpeed)
+		return nil
 	})
 
 	err = g.Wait()
@@ -2637,37 +2639,36 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 func modifyTaskParamLoop(
 	ctx context.Context,
 	sysTblMgr systable.Manager,
-	taskManager *storage.TaskManager,
+	taskManager storage.Manager,
 	done chan struct{},
 	jobID, taskID int64,
 	lastConcurrency, lastBatchSize, lastMaxWriteSpeed int,
-) error {
+) {
+	logger := logutil.DDLLogger().With(zap.Int64("jobId", jobID), zap.Int64("taskId", taskID))
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-done:
-			return nil
+			return
 		case <-ticker.C:
 		}
 
 		latestJob, err := sysTblMgr.GetJobByID(ctx, jobID)
 		if err != nil {
 			if goerrors.Is(err, systable.ErrNotFound) {
-				logutil.DDLLogger().Info("job not found, might already finished",
-					zap.Int64("job_id", jobID))
-				return nil
+				logger.Info("job not found, might already finished")
+				return
 			}
-			logutil.DDLLogger().Error("get job failed, will retry later",
-				zap.Int64("job_id", jobID), zap.Error(err))
+			logger.Error("get job failed, will retry later", zap.Error(err))
 			continue
 		}
 
 		modifies := make([]proto.Modification, 0, 3)
 		workerCntLimit := latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		concurrency, err := adjustConcurrency(ctx, workerCntLimit)
+		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
-			logutil.DDLLogger().Error("adjust concurrency failed", zap.Error(err))
+			logger.Error("adjust concurrency failed", zap.Error(err))
 			continue
 		}
 		if concurrency != lastConcurrency {
@@ -2696,35 +2697,38 @@ func modifyTaskParamLoop(
 		currTask, err := taskManager.GetTaskByID(ctx, taskID)
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
-				logutil.DDLLogger().Info("task not found, might already finished",
-					zap.Int64("task_id", taskID))
-				return nil
+				logger.Info("task not found, might already finished")
+				return
 			}
-			logutil.DDLLogger().Error("get task failed, will retry later",
-				zap.Int64("task_id", taskID), zap.Error(err))
+			logger.Error("get task failed, will retry later", zap.Error(err))
 			continue
 		}
 		if !currTask.State.CanMoveToModifying() {
-			logutil.DDLLogger().Info("task state is not suitable for modifying, will retry later",
-				zap.Int64("task_id", taskID), zap.String("state", currTask.State.String()))
+			logger.Info("task state is not suitable for modifying, will retry later",
+				zap.String("state", currTask.State.String()))
 			continue
 		}
 		if err = taskManager.ModifyTaskByID(ctx, taskID, &proto.ModifyParam{
 			PrevState:     currTask.State,
 			Modifications: modifies,
 		}); err != nil {
-			logutil.DDLLogger().Error("modify task failed", zap.Int64("task_id", taskID), zap.Error(err))
+			logger.Error("modify task failed", zap.Error(err))
 			continue
 		}
-
+		logger.Info("modify task success",
+			zap.Int("oldConcurrency", lastConcurrency), zap.Int("newConcurrency", concurrency),
+			zap.Int("oldBatchSize", lastBatchSize), zap.Int("newBatchSize", batchSize),
+			zap.String("oldMaxWriteSpeed", units.HumanSize(float64(lastMaxWriteSpeed))),
+			zap.String("newMaxWriteSpeed", units.HumanSize(float64(maxWriteSpeed))),
+		)
 		lastConcurrency = concurrency
 		lastBatchSize = batchSize
 		lastMaxWriteSpeed = maxWriteSpeed
 	}
 }
 
-func adjustConcurrency(ctx context.Context, workerCnt int) (int, error) {
-	cpuCount, err := handle.GetCPUCountOfNode(ctx)
+func adjustConcurrency(ctx context.Context, taskMgr storage.Manager, workerCnt int) (int, error) {
+	cpuCount, err := taskMgr.GetCPUCountOfNode(ctx)
 	if err != nil {
 		return 0, err
 	}
