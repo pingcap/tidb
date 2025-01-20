@@ -977,9 +977,6 @@ const (
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 
-	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
-	TiDBSchemaCacheSize = "tidb_schema_cache_size"
-
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
@@ -1218,6 +1215,10 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	TiDBSchemaCacheSize = "tidb_schema_cache_size"
+	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
+	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 )
 
 // TiDB intentional limits
@@ -1571,6 +1572,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBAccelerateUserCreationUpdate               = false
 )
 
 // Process global variables.
@@ -1695,6 +1697,8 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+
+	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 )
 
 var (
