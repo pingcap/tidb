@@ -1599,6 +1599,8 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		for _, record := range userList.data {
 			if record.fullyMatch(user, host) {
 				userExists = true
+				hasGlobalGrant = true
+				currentPriv |= record.Privileges
 				break
 			}
 		}
@@ -1606,24 +1608,18 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 			return gs
 		}
 	}
-	var g string
-	p.user.Ascend(func(itm itemUser) bool {
-		for _, record := range itm.data {
-			if record.fullyMatch(user, host) {
-				hasGlobalGrant = true
-				currentPriv |= record.Privileges
-			} else {
-				for _, r := range allRoles {
-					if record.baseRecord.match(r.Username, r.Hostname) {
-						hasGlobalGrant = true
-						currentPriv |= record.Privileges
-					}
+
+	for _, r := range allRoles {
+		if userList, ok := p.user.Get(itemUser{username: r.Username}); ok {
+			for _, record := range userList.data {
+				if record.fullyMatch(r.Username, r.Hostname) {
+					hasGlobalGrant = true
+					currentPriv |= record.Privileges
 				}
 			}
 		}
-		return true
-	})
-	g = userPrivToString(currentPriv)
+	}
+	g := userPrivToString(currentPriv)
 	if len(g) > 0 {
 		var s string
 		if (currentPriv & mysql.GrantPriv) > 0 {
