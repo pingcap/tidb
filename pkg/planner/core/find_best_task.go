@@ -767,8 +767,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
-			// 1) there are at least 2 equal/INs, OR - when combined with 1) above
-			// 2) it's a full index match for all index predicates
+			// 1) there are at least 2 equal/INs
+			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
 				return 1, true // left wins and does NOT have statistics
