@@ -11,14 +11,12 @@ go_library(
         "scheduler_manager.go",
         "slots.go",
         "state_transform.go",
-        "testutil.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
         "//pkg/kv",
@@ -35,7 +33,6 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_prometheus_client_golang//prometheus",
-        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )
