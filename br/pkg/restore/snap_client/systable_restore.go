@@ -72,6 +72,10 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
 		// Therefore actually the table is empty.
 		"advisory_locks": {},
+		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
+		"analyze_jobs": {},
+		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
+		"analyze_options": {},
 		// Distributed eXecution Framework
 		// Records the tidb node information, no need to recovered.
 		"dist_framework_meta":             {},
@@ -83,6 +87,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_ddl_history": {},
 		"tidb_ddl_job":     {},
 		"tidb_ddl_reorg":   {},
+		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
+		"tidb_ddl_notifier": {},
 		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
 		"tidb_import_jobs": {},
 
@@ -134,6 +140,15 @@ func isUnrecoverableTable(schemaName string, tableName string) bool {
 
 func isStatsTable(schemaName string, tableName string) bool {
 	tableMap, ok := statsTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
 	if !ok {
 		return false
 	}
@@ -296,6 +311,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	//  1.5 ) (Optional) The UPDATE statement sometimes costs, the whole system tables restore step can be place into the restore pipeline.
 	//  2   ) Deprecate the origin interface for backing up statistics.
 	if isStatsTable(dbName, tableName) {
+		return nil
+	}
+
+	if isPlanReplayerTables(dbName, tableName) {
 		return nil
 	}
 
