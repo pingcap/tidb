@@ -91,13 +91,13 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -346,13 +346,13 @@ func (coll *HistColl) IdxNum() int {
 // DelCol deletes the column with the given id.
 func (t *Table) DelCol(id int64) {
 	delete(t.columns, id)
-	t.ColAndIdxExistenceMap.DeleteColAnalyzed(id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
 func (t *Table) DelIdx(id int64) {
 	delete(t.indices, id)
-	t.ColAndIdxExistenceMap.DeleteIdxAnalyzed(id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // CleanUpStats reset the stats of the table to no stats.
