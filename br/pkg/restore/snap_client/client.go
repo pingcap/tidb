@@ -1167,6 +1167,10 @@ func (rc *SnapClient) execAndValidateChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validating checksum")
+	logger.Info("success in validating checksum",
+		zap.Uint64("table crc64", item.Crc64xor),
+		zap.Uint64("table total kvs", item.TotalKvs),
+		zap.Uint64("table total bytes", item.TotalBytes),
+	)
 	return nil
 }
