@@ -3365,7 +3365,7 @@ type SlowQueryLogItems struct {
 	PlanDigest        string
 	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
-	KVExecDetail      util.ExecDetails
+	KVExecDetail      *util.ExecDetails
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
@@ -3547,17 +3547,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(atomic.LoadInt64(&logItems.KVExecDetail.WaitKVRespDuration)).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(atomic.LoadInt64(&logItems.KVExecDetail.WaitPDRespDuration)).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(atomic.LoadInt64(&logItems.KVExecDetail.BackoffDuration)).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVTotal, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesSentKVTotal), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVTotal, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesReceivedKVTotal), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVCrossZone, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesSentKVCrossZone), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVCrossZone, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesReceivedKVCrossZone), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentMPPTotal, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesSentMPPTotal), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedMPPTotal, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesReceivedMPPTotal), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentMPPCrossZone, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesSentMPPCrossZone), 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedMPPCrossZone, strconv.FormatInt(atomic.LoadInt64(&logItems.KVExecDetail.UnpackedBytesReceivedMPPCrossZone), 10))
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentMPPTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedMPPTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedMPPTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentMPPCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedMPPCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	if len(logItems.Warnings) > 0 {
