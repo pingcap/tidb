@@ -85,7 +85,6 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 			}
 			filteredTableIDs = append(filteredTableIDs, tableID)
 		}
-
 	}
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
