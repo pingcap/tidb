@@ -523,7 +523,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, sm.StartSubtask(ctx, 1, "tidb1"))
 
 	err = sm.StartSubtask(ctx, 1, "tidb2")
-	require.Error(t, storage.ErrSubtaskNotFound, err)
+	require.ErrorIs(t, err, storage.ErrSubtaskNotFound)
 
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
@@ -950,16 +950,16 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 func TestTaskNotFound(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	task, err := gm.GetTaskByID(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByIDWithHistory(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKey(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKeyWithHistory(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 }
 

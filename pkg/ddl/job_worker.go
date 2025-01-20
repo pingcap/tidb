@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -838,7 +839,7 @@ func (w *worker) runOneJobStep(
 						return
 					case <-ticker.C:
 						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if err == systable.ErrNotFound {
+						if goerrors.Is(err, systable.ErrNotFound) {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))

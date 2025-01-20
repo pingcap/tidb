@@ -2498,7 +2498,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		return err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(w.workCtx, taskKey)
-	if err != nil && err != storage.ErrTaskNotFound {
+	if err != nil && goerrors.Is(err, storage.ErrTaskNotFound) {
 		return err
 	}
 
