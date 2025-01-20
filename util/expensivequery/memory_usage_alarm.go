@@ -24,7 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -161,6 +163,24 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
+func getCurrentMemoryUsage(refCount *stmtctx.ReferenceCount, stmtCtx *stmtctx.StatementContext) (ret int64) {
+	ret = 0
+	if refCount != nil && refCount.TryIncrease() {
+		defer func() {
+			// even if we increase the refCount, reading MemTracker is still not thread-safe, so we add recover here
+			if r := recover(); r != nil {
+				ret = 0
+			}
+			refCount.Decrease()
+		}()
+		if tracker := stmtCtx.MemTracker; tracker != nil {
+			ret = tracker.MaxConsumed()
+			failpoint.Inject("panicWhenGetCurrentMemoryUsage", func() { panic("panic when get current memory usage") })
+		}
+	}
+	return
+}
+
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
@@ -211,7 +231,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 
 	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
 	printTop10(func(i, j int) bool {
-		return pinfo[i].StmtCtx.MemTracker.MaxConsumed() > pinfo[j].StmtCtx.MemTracker.MaxConsumed()
+		iConsume := getCurrentMemoryUsage(pinfo[i].RefCountOfStmtCtx, pinfo[i].StmtCtx)
+		jConsume := getCurrentMemoryUsage(pinfo[j].RefCountOfStmtCtx, pinfo[j].StmtCtx)
+		return iConsume > jConsume
 	})
 
 	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
