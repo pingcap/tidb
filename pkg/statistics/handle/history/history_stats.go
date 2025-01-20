@@ -76,8 +76,11 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 	if version == 0 {
 		return
 	}
-	filteredTableIDs := make([]int64, 0, len(tableIDs))
-	if !enforce {
+
+	var filteredTableIDs []int64
+	if enforce {
+		filteredTableIDs = tableIDs
+	} else {
 		for _, tableID := range tableIDs {
 			tbl, ok := sh.statsHandle.Get(tableID)
 			if tableID == 0 || !ok || !tbl.IsInitialized() {
@@ -86,13 +89,15 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 			filteredTableIDs = append(filteredTableIDs, tableID)
 		}
 	}
+
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			return nil
 		}
 		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, filteredTableIDs...)
 	}, handleutil.FlagWrapTxn)
-	if err != nil { // just log the error, hide the error from the outside caller.
+
+	if err != nil {
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Uint64("version", version),
 			zap.String("source", source),
