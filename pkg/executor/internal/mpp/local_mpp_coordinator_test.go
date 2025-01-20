@@ -59,7 +59,7 @@ func mockTaskZoneInfoHelper(isRoot bool, taskZone string, tidbZone string, store
 		tidbZone:           tidbZone,
 		currentTaskZone:    taskZone,
 		isRoot:             isRoot,
-		allTiflashZoneInfo: storeZoneMpp,
+		allTiFlashZoneInfo: storeZoneMpp,
 		exchangeZoneInfo:   exchangeZoneInfo,
 	}
 	return helper
