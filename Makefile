@@ -582,6 +582,9 @@ generate_grafana_scripts:
 	  rm tidb_summary.json.committed && \
 	  rm tidb_resource_control.json.committed
 
+.PHONY: bazel_mirror_upload
+bazel_mirror_upload:
+	bazel run  //cmd/mirror -- --mirror --upload
 
 .PHONY: bazel_ci_prepare
 bazel_ci_prepare:
