@@ -73,7 +73,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		return true
 	}
 	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
-	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
