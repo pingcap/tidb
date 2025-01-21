@@ -37,7 +37,8 @@ import (
 // ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
-func genConfig(
+// newLocalBackendConfig creates a local backend config.
+func newLocalBackendConfig(
 	ctx context.Context,
 	jobSortPath string,
 	memRoot MemRoot,
@@ -185,10 +186,8 @@ func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backen
 	return true
 }
 
-// defaultImportantVariables is used in obtainImportantVariables to retrieve the system
-// variables from downstream which may affect KV encode result. The values record the default
-// values if missing.
-var defaultImportantVariables = map[string]string{
+// defaultSystemVarsForDuplicateCheck is used by the duplicate checker to initialize the session variables.
+var defaultSystemVarsForDuplicateCheck = map[string]string{
 	"max_allowed_packet":      "67108864", // 64MB
 	"div_precision_increment": "4",
 	"time_zone":               "SYSTEM",

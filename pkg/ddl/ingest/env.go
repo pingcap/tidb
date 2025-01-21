@@ -165,12 +165,7 @@ func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
 	for id := range toCheckJobIDs {
 		logutil.DDLIngestLogger().Info("remove stale temp index data",
 			zap.Int64("jobID", id))
-		p := filepath.Join(path, encodeBackendTag(id, false))
-		err = os.RemoveAll(p)
-		if err != nil {
-			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))
-		}
-		p = filepath.Join(path, encodeBackendTag(id, true))
+		p := filepath.Join(path, encodeBackendTag(id))
 		err = os.RemoveAll(p)
 		if err != nil {
 			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))

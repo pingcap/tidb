@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -64,7 +63,6 @@ type BackendCtxBuilder struct {
 
 	sessPool   *sess.Pool
 	physicalID int64
-	checkDup   bool
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -84,13 +82,6 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	return b
 }
 
-// ForDuplicateCheck marks this backend context is only used for duplicate check.
-// TODO(tangenta): remove this after we don't rely on the backend to do duplicate check.
-func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
-	b.checkDup = true
-	return b
-}
-
 // BackendCounterForTest is only used in test.
 var BackendCounterForTest = atomic.Int64{}
 
@@ -101,7 +92,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID, b.checkDup))
+	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID))
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex)
 	intest.Assert(job.ReorgMeta != nil)
@@ -113,7 +104,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
+	cfg, err := newLocalBackendConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
@@ -150,7 +141,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+		defaultSystemVarsForDuplicateCheck, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
 
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
@@ -233,10 +224,7 @@ func newBackendContext(
 
 // encodeBackendTag encodes the job ID to backend tag.
 // The backend tag is also used as the file name of the local index data files.
-func encodeBackendTag(jobID int64, checkDup bool) string {
-	if checkDup {
-		return fmt.Sprintf("%d-dup", jobID)
-	}
+func encodeBackendTag(jobID int64) string {
 	return strconv.FormatInt(jobID, 10)
 }
 
