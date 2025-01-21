@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 )
 
@@ -26,6 +27,9 @@ type TableInfoGetter interface {
 	// TableInfoByID returns the table info specified by the physicalID.
 	// If the physicalID is corresponding to a partition, return its parent table.
 	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
+	// SchemaNameAndTableNameByID returns the schema name and table name specified by the physicalID.
+	// This is pure memory operation.
+	SchemaNameAndTableNameByID(is infoschema.InfoSchema, physicalID int64) (schemaName, tableName ast.CIStr, ok bool)
 }
 
 // tableInfoGetterImpl is used to get table meta info.
@@ -46,4 +50,13 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 	}
 	tbl, _, _ = is.FindTableByPartitionID(physicalID)
 	return tbl, tbl != nil
+}
+
+// SchemaNameAndTableNameByID returns the schema name and table name specified by the physicalID.
+func (*tableInfoGetterImpl) SchemaNameAndTableNameByID(is infoschema.InfoSchema, physicalID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	schemaName, tableName, ok = is.SchemaNameAndTableNameByID(physicalID)
+	if ok {
+		return
+	}
+	return is.SchemaNameAndTableNameByPartitionID(physicalID)
 }

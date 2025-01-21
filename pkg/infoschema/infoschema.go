@@ -315,6 +315,19 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+// SchemaNameAndTableNameByID implements InfoSchema.SchemaNameAndTableNameByID.
+func (is *infoSchema) SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+	if !ok {
+		return
+	}
+	db, ok := is.SchemaByID(tbl.Meta().DBID)
+	if !ok {
+		return
+	}
+	return db.Name, tbl.Meta().Name, true
+}
+
 func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), tableID)
 	if !ok {
@@ -410,6 +423,15 @@ func (is *infoSchema) AllSchemaNames() (schemas []ast.CIStr) {
 		rs = append(rs, v.dbInfo.Name)
 	}
 	return rs
+}
+
+// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
+func (is *infoSchema) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	tbl, db, _ := is.FindTableByPartitionID(partitionID)
+	if tbl == nil {
+		return
+	}
+	return db.Name, tbl.Meta().Name, true
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.

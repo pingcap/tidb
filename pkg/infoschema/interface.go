@@ -30,7 +30,9 @@ type InfoSchema interface {
 	context.MetaOnlyInfoSchema
 	TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
+	SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool)
 	SchemaNameByTableID(tableID int64) (ast.CIStr, bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool)
 	base() *infoSchema
 }
