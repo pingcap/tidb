@@ -173,7 +173,10 @@ func RecordHistoricalStatsMeta(
 		}
 		intest.Assert(len(rows) != 0, "no historical meta stats can be recorded")
 		if len(rows) == 0 {
-			return errors.New("no historical meta stats can be recorded")
+			statslogutil.StatsLogger().Warn("no historical meta stats can be recorded",
+				zap.Int64("tableID", tableID),
+				zap.Uint64("version", version),
+			)
 		}
 	}
 
