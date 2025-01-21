@@ -210,13 +210,7 @@ func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *sta
 
 func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64, returnPseudo bool) *statistics.Table {
 	var statsTbl *statistics.Table
-	if h == nil {
-		tbl, ok := h.TableInfoByID(is, pid)
-		if !ok {
-			return nil
-		}
-		statsTbl = statistics.PseudoTable(tbl.Meta(), false, false)
-	}
+	intest.Assert(h != nil, "handle is nil")
 	tbl, ok := h.Get(pid)
 	if !ok {
 		if returnPseudo {

@@ -55,5 +55,8 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 // SchemaNameAndTableNameByID returns the schema name and table name specified by the physicalID.
 func (*tableInfoGetterImpl) SchemaNameAndTableNameByID(is infoschema.InfoSchema, physicalID int64) (schemaName, tableName ast.CIStr, ok bool) {
 	schemaName, tableName, ok = is.SchemaNameAndTableNameByID(physicalID)
-	return schemaName, tableName, ok
+	if ok {
+		return
+	}
+	return is.SchemaNameAndTableNameByPartitionID(physicalID)
 }
