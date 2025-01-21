@@ -204,6 +204,7 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 	return tbl
 }
 
+// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
 func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
 	return h.getPartitionStatsByID(is, pid, false)
 }
