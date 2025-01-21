@@ -32,6 +32,7 @@ type InfoSchema interface {
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
 	SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool)
 	SchemaNameByTableID(tableID int64) (ast.CIStr, bool)
+	TableIDByPartitionID(partitionID int64) (tableID int64, ok bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool)
 	base() *infoSchema
