@@ -3285,7 +3285,7 @@ const (
 	SlowLogUnpackedBytesReceivedKVCrossZone = "Unpacked_bytes_received_kv_cross_zone"
 	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
 	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
-	// SlowLogUnpackedBytesReceivedTiFLashTotal is the total bytes received by tiflash.
+	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
 	SlowLogUnpackedBytesReceivedTiFlashTotal = "Unpacked_bytes_received_tiflash_total"
 	// SlowLogUnpackedBytesSentTiFlashCrossZone is the cross zone bytes sent by tiflash.
 	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
