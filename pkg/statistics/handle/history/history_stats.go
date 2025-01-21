@@ -81,6 +81,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 	if enforce {
 		filteredTableIDs = tableIDs
 	} else {
+		filteredTableIDs = make([]int64, 0, len(tableIDs))
 		for _, tableID := range tableIDs {
 			tbl, ok := sh.statsHandle.Get(tableID)
 			if tableID == 0 || !ok || !tbl.IsInitialized() {
