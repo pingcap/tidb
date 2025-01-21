@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -172,4 +174,28 @@ func TestDeleteAnalyzeJobs(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
 	rows = testKit.MustQuery("show analyze status").Rows()
 	require.Equal(t, 0, len(rows))
+}
+
+func TestExtremCaseOfGC(t *testing.T) {
+	// This case tests that there's no records in mysql.stats_histograms but this table is not deleted in fact.
+	// We should not delete the record in mysql.stats_meta.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("insert into t values (1,2),(3,4)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tid := tbl.Meta().ID
+	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 1)
+	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 2)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`))
+	h.GCStats(dom.InfoSchema(), time.Second*3)
+	rs = testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 1)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset"))
 }
