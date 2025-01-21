@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -741,7 +742,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		Updated: []*statistics.Table{statsTbl},
 	})
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
-	if col.IsSyncLoadFailed {
+	if col.IsSyncLoadFailed && rand.Float64() < 0.0001 {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", colHist.PhysicalID),
 			zap.Int64("column_id", colHist.Info.ID),
@@ -807,7 +808,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
-	if idx.IsSyncLoadFailed {
+	if idx.IsSyncLoadFailed && rand.Float64() < 0.0001 {
 		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
 			zap.Int64("index_id", idxHist.Info.ID),

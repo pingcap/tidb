@@ -15,6 +15,8 @@
 package statistics
 
 import (
+	"math/rand/v2"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -22,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // Index represents an index histogram.
@@ -148,6 +152,9 @@ func IndexStatsIsInvalid(sctx planctx.PlanContext, idxStats *Index, coll *HistCo
 			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
 		}, true)
 		// TODO: we can return true here. But need to fix some tests first.
+		if !sctx.GetSessionVars().InRestrictedSQL && rand.Float64() < 0.0001 {
+			logutil.BgLogger().Info("async load happened", zap.String("sql", sctx.GetSessionVars().StmtCtx.OriginalSQL+sctx.GetSessionVars().PlanCacheParams.String()))
+		}
 	}
 	if idxStats == nil {
 		return true

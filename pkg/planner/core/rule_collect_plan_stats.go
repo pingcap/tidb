@@ -66,9 +66,6 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	})
 
 	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, histNeeded)
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
@@ -83,9 +80,18 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
-	if len(histNeededItems) > 0 {
+	if !histNeeded {
+		return plan, planChanged, nil
+	}
+	if len(histNeededItems) == 0 {
+		return plan, planChanged, nil
+	}
+	if histNeeded {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
+	}
+	for _, item := range histNeededItems {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
 	}
 	return plan, planChanged, nil
 }

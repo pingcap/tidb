@@ -15,6 +15,8 @@
 package statistics
 
 import (
+	"math/rand/v2"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -22,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Column represents a column histogram.
@@ -160,6 +164,9 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 				IsIndex:          false,
 				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
 			}, true)
+			if rand.Float64() < 0.0001 {
+				logutil.BgLogger().Info("async load happend", zap.String("sql", sctx.GetSessionVars().StmtCtx.OriginalSQL+sctx.GetSessionVars().PlanCacheParams.String()))
+			}
 		}
 	}
 	if histColl.Pseudo {
