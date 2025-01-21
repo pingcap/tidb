@@ -2636,6 +2636,14 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	return err
 }
 
+// Note: we can achieve the same effect by calling ModifyTaskByID directly inside
+// the process of 'ADMIN ALTER DDL JOB xxx', so we can eliminate the goroutine,
+// but if the task hasn't been created we need to make sure the task is created
+// with config after ALTER DDL JOB is executed. A possible solution is to make
+// the DXF task submission and 'ADMIN ALTER DDL JOB xxx' txn conflict with each
+// other when they overlap in time, by modify the job at the same time when submit
+// task, as we are using optimistic txn. But this will cause WRITE CONFLICT with
+// outer txn in transitOneJobStep.
 func modifyTaskParamLoop(
 	ctx context.Context,
 	sysTblMgr systable.Manager,
