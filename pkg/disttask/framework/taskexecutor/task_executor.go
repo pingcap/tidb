@@ -83,7 +83,7 @@ func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeReso
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	Param
-	// this field represents the last task that we have refreshed from the system
+	// task is a local state that periodically aligned with what's saved in system
 	// table, but if the task has modified params, it might be updated in memory
 	// to reflect that some param modification have been applied successfully,
 	// see detectAndHandleParamModifyLoop for more detail.
