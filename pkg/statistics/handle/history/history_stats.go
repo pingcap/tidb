@@ -163,11 +163,7 @@ func RecordHistoricalStatsMeta(
 	}()
 
 	for _, tableID := range tableIDs {
-		_, err := handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %d", tableID))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, err = handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @version = %d", version))
+		_, err := handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %d, @version = %d", tableID, version))
 		if err != nil {
 			return errors.Trace(err)
 		}
