@@ -25,12 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -60,7 +60,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 		return 0, errors.Trace(err)
 	}
 	if js == nil {
-		logutil.BgLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
+		statslogutil.StatsLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
 		return 0, nil
 	}
 	var version uint64
@@ -99,7 +99,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 	}, handleutil.FlagWrapTxn)
 
 	if err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
+		statslogutil.StatsLogger().Error("record historical stats meta failed",
 			zap.Uint64("version", version),
 			zap.String("source", source),
 			zap.Int64s("tableIDs", tableIDs),
@@ -146,7 +146,7 @@ func RecordHistoricalStatsMeta(
 	defer func() {
 		_, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
 		if err != nil {
-			logutil.BgLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
+			statslogutil.StatsLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
 		}
 	}()
 	prepareSelectForUpdate := `
@@ -158,7 +158,7 @@ func RecordHistoricalStatsMeta(
 	defer func() {
 		_, err := handleutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt")
 		if err != nil {
-			logutil.BgLogger().Error("failed to deallocate prepared statement", zap.Error(errors.Trace(err)))
+			statslogutil.StatsLogger().Error("failed to deallocate prepared statement", zap.Error(errors.Trace(err)))
 		}
 	}()
 
