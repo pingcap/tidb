@@ -205,7 +205,7 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 }
 
 func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
-	return h.getPartitionStatsByID(is, pid, true)
+	return h.getPartitionStatsByID(is, pid, false)
 }
 
 func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64, returnPseudo bool) *statistics.Table {
