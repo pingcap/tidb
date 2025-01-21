@@ -38,6 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	_ Copier = &KS3Storage{}
+)
+
 const (
 	// ks3 sdk does not expose context, we use hardcoded timeout for network request
 	ks3SDKProvider = "ks3-sdk"
@@ -734,3 +738,45 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 
 // Close implements ExternalStorage interface.
 func (*KS3Storage) Close() {}
+
+func maybeObjectAlreadyExists(err awserr.Error) bool {
+	// Some versions of server did return the error code "ObjectAlreayExists"...
+	return err.Code() == "ObjectAlreayExists" || err.Code() == "ObjectAlreadyExists"
+}
+
+// CopyFrom implements Copier.
+func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*KS3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
+	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
+	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	if err != nil {
+		aErr, ok := err.(awserr.Error)
+		if !ok {
+			return err
+		}
+		// KS3 reports an error when copying an object to an existing path.
+		// AWS S3 will directly override the target. Simulating its behavior.
+		// Glitch: this isn't an atomic operation. So it is possible left nothing to `spec.To`...
+		if maybeObjectAlreadyExists(aErr) {
+			log.Warn("The object of `spec.To` already exists, will delete it and retry", zap.String("object", spec.To), logutil.ShortError(err))
+			if err := rs.DeleteFile(ctx, spec.To); err != nil {
+				return errors.Annotate(err, "during deleting an exist object for making place for copy")
+			}
+
+			return rs.CopyFrom(ctx, e, spec)
+		}
+	}
+	return nil
+}
