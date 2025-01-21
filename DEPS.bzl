@@ -1113,13 +1113,26 @@ def go_deps():
         name = "com_github_cockroachdb_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cockroachdb/errors",
-        sha256 = "6c8101703839a0d69685485d3d0d6040f51b83382bbc53c362c47732246249bf",
-        strip_prefix = "github.com/cockroachdb/errors@v1.11.1",
+        sha256 = "d11ed59d96afef2d1f0ce56892839c62ff5c0cbca8dff0aaefeaef7eb190e73c",
+        strip_prefix = "github.com/cockroachdb/errors@v1.11.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.1.zip",
-            "http://ats.apps.svc/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.3.zip",
+            "http://ats.apps.svc/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/errors/com_github_cockroachdb_errors-v1.11.3.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_cockroachdb_fifo",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/cockroachdb/fifo",
+        sha256 = "41e682b393cc82891ab5fcefbd28cc6173f16887702ab8760bcbc66d122e5900",
+        strip_prefix = "github.com/cockroachdb/fifo@v0.0.0-20240606204812-0bbfbd93a7ce",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/fifo/com_github_cockroachdb_fifo-v0.0.0-20240606204812-0bbfbd93a7ce.zip",
+            "http://ats.apps.svc/gomod/github.com/cockroachdb/fifo/com_github_cockroachdb_fifo-v0.0.0-20240606204812-0bbfbd93a7ce.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/fifo/com_github_cockroachdb_fifo-v0.0.0-20240606204812-0bbfbd93a7ce.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/fifo/com_github_cockroachdb_fifo-v0.0.0-20240606204812-0bbfbd93a7ce.zip",
         ],
     )
     go_repository(
@@ -1139,13 +1152,13 @@ def go_deps():
         name = "com_github_cockroachdb_pebble",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cockroachdb/pebble",
-        sha256 = "23f1da0f581aaeecfa607b180912e862742211bde548ec514c7d1084793f6776",
-        strip_prefix = "github.com/cockroachdb/pebble@v1.1.0",
+        sha256 = "d0dd0414c6526fed82e3c9558c40890529db0e9f8c33553f228d34e91ed7a906",
+        strip_prefix = "github.com/cockroachdb/pebble@v1.1.4-0.20250120151818-5dd133a1e6fb",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.0.zip",
-            "http://ats.apps.svc/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.4-0.20250120151818-5dd133a1e6fb.zip",
+            "http://ats.apps.svc/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.4-0.20250120151818-5dd133a1e6fb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.4-0.20250120151818-5dd133a1e6fb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v1.1.4-0.20250120151818-5dd133a1e6fb.zip",
         ],
     )
     go_repository(
