@@ -52,6 +52,7 @@ func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
 func (p *Plan) Reset4Cascades(tp string) {
 	p.tp = tp
 	p.id = int(p.ctx.GetSessionVars().PlanID.Add(1))
+	p.stats = nil
 	// the context and qb should keep the same.
 }
 
