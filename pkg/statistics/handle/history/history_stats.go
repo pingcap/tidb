@@ -167,9 +167,13 @@ func RecordHistoricalStatsMeta(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = handleutil.ExecWithCtx(ctx, sctx, "EXECUTE select_stmt USING @table_id, @version")
+		rows, _, err := handleutil.ExecRowsWithCtx(ctx, sctx, "EXECUTE select_stmt USING @table_id, @version")
 		if err != nil {
 			return errors.Trace(err)
+		}
+		intest.Assert(len(rows) != 0, "no historical meta stats can be recorded")
+		if len(rows) == 0 {
+			return errors.New("no historical meta stats can be recorded")
 		}
 	}
 
