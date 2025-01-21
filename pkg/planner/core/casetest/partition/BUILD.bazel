@@ -10,7 +10,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 10,
+>>>>>>> b11cce72848 (planner/core: move all extra columns to the end in ExpandVirtualColumn (#58499))
     deps = [
         "//pkg/config",
         "//pkg/planner/core/internal",
