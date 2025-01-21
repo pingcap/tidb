@@ -92,6 +92,7 @@ go_test(
         "//br/pkg/gluetidb",
         "//br/pkg/mock",
         "//br/pkg/restore/internal/import_client",
+        "//br/pkg/restore/internal/rawkv",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
         "//br/pkg/storage",
@@ -122,7 +123,11 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+<<<<<<< HEAD
         "@com_github_tikv_pd_client//:client",
+=======
+        "@com_github_tikv_client_go_v2//rawkv",
+>>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",

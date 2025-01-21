@@ -51,7 +51,17 @@ const (
 	ChecksumWaitInterval    = 1 * time.Second
 	ChecksumMaxWaitInterval = 30 * time.Second
 
+<<<<<<< HEAD
 	gRPC_Cancel = "the client connection is closing"
+=======
+	recoveryMaxAttempts  = 16
+	recoveryDelayTime    = 30 * time.Second
+	recoveryMaxDelayTime = 4 * time.Minute
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
+>>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
 )
 
 // At least, there are two possible cancel() call,
@@ -171,8 +181,116 @@ func NewBackupSSTBackoffer() Backoffer {
 	return NewBackoffer(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
 }
 
+<<<<<<< HEAD
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
+=======
+func NewPDBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Duration) BackoffStrategy {
+	retryErrs := map[error]struct{}{
+		berrors.ErrRestoreTotalKVMismatch: {},
+		io.EOF:                            {},
+	}
+	grpcRetryCodes := map[codes.Code]struct{}{
+		codes.Canceled:          {},
+		codes.DeadlineExceeded:  {},
+		codes.NotFound:          {},
+		codes.AlreadyExists:     {},
+		codes.PermissionDenied:  {},
+		codes.ResourceExhausted: {},
+		codes.Aborted:           {},
+		codes.OutOfRange:        {},
+		codes.Unavailable:       {},
+		codes.DataLoss:          {},
+		codes.Unknown:           {},
+	}
+	nonRetryErrs := map[error]struct{}{
+		context.Canceled:         {},
+		context.DeadlineExceeded: {},
+		sql.ErrNoRows:            {},
+	}
+
+	isRetryErrFunc := buildIsRetryErrFunc(retryErrs, grpcRetryCodes)
+	isNonRetryErrFunc := buildIsNonRetryErrFunc(nonRetryErrs)
+
+	return NewBackoffStrategy(
+		WithRemainingAttempts(maxRetry),
+		WithDelayTime(delayTime),
+		WithMaxDelayTime(maxDelayTime),
+		WithErrorContext(NewZeroRetryContext("connect PD")),
+		WithRetryErrorFunc(isRetryErrFunc),
+		WithNonRetryErrorFunc(isNonRetryErrFunc),
+	)
+}
+
+func NewAggressivePDBackoffStrategy() BackoffStrategy {
+	return NewPDBackoffStrategy(resetTSRetryTime, resetTSWaitInterval, resetTSMaxWaitInterval)
+}
+
+func NewConservativePDBackoffStrategy() BackoffStrategy {
+	return NewPDBackoffStrategy(resetTSRetryTimeExt, resetTSWaitIntervalExt, resetTSMaxWaitIntervalExt)
+}
+
+func NewDiskCheckBackoffStrategy() BackoffStrategy {
+	retryErrs := map[error]struct{}{
+		berrors.ErrPDInvalidResponse: {},
+		berrors.ErrKVDiskFull:        {},
+	}
+	grpcRetryCodes := map[codes.Code]struct{}{}
+
+	isRetryErrFunc := buildIsRetryErrFunc(retryErrs, grpcRetryCodes)
+
+	return NewBackoffStrategy(
+		WithRemainingAttempts(resetTSRetryTime),
+		WithDelayTime(resetTSWaitInterval),
+		WithErrorContext(NewZeroRetryContext("disk check")),
+		WithRetryErrorFunc(isRetryErrFunc),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewRecoveryBackoffStrategy(isRetryErrFunc func(error) bool) BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(recoveryMaxAttempts),
+		WithDelayTime(recoveryDelayTime),
+		WithErrorContext(NewZeroRetryContext("recovery")),
+		WithRetryErrorFunc(isRetryErrFunc),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewFlashBackBackoffStrategy() BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(FlashbackRetryTime),
+		WithDelayTime(FlashbackWaitInterval),
+		WithErrorContext(NewZeroRetryContext("flashback")),
+		WithRetryErrorFunc(alwaysTrueFunc()),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewChecksumBackoffStrategy() BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(ChecksumRetryTime),
+		WithDelayTime(ChecksumWaitInterval),
+		WithErrorContext(NewZeroRetryContext("checksum")),
+		WithRetryErrorFunc(alwaysTrueFunc()),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewRawClientBackoffStrategy() BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(rawClientMaxAttempts),
+		WithDelayTime(rawClientDelayTime),
+		WithMaxDelayTime(rawClientMaxDelayTime),
+		WithErrorContext(NewZeroRetryContext("raw client")),
+		WithRetryErrorFunc(alwaysTrueFunc()),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func (bo *backoffStrategyImpl) NextBackoff(err error) time.Duration {
+>>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
 	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
