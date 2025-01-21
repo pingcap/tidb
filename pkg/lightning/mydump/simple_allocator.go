@@ -26,7 +26,7 @@ const (
 )
 
 // This value will be modifed in test
-var alignSize = 64 << 10
+var alignSize = 16 << 10
 
 func simpleGetAllocationSize(size int) int {
 	return roundUp(size+metaSize, alignSize) * 2
@@ -50,7 +50,6 @@ func readInt(buf []byte) int {
 }
 
 type simpleAllocator struct {
-	freeBuf   map[int]int
 	buf       []byte
 	base      int
 	numAlloc  int
@@ -129,7 +128,7 @@ func (sa *simpleAllocator) allocate(size int) []byte {
 		if offset+blkSize >= len(sa.buf) {
 			panic("Error blk size")
 		}
-		if blkSize > allocSize && blkSize-allocSize < minRemain {
+		if blkSize >= allocSize && blkSize-allocSize < minRemain {
 			bestOffset = offset
 			minRemain = blkSize - allocSize
 			if minRemain == 0 {
@@ -184,10 +183,6 @@ func (sa *simpleAllocator) allocated() int64 {
 	return int64(sa.numAlloc)
 }
 
-func (sa *simpleAllocator) freeAll() {
-	sa.reset()
-}
-
 func (sa *simpleAllocator) sanityCheck() {
 	if !intest.InTest {
 		return
@@ -205,7 +200,6 @@ func (sa *simpleAllocator) sanityCheck() {
 }
 
 func (sa *simpleAllocator) reset() {
-	sa.freeBuf = make(map[int]int, 32)
 	sa.alloc = 0
 
 	// Add dummy head and tail

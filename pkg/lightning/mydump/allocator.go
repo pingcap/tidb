@@ -71,11 +71,10 @@ func GetArenaSize() int {
 
 // arena is the interface of single allocator
 type arena interface {
-	allocate(size int) []byte
-	free(bs []byte)
+	allocate(int) []byte
+	free([]byte)
 	allocated() int64
 	reset()
-	freeAll()
 }
 
 type globalArenaPool struct {
@@ -137,7 +136,6 @@ func (ga *globalArenaPool) put(a arena) {
 
 	// discard it if necessary
 	if ga.allocated > maxArenaCount {
-		a.freeAll()
 		a.reset()
 		ga.adjustGCPercent()
 		return
@@ -153,7 +151,6 @@ func (ga *globalArenaPool) free() {
 	ga.allocated = 0
 	for len(ga.arenas) > 0 {
 		a := <-ga.arenas
-		a.freeAll()
 		a.reset()
 	}
 	ga.adjustGCPercent()
@@ -249,7 +246,6 @@ func (alloc *defaultAllocator) Close() {
 	// If global pool is initialized, return allocated arena to the pool.
 	if globalPool != nil {
 		for _, a := range alloc.arenas {
-			a.freeAll()
 			a.reset()
 			globalPool.put(a)
 		}
