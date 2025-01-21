@@ -709,7 +709,8 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
-// The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
+// The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
+// The 2nd return value indicates whether the "better path" is missing statistics or not.
 func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
@@ -754,7 +755,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	if (lhsPseudo != rhsPseudo || ((lhsPseudo || rhsPseudo) && !tablePseudo)) && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
@@ -1209,7 +1210,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			currentMissingStats := false
 			result, currentMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
 			if currentMissingStats {
-				idxMissingStats = true
+				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {
 				pruned = true
