@@ -31,7 +31,7 @@ type XFDeCorrelateApply struct {
 	*rule.BaseRule
 }
 
-// NewXFDeCorrelateApply creates a new JoinToApply rule.
+// NewXFDeCorrelateApply creates a new XFDeCorrelateApply rule.
 func NewXFDeCorrelateApply() *XFDeCorrelateApply {
 	pa := pattern.NewPattern(pattern.OperandApply, pattern.EngineTiDBOnly)
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly), pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly))
@@ -45,14 +45,15 @@ func (*XFDeCorrelateApply) Match(_ corebase.LogicalPlan) bool {
 	return true
 }
 
-// XForm implements thr Rule interface.
+// XForm implements the Rule interface.
 func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, error) {
-	apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
-	outerPlanGE := applyGE.Children()[0]
-	innerPlanGE := applyGE.Children()[1]
+	children := applyGE.Children()
+	outerPlanGE := children[0]
+	innerPlanGE := children[1]
 	// don't modify the apply op's CorCols in-place, which will change the hash64, apply should be re-inserted into the group otherwise.
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlanGE.GetWrappedLogicalPlan(), outerPlanGE.GetWrappedLogicalPlan().Schema())
 	if len(corCols) == 0 {
+		apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
 		// If the inner plan is non-correlated, this apply will be simplified to join.
 		clonedJoin := apply.LogicalJoin
 		// Reset4Cascades is to reset the plan for cascades.
