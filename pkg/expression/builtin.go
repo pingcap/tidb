@@ -431,7 +431,7 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
-	b.args = make([]Expression, 0, len(b.args))
+	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
