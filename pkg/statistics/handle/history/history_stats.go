@@ -134,6 +134,7 @@ func RecordHistoricalStatsMeta(
 		}
 		return true
 	}, "tableIDs should not contain 0")
+	intest.Assert(len(tableIDs) > 0, "tableIDs should not be empty")
 	if len(tableIDs) == 0 {
 		return nil
 	}
