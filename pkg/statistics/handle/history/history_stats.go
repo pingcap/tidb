@@ -126,6 +126,14 @@ func RecordHistoricalStatsMeta(
 	tableIDs ...int64,
 ) error {
 	intest.Assert(version != 0, "version should not be zero")
+	intest.AssertFunc(func() bool {
+		for _, id := range tableIDs {
+			if id == 0 {
+				return false
+			}
+		}
+		return true
+	}, "tableIDs should not contain 0")
 	if len(tableIDs) == 0 {
 		return nil
 	}
