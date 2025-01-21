@@ -253,8 +253,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
-			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
 
@@ -271,9 +271,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tbl, _, _ := is.FindTableByPartitionID(update.TableID)
-		if tbl != nil { // It's a partition table.
-			tableID := tbl.Meta().ID
+		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false
 

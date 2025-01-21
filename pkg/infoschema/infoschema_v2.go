@@ -1140,6 +1140,31 @@ func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (
 	return is.SchemaNameAndTableNameByID(pi.tableID)
 }
 
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	var pi partitionItem
+	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
+			}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
+			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return
+	}
+	return pi.tableID, true
+}
+
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	var ok bool
 	var pi partitionItem

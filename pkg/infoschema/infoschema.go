@@ -434,6 +434,15 @@ func (is *infoSchema) SchemaNameAndTableNameByPartitionID(partitionID int64) (sc
 	return db.Name, tbl.Meta().Name, true
 }
 
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoSchema) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	tbl, _, _ := is.FindTableByPartitionID(partitionID)
+	if tbl == nil {
+		return
+	}
+	return tbl.Meta().ID, true
+}
+
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
 func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
