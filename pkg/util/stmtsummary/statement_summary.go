@@ -1118,10 +1118,10 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 
 // StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
 type StmtNetworkTrafficSummary struct {
-	UnpackedBytesSentKVTotal              int64 `json:"unpacked_bytes_send_kv_total"`
-	UnpackedBytesReceivedKVTotal          int64 `json:"unpacked_bytes_received_kv_total"`
-	UnpackedBytesSentKVCrossZone          int64 `json:"unpacked_bytes_send_kv_cross_zone"`
-	UnpackedBytesReceivedKVCrossZone      int64 `json:"unpacked_bytes_received_kv_cross_zone"`
+	UnpackedBytesSentTiKVTotal            int64 `json:"unpacked_bytes_send_tikv_total"`
+	UnpackedBytesReceivedTiKVTotal        int64 `json:"unpacked_bytes_received_tikv_total"`
+	UnpackedBytesSentTiKVCrossZone        int64 `json:"unpacked_bytes_send_tikv_cross_zone"`
+	UnpackedBytesReceivedTiKVCrossZone    int64 `json:"unpacked_bytes_received_tikv_cross_zone"`
 	UnpackedBytesSentTiFlashTotal         int64 `json:"unpacked_bytes_send_tiflash_total"`
 	UnpackedBytesReceivedTiFlashTotal     int64 `json:"unpacked_bytes_received_tiflash_total"`
 	UnpackedBytesSentTiFlashCrossZone     int64 `json:"unpacked_bytes_send_tiflash_cross_zone"`
@@ -1133,10 +1133,10 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 	if other == nil {
 		return
 	}
-	s.UnpackedBytesSentKVTotal += other.UnpackedBytesSentKVTotal
-	s.UnpackedBytesReceivedKVTotal += other.UnpackedBytesReceivedKVTotal
-	s.UnpackedBytesSentKVCrossZone += other.UnpackedBytesSentKVCrossZone
-	s.UnpackedBytesReceivedKVCrossZone += other.UnpackedBytesReceivedKVCrossZone
+	s.UnpackedBytesSentTiKVTotal += other.UnpackedBytesSentTiKVTotal
+	s.UnpackedBytesReceivedTiKVTotal += other.UnpackedBytesReceivedTiKVTotal
+	s.UnpackedBytesSentTiKVCrossZone += other.UnpackedBytesSentTiKVCrossZone
+	s.UnpackedBytesReceivedTiKVCrossZone += other.UnpackedBytesReceivedTiKVCrossZone
 	s.UnpackedBytesSentTiFlashTotal += other.UnpackedBytesSentTiFlashTotal
 	s.UnpackedBytesReceivedTiFlashTotal += other.UnpackedBytesReceivedTiFlashTotal
 	s.UnpackedBytesSentTiFlashCrossZone += other.UnpackedBytesSentTiFlashCrossZone
@@ -1146,10 +1146,10 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 // Add add a new sample value to the ru summary record.
 func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
 	if info != nil {
-		s.UnpackedBytesSentKVTotal += info.UnpackedBytesSentKVTotal
-		s.UnpackedBytesReceivedKVTotal += info.UnpackedBytesReceivedKVTotal
-		s.UnpackedBytesSentKVCrossZone += info.UnpackedBytesSentKVCrossZone
-		s.UnpackedBytesReceivedKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
 		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
 		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
 		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone

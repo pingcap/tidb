@@ -363,10 +363,10 @@ const (
 	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
 	ResourceGroupName                          = "RESOURCE_GROUP"
-	SumUnpackedBytesSentKVTotalStr             = "SUM_UNPACKED_BYTES_SENT_KV_TOTAL"
-	SumUnpackedBytesReceivedKVTotalStr         = "SUM_UNPACKED_BYTES_RECEIVED_KV_TOTAL"
-	SumUnpackedBytesSentKVCrossZoneStr         = "SUM_UNPACKED_BYTES_SENT_KV_CROSS_ZONE"
-	SumUnpackedBytesReceivedKVCrossZoneStr     = "SUM_UNPACKED_BYTES_RECEIVED_KV_CROSS_ZONE"
+	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
+	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
+	SumUnpackedBytesSentTiKVCrossZoneStr       = "SUM_UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE"
+	SumUnpackedBytesReceivedTiKVCrossZoneStr   = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE"
 	SumUnpackedBytesSentTiFlashTotalStr        = "SUM_UNPACKED_BYTES_SENT_TIFLASH_TOTAL"
 	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
@@ -418,10 +418,10 @@ const (
 	RequestUnitReadStr                      = "REQUEST_UNIT_READ"
 	RequestUnitWriteStr                     = "REQUEST_UNIT_WRITE"
 	QueuedRcTimeStr                         = "QUEUED_RC_TIME"
-	UnpackedBytesSentKVTotalStr             = "UNPACKED_BYTES_SENT_KV_TOTAL"
-	UnpackedBytesReceivedKVTotalStr         = "UNPACKED_BYTES_RECEIVED_KV_TOTAL"
-	UnpackedBytesSentKVCrossZoneStr         = "UNPACKED_BYTES_SENT_KV_CROSS_ZONE"
-	UnpackedBytesReceivedKVCrossZoneStr     = "UNPACKED_BYTES_RECEIVED_KV_CROSS_ZONE"
+	UnpackedBytesSentTiKVTotalStr           = "UNPACKED_BYTES_SENT_TIKV_TOTAL"
+	UnpackedBytesReceivedTiKVTotalStr       = "UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
+	UnpackedBytesSentTiKVCrossZoneStr       = "UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE"
+	UnpackedBytesReceivedTiKVCrossZoneStr   = "UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE"
 	UnpackedBytesSentTiFlashTotalStr        = "UNPACKED_BYTES_SENT_TIFLASH_TOTAL"
 	UnpackedBytesReceivedTiFlashTotalStr    = "UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	UnpackedBytesSentTiFlashCrossZoneStr    = "UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
@@ -904,17 +904,17 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.lastPlanCacheUnqualified
 	},
-	SumUnpackedBytesSentKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesSentKVTotal
+	SumUnpackedBytesSentTiKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesSentTiKVTotal
 	},
-	SumUnpackedBytesReceivedKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesReceivedKVTotal
+	SumUnpackedBytesReceivedTiKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesReceivedTiKVTotal
 	},
-	SumUnpackedBytesSentKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesSentKVCrossZone
+	SumUnpackedBytesSentTiKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesSentTiKVCrossZone
 	},
-	SumUnpackedBytesReceivedKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesReceivedKVCrossZone
+	SumUnpackedBytesReceivedTiKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesReceivedTiKVCrossZone
 	},
 	SumUnpackedBytesSentTiFlashTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.UnpackedBytesSentTiFlashTotal
@@ -928,17 +928,17 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.UnpackedBytesReceivedTiFlashCrossZone
 	},
-	UnpackedBytesSentKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesSentKVTotal
+	UnpackedBytesSentTiKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesSentTiKVTotal
 	},
-	UnpackedBytesReceivedKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesReceivedKVTotal
+	UnpackedBytesReceivedTiKVTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesReceivedTiKVTotal
 	},
-	UnpackedBytesSentKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesSentKVCrossZone
+	UnpackedBytesSentTiKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesSentTiKVCrossZone
 	},
-	UnpackedBytesReceivedKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.UnpackedBytesReceivedKVCrossZone
+	UnpackedBytesReceivedTiKVCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.UnpackedBytesReceivedTiKVCrossZone
 	},
 	UnpackedBytesSentTiFlashTotalStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.UnpackedBytesSentTiFlashTotal

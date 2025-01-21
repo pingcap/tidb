@@ -139,10 +139,10 @@ const (
 	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
 	ResourceGroupName                          = "RESOURCE_GROUP"
-	SumUnpackedBytesSentKVTotalStr             = "SUM_UNPACKED_BYTES_SENT_KV_TOTAL"
-	SumUnpackedBytesReceivedKVTotalStr         = "SUM_UNPACKED_BYTES_RECEIVED_KV_TOTAL"
-	SumUnpackedBytesSentKVCrossZoneStr         = "SUM_UNPACKED_BYTES_SENT_KV_CROSS_ZONE"
-	SumUnpackedBytesReceivedKVCrossZoneStr     = "SUM_UNPACKED_BYTES_RECEIVED_KV_CROSS_ZONE"
+	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
+	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
+	SumUnpackedBytesSentTiKVCrossZoneStr       = "SUM_UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE"
+	SumUnpackedBytesReceivedTiKVCrossZoneStr   = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE"
 	SumUnpackedBytesSentTiFlashTotalStr        = "SUM_UNPACKED_BYTES_SENT_TIFLASH_TOTAL"
 	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
@@ -506,17 +506,17 @@ var columnFactoryMap = map[string]columnFactory{
 	PlanCacheUnqualifiedLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheUnqualifiedLastReason
 	},
-	SumUnpackedBytesSentKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentKVTotal
+	SumUnpackedBytesSentTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiKVTotal
 	},
-	SumUnpackedBytesReceivedKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedKVTotal
+	SumUnpackedBytesReceivedTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiKVTotal
 	},
-	SumUnpackedBytesSentKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentKVCrossZone
+	SumUnpackedBytesSentTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiKVCrossZone
 	},
-	SumUnpackedBytesReceivedKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedKVCrossZone
+	SumUnpackedBytesReceivedTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiKVCrossZone
 	},
 	SumUnpackedBytesSentTiFlashTotalStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.UnpackedBytesSentTiFlashTotal
