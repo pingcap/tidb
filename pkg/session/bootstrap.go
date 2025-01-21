@@ -3573,7 +3573,6 @@ func upgradeToEEVer11(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "ALTER TABLE `mysql`.`login_history` DROP INDEX IF EXISTS idx_session_id")
 	mustExecute(s, "ALTER TABLE `mysql`.`login_history` DROP INDEX IF EXISTS idx_user")
 	mustExecute(s, "ALTER TABLE `mysql`.`login_history` ADD INDEX IF NOT EXISTS idx_user(User, User_host, Result, Time)")
-
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
