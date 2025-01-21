@@ -12,8 +12,13 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
+<<<<<<< HEAD
         "//pkg/parser/ast",
         "//pkg/parser/model",
+=======
+        "//pkg/meta/model",
+        "//pkg/metrics",
+>>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739))
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
