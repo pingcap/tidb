@@ -1482,24 +1482,8 @@ func (do *Domain) Init(
 		return err
 	}
 
-	startReloadTime := time.Now()
 	// step 3: domain reload the infoSchema.
-	err = do.Reload()
-	if err != nil {
-		return err
-	}
-
-	sub := time.Since(startReloadTime)
-	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
-	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
-	if sub > (do.schemaLease / 2) {
-		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
-		err = do.Reload()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return do.Reload()
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
