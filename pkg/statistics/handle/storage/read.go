@@ -533,6 +533,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	// Check table has no index/column stats.
 	if len(rows) == 0 {
+		table.ResetToEmpty()
 		return table, nil
 	}
 	for _, row := range rows {

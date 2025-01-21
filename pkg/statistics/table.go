@@ -168,6 +168,11 @@ func (m *ColAndIdxExistenceMap) ColNum() int {
 	return len(m.colAnalyzed)
 }
 
+// IdxNum returns the number of indices in the map.
+func (m *ColAndIdxExistenceMap) IdxNum() int {
+	return len(m.idxAnalyzed)
+}
+
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
@@ -356,6 +361,16 @@ func (t *Table) DelCol(id int64) {
 func (t *Table) DelIdx(id int64) {
 	delete(t.indices, id)
 	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
+}
+
+// ResetToEmpty reset the stats of the table to no stats.
+// The clean up is called when we find the `mysql.stats_histograms` has no record of this table.
+func (t *Table) ResetToEmpty() {
+	t.columns = make(map[int64]*Column, 0)
+	t.indices = make(map[int64]*Index, 0)
+	t.ColAndIdxExistenceMap = NewColAndIndexExistenceMapWithoutSize()
+	t.LastAnalyzeVersion = 0
+	t.StatsVer = Version0
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
