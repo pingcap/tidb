@@ -946,7 +946,7 @@ func TestTiFlashBatchKill(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/FastFailCheckTiFlashPendingTables"))
 	}()
 	timeOut, err := execWithTimeout(t, tk, time.Second*2000, "alter database tiflash_ddl_limit set tiflash replica 1")
-	require.Error(t, err, "[executor:1317]Query execution was interrupted")
+	require.ErrorContains(t, err, "[executor:1317]Query execution was interrupted")
 	require.False(t, timeOut)
 	wg.Wait()
 }

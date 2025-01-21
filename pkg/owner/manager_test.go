@@ -225,7 +225,7 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	// test del owner key when SetOwnerOpValue
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("delOwnerKeyAndNotOwner")`))
 	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpNone)
-	require.Error(t, err, "put owner key failed, cmp is false")
+	require.ErrorContains(t, err, "put owner key failed, cmp is false")
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key")
 	require.NotNil(t, err)
 	require.Equal(t, concurrency.ErrElectionNoLeader.Error(), err.Error())
@@ -241,7 +241,7 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	// And then the manager campaigns the owner again, and become the owner.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("onlyDelOwnerKey")`))
 	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
-	require.Error(t, err, "put owner key failed, cmp is false")
+	require.ErrorContains(t, err, "put owner key failed, cmp is false")
 	isOwner = checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key")
