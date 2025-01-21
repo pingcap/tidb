@@ -146,7 +146,7 @@ func RecordHistoricalStatsMeta(
 	defer func() {
 		_, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
 		if err != nil {
-			statslogutil.StatsLogger().Error("failed to reset prepared statement cache", zap.Error(errors.Trace(err)))
+			statslogutil.StatsLogger().Error("failed to disable prepared statement cache", zap.Error(errors.Trace(err)))
 		}
 	}()
 	prepareSelectForUpdate := `
