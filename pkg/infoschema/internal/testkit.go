@@ -97,10 +97,10 @@ select * from t_slim;
 # Unpacked_bytes_received_kv_total: 3000
 # Unpacked_bytes_sent_kv_cross_zone: 10000
 # Unpacked_bytes_received_kv_cross_zone: 1000
-# Unpacked_bytes_sent_mpp_total: 500000
-# Unpacked_bytes_received_mpp_total: 500005
-# Unpacked_bytes_sent_mpp_cross_zone: 300000
-# Unpacked_bytes_received_mpp_cross_zone: 300005
+# Unpacked_bytes_sent_tiflash_total: 500000
+# Unpacked_bytes_received_tiflash_total: 500005
+# Unpacked_bytes_sent_tiflash_cross_zone: 300000
+# Unpacked_bytes_received_tiflash_cross_zone: 300005
 # Write_sql_response_total: 0
 # Succ: true
 # Resource_group: rg1

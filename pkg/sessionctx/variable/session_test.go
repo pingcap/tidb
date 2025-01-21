@@ -256,10 +256,10 @@ func TestSlowLogFormat(t *testing.T) {
 # Unpacked_bytes_received_kv_total: 0
 # Unpacked_bytes_sent_kv_cross_zone: 0
 # Unpacked_bytes_received_kv_cross_zone: 0
-# Unpacked_bytes_sent_mpp_total: 0
-# Unpacked_bytes_received_mpp_total: 0
-# Unpacked_bytes_sent_mpp_cross_zone: 0
-# Unpacked_bytes_received_mpp_cross_zone: 0
+# Unpacked_bytes_sent_tiflash_total: 0
+# Unpacked_bytes_received_tiflash_total: 0
+# Unpacked_bytes_sent_tiflash_cross_zone: 0
+# Unpacked_bytes_received_tiflash_cross_zone: 0
 # Write_sql_response_total: 1
 # Result_rows: 12345
 # Succ: true
