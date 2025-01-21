@@ -200,7 +200,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsUpdateVersion >= latestHistUpdateVersion {
-			tbl = oldTbl.Copy()
+			tbl = oldTbl.ShallowCopy()
 			// count and modify count is updated in finalProcess
 			goto finalProcess
 		}
