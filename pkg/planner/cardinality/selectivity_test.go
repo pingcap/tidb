@@ -337,8 +337,56 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblnew.RealtimeCount, statsTblnew.ModifyCount, false)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Truef(t, count < 41, "expected: between 10 to 40, got: %v", count)
 	require.Truef(t, count > 9, "expected: between 10 to 40, got: %v", count)
+=======
+	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
+}
+
+func TestNewIndexWithoutStats(t *testing.T) {
+	// Test where there exists multple indexes - but (at least) one index does not have statistics
+	// Test 1) Prioritizing an index with stats vs one without - when both have the same number of equal predicates,
+	// Test 2) Prioritize the index with more equal predicates regardless
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index idxa(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t values (1, 1, 1)")
+	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idxb on t(b)")
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxa is chosen because it has statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxa(a)")
+	testKit.MustExec("analyze table t")
+	// idxa should still win after statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxa(a)")
+	testKit.MustExec("create index idxab on t(a, b)")
+	// New index idxab should win due to having the most matching equal predicates - regardless of no statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+>>>>>>> aabd3ac7c45 (planner: Ensure index without stats survives for skyling pruning (#58729))
+}
+
+func TestIssue57948(t *testing.T) {
+	// Similar to test (above) TestNewIndexWithoutStats
+	// Test when only 1 index exists - prioritize that index if it is missing statistics
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t values (1, 1, 1)")
+	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idxb on t(b)")
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen because it has statistics
+	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
