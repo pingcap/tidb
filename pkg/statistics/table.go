@@ -80,12 +80,6 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this table again.
 	// Stats' sync load/async load should not change this field since they are not table-level update.
 	LastStatsUpdateVersion uint64
-	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
-	// It is the schema version of the corresponding table. It is used to skip redundant
-	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
-	// and the schema of the table does not change, we don't need to load the stats for this
-	// table again.
-	TblInfoUpdateTS uint64
 
 	IsPkIsHandle bool
 }
@@ -630,7 +624,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:               newHistColl,
 		Version:                t.Version,
-		TblInfoUpdateTS:        t.TblInfoUpdateTS,
 		LastAnalyzeVersion:     t.LastAnalyzeVersion,
 		LastStatsUpdateVersion: t.LastStatsUpdateVersion,
 	}
@@ -666,7 +659,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:               newHistColl,
 		Version:                t.Version,
-		TblInfoUpdateTS:        t.TblInfoUpdateTS,
 		ExtendedStats:          t.ExtendedStats,
 		ColAndIdxExistenceMap:  t.ColAndIdxExistenceMap,
 		LastAnalyzeVersion:     t.LastAnalyzeVersion,

@@ -182,7 +182,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			return ctx.Err()
 		}
 
-		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
+		_, _, ok := s.statsHandle.SchemaNameAndTableNameByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug(
 				"unknown physical ID in stats meta table, maybe it has been dropped",
@@ -191,12 +191,9 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
-		tableInfo := table.Meta()
 		// If the table is not updated, we can skip it.
-
 		oldTbl, ok := s.Get(physicalID)
-		if ok && oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if ok && oldTbl.Version >= version {
 			continue
 		}
 		var tbl *statistics.Table
@@ -207,20 +204,24 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			// count and modify count is updated in finalProcess
 			goto finalProcess
 		}
-		tbl, err = s.statsHandle.TableStatsFromStorage(
-			tableInfo,
-			physicalID,
-			false,
-			0,
-		)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"error occurred when read table stats",
-				zap.String("table", tableInfo.Name.O),
-				zap.Error(err),
+		{
+			table, _ := s.statsHandle.TableInfoByID(is, physicalID)
+			tableInfo := table.Meta()
+			tbl, err = s.statsHandle.TableStatsFromStorage(
+				tableInfo,
+				physicalID,
+				false,
+				0,
 			)
-			continue
+			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"error occurred when read table stats",
+					zap.String("table", tableInfo.Name.O),
+					zap.Error(err),
+				)
+				continue
+			}
 		}
 		if tbl == nil {
 			tblToUpdateOrDelete.addToDelete(physicalID)
@@ -230,7 +231,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
-		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		// It only occurs in the following situations:
 		// 1. The table has already been analyzed,
 		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
