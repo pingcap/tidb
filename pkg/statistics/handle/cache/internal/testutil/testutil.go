@@ -93,13 +93,3 @@ func MockTableAppendIndex(t *statistics.Table) {
 		CMSketch: statistics.NewCMSketch(1, 1),
 	})
 }
-
-// MockTableRemoveColumn removes the last column of the table.
-func MockTableRemoveColumn(t *statistics.Table) {
-	t.DelCol(int64(t.ColNum()))
-}
-
-// MockTableRemoveIndex removes the last index of the table.
-func MockTableRemoveIndex(t *statistics.Table) {
-	t.DelIdx(int64(t.IdxNum()))
-}
