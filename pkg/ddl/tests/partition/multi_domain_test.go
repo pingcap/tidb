@@ -1717,7 +1717,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	//delete a row from updated in previous state - up
 	//delete a row from updated in next state - un
 
-	currId := 1
+	currID := 1
 	const (
 		Insert     = 0
 		Update     = 1
@@ -1740,53 +1740,53 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	// Skip first state, since it is none, i.e. before the DDL started...
 	for s := states - 1; s > 0; s-- {
 		// Check operation against 'before DDL'
-		IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
-		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
-		currId++
-		IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
-		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
-		currId++
-		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
-		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currId)
-		currId++
+		IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
 		for _, from := range []int{Previous, Current} {
 			// Check operation against previous and current state
-			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
-			IDs[s][from][Update] = append(IDs[s][from][Update], currId)
-			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
-			currId++
-			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currId)
-			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
-			currId++
-			IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
-			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
-			currId++
-			IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
-			IDs[s][from][Insert] = append(IDs[s][from][Insert], currId)
-			currId++
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+			IDs[s][from][Update] = append(IDs[s][from][Update], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
 		}
 		// Check against Next state, use 'Previous' as current and 'Current' as Next.
-		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currId)
-		IDs[s][Current][Update] = append(IDs[s][Current][Update], currId)
-		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
-		currId++
-		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currId)
-		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
-		currId++
-		IDs[s][Previous][Update] = append(IDs[s][Previous][Update], currId)
-		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
-		currId++
-		IDs[s][Previous][InsertODKU] = append(IDs[s][Previous][InsertODKU], currId)
-		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
-		currId++
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currID)
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][Update] = append(IDs[s][Previous][Update], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][InsertODKU] = append(IDs[s][Previous][InsertODKU], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
 
 		// Normal inserts to keep
-		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currId)
-		currId++
-		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currId)
-		currId++
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+		currID++
 	}
-	require.Equal(t, 103, currId)
+	require.Equal(t, 103, currID)
 
 	// Run like this:
 	// prepare in previous state + run in Current
@@ -1851,11 +1851,11 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 					case Insert:
 						sql = fmt.Sprintf(`insert into t values (%d,%d,%d,'Insert s:%d f:%d')`, id, id, id, state, from)
 					case Update:
-						sql = fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currId, state, from, id)
+						sql = fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currID, state, from, id)
 					case Delete:
 						sql = fmt.Sprintf(`delete from t where a = %d /* s:%d f:%d */`, id, state, from)
 					case InsertODKU:
-						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s:%d f:%d')`, id, id, id, state, from, id+currId, state, from)
+						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s:%d f:%d')`, id, id, id, state, from, id+currID, state, from)
 					default:
 						require.Fail(t, "unknown op", "op: %d", op)
 					}
