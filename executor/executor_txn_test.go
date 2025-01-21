@@ -24,18 +24,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:executor/executor_txn_test.go
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tipb/go-binlog"
-=======
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/txn_test.go
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -853,59 +847,6 @@ func TestColumnNotMatchError(t *testing.T) {
 	tk.MustExec("delete from t where id=1")
 	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 }
-<<<<<<< HEAD:executor/executor_txn_test.go
-=======
-
-func TestSavepointWithForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table parent (id int primary key)")
-	tk.MustExec("create table child (id int primary key, parent_id int, foreign key (parent_id) references parent(id))")
-
-	tk.MustExec("begin")
-	// rollback insertion to child table
-	tk.MustExec("savepoint sp1")
-	tk.MustExec("insert into parent values (1)")
-	tk.MustExec("savepoint sp2")
-	tk.MustExec("insert into child values (1, 1)")
-	tk.MustExec("rollback to sp2")
-	tk.MustQuery("select * from child").Check(testkit.Rows())
-	// rollback insertion to parent table
-	tk.MustExec("rollback to sp1")
-	require.Contains(t, tk.ExecToErr("insert into child values (1, 1)").Error(), "a foreign key constraint fails")
-	tk.MustQuery("select * from parent").Check(testkit.Rows())
-	tk.MustExec("rollback")
-
-	// A known limitation: the lock of the parent table is not released after rollback to savepoint.
-	tk.MustExec("insert into parent values (1)")
-
-	tk.MustExec("begin")
-	tk.MustExec("savepoint sp1")
-	tk.MustExec("insert into child values (1, 1)")
-	// Now, the row in parent table is locked
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var updateTime, beforeCommitTime time.Time
-	go func() {
-		defer wg.Done()
-
-		// This SQL will be blocked until the transaction is committed. It's a known limitation that the pessimistic lock
-		// is not released after rollback to savepoint. If the lock can be released after rollback in the future, this test
-		// can be modified.
-		tk2.MustExec("update parent set id = 2 where id = 1")
-		updateTime = time.Now()
-	}()
-	tk.MustExec("rollback to sp1")
-	time.Sleep(500 * time.Millisecond)
-	beforeCommitTime = time.Now()
-	tk.MustExec("commit")
-
-	wg.Wait()
-	require.Greater(t, updateTime, beforeCommitTime)
-}
 
 func TestInnodbLockWaitTimeout(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -920,9 +861,9 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	tk.MustExec("update t set k= id, c = id")
 	tk.MustExec("split table t by (0), (50), (100);")
 	tk.MustExec("split table t index idx by (0), (50), (100);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"))
 	}()
 	tk.MustExec("set @@innodb_lock_wait_timeout=1")
 	isolations := []string{"REPEATABLE READ", "READ COMMITTED"}
@@ -943,4 +884,3 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk.MustExec("commit")
 	}
 }
->>>>>>> 38187e5b1d6 (txn: fix issue innodb_lock_wait_timeout doesn't work in some case (#56847)):pkg/executor/test/txn/txn_test.go

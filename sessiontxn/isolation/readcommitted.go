@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
