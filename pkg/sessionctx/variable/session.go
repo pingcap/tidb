@@ -3275,14 +3275,14 @@ const (
 	SlowLogPDTotal = "PD_total"
 	// SlowLogBackoffTotal is the total time doing backoff.
 	SlowLogBackoffTotal = "Backoff_total"
-	// SlowLogUnpackedBytesSentKVTotal is the total bytes sent by tikv.
-	SlowLogUnpackedBytesSentKVTotal = "Unpacked_bytes_sent_kv_total"
-	// SlowLogUnpackedBytesReceivedKVTotal is the total bytes received by tikv.
-	SlowLogUnpackedBytesReceivedKVTotal = "Unpacked_bytes_received_kv_total"
-	// SlowLogUnpackedBytesSentKVCrossZone is the cross zone bytes sent by tikv.
-	SlowLogUnpackedBytesSentKVCrossZone = "Unpacked_bytes_sent_kv_cross_zone"
-	// SlowLogUnpackedBytesReceivedKVCrossZone is the cross zone bytes received by tikv.
-	SlowLogUnpackedBytesReceivedKVCrossZone = "Unpacked_bytes_received_kv_cross_zone"
+	// SlowLogUnpackedBytesSentTiKVTotal is the total bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVTotal = "Unpacked_bytes_sent_tikv_total"
+	// SlowLogUnpackedBytesReceivedTiKVTotal is the total bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVTotal = "Unpacked_bytes_received_tikv_total"
+	// SlowLogUnpackedBytesSentTiKVCrossZone is the cross zone bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVCrossZone = "Unpacked_bytes_sent_tikv_cross_zone"
+	// SlowLogUnpackedBytesReceivedTiKVCrossZone is the cross zone bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVCrossZone = "Unpacked_bytes_received_tikv_cross_zone"
 	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
 	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
 	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
@@ -3550,10 +3550,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVTotal, 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVTotal, 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVCrossZone, 10))
-	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
 	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPTotal, 10))
 	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedMPPTotal, 10))
 	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPCrossZone, 10))

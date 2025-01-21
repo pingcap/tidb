@@ -252,10 +252,10 @@ func TestSlowLogFormat(t *testing.T) {
 # KV_total: 10
 # PD_total: 11
 # Backoff_total: 12
-# Unpacked_bytes_sent_kv_total: 0
-# Unpacked_bytes_received_kv_total: 0
-# Unpacked_bytes_sent_kv_cross_zone: 0
-# Unpacked_bytes_received_kv_cross_zone: 0
+# Unpacked_bytes_sent_tikv_total: 0
+# Unpacked_bytes_received_tikv_total: 0
+# Unpacked_bytes_sent_tikv_cross_zone: 0
+# Unpacked_bytes_received_tikv_cross_zone: 0
 # Unpacked_bytes_sent_tiflash_total: 0
 # Unpacked_bytes_received_tiflash_total: 0
 # Unpacked_bytes_sent_tiflash_cross_zone: 0

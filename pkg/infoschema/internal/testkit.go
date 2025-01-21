@@ -93,10 +93,10 @@ select * from t_slim;
 # KV_total: 86.635049185
 # PD_total: 0.015486658
 # Backoff_total: 100.054
-# Unpacked_bytes_sent_kv_total: 30000
-# Unpacked_bytes_received_kv_total: 3000
-# Unpacked_bytes_sent_kv_cross_zone: 10000
-# Unpacked_bytes_received_kv_cross_zone: 1000
+# Unpacked_bytes_sent_tikv_total: 30000
+# Unpacked_bytes_received_tikv_total: 3000
+# Unpacked_bytes_sent_tikv_cross_zone: 10000
+# Unpacked_bytes_received_tikv_cross_zone: 1000
 # Unpacked_bytes_sent_tiflash_total: 500000
 # Unpacked_bytes_received_tiflash_total: 500005
 # Unpacked_bytes_sent_tiflash_cross_zone: 300000

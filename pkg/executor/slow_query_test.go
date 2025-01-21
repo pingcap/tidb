@@ -141,10 +141,10 @@ func TestParseSlowLogFile(t *testing.T) {
 # Disk_max: 65536
 # Plan_from_cache: true
 # Plan_from_binding: true
-# Unpacked_bytes_sent_kv_total: 30000
-# Unpacked_bytes_received_kv_total: 3000
-# Unpacked_bytes_sent_kv_cross_zone: 10000
-# Unpacked_bytes_received_kv_cross_zone: 1000
+# Unpacked_bytes_sent_tikv_total: 30000
+# Unpacked_bytes_received_tikv_total: 3000
+# Unpacked_bytes_sent_tikv_cross_zone: 10000
+# Unpacked_bytes_received_tikv_cross_zone: 1000
 # Unpacked_bytes_sent_tiflash_total: 500000
 # Unpacked_bytes_received_tiflash_total: 500005
 # Unpacked_bytes_sent_tiflash_cross_zone: 300000
