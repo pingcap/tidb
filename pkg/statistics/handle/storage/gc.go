@@ -68,9 +68,9 @@ func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
+func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
 	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return DeleteTableStatsFromKV(sctx, statsIDs)
+		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)
 }
 
@@ -136,7 +136,7 @@ func GCStats(
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err error) {
+func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -146,8 +146,19 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
-			return err
+		if soft {
+			// Soft delete is triggered by DROP STATS, we just reset the meta info of each column.
+			if _, err = util.Exec(sctx,
+				"update mysql.stats_histograms "+
+					"set distinct_count = 0, null_count = 0, tot_col_size = 0, modify_count = 0, version = %?,"+
+					"cm_sketch = null, stats_ver = 0, flag = 0, correlation = 0, last_analyze_pos = null where table_id = %?",
+				startTS, statsID); err != nil {
+				return
+			}
+		} else {
+			if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
+				return err
+			}
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
 			return err
@@ -287,7 +298,7 @@ func gcTableStats(sctx sessionctx.Context,
 			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
 			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("tableID", physicalID))
 			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}, false))
 			})
 		}
 		// len(rows) == 0 => The table's stats is empty.
