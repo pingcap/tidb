@@ -1493,7 +1493,7 @@ func (rc *LogClient) restoreMetaKvEntries(
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
 		})
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
+		if err := PutRawKvWithRetry(ctx, rc.rawKVClient, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
@@ -2052,4 +2052,14 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
+}
+
+func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key, value []byte, originTs uint64) error {
+	err := utils.WithRetry(ctx, func() error {
+		return client.Put(ctx, key, value, originTs)
+	}, utils.NewRawClientBackoffStrategy())
+	if err != nil {
+		return errors.Errorf("failed to put raw kv after retry")
+	}
+	return nil
 }
