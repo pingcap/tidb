@@ -202,16 +202,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		var tbl *statistics.Table
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
-		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsFullUpdateVersion >= latestHistUpdateVersion {
+		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsUpdateVersion >= latestHistUpdateVersion {
 			tbl = oldTbl.Copy()
-			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"error occurred when read table stats",
-					zap.String("table", tableInfo.Name.O),
-					zap.Error(err),
-				)
-				continue
-			}
 			// count and modify count is updated in finalProcess
 			goto finalProcess
 		}

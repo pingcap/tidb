@@ -87,11 +87,11 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			lastStatsFullUpdateVersion = max(lastStatsFullUpdateVersion, row.GetUint64(6))
 		}
 		tbl := &statistics.Table{
-			HistColl:                   newHistColl,
-			Version:                    row.GetUint64(0),
-			ColAndIdxExistenceMap:      statistics.NewColAndIndexExistenceMapWithoutSize(),
-			LastAnalyzeVersion:         lastAnalyzeVersion,
-			LastStatsFullUpdateVersion: lastStatsFullUpdateVersion,
+			HistColl:               newHistColl,
+			Version:                row.GetUint64(0),
+			ColAndIdxExistenceMap:  statistics.NewColAndIndexExistenceMapWithoutSize(),
+			LastAnalyzeVersion:     lastAnalyzeVersion,
+			LastStatsUpdateVersion: lastStatsFullUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -158,11 +158,11 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		} else {
 			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 		}
-		// The LastXXXVersion can be added by ALTER table so its value might be 0.
+		// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
 		if statsVer != statistics.Version0 {
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 		}
-		table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, row.GetUint64(4))
+		table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, row.GetUint64(4))
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -234,13 +234,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				StatsVer:   statsVer,
 				PhysicalID: tblID,
 			}
+			// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
 			if statsVer != statistics.Version0 {
 				// We first set the StatsLoadedStatus as AllEvicted. when completing to load bucket, we will set it as ALlLoad.
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
-			table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, version)
+			table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, version)
 
 			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
@@ -266,8 +266,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
 			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 				// We will also set int primary key's loaded status to evicted.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
@@ -277,7 +277,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
-			table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, version)
+			table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, version)
 		}
 	}
 	if table != nil {
