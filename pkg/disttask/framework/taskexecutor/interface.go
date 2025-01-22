@@ -143,6 +143,11 @@ func (*BaseStepExecutor) Cleanup(context.Context) error {
 }
 
 // TaskMetaModified implements the StepExecutor interface.
-func (*BaseStepExecutor) TaskMetaModified(*proto.Task) error {
-	return nil
+func (*BaseStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	panic("not implemented")
+}
+
+// ResourceModified implements the StepExecutor interface.
+func (*BaseStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
+	panic("not implemented")
 }
