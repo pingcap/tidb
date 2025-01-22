@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -29,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -44,10 +45,37 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+var globalLocationMap *locationMap = newLocationMap()
+
+type locationMap struct {
+	lmap map[string]*time.Location
+	mu   sync.RWMutex
+}
+
+func newLocationMap() *locationMap {
+	return &locationMap{
+		lmap: make(map[string]*time.Location),
+	}
+}
+
+func (l *locationMap) getLocation(name string) (*time.Location, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	result, ok := l.lmap[name]
+	return result, ok
+}
+
+func (l *locationMap) setLocation(name string, value *time.Location) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lmap[name] = value
+}
 
 // MPPCtx is the mpp execution context
 type MPPCtx struct {
@@ -308,9 +336,14 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	case "System":
 		tz = time.Local
 	default:
-		tz, err = time.LoadLocation(dagReq.TimeZoneName)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		var ok bool
+		tz, ok = globalLocationMap.getLocation(dagReq.TimeZoneName)
+		if !ok {
+			tz, err = time.LoadLocation(dagReq.TimeZoneName)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			globalLocationMap.setLocation(dagReq.TimeZoneName, tz)
 		}
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
@@ -437,7 +470,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sctx.GetSessionVars().StmtCtx = sc
 	sctx.GetSessionVars().TimeZone = tz
 	return sctx
@@ -470,7 +503,7 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []contextutil.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{
 		Range: lastRange,
 	}

@@ -17,6 +17,8 @@ package expression
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -25,20 +27,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -344,7 +348,7 @@ func extractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, exp
 				if i == 0 {
 					continue
 				}
-				if !guard.Equal(ctx, v) {
+				if !guard.Equal(ctx.GetEvalCtx(), v) {
 					allArgsIsConst = false
 					break
 				}
@@ -372,15 +376,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
+	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
@@ -454,18 +458,42 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if substituted {
 				flag := v.RetType.GetFlag()
 				var e Expression
+				var err error
 				if v.FuncName.L == ast.Cast {
-					e = BuildCastFunction(ctx, newArg, v.RetType)
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
 					e.(*ScalarFunction).Function.getArgs()[0] = newArg
 				}
 				e.SetCoercibility(v.Coercibility())
-				e.GetType().SetFlag(flag)
+				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetStaticType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
@@ -496,11 +524,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
-					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
+					if newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate() == arg.GetType(ctx.GetEvalCtx()).GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
 						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
 						changed = true
 					} else {
-						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType().GetCollate())
+						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate())
 					}
 				}
 			}
@@ -519,7 +547,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			return true, hasFail, NewFunctionInternal(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			if err != nil {
+				return true, true, v
+			}
+			return true, hasFail, newFunc
 		}
 	}
 	return false, false, expr
@@ -601,11 +633,11 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(ctx, chunk.Row{})
+			val, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
-			return &Constant{Value: val, RetType: x.GetType()}, nil
+			return &Constant{Value: val, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 		var (
 			err   error
@@ -617,15 +649,15 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = x.Clone()
 			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
 		} else {
-			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(), newArgs...)
+			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
 		return newSf, err
 	case *CorrelatedColumn:
-		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+		return &Constant{Value: *x.Data, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
 			newExpr := FoldConstant(ctx, x)
-			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType()}, nil
+			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 	}
 	return expr, nil
@@ -887,13 +919,13 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
+				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
 			}
 			newArgs, changed := pushNotAcrossArgs(ctx, f.GetArgs(), false)
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		case ast.LogicAnd, ast.LogicOr:
 			var (
 				newArgs []Expression
@@ -910,7 +942,7 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, funcName, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, funcName, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		}
 	}
 	if not {
@@ -986,9 +1018,14 @@ func containOuterNot(expr Expression, not bool) bool {
 }
 
 // Contains tests if `exprs` contains `e`.
-func Contains(exprs []Expression, e Expression) bool {
+func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-		if e == expr {
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		if e == expr || sameString {
 			return true
 		}
 	}
@@ -997,7 +1034,7 @@ func Contains(exprs []Expression, e Expression) bool {
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
 // The original DNF will be replaced by the remained part or just be deleted if remained part is nil.
-// And the extracted part will be appended to the end of the orignal slice.
+// And the extracted part will be appended to the end of the original slice.
 func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
@@ -1150,7 +1187,7 @@ func PopRowFirstArg(ctx BuildContext, e Expression) (ret Expression, err error) 
 		if len(args) == 2 {
 			return args[1], nil
 		}
-		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
+		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(ctx.GetEvalCtx()), args[1:]...)
 		return ret, err
 	}
 	return
@@ -1164,16 +1201,14 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
-	useCache := ctx.GetSessionVars().StmtCtx.UseCache
-	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
+func ParamMarkerExpression(ctx BuildContext, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
+	useCache := ctx.IsUseCache()
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
-	if useCache || isPointExec || needParam {
+	if useCache || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
-			ctx:   ctx,
 		}
 	}
 	return value, nil
@@ -1205,14 +1240,14 @@ func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool
 // it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
 // race may happen if another goroutine read from the infoschema at the same
 // time.
-func DisableParseJSONFlag4Expr(expr Expression) {
+func DisableParseJSONFlag4Expr(ctx EvalContext, expr Expression) {
 	if _, isColumn := expr.(*Column); isColumn {
 		return
 	}
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
+	expr.GetType(ctx).SetFlag(expr.GetType(ctx).GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -1229,7 +1264,7 @@ func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, erro
 	if err != nil {
 		return 0, true, err
 	}
-	pos, isNull, err := GetIntFromConstant(ctx, value)
+	pos, isNull, err := GetIntFromConstant(ctx.GetEvalCtx(), value)
 	if err != nil || isNull {
 		return 0, true, err
 	}
@@ -1237,7 +1272,7 @@ func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, erro
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
-func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, error) {
+func GetStringFromConstant(ctx EvalContext, value Expression) (string, bool, error) {
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
@@ -1250,8 +1285,8 @@ func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, er
 	return str, false, nil
 }
 
-// GetIntFromConstant gets an interger value from the Constant expression.
-func GetIntFromConstant(ctx BuildContext, value Expression) (int, bool, error) {
+// GetIntFromConstant gets an integer value from the Constant expression.
+func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1395,7 +1430,12 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar()
+		var err error
+		dt, err = con.ParamMarker.GetUserVar(ctx)
+		if err != nil {
+			logutil.BgLogger().Warn("get param failed", zap.Error(err))
+			return 0, false, false
+		}
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})
@@ -1451,6 +1491,57 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
+func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
+	arg0 := sf.GetArgs()[0]
+	// Only `->>` which parsed to JSONUnquote(CAST(JSONExtract() AS string)) can be pushed down to tikv
+	if fChild, ok := arg0.(*ScalarFunction); ok {
+		if fChild.FuncName.L == ast.Cast {
+			if fGrand, ok := fChild.GetArgs()[0].(*ScalarFunction); ok {
+				if fGrand.FuncName.L == ast.JSONExtract {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ProjectionBenefitsFromPushedDown evaluates if the expressions can improve performance when pushed down to TiKV
+// Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
+// Note: virtual column is not considered here, since this function cares performance instead of functionality
+func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	allColRef := true
+	colRefCount := 0
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			colRefCount = colRefCount + 1
+			continue
+		case *ScalarFunction:
+			allColRef = false
+			switch v.FuncName.L {
+			case ast.JSONDepth, ast.JSONLength, ast.JSONType, ast.JSONValid, ast.JSONContains, ast.JSONContainsPath,
+				ast.JSONExtract, ast.JSONKeys, ast.JSONSearch, ast.JSONMemberOf, ast.JSONOverlaps:
+				continue
+			case ast.JSONUnquote:
+				if jsonUnquoteFunctionBenefitsFromPushedDown(v) {
+					continue
+				}
+				return false
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	// For all col refs, only push down column pruning projections
+	if allColRef {
+		return colRefCount < inputSchemaLen
+	}
+	return true
+}
+
 // MaybeOverOptimized4PlanCache used to check whether an optimization can work
 // for the statement when we enable the plan cache.
 // In some situations, some optimizations maybe over-optimize and cache an
@@ -1465,10 +1556,10 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ctx.IsUseCache() {
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
@@ -1495,8 +1586,8 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 		case *Constant:
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
-				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(ctx, chunk.Row{})
+				// TODO: remove or hide DeferredExpr since it's too dangerous (hard to be consistent with v.Value all the time).
+				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err
 				}
@@ -1525,8 +1616,8 @@ const (
 	micro   = 1000 * nano
 	milli   = 1000 * micro
 	sec     = 1000 * milli
-	min     = 60 * sec
-	hour    = 60 * min
+	minute  = 60 * sec
+	hour    = 60 * minute
 	dayTime = 24 * hour
 )
 
@@ -1581,8 +1672,8 @@ func GetFormatNanoTime(time float64) string {
 	} else if timeAbs >= hour {
 		divisor = hour
 		unit = "h"
-	} else if timeAbs >= min {
-		divisor = min
+	} else if timeAbs >= minute {
+		divisor = minute
 		unit = "min"
 	} else if timeAbs >= sec {
 		divisor = sec
@@ -1650,7 +1741,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec contextopt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec expropt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -1698,7 +1789,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 }
 
 // RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
-func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec contextopt.SQLExecutor) error {
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt.SQLExecutor) error {
 	if len(r.SQLDigestsMap) == 0 {
 		return nil
 	}
@@ -1732,7 +1823,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec context
 }
 
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
-func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contextopt.SQLExecutor) error {
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec expropt.SQLExecutor) error {
 	err := r.RetrieveLocal(ctx, exec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1777,7 +1868,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contex
 // to make it better for display and debug, it also escapes the string to corresponding golang string literal,
 // which means using \t, \n, \x??, \u????, ... to represent newline, control character, non-printable character,
 // invalid utf-8 bytes and so on.
-func ExprsToStringsForDisplay(exprs []Expression) []string {
+func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 	strs := make([]string, len(exprs))
 	for i, cond := range exprs {
 		quote := `"`
@@ -1785,7 +1876,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.String()),
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
 				quote),
 			quote)
 	}
@@ -1805,4 +1896,269 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 	default:
 		return false
 	}
+}
+
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if ExprHasSetVarOrSleep(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func ExprHasSetVarOrSleep(expr Expression) bool {
+	scalaFunc, isScalaFunc := expr.(*ScalarFunction)
+	if !isScalaFunc {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+		return true
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if ExprHasSetVarOrSleep(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExecBinaryParam parse execute binary param arguments to datum slice.
+func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (params []Expression, err error) {
+	var (
+		tmp any
+	)
+
+	params = make([]Expression, len(binaryParams))
+	args := make([]types.Datum, len(binaryParams))
+	for i := 0; i < len(args); i++ {
+		tp := binaryParams[i].Tp
+		isUnsigned := binaryParams[i].IsUnsigned
+
+		switch tp {
+		case mysql.TypeNull:
+			var nilDatum types.Datum
+			nilDatum.SetNull()
+			args[i] = nilDatum
+			continue
+
+		case mysql.TypeTiny:
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(binaryParams[i].Val[0]))
+			} else {
+				args[i] = types.NewIntDatum(int64(int8(binaryParams[i].Val[0])))
+			}
+			continue
+
+		case mysql.TypeShort, mysql.TypeYear:
+			valU16 := binary.LittleEndian.Uint16(binaryParams[i].Val)
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(valU16))
+			} else {
+				args[i] = types.NewIntDatum(int64(int16(valU16)))
+			}
+			continue
+
+		case mysql.TypeInt24, mysql.TypeLong:
+			valU32 := binary.LittleEndian.Uint32(binaryParams[i].Val)
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(valU32))
+			} else {
+				args[i] = types.NewIntDatum(int64(int32(valU32)))
+			}
+			continue
+
+		case mysql.TypeLonglong:
+			valU64 := binary.LittleEndian.Uint64(binaryParams[i].Val)
+			if isUnsigned {
+				args[i] = types.NewUintDatum(valU64)
+			} else {
+				args[i] = types.NewIntDatum(int64(valU64))
+			}
+			continue
+
+		case mysql.TypeFloat:
+			args[i] = types.NewFloat32Datum(math.Float32frombits(binary.LittleEndian.Uint32(binaryParams[i].Val)))
+			continue
+
+		case mysql.TypeDouble:
+			args[i] = types.NewFloat64Datum(math.Float64frombits(binary.LittleEndian.Uint64(binaryParams[i].Val)))
+			continue
+
+		case mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDatetime:
+			switch len(binaryParams[i].Val) {
+			case 0:
+				tmp = types.ZeroDatetimeStr
+			case 4:
+				_, tmp = binaryDate(0, binaryParams[i].Val)
+			case 7:
+				_, tmp = binaryDateTime(0, binaryParams[i].Val)
+			case 11:
+				_, tmp = binaryTimestamp(0, binaryParams[i].Val)
+			case 13:
+				_, tmp = binaryTimestampWithTZ(0, binaryParams[i].Val)
+			default:
+				err = mysql.ErrMalformPacket
+				return
+			}
+			// TODO: generate the time datum directly
+			var parseTime func(types.Context, string) (types.Time, error)
+			switch tp {
+			case mysql.TypeDate:
+				parseTime = types.ParseDate
+			case mysql.TypeDatetime:
+				parseTime = types.ParseDatetime
+			case mysql.TypeTimestamp:
+				// To be compatible with MySQL, even the type of parameter is
+				// TypeTimestamp, the return type should also be `Datetime`.
+				parseTime = types.ParseDatetime
+			}
+			var time types.Time
+			time, err = parseTime(typectx, tmp.(string))
+			err = typectx.HandleTruncate(err)
+			if err != nil {
+				return
+			}
+			args[i] = types.NewDatum(time)
+			continue
+
+		case mysql.TypeDuration:
+			fsp := 0
+			switch len(binaryParams[i].Val) {
+			case 0:
+				tmp = "0"
+			case 8:
+				isNegative := binaryParams[i].Val[0]
+				if isNegative > 1 {
+					err = mysql.ErrMalformPacket
+					return
+				}
+				_, tmp = binaryDuration(1, binaryParams[i].Val, isNegative)
+			case 12:
+				isNegative := binaryParams[i].Val[0]
+				if isNegative > 1 {
+					err = mysql.ErrMalformPacket
+					return
+				}
+				_, tmp = binaryDurationWithMS(1, binaryParams[i].Val, isNegative)
+				fsp = types.MaxFsp
+			default:
+				err = mysql.ErrMalformPacket
+				return
+			}
+			// TODO: generate the duration datum directly
+			var dur types.Duration
+			dur, _, err = types.ParseDuration(typectx, tmp.(string), fsp)
+			err = typectx.HandleTruncate(err)
+			if err != nil {
+				return
+			}
+			args[i] = types.NewDatum(dur)
+			continue
+		case mysql.TypeNewDecimal:
+			if binaryParams[i].IsNull {
+				args[i] = types.NewDecimalDatum(nil)
+			} else {
+				var dec types.MyDecimal
+				err = typectx.HandleTruncate(dec.FromString(binaryParams[i].Val))
+				if err != nil {
+					return nil, err
+				}
+				args[i] = types.NewDecimalDatum(&dec)
+			}
+			continue
+		case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			if binaryParams[i].IsNull {
+				args[i] = types.NewBytesDatum(nil)
+			} else {
+				args[i] = types.NewBytesDatum(binaryParams[i].Val)
+			}
+			continue
+		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
+			if !binaryParams[i].IsNull {
+				tmp = string(hack.String(binaryParams[i].Val))
+			} else {
+				tmp = nil
+			}
+			args[i] = types.NewDatum(tmp)
+			continue
+		default:
+			err = param.ErrUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
+			return
+		}
+	}
+
+	for i := range params {
+		ft := new(types.FieldType)
+		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
+		params[i] = &Constant{Value: args[i], RetType: ft}
+	}
+	return
+}
+
+func binaryDate(pos int, paramValues []byte) (int, string) {
+	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
+	pos += 2
+	month := paramValues[pos]
+	pos++
+	day := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+}
+
+func binaryDateTime(pos int, paramValues []byte) (int, string) {
+	pos, date := binaryDate(pos, paramValues)
+	hour := paramValues[pos]
+	pos++
+	minute := paramValues[pos]
+	pos++
+	second := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
+}
+
+func binaryTimestamp(pos int, paramValues []byte) (int, string) {
+	pos, dateTime := binaryDateTime(pos, paramValues)
+	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
+}
+
+func binaryTimestampWithTZ(pos int, paramValues []byte) (int, string) {
+	pos, timestamp := binaryTimestamp(pos, paramValues)
+	tzShiftInMin := int16(binary.LittleEndian.Uint16(paramValues[pos : pos+2]))
+	tzShiftHour := tzShiftInMin / 60
+	tzShiftAbsMin := tzShiftInMin % 60
+	if tzShiftAbsMin < 0 {
+		tzShiftAbsMin = -tzShiftAbsMin
+	}
+	pos += 2
+	return pos, fmt.Sprintf("%s%+02d:%02d", timestamp, tzShiftHour, tzShiftAbsMin)
+}
+
+func binaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
+	sign := ""
+	if isNegative == 1 {
+		sign = "-"
+	}
+	days := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	hours := paramValues[pos]
+	pos++
+	minutes := paramValues[pos]
+	pos++
+	seconds := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
+}
+
+func binaryDurationWithMS(pos int, paramValues []byte,
+	isNegative uint8) (int, string) {
+	pos, dur := binaryDuration(pos, paramValues, isNegative)
+	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }

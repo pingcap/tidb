@@ -40,7 +40,9 @@ const (
 
 	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
 	MppVersionV2
-	// MppVersionV3
+
+	// MppVersionV3 supports TiFlash version [v9.0, ~], support new serdes format of strings
+	MppVersionV3
 
 	mppVersionMax
 
@@ -235,6 +237,29 @@ type MPPBuildTasksRequest struct {
 	StartTS   uint64
 
 	PartitionIDAndRanges []PartitionIDAndRanges
+}
+
+// ToString returns a string representation of MPPBuildTasksRequest. Used for CacheKey.
+func (req *MPPBuildTasksRequest) ToString() string {
+	sb := strings.Builder{}
+	if req.KeyRanges != nil { // Non-partiton
+		for i, keyRange := range req.KeyRanges {
+			sb.WriteString("range_id" + strconv.Itoa(i))
+			sb.WriteString(keyRange.StartKey.String())
+			sb.WriteString(keyRange.EndKey.String())
+		}
+		return sb.String()
+	}
+	// Partition
+	for _, partitionIDAndRange := range req.PartitionIDAndRanges {
+		sb.WriteString("partition_id" + strconv.Itoa(int(partitionIDAndRange.ID)))
+		for i, keyRange := range partitionIDAndRange.KeyRanges {
+			sb.WriteString("range_id" + strconv.Itoa(i))
+			sb.WriteString(keyRange.StartKey.String())
+			sb.WriteString(keyRange.EndKey.String())
+		}
+	}
+	return sb.String()
 }
 
 // ExchangeCompressionMode means the compress method used in exchange operator

@@ -85,35 +85,60 @@ connection default;
 drop user placement_user;
 
 # TestResourceGroupAdminDynamicPriv
+CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
 # This should be the default value in the future, so we do not need to set if for testing?
 set @@global.tidb_enable_resource_control = 1;
 
+connect (resource_group_admin,localhost,resource_group_admin,,);
 connect (resource_group_user,localhost,resource_group_user,,);
-connection resource_group_user;
+
+connection resource_group_admin;
 --error 1227
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 
 connection default;
-GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user;
+CREATE DATABASE IF NOT EXISTS test_rc;
+CREATE TABLE test_rc.t(id int);
+INSERT INTO test_rc.t VALUES (1);
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_admin;
+SHOW GRANTS FOR resource_group_admin;
+GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
 SHOW GRANTS FOR resource_group_user;
+GRANT SELECT on test_rc.* TO resource_group_admin;
+GRANT SELECT on test_rc.* TO resource_group_user;
 
-connection resource_group_user;
+connection resource_group_admin;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 CREATE RESOURCE GROUP test2 RU_PER_SEC = 999;
 ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000;
 DROP RESOURCE GROUP test2;
-
-connection default;
-REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+SET RESOURCE GROUP test;
 
 connection resource_group_user;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+SET RESOURCE GROUP test;
+
+connection default;
+REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_admin;
+REVOKE RESOURCE_GROUP_USER ON *.* FROM resource_group_user;
+
+connection resource_group_admin;
 --error 1227
 ALTER RESOURCE GROUP test RU_PER_SEC = 667;
 --error 1227
 DROP RESOURCE GROUP test;
+--error 1227
+SET RESOURCE GROUP test;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+
+disconnect resource_group_admin;
 disconnect resource_group_user;
 connection default;
+REVOKE SELECT on test_rc.* FROM resource_group_admin;
+REVOKE SELECT on test_rc.* FROM resource_group_user;
+DROP DATABASE test_rc;
 
 # TestGrantReferences
 CREATE SCHEMA IF NOT EXISTS privilege__privileges;
@@ -808,6 +833,21 @@ connection default;
 
 set global tidb_enable_resource_control = default;
 
+# TestTraffic
+CREATE USER traffic_test;
+connect (traffic_test,localhost,traffic_test,,);
+connection traffic_test;
+--error 1227
+traffic capture to '/tmp' duration='1s';
+--error 1227
+traffic replay from '/tmp' user='traffic_test';
+--error 1227
+cancel traffic jobs;
+--error 1227
+show traffic jobs;
+disconnect traffic_test;
+connection default;
+
 # TestAdmin
 create table privilege__privileges.admin(a int, KEY idx_a (`a`));
 create user without_super;
@@ -841,6 +881,35 @@ ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 ADMIN SHOW SLOW RECENT 3;
 -- error 8121
 ADMIN SHOW SLOW TOP ALL 3;
+-- error 8121
+ADMIN ALTER DDL JOBS 10 THREAD = 3, BATCH_SIZE = 100, MAX_WRITE_SPEED = '10MiB';
 
 disconnect without_super;
+connection default;
+
+# TestIssue53490
+create table privilege__privileges.tt1 (id bigint,pid bigint,name varchar(20),fullname varchar(20));
+insert into privilege__privileges.tt1 values (1,null,'a',''),(2,1,'b',''),(3,2,'c','');
+
+CREATE USER u53490;
+GRANT USAGE ON *.* TO 'u53490';
+GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,CREATE ROUTINE,ALTER ROUTINE,ALTER,EXECUTE,INDEX,CREATE VIEW,SHOW VIEW ON privilege__privileges.* TO 'u53490';
+
+connect (u53490,localhost,u53490,,);
+connection u53490;
+
+with t_f as (
+         select id,pid,name,'AAA' fullname from privilege__privileges.tt1 )
+         update privilege__privileges.tt1 inner join t_f
+         set tt1.fullname=t_f.fullname
+         where tt1.id=t_f.id;
+
+-- error 1288
+with t_f as (
+         select id,pid,name,'AAA' fullname from privilege__privileges.tt1 )
+         update privilege__privileges.tt1 inner join t_f
+         set t_f.fullname=t_f.fullname
+         where tt1.id=t_f.id;
+
+disconnect u53490;
 connection default;

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -83,7 +83,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("copclient"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -161,7 +161,7 @@ func TestInconsistentIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
 	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
@@ -314,16 +314,16 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	// Check 'rpc_num' in the execution information
 	//
 	// mysql> explain analyze select * from t_paging;
-	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-	// | id                 |task      | execution info                                                                                                                                                                                       |
-	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-	// | TableReader_5      |root      | time:7.27ms, loops:2, cop_task: {num: 10, max: 1.57ms, min: 313.3µs, avg: 675.9µs, p95: 1.57ms, tot_proc: 2ms, rpc_num: 10, rpc_time: 6.69ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}   |
-	// | └─TableFullScan_4  |cop[tikv] | tikv_task:{proc max:1.48ms, min:294µs, avg: 629µs, p80:1.21ms, p95:1.48ms, iters:0, tasks:10}                                                                                                        |
-	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// +--------------------+----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | id                 |task      | execution info                                                                                                                                                                                                        |
+	// +--------------------+----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | TableReader_5      |root      | time:7.27ms, loops:2, cop_task: {num: 10, max: 1.57ms, min: 313.3µs, avg: 675.9µs, p95: 1.57ms, tot_proc: 2ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, rpc_info:{Cop:{num_rpc:10, total_time:6.69ms}}   |
+	// | └─TableFullScan_4  |cop[tikv] | tikv_task:{proc max:1.48ms, min:294µs, avg: 629µs, p80:1.21ms, p95:1.48ms, iters:0, tasks:10}                                                                                                                         |
+	// +--------------------+----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 	// 2 rows in set (0.01 sec)
 
 	getRPCNumFromExplain := func(rows [][]any) (res uint64) {
-		re := regexp.MustCompile("rpc_num: ([0-9]+)")
+		re := regexp.MustCompile("num_rpc:([0-9]+)")
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")
 			_, _ = fmt.Fprintf(buf, "%s\n", row)
@@ -361,6 +361,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	// the avg row size is more accurate in check_rpc mode when unistre is used.
 	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
 	tk.MustExec("set @@tidb_enable_chunk_rpc = '1'")
+	tk.MustExec("set @@tidb_opt_projection_push_down = '0'")
 
 	readCounter := func(counter prometheus.Counter) float64 {
 		var metric dto.Metric
@@ -380,7 +381,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 
 	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16));")
 	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003');")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 
 	tk.MustExec("set @@tidb_partition_prune_mode  ='static';")
 	tk.MustExec("set tidb_replica_read = 'closest-adaptive';")
@@ -403,7 +404,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16)) " + partitionDef)
 	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	// estimate cost is 38
 	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
 	// estimate cost is 39 with 2 cop request
@@ -413,7 +414,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int, s varchar(8), p varchar(8), key `idx_s_p`(`s`, `p`));")
 	tk.MustExec("insert into t values (1, 'test1000', '11111111'), (2, 'test2000', '11111111');")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	// avg row size = 27.91
 	checkMetrics("select p from t where s >= 'test' and s < 'test11'", 0, 1)
 	checkMetrics("select p from t where s >= 'test' and s < 'test22'", 1, 0)
@@ -423,7 +424,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (v int, id int, p varchar(8), key `idx_id_p`(`id`, `p`)) " + partitionDef)
 	tk.MustExec("insert into t values (1, 1, '11111111'), (2, 2, '22222222'), (3, 3, '33333333'), (4, 4, '44444444');")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	// avg row size = 19
 	checkMetrics("select p from t where id >= 1 and id < 3", 1, 0)
 	checkMetrics("select p from t where id >= 2 and id < 4", 0, 2)
@@ -434,7 +435,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("create table t (id int, s varchar(8), p varchar(50), key `idx_s`(`s`));")
 	str := "this_is_a_string_with_length_of_50________________"
 	tk.MustExec(fmt.Sprintf("insert into t values (1, 'test1000', '%s'), (2, 'test2000', '%s');", str, str))
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 80;")
 	// IndexReader cost is 22, TableReader cost (1 row) is 67
 	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 0, 2)
@@ -446,7 +447,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	// use int field to avoid the planer estimation with big random fluctuation.
 	tk.MustExec("create table t (id int, v bigint not null, s1 int not null, s2 int not null, key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
 	tk.MustExec("insert into t values (1, 1,  1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	// 2 IndexScan with cost 19/56, 2 TableReader with cost 32.5/65.
 	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 3, 1)

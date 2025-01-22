@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -206,7 +206,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
-				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", r.mppErrRecovery.RecoveryCnt()))
+				zap.Any("mppErr", mppErr), zap.Uint32("recoveryCnt", r.mppErrRecovery.RecoveryCnt()))
 
 			if _, err := r.setupMPPCoordinator(r.ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))

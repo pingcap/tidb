@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -183,8 +184,6 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 func (p *Preparer) Finalize(ctx context.Context) error {
 	eg := new(errgroup.Group)
 	for id, cli := range p.clients {
-		cli := cli
-		id := id
 		eg.Go(func() error {
 			if err := cli.Finalize(ctx); err != nil {
 				return errors.Annotatef(err, "failed to finalize the prepare stream for %d", id)
@@ -192,19 +191,36 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 			return nil
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		logutil.CL(ctx).Warn("failed to finalize some prepare streams.", logutil.ShortError(err))
-		return err
-	}
-	logutil.CL(ctx).Info("all connections to store have shuted down.")
+	errCh := make(chan error, 1)
+	go func() {
+		if err := eg.Wait(); err != nil {
+			logutil.CL(ctx).Warn("failed to finalize some prepare streams.", logutil.ShortError(err))
+			errCh <- err
+			return
+		}
+		logutil.CL(ctx).Info("all connections to store have shuted down.")
+		errCh <- nil
+	}()
 	for {
 		select {
-		case event := <-p.eventChan:
+		case event, ok := <-p.eventChan:
+			if !ok {
+				return nil
+			}
 			if err := p.onEvent(ctx, event); err != nil {
 				return err
 			}
-		default:
-			return nil
+		case err, ok := <-errCh:
+			if !ok {
+				panic("unreachable.")
+			}
+			if err != nil {
+				return err
+			}
+			// All streams are finialized, they shouldn't send more events to event chan.
+			close(p.eventChan)
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
@@ -407,6 +423,10 @@ func (p *Preparer) streamOf(ctx context.Context, storeID uint64) (*prepareStream
 }
 
 func (p *Preparer) createAndCacheStream(ctx context.Context, cli PrepareClient, storeID uint64) error {
+	if _, ok := p.clients[storeID]; ok {
+		return nil
+	}
+
 	s := new(prepareStream)
 	s.storeID = storeID
 	s.output = p.eventChan
@@ -432,6 +452,9 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 // PrepareConnections prepares the connections for each store.
 // This will pause the admin commands for each store.
 func (p *Preparer) PrepareConnections(ctx context.Context) error {
+	failpoint.Inject("PrepareConnectionsErr", func() {
+		failpoint.Return(errors.New("mock PrepareConnectionsErr"))
+	})
 	log.Info("Preparing connections to stores.")
 	stores, err := p.env.GetAllLiveStores(ctx)
 	if err != nil {

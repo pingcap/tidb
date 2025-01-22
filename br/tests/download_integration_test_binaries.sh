@@ -43,6 +43,8 @@ minio_cli_url="${file_server_url}/download/builds/minio/minio/RELEASE.2020-02-27
 kes_url="${file_server_url}/download/kes"
 fake_gcs_server_url="${file_server_url}/download/builds/fake-gcs-server"
 brv_url="${file_server_url}/download/builds/brv4.0.8"
+# already manually uploaded to file server for localstack
+localstack_url="${file_server_url}/download/localstack-cli.tar.gz"
 
 set -o nounset
 
@@ -68,18 +70,33 @@ function main() {
     rm -rf tmp
     mkdir third_bin
     mkdir tmp
+    
+    #PD server
     download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
-    tar -xz -C third_bin 'bin/*' -f tmp/pd-server.tar.gz && mv third_bin/bin/* third_bin/
+    tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
+    mv third_bin/bin/* third_bin/ 
+
+    #TiKV server
     download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
-    tar -xz -C third_bin 'bin/*' -f tmp/tikv-server.tar.gz && mv third_bin/bin/* third_bin/
+    tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
+    mv third_bin/bin/* third_bin/
+
+    #TiFlash
     download "$tiflash_download_url" "tiflash.tar.gz" "tmp/tiflash.tar.gz"
-    tar -xz -C third_bin -f tmp/tiflash.tar.gz
+    tar -xzf tmp/tiflash.tar.gz -C third_bin
     mv third_bin/tiflash third_bin/_tiflash
     mv third_bin/_tiflash/* third_bin && rm -rf third_bin/_tiflash
+
+    #TiKV Importer
     download "$tikv_importer_download_url" "importer.tar.gz" "tmp/importer.tar.gz"
-    tar -xz -C third_bin bin/tikv-importer  -f tmp/importer.tar.gz && mv third_bin/bin/tikv-importer third_bin/
+    tar -xzf tmp/importer.tar.gz -C third_bin --wildcards 'bin/tikv-importer'
+    mv third_bin/bin/tikv-importer third_bin/
+
+    #TiCDC
     download "$ticdc_download_url" "ticdc-linux-amd64.tar.gz" "tmp/ticdc-linux-amd64.tar.gz"
-    tar -xz -C third_bin -f tmp/ticdc-linux-amd64.tar.gz && mv third_bin/ticdc-linux-amd64/bin/* third_bin/ && rm -rf third_bin/ticdc-linux-amd64
+    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards '*/bin/*'
+    mv third_bin/ticdc-linux-amd64/bin/* third_bin/
+    rm -rf third_bin/ticdc-linux-amd64
 
     download "$minio_url" "minio" "third_bin/minio"
     download "$go_ycsb_url" "go-ycsb" "third_bin/go-ycsb"
@@ -87,6 +104,13 @@ function main() {
     download "$kes_url" "kes" "third_bin/kes"
     download "$fake_gcs_server_url" "fake-gcs-server" "third_bin/fake-gcs-server"
     download "$brv_url" "brv4.0.8" "third_bin/brv4.0.8"
+
+    # Download and set up LocalStack
+    download "$localstack_url" "localstack-cli.tar.gz" "tmp/localstack-cli.tar.gz"
+    mkdir -p tmp/localstack_extract
+    tar -xzf tmp/localstack-cli.tar.gz -C tmp/localstack_extract
+    mv tmp/localstack_extract/localstack/* third_bin/
+    rm -rf tmp/localstack_extract
 
     chmod +x third_bin/*
     rm -rf tmp

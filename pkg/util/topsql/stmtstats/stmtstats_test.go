@@ -179,14 +179,14 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)
-	for n := 0; n < 1; n++ {
+	for range 1 {
 		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
 	}
-	for n := 0; n < 2; n++ {
+	for range 2 {
 		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""))
 		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second)
 	}
-	for n := 0; n < 3; n++ {
+	for range 3 {
 		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
 		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond)
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -41,7 +42,7 @@ var DefaultExprPushDownBlacklist *atomic.Value
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 
-func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
+func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
@@ -64,13 +65,13 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 
 	switch storeType {
 	case kv.TiFlash:
-		ret = scalarExprSupportedByFlash(sf)
+		ret = scalarExprSupportedByFlash(ctx, sf)
 	case kv.TiKV:
-		ret = scalarExprSupportedByTiKV(sf)
+		ret = scalarExprSupportedByTiKV(ctx, sf)
 	case kv.TiDB:
-		ret = scalarExprSupportedByTiDB(sf)
+		ret = scalarExprSupportedByTiDB(ctx, sf)
 	case kv.UnSpecified:
-		ret = scalarExprSupportedByTiDB(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByFlash(sf)
+		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf)
 	}
 
 	if ret {
@@ -84,7 +85,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
 	// Check whether this function can be pushed.
-	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
+	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(ctx.EvalCtx(), scalarFunc, storeType) {
 		if unspecified {
 			failpoint.Inject("PanicIfPbCodeUnspecified", func() {
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
@@ -95,12 +96,8 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 			storageName = "storage layer"
 		}
 		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		sc := ctx.GetSessionVars().StmtCtx
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
+
+		ctx.AppendWarning(warnErr)
 		return false
 	}
 	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
@@ -125,51 +122,42 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
 	if storeType == kv.TiFlash {
-		sc := ctx.sessVars.StmtCtx
-		switch expr.GetType().GetType() {
+		switch expr.GetType(ctx.EvalCtx()).GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
+			if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if sc.InExplainStmt {
-				sc.AppendWarning(warnErr)
-			} else {
-				sc.AppendExtraWarning(warnErr)
-			}
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
+			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
-			if !expr.GetType().IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if sc.InExplainStmt {
-					sc.AppendWarning(warnErr)
-				} else {
-					sc.AppendExtraWarning(warnErr)
-				}
+			if !expr.GetType(ctx.EvalCtx()).IsDecimalValid() {
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
+				ctx.AppendWarning(warnErr)
 				return false
 			}
 		}
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
 		return canScalarFuncPushDown(ctx, x, storeType)
 	}
 	return false
 }
 
-func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+func scalarExprSupportedByTiDB(ctx EvalContext, function *ScalarFunction) bool {
 	// TiDB can support all functions, but TiPB may not include some functions.
-	return scalarExprSupportedByTiKV(function) || scalarExprSupportedByFlash(function)
+	return scalarExprSupportedByTiKV(ctx, function) || scalarExprSupportedByFlash(ctx, function)
 }
 
 // supported functions tracked by https://github.com/tikv/tikv/issues/5751
-func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
+func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 	switch sf.FuncName.L {
 	case
 		// op functions.
@@ -189,7 +177,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
 		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
-		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.Radians, ast.Degrees, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
@@ -207,14 +195,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
+
+		// vector functions.
+		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
-		ast.DateFormat,
+		ast.DateFormat, ast.DateAdd, ast.AddDate, ast.DateSub, ast.SubDate,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
@@ -233,6 +224,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
 		ast.UUID:
 
+		return true
+	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+	// open the following switchers if we implement them in coprocessor via `cmath`
+	case ast.Conv:
+		arg0 := sf.GetArgs()[0]
+		// To be aligned with MySQL, tidb handles hybrid type argument and binary literal specially, tikv can't be consistent with tidb now.
+		if f, ok := arg0.(*ScalarFunction); ok {
+			if f.FuncName.L == ast.Cast && (f.GetArgs()[0].GetType(ctx).Hybrid() || IsBinaryLiteral(f.GetArgs()[0])) {
+				return false
+			}
+		}
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
@@ -256,7 +258,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
-func scalarExprSupportedByFlash(function *ScalarFunction) bool {
+func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Floor, ast.Ceil, ast.Ceiling:
 		switch function.Function.PbCode() {
@@ -289,7 +291,15 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CoalesceDuration,
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
+			tipb.ScalarFuncSig_CaseWhenDuration,
+			tipb.ScalarFuncSig_LTJson,
+			tipb.ScalarFuncSig_LEJson,
+			tipb.ScalarFuncSig_GTJson,
+			tipb.ScalarFuncSig_GEJson,
+			tipb.ScalarFuncSig_EQJson,
+			tipb.ScalarFuncSig_NEJson,
+			tipb.ScalarFuncSig_JsonIsNull,
+			tipb.ScalarFuncSig_InJson:
 			return false
 		}
 		return true
@@ -313,7 +323,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case ast.Cast:
-		sourceType := function.GetArgs()[0].GetType()
+		sourceType := function.GetArgs()[0].GetType(ctx)
 		retType := function.RetType
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
@@ -333,9 +343,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
-			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
+			return function.GetArgs()[0].GetType(ctx).GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastVectorFloat32AsString,
+			tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
+			return true
 		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
 			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
 			return true
@@ -398,6 +411,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.IsIPv4, ast.IsIPv6:
 		return true
+	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
+		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
@@ -431,18 +446,41 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 
 // PushDownContext is the context used for push down expressions
 type PushDownContext struct {
-	evalCtx  EvalContext
-	client   kv.Client
-	sessVars *variable.SessionVars
+	evalCtx           EvalContext
+	client            kv.Client
+	warnHandler       contextutil.WarnAppender
+	groupConcatMaxLen uint64
 }
 
 // NewPushDownContext returns a new PushDownContext
-func NewPushDownContext(evalCtx EvalContext, sessVars *variable.SessionVars, client kv.Client) PushDownContext {
-	return PushDownContext{
-		evalCtx:  evalCtx,
-		client:   client,
-		sessVars: sessVars,
+func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool,
+	warnHandler contextutil.WarnAppender, extraWarnHandler contextutil.WarnAppender, groupConcatMaxLen uint64) PushDownContext {
+	var newWarnHandler contextutil.WarnAppender
+	if warnHandler != nil && extraWarnHandler != nil {
+		if inExplainStmt {
+			newWarnHandler = warnHandler
+		} else {
+			newWarnHandler = extraWarnHandler
+		}
 	}
+
+	return PushDownContext{
+		evalCtx:           evalCtx,
+		client:            client,
+		warnHandler:       newWarnHandler,
+		groupConcatMaxLen: groupConcatMaxLen,
+	}
+}
+
+// NewPushDownContextFromSessionVars builds a new PushDownContext from session vars.
+func NewPushDownContextFromSessionVars(evalCtx EvalContext, sessVars *variable.SessionVars, client kv.Client) PushDownContext {
+	return NewPushDownContext(
+		evalCtx,
+		client,
+		sessVars.StmtCtx.InExplainStmt,
+		sessVars.StmtCtx.WarnHandler,
+		sessVars.StmtCtx.ExtraWarnHandler,
+		sessVars.GroupConcatMaxLen)
 }
 
 // EvalCtx returns the eval context
@@ -460,9 +498,16 @@ func (ctx PushDownContext) Client() kv.Client {
 	return ctx.client
 }
 
-// GetSessionVars returns the session variables
-func (ctx PushDownContext) GetSessionVars() *variable.SessionVars {
-	return ctx.sessVars
+// GetGroupConcatMaxLen returns the max length of group_concat
+func (ctx PushDownContext) GetGroupConcatMaxLen() uint64 {
+	return ctx.groupConcatMaxLen
+}
+
+// AppendWarning appends a warning to be handled by the internal handler
+func (ctx PushDownContext) AppendWarning(err error) {
+	if ctx.warnHandler != nil {
+		ctx.warnHandler.AppendWarning(err)
+	}
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down

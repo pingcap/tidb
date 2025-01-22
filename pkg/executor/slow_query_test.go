@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -59,12 +59,13 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +141,22 @@ func TestParseSlowLogFile(t *testing.T) {
 # Disk_max: 65536
 # Plan_from_cache: true
 # Plan_from_binding: true
+# Unpacked_bytes_sent_tikv_total: 30000
+# Unpacked_bytes_received_tikv_total: 3000
+# Unpacked_bytes_sent_tikv_cross_zone: 10000
+# Unpacked_bytes_received_tikv_cross_zone: 1000
+# Unpacked_bytes_sent_tiflash_total: 500000
+# Unpacked_bytes_received_tiflash_total: 500005
+# Unpacked_bytes_sent_tiflash_cross_zone: 300000
+# Unpacked_bytes_received_tiflash_cross_zone: 300005
 # Succ: false
 # IsExplicitTxn: true
 # Resource_group: default
 # Request_unit_read: 2.158
 # Request_unit_write: 2.123
 # Time_queued_by_rc: 0.05
+# Tidb_cpu_time: 0.01
+# Tikv_cpu_time: 0.021
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -170,9 +181,9 @@ select * from t;`
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -193,9 +204,9 @@ select * from t;`
 	expectRecordString = `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -448,8 +459,12 @@ select 7;`
 			{
 				startTime: "",
 				endTime:   "",
-				files:     []string{fileName3},
+				files:     []string{fileName1, fileName2, fileName3},
 				querys: []string{
+					"select 1;",
+					"select 2;",
+					"select 3;",
+					"select 4;",
 					"select 5;",
 					"select 6;",
 					"select 7;",
@@ -532,8 +547,8 @@ func TestSplitbyColon(t *testing.T) {
 		},
 		{
 			"123a",
-			[]string{},
 			[]string{"123a"},
+			[]string{""},
 		},
 		{
 			"1a: 2b",
@@ -551,14 +566,51 @@ func TestSplitbyColon(t *testing.T) {
 			[]string{"[2b,3c]", "5e"},
 		},
 		{
+			"1a: [2b,[3c: 3cc]] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,[3c: 3cc]]", "5e"},
+		},
+		{
+			"1a: {2b 3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b 3c}", "5e"},
+		},
+		{
+			"1a: {2b,3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,3c}", "5e"},
+		},
+		{
+			"1a: {2b,{3c: 3cc}} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,{3c: 3cc}}", "5e"},
+		},
+		{
+			"1a: {{{2b,{3c: 3cc}} 4d: 5e",
+			nil,
+			nil,
+		},
+		{
+			"1a: [2b,[3c: 3cc]]]] 4d: 5e",
+			nil,
+			nil,
+		},
+		{
 
 			"Time: 2021-09-08T14:39:54.506967433+08:00",
 			[]string{"Time"},
 			[]string{"2021-09-08T14:39:54.506967433+08:00"},
 		},
+		{
+
+			"Cop_proc_avg: 0 Cop_proc_addr: Cop_proc_max: Cop_proc_min: ",
+			[]string{"Cop_proc_avg", "Cop_proc_addr", "Cop_proc_max", "Cop_proc_min"},
+			[]string{"0", "", "", ""},
+		},
 	}
 	for _, c := range cases {
 		resFields, resValues := splitByColon(c.line)
+		logutil.BgLogger().Info(c.line)
 		require.Equal(t, c.fields, resFields)
 		require.Equal(t, c.values, resValues)
 	}
@@ -767,4 +819,28 @@ func removeFiles(fileNames []string) {
 	for _, fileName := range fileNames {
 		os.Remove(fileName)
 	}
+}
+
+func TestIssue54324(t *testing.T) {
+	f, err := os.CreateTemp("", "test-tidb-slow-query-issue54324")
+	require.NoError(t, err)
+	defer os.Remove(f.Name()) // clean up
+
+	w := bufio.NewWriter(f)
+	for i := 0; i < 8191; i++ {
+		w.WriteByte('x')
+	}
+	w.WriteByte('\n')
+	for i := 0; i < 4096; i++ {
+		w.WriteByte('a')
+	}
+	require.NoError(t, w.Flush())
+
+	stat, err := f.Stat()
+	require.NoError(t, err)
+	endCursor := stat.Size()
+	lines, readBytes, err := readLastLines(context.Background(), f, endCursor)
+	require.NoError(t, err)
+	require.Len(t, lines, 2)
+	require.Equal(t, readBytes, 8192+4096)
 }

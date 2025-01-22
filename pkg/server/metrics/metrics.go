@@ -15,9 +15,11 @@
 package metrics
 
 import (
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -33,17 +35,45 @@ var (
 	ConnIdleDurationHistogramNotInTxn prometheus.Observer
 	ConnIdleDurationHistogramInTxn    prometheus.Observer
 
-	AffectedRowsCounterInsert  prometheus.Counter
-	AffectedRowsCounterUpdate  prometheus.Counter
-	AffectedRowsCounterDelete  prometheus.Counter
-	AffectedRowsCounterReplace prometheus.Counter
-
 	InPacketBytes  prometheus.Counter
 	OutPacketBytes prometheus.Counter
 )
 
 func init() {
 	InitMetricsVars()
+}
+
+// CmdToString convert command type to string.
+func CmdToString(cmd byte) string {
+	switch cmd {
+	case mysql.ComSleep:
+		return "Sleep"
+	case mysql.ComQuit:
+		return "Quit"
+	case mysql.ComInitDB:
+		return "InitDB"
+	case mysql.ComQuery:
+		return "Query"
+	case mysql.ComPing:
+		return "Ping"
+	case mysql.ComFieldList:
+		return "FieldList"
+	case mysql.ComStmtPrepare:
+		return "StmtPrepare"
+	case mysql.ComStmtExecute:
+		return "StmtExecute"
+	case mysql.ComStmtFetch:
+		return "StmtFetch"
+	case mysql.ComStmtClose:
+		return "StmtClose"
+	case mysql.ComStmtSendLongData:
+		return "StmtSendLongData"
+	case mysql.ComStmtReset:
+		return "StmtReset"
+	case mysql.ComSetOption:
+		return "SetOption"
+	}
+	return strconv.Itoa(int(cmd))
 }
 
 // InitMetricsVars init server metrics vars.
@@ -85,11 +115,6 @@ func InitMetricsVars() {
 
 	ConnIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	ConnIdleDurationHistogramInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
-
-	AffectedRowsCounterInsert = metrics.AffectedRowsCounter.WithLabelValues("Insert")
-	AffectedRowsCounterUpdate = metrics.AffectedRowsCounter.WithLabelValues("Update")
-	AffectedRowsCounterDelete = metrics.AffectedRowsCounter.WithLabelValues("Delete")
-	AffectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
 
 	InPacketBytes = metrics.PacketIOCounter.WithLabelValues("In")
 	OutPacketBytes = metrics.PacketIOCounter.WithLabelValues("Out")

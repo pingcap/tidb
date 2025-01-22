@@ -13,7 +13,7 @@ fmt.Sscanf
 (*bufio.Writer).Flush
 (*google.golang.org/grpc.ClientConn).Close
 (*github.com/pingcap/tidb/util/sqlexec.RecordSet).Close
-(*github.com/pingcap/tidb/br/pkg/lightning/mydump.blockParser).Close
+(*github.com/pingcap/tidb/pkg/lightning/mydump.blockParser).Close
 (*github.com/pingcap/tidb/kv.Storage).Close
 (*database/sql.DB).Close
 (*database/sql.Rows).Close

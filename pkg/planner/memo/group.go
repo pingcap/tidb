@@ -19,8 +19,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	// import core pkg first to call its init func.
+	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 )
 
@@ -181,7 +184,7 @@ func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation)
 }
 
 // Convert2GroupExpr converts a logical plan to a GroupExpr.
-func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
+func Convert2GroupExpr(node base.LogicalPlan) *GroupExpr {
 	e := NewGroupExpr(node)
 	e.Children = make([]*Group, 0, len(node.Children()))
 	for _, child := range node.Children() {
@@ -192,7 +195,7 @@ func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 }
 
 // Convert2Group converts a logical plan to a Group.
-func Convert2Group(node plannercore.LogicalPlan) *Group {
+func Convert2Group(node base.LogicalPlan) *Group {
 	e := Convert2GroupExpr(node)
 	g := NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.
@@ -217,8 +220,8 @@ func (g *Group) BuildKeyInfo() {
 	if len(childSchema) == 1 {
 		// For UnaryPlan(such as Selection, Limit ...), we can set the child's unique key as its unique key.
 		// If the GroupExpr is a schemaProducer, schema.Keys will be reset below in `BuildKeyInfo()`.
-		g.Prop.Schema.Keys = childSchema[0].Keys
+		g.Prop.Schema.PKOrUK = childSchema[0].PKOrUK
 	}
 	e.ExprNode.BuildKeyInfo(g.Prop.Schema, childSchema)
-	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || plannercore.HasMaxOneRow(e.ExprNode, childMaxOneRow)
+	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || logicalop.HasMaxOneRow(e.ExprNode, childMaxOneRow)
 }

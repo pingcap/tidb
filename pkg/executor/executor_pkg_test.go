@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -56,16 +57,16 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
+	joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetSessionVars().StmtCtx, ctx.GetPlanCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -87,15 +88,15 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed1 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 10)
 		for i := int64(0); i < 10; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetSessionVars().StmtCtx, ctx.GetPlanCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -109,15 +110,15 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed2 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 20)
 		for i := int64(0); i < 20; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetSessionVars().StmtCtx, ctx.GetPlanCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -130,7 +131,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	}
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
-	require.Equal(t, int64(20760), bytesConsumed1)
+	require.Equal(t, int64(23640), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -186,6 +187,8 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	var cases []testCase
 	// https://github.com/golang/go/issues/63438
 	// in 1.21, the load factor of map is 6 rather than 6.5 and the go team refused to backport to 1.21.
+	// https://github.com/golang/go/issues/65706
+	// in 1.23, it has problem.
 	if strings.Contains(runtime.Version(), `go1.21`) {
 		cases = []testCase{
 			{
@@ -329,7 +332,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	domain.BindDomain(ctx, &domain.Domain{})
+	ctx.BindDomain(&domain.Domain{})
 
 	cases := []struct {
 		name    string
@@ -345,6 +348,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -359,6 +363,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -373,6 +378,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -387,6 +393,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -401,6 +408,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -415,6 +423,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -429,6 +438,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -443,6 +453,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -457,6 +468,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -471,6 +483,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn

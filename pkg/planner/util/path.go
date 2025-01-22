@@ -19,9 +19,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -52,17 +53,41 @@ type AccessPath struct {
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
 
-	// ************************************************** special field below *********************************************************
-	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
-	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
-	// at same time. Normal single index or table path also doesn't use this field.
-	PartialAlternativeIndexPaths [][]*AccessPath
-	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
-	// the new state/type of access path. (undetermined index merge path)
+	// The 3 fields below are for another case for building IndexMerge path besides AccessPath.PartialIndexPaths.
+	// Currently, it only applies to OR type IndexMerge.
+	// For every item in the OR list, there might be multiple candidate paths that satisfy the filters.
+	// The AccessPath.PartialIndexPaths case decides on one of them when building AccessPath. But here, we keep all the
+	// alternatives and make the decision later in findBestTask (see matchPropForIndexMergeAlternatives()).
+	// It's because we only know the required Sort property at that time. Delaying the decision to findBestTask can make
+	// us able to consider and try to satisfy the required Sort property.
+	/* For example:
+		create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+		explain format='verbose' select * from t where a=1 or b=1 order by c;
+	For a=1, it has two partial alternative paths: [a, ac]
+	For b=1, it has two partial alternative paths: [b, bc]
+	Then we build such a AccessPath:
+		AccessPath {
+			PartialAlternativeIndexPaths: [[[a], [ac]], [[b], [bc]]]
+			IndexMergeORSourceFilter: a = 1 or b = 1
+		}
+	*/
+
+	// PartialAlternativeIndexPaths stores all the alternative paths for each OR branch.
+	// meaning of the 3 dimensions:
+	// each OR branch -> each alternative for this OR branch -> each access path of this alternative (One JSON filter on
+	// MV index may build into multiple partial paths. For example, json_overlap(a, '[1, 2, 3]') builds into 3 partial
+	// paths in the final plan. For non-MV index, each alternative only has one AccessPath.)
+	PartialAlternativeIndexPaths [][][]*AccessPath
+	// KeepIndexMergeORSourceFilter indicates if we need to keep IndexMergeORSourceFilter in the final Selection of the
+	// IndexMerge plan.
+	// It has 2 cases:
+	// 1. The AccessPath.PartialAlternativeIndexPaths is set.
+	// If this field is true, the final plan should keep the filter.
+	// 2. It's a children of AccessPath.PartialAlternativeIndexPaths.
+	// If the final plan contains this alternative, it should keep the filter.
 	KeepIndexMergeORSourceFilter bool
-	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	// IndexMergeORSourceFilter is the original OR list for building the IndexMerge path.
 	IndexMergeORSourceFilter expression.Expression
-	// ********************************************************************************************************************************
 
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
@@ -73,7 +98,13 @@ type AccessPath struct {
 
 	StoreType kv.StoreType
 
-	IsDNFCond bool
+	// If the top level of the filters is an OR list, IsDNFCond is true.
+	// In this case, MinAccessCondsForDNFCond will record the minimum number of access conditions among all DNF items.
+	// For example, if the filter is (a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7),
+	// for index (a) or index (b), MinAccessCondsForDNFCond will be 1;
+	// for index (a, b, c), MinAccessCondsForDNFCond will be 2.
+	IsDNFCond                bool
+	MinAccessCondsForDNFCond int
 
 	// IsIntHandlePath indicates whether this path is table path.
 	IsIntHandlePath    bool
@@ -112,6 +143,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
 		IsDNFCond:                    path.IsDNFCond,
+		MinAccessCondsForDNFCond:     path.MinAccessCondsForDNFCond,
 		IsIntHandlePath:              path.IsIntHandlePath,
 		IsCommonHandlePath:           path.IsCommonHandlePath,
 		Forced:                       path.Forced,
@@ -124,28 +156,38 @@ func (path *AccessPath) Clone() *AccessPath {
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	for _, partialPath := range path.PartialIndexPaths {
-		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
-	}
-	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
-		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
-		for _, oneAlternative := range onePartialAlternative {
-			tmp = append(tmp, oneAlternative.Clone())
+	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
+		for _, oneAlternative := range oneORBranch {
+			clonedOneAlternative := SliceDeepClone(oneAlternative)
+			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
-		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
 	}
 	return ret
 }
 
-// IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
+// IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
-	return path.IsIntHandlePath || path.IsCommonHandlePath
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+}
+
+// IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.
+func (path *AccessPath) IsTiKVTablePath() bool {
+	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiKV
+}
+
+// IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
+func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
+	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
 	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
@@ -153,6 +195,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -176,6 +219,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
@@ -184,6 +228,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext
 			break
 		}
 	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
@@ -356,9 +401,24 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2Len {
 	if path.IsTablePath() {
-		return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, nil, nil)
+		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
-	return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
 }

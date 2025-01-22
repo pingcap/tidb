@@ -16,6 +16,7 @@ package variable_test
 
 import (
 	"context"
+	"math/rand"
 	"strconv"
 	"sync"
 	"testing"
@@ -63,8 +64,6 @@ func TestSetSystemVariable(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			mtx.Lock()
 			err := v.SetSystemVar(tc.key, tc.value)
@@ -151,7 +150,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.SessionAlias = "aliasabc"
-	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1
@@ -253,6 +252,14 @@ func TestSlowLogFormat(t *testing.T) {
 # KV_total: 10
 # PD_total: 11
 # Backoff_total: 12
+# Unpacked_bytes_sent_tikv_total: 0
+# Unpacked_bytes_received_tikv_total: 0
+# Unpacked_bytes_sent_tikv_cross_zone: 0
+# Unpacked_bytes_received_tikv_cross_zone: 0
+# Unpacked_bytes_sent_tiflash_total: 0
+# Unpacked_bytes_received_tiflash_total: 0
+# Unpacked_bytes_sent_tiflash_cross_zone: 0
+# Unpacked_bytes_received_tiflash_cross_zone: 0
 # Write_sql_response_total: 1
 # Result_rows: 12345
 # Succ: true
@@ -265,6 +272,11 @@ func TestSlowLogFormat(t *testing.T) {
 # Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
+	tikvExecDetail := util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
+	}
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -285,9 +297,7 @@ func TestSlowLogFormat(t *testing.T) {
 		PlanFromCache:     true,
 		PlanFromBinding:   true,
 		HasMoreResults:    true,
-		KVTotal:           10 * time.Second,
-		PDTotal:           11 * time.Second,
-		BackoffTotal:      12 * time.Second,
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: 1 * time.Second,
 		ResultRows:        12345,
 		Succ:              true,
@@ -335,14 +345,11 @@ func TestTableDeltaClone(t *testing.T) {
 	td0 := variable.TableDelta{
 		Delta:    1,
 		Count:    2,
-		ColSize:  map[int64]int64{1: 1, 2: 2},
 		InitTime: time.Now(),
 		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
-	td0.ColSize[3] = 3
-	require.NotEqual(t, td0, td1)
 
 	td2 := td0.Clone()
 	require.Equal(t, td0, td2)
@@ -357,7 +364,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 				1: {
 					Delta:    1,
 					Count:    2,
-					ColSize:  map[int64]int64{1: 1},
 					InitTime: time.Now(),
 					TableID:  5,
 				},
@@ -376,11 +382,9 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.False(t, succ)
 	require.Equal(t, 1, len(tc.Savepoints))
 
-	tc.TableDeltaMap[1].ColSize[2] = 2
 	tc.TableDeltaMap[2] = variable.TableDelta{
 		Delta:    6,
 		Count:    7,
-		ColSize:  map[int64]int64{8: 8},
 		InitTime: time.Now(),
 		TableID:  9,
 	}
@@ -390,7 +394,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
 	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap[1].ColSize))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
 	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)
@@ -398,7 +401,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	tc.TableDeltaMap[3] = variable.TableDelta{
 		Delta:    10,
 		Count:    11,
-		ColSize:  map[int64]int64{12: 12},
 		InitTime: time.Now(),
 		TableID:  13,
 	}
@@ -558,4 +560,52 @@ func TestSetStatus(t *testing.T) {
 	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
 	require.False(t, sv.InTxn())
 	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
+}
+
+func TestRowIDShardGenerator(t *testing.T) {
+	g := variable.NewRowIDShardGenerator(rand.New(rand.NewSource(12345)), 128) // #nosec G404)
+	// default settings
+	require.Equal(t, 128, g.GetShardStep())
+	shard := g.GetCurrentShard(127)
+	require.Equal(t, int64(3535546008), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	// reset alloc step
+	g.SetShardStep(5)
+	require.Equal(t, 5, g.GetShardStep())
+	// generate shard in step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(1371624976), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(2))
+	// generate shard in next step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(895725277), shard)
+	// set step will reset clear remain
+	g.SetShardStep(5)
+	require.NotEqual(t, shard, g.GetCurrentShard(1))
+}
+
+func TestUserVars(t *testing.T) {
+	vars := variable.NewUserVars()
+	vars.SetUserVarVal("a", types.NewIntDatum(1))
+	vars.SetUserVarVal("b", types.NewStringDatum("v2"))
+	dt, ok := vars.GetUserVarVal("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewIntDatum(1), dt)
+
+	vars.SetUserVarType("a", types.NewFieldType(mysql.TypeLonglong))
+	tp, ok := vars.GetUserVarType("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewFieldType(mysql.TypeLonglong), tp)
+
+	vars.UnsetUserVar("a")
+	_, ok = vars.GetUserVarVal("a")
+	require.False(t, ok)
+	_, ok = vars.GetUserVarType("a")
+	require.False(t, ok)
+
+	dt, ok = vars.GetUserVarVal("b")
+	require.True(t, ok)
+	require.Equal(t, types.NewStringDatum("v2"), dt)
 }

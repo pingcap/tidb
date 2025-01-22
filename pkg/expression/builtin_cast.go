@@ -29,9 +29,9 @@ import (
 	"strings"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -106,12 +106,19 @@ var (
 	_ builtinFunc = &builtinCastJSONAsTimeSig{}
 	_ builtinFunc = &builtinCastJSONAsDurationSig{}
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
+
+	_ builtinFunc = &builtinCastStringAsVectorFloat32Sig{}
+	_ builtinFunc = &builtinCastVectorFloat32AsStringSig{}
+	_ builtinFunc = &builtinCastVectorFloat32AsVectorFloat32Sig{}
+	_ builtinFunc = &builtinCastUnsupportedAsVectorFloat32Sig{}
+	_ builtinFunc = &builtinCastVectorFloat32AsUnsupportedSig{}
 )
 
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -122,13 +129,13 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
-	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
+	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig, nil
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsIntSig{bf}
@@ -151,8 +158,11 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	case types.ETString:
 		sig = &builtinCastStringAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsInt)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf.baseBuiltinFunc}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsInt)
 	default:
-		panic("unsupported types.EvalType in castAsIntFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Int")
 	}
 	return sig, nil
 }
@@ -160,7 +170,8 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 type castAsRealFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -171,17 +182,17 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 		return sig, nil
 	}
 	var argTp types.EvalType
-	if args[0].GetType().Hybrid() {
+	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() {
 		argTp = types.ETInt
 	} else {
-		argTp = args[0].GetType().EvalType()
+		argTp = args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	}
 	switch argTp {
 	case types.ETInt:
@@ -192,7 +203,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
-		PropagateType(types.ETReal, sig.getArgs()...)
+		PropagateType(ctx.GetEvalCtx(), types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -206,8 +217,11 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	case types.ETString:
 		sig = &builtinCastStringAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsReal)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf.baseBuiltinFunc}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsReal)
 	default:
-		panic("unsupported types.EvalType in castAsRealFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Real")
 	}
 	return sig, nil
 }
@@ -215,7 +229,8 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 type castAsDecimalFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -226,17 +241,17 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
 		return sig, nil
 	}
 	var argTp types.EvalType
-	if args[0].GetType().Hybrid() {
+	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() {
 		argTp = types.ETInt
 	} else {
-		argTp = args[0].GetType().EvalType()
+		argTp = args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	}
 	switch argTp {
 	case types.ETInt:
@@ -260,8 +275,11 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	case types.ETString:
 		sig = &builtinCastStringAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDecimal)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf.baseBuiltinFunc}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsDecimal)
 	default:
-		panic("unsupported types.EvalType in castAsDecimalFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Decimal")
 	}
 	return sig, nil
 }
@@ -269,29 +287,40 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
-	if args[0].GetType().Hybrid() {
-		sig = &builtinCastStringAsStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
-		return sig, nil
+	if ft := args[0].GetType(ctx.GetEvalCtx()); ft.Hybrid() {
+		castBitAsUnBinary := ft.GetType() == mysql.TypeBit && c.tp.GetCharset() != charset.CharsetBin
+		if !castBitAsUnBinary {
+			sig = &builtinCastStringAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
+			return sig, nil
+		}
+		// for type BIT, it maybe an invalid value for the specified charset, we need to convert it to binary first,
+		// and then convert it to the specified charset with `HandleBinaryLiteral` in the following code.
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		args[0] = BuildCastFunction(ctx, args[0], tp)
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			// check https://github.com/pingcap/tidb/issues/44786
 			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			switch args[0].GetType().GetType() {
+			switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
 			case mysql.TypeTiny:
 				bf.tp.SetFlen(4)
 			case mysql.TypeShort:
@@ -302,7 +331,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 				// set it to 11 as mysql
 				bf.tp.SetFlen(11)
 			default:
-				bf.tp.SetFlen(args[0].GetType().GetFlen())
+				bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 			}
 		}
 		sig = &builtinCastIntAsStringSig{bf}
@@ -322,14 +351,17 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETJson:
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsString)
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
-		panic("unsupported types.EvalType in castAsStringFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "String")
 	}
 	return sig, nil
 }
@@ -348,7 +380,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsTimeSig{bf}
@@ -371,8 +403,11 @@ func (c *castAsTimeFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	case types.ETString:
 		sig = &builtinCastStringAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsTime)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsTime)
 	default:
-		panic("unsupported types.EvalType in castAsTimeFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Datetime")
 	}
 	return sig, nil
 }
@@ -391,7 +426,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsDurationSig{bf}
@@ -414,8 +449,11 @@ func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, args []Expre
 	case types.ETString:
 		sig = &builtinCastStringAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDuration)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsDuration)
 	default:
-		panic("unsupported types.EvalType in castAsDurationFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Time")
 	}
 	return sig, nil
 }
@@ -426,12 +464,12 @@ type castAsArrayFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
+func (c *castAsArrayFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
 
-	if args[0].GetType().EvalType() != types.ETJson {
+	if args[0].GetType(ctx).EvalType() != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "cast_as_array")
 	}
 
@@ -439,7 +477,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
 }
 
 func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	arrayType := c.tp.ArrayType()
@@ -451,7 +489,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs with unspecified length")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -515,7 +553,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
-// ConvertJSON2Tp returns a function that can convert JSON to the specified type.
+// ConvertJSON2Tp converts JSON to the specified type.
 func ConvertJSON2Tp(v types.BinaryJSON, targetType *types.FieldType) (any, error) {
 	convertFunc := convertJSON2Tp(targetType.EvalType())
 	if convertFunc == nil {
@@ -557,7 +595,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			res := item.GetTime()
+			res := item.GetTimeWithFsp(tp.GetDecimal())
 			res.SetType(tp.GetType())
 			if tp.GetType() == mysql.TypeDate {
 				// Truncate hh:mm:ss part if the type is Date.
@@ -591,7 +629,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsJSONSig{bf}
@@ -615,14 +653,192 @@ func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		sig = &builtinCastStringAsJSONSig{bf}
 		sig.getRetTp().AddFlag(mysql.ParseToJSONFlag)
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsJson)
 	default:
-		panic("unsupported types.EvalType in castAsJSONFunctionClass")
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Json")
 	}
 	return sig, nil
 }
 
+type castAsVectorFloat32FunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (c *castAsVectorFloat32FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	if err != nil {
+		return nil, err
+	}
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	switch argTp {
+	case types.ETInt:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastIntAsVectorFloat32)
+	case types.ETReal:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastRealAsVectorFloat32)
+	case types.ETDecimal:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsVectorFloat32)
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsVectorFloat32)
+	case types.ETDuration:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsVectorFloat32)
+	case types.ETJson:
+		sig = &builtinCastUnsupportedAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsVectorFloat32)
+	case types.ETVectorFloat32:
+		sig = &builtinCastVectorFloat32AsVectorFloat32Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32)
+	case types.ETString:
+		sig = &builtinCastStringAsVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CastStringAsVectorFloat32)
+	default:
+		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "VectorFloat32")
+	}
+	return sig, nil
+}
+
+type builtinCastUnsupportedAsVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCastUnsupportedAsVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	return types.ZeroVectorFloat32, false, errors.Errorf(
+		"cannot cast from %s to vector",
+		types.TypeStr(b.args[0].GetType(ctx).GetType()))
+}
+
+type builtinCastVectorFloat32AsUnsupportedSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) Clone() builtinFunc {
+	newSig := &builtinCastVectorFloat32AsUnsupportedSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalInt(_ EvalContext, _ chunk.Row) (int64, bool, error) {
+	return 0, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalReal(_ EvalContext, _ chunk.Row) (float64, bool, error) {
+	return 0, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDecimal(_ EvalContext, _ chunk.Row) (*types.MyDecimal, bool, error) {
+	return nil, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalString(_ EvalContext, _ chunk.Row) (string, bool, error) {
+	return "", false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalTime(_ EvalContext, _ chunk.Row) (types.Time, bool, error) {
+	return types.ZeroTime, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDuration(_ EvalContext, _ chunk.Row) (types.Duration, bool, error) {
+	return types.ZeroDuration, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalJSON(_ EvalContext, _ chunk.Row) (types.BinaryJSON, bool, error) {
+	return types.BinaryJSON{}, false, errors.Errorf(
+		"cannot cast from vector to %s",
+		types.TypeStr(b.tp.GetType()))
+}
+
+type builtinCastStringAsVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastStringAsVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCastStringAsVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastStringAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	vec, err := types.ParseVectorFloat32(val)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if err = vec.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	return vec, false, nil
+}
+
+type builtinCastVectorFloat32AsVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastVectorFloat32AsVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCastVectorFloat32AsVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastVectorFloat32AsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	val, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	if err = val.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	return val, false, nil
+}
+
 type builtinCastIntAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
@@ -644,6 +860,9 @@ func (b *builtinCastIntAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 type builtinCastIntAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsRealSig) Clone() builtinFunc {
@@ -657,7 +876,7 @@ func (b *builtinCastIntAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
 		res = float64(val)
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
@@ -674,6 +893,9 @@ func (b *builtinCastIntAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res 
 
 type builtinCastIntAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsDecimalSig) Clone() builtinFunc {
@@ -687,7 +909,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
 		//revive:disable:empty-lines
 		res = types.NewDecFromInt(val)
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
@@ -708,6 +930,9 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 
 type builtinCastIntAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
@@ -721,7 +946,7 @@ func (b *builtinCastIntAsStringSig) evalString(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	tp := b.args[0].GetType()
+	tp := b.args[0].GetType(ctx)
 	if !mysql.HasUnsignedFlag(tp.GetFlag()) {
 		res = strconv.FormatInt(val, 10)
 	} else {
@@ -739,6 +964,9 @@ func (b *builtinCastIntAsStringSig) evalString(ctx EvalContext, row chunk.Row) (
 
 type builtinCastIntAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
@@ -753,7 +981,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res 
 		return res, isNull, err
 	}
 
-	if b.args[0].GetType().GetType() == mysql.TypeYear {
+	if b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		res, err = types.ParseTimeFromYear(val)
 	} else {
 		res, err = types.ParseTimeFromNum(typeCtx(ctx), val, b.tp.GetType(), b.tp.GetDecimal())
@@ -771,6 +999,9 @@ func (b *builtinCastIntAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res 
 
 type builtinCastIntAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
@@ -797,6 +1028,9 @@ func (b *builtinCastIntAsDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 
 type builtinCastIntAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
@@ -810,9 +1044,9 @@ func (b *builtinCastIntAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if mysql.HasIsBooleanFlag(b.args[0].GetType().GetFlag()) {
+	if mysql.HasIsBooleanFlag(b.args[0].GetType(ctx).GetFlag()) {
 		res = types.CreateBinaryJSON(val != 0)
-	} else if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		res = types.CreateBinaryJSON(uint64(val))
 	} else {
 		res = types.CreateBinaryJSON(val)
@@ -822,6 +1056,9 @@ func (b *builtinCastIntAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 
 type builtinCastRealAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
@@ -838,6 +1075,9 @@ func (b *builtinCastRealAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastDecimalAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
@@ -861,6 +1101,9 @@ func (b *builtinCastDecimalAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (
 
 type builtinCastStringAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
@@ -875,7 +1118,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		return res, isNull, err
 	}
 
-	typ := b.args[0].GetType()
+	typ := b.args[0].GetType(ctx)
 	if types.IsBinaryStr(typ) {
 		buf := []byte(val)
 		if typ.GetType() == mysql.TypeString && typ.GetFlen() > 0 {
@@ -885,7 +1128,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		}
 
 		res := types.CreateBinaryJSON(types.Opaque{
-			TypeCode: b.args[0].GetType().GetType(),
+			TypeCode: b.args[0].GetType(ctx).GetType(),
 			Buf:      buf,
 		})
 
@@ -900,6 +1143,9 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastDurationAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
@@ -919,6 +1165,9 @@ func (b *builtinCastDurationAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) 
 
 type builtinCastTimeAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
@@ -940,6 +1189,9 @@ func (b *builtinCastTimeAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastRealAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsRealSig) Clone() builtinFunc {
@@ -958,6 +1210,9 @@ func (b *builtinCastRealAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastRealAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsIntSig) Clone() builtinFunc {
@@ -972,13 +1227,13 @@ func (b *builtinCastRealAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.GetFlag()) {
-		res, err = types.ConvertFloatToInt(val, types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+		res, err = types.ConvertFloatToInt(val, types.IntegerSignedLowerBound(mysql.TypeLonglong), types.IntegerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 	} else if b.inUnion && val < 0 {
 		res = 0
 	} else {
 		var uintVal uint64
 		tc := typeCtx(ctx)
-		uintVal, err = types.ConvertFloatToUint(tc.Flags(), val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+		uintVal, err = types.ConvertFloatToUint(tc.Flags(), val, types.IntegerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
 	if types.ErrOverflow.Equal(err) {
@@ -990,6 +1245,9 @@ func (b *builtinCastRealAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 
 type builtinCastRealAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsDecimalSig) Clone() builtinFunc {
@@ -1008,7 +1266,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
-			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
 			err = ec.HandleErrorWithAlias(err, err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
@@ -1025,6 +1283,9 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastRealAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
@@ -1040,7 +1301,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	}
 
 	bits := 64
-	if b.args[0].GetType().GetType() == mysql.TypeFloat {
+	if b.args[0].GetType(ctx).GetType() == mysql.TypeFloat {
 		// b.args[0].EvalReal() casts the value from float32 to float64, for example:
 		// float32(208.867) is cast to float64(208.86700439)
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
@@ -1055,6 +1316,9 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinCastRealAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsTimeSig) Clone() builtinFunc {
@@ -1086,6 +1350,9 @@ func (b *builtinCastRealAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (typ
 
 type builtinCastRealAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
@@ -1113,6 +1380,9 @@ func (b *builtinCastRealAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinCastDecimalAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsDecimalSig) Clone() builtinFunc {
@@ -1138,6 +1408,9 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 
 type builtinCastDecimalAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsIntSig) Clone() builtinFunc {
@@ -1180,6 +1453,9 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 
 type builtinCastDecimalAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
@@ -1202,6 +1478,9 @@ func (b *builtinCastDecimalAsStringSig) evalString(ctx EvalContext, row chunk.Ro
 
 type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
@@ -1239,6 +1518,9 @@ func (b *builtinCastDecimalAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 
 type builtinCastDecimalAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsTimeSig) Clone() builtinFunc {
@@ -1265,6 +1547,9 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 
 type builtinCastDecimalAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
@@ -1290,6 +1575,9 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(ctx EvalContext, row chun
 
 type builtinCastStringAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
@@ -1312,6 +1600,9 @@ func (b *builtinCastStringAsStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinCastStringAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsIntSig) Clone() builtinFunc {
@@ -1345,7 +1636,7 @@ func (*builtinCastStringAsIntSig) handleOverflow(ctx EvalContext, origRes int64,
 }
 
 func (b *builtinCastStringAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
+	if b.args[0].GetType(ctx).Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalInt(ctx, row)
 	}
 
@@ -1390,6 +1681,9 @@ func (b *builtinCastStringAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastStringAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsRealSig) Clone() builtinFunc {
@@ -1425,6 +1719,9 @@ func (b *builtinCastStringAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastStringAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsDecimalSig) Clone() builtinFunc {
@@ -1462,6 +1759,9 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.R
 
 type builtinCastStringAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
@@ -1491,6 +1791,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastStringAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
@@ -1514,6 +1817,9 @@ func (b *builtinCastStringAsDurationSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinCastTimeAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
@@ -1543,6 +1849,9 @@ func (b *builtinCastTimeAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastTimeAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsIntSig) Clone() builtinFunc {
@@ -1567,6 +1876,9 @@ func (b *builtinCastTimeAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 
 type builtinCastTimeAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsRealSig) Clone() builtinFunc {
@@ -1586,6 +1898,9 @@ func (b *builtinCastTimeAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastTimeAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsDecimalSig) Clone() builtinFunc {
@@ -1607,6 +1922,9 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastTimeAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
@@ -1629,6 +1947,9 @@ func (b *builtinCastTimeAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinCastTimeAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastTimeAsDurationSig) Clone() builtinFunc {
@@ -1652,6 +1973,9 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinCastDurationAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsDurationSig) Clone() builtinFunc {
@@ -1671,6 +1995,9 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(ctx EvalContext, row chu
 
 type builtinCastDurationAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsIntSig) Clone() builtinFunc {
@@ -1700,6 +2027,9 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastDurationAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsRealSig) Clone() builtinFunc {
@@ -1722,6 +2052,9 @@ func (b *builtinCastDurationAsRealSig) evalReal(ctx EvalContext, row chunk.Row) 
 
 type builtinCastDurationAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsDecimalSig) Clone() builtinFunc {
@@ -1746,6 +2079,9 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 
 type builtinCastDurationAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
@@ -1781,6 +2117,9 @@ func padZeroForBinaryType(s string, tp *types.FieldType, ctx EvalContext) (strin
 
 type builtinCastDurationAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastDurationAsTimeSig) Clone() builtinFunc {
@@ -1809,6 +2148,9 @@ func (b *builtinCastDurationAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) 
 
 type builtinCastJSONAsJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsJSONSig) Clone() builtinFunc {
@@ -1823,6 +2165,9 @@ func (b *builtinCastJSONAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (val
 
 type builtinCastJSONAsIntSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsIntSig) Clone() builtinFunc {
@@ -1844,6 +2189,9 @@ func (b *builtinCastJSONAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 
 type builtinCastJSONAsRealSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsRealSig) Clone() builtinFunc {
@@ -1863,6 +2211,9 @@ func (b *builtinCastJSONAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastJSONAsDecimalSig struct {
 	baseBuiltinCastFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsDecimalSig) Clone() builtinFunc {
@@ -1888,6 +2239,9 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastJSONAsStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
@@ -1908,8 +2262,36 @@ func (b *builtinCastJSONAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	return s, false, nil
 }
 
+type builtinCastVectorFloat32AsStringSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastVectorFloat32AsStringSig) Clone() builtinFunc {
+	newSig := &builtinCastVectorFloat32AsStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastVectorFloat32AsStringSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	s, err := types.ProduceStrWithSpecifiedTp(val.String(), b.tp, typeCtx(ctx), false)
+	if err != nil {
+		return res, false, err
+	}
+	return s, false, nil
+}
+
 type builtinCastJSONAsTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsTimeSig) Clone() builtinFunc {
@@ -1926,7 +2308,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		res = val.GetTime()
+		res = val.GetTimeWithFsp(b.tp.GetDecimal())
 		res.SetType(b.tp.GetType())
 		if b.tp.GetType() == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
@@ -1970,6 +2352,9 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastJSONAsDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {
@@ -1988,7 +2373,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		time := val.GetTime()
+		time := val.GetTimeWithFsp(b.tp.GetDecimal())
 		res, err = time.ConvertToDuration()
 		if err != nil {
 			return res, false, err
@@ -2052,23 +2437,21 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	ctx.SetValue(inUnionCastContext, struct{}{})
-	defer func() {
-		ctx.SetValue(inUnionCastContext, nil)
-	}()
-	return BuildCastFunction(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true, false)
+	terror.Log(err)
+	return
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
 func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprCollation, enumOrSetRealTypeIsStr bool) Expression {
-	if expr.GetType().EvalType() != types.ETString {
+	if expr.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
 		return expr
 	}
-	if expr.GetType().GetCollate() == ec.Collation {
+	if expr.GetType(ctx.GetEvalCtx()).GetCollate() == ec.Collation {
 		return expr
 	}
-	tp := expr.GetType().Clone()
-	if expr.GetType().Hybrid() {
+	tp := expr.GetType(ctx.GetEvalCtx()).Clone()
+	if expr.GetType(ctx.GetEvalCtx()).Hybrid() {
 		if !enumOrSetRealTypeIsStr {
 			return expr
 		}
@@ -2091,14 +2474,14 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
-	argType := expr.GetType()
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
+	argType := expr.GetType(ctx.GetEvalCtx())
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
 		tp.DelFlag(mysql.NotNullFlag)
@@ -2107,11 +2490,11 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDatetime, types.ETTimestamp:
 		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETDuration:
@@ -2122,15 +2505,19 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 		} else {
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
+	case types.ETVectorFloat32:
+		fc = &castAsVectorFloat32FunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		if expr.GetType().GetType() == mysql.TypeBit {
-			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
+		if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeBit {
+			tp.SetFlen((expr.GetType(ctx.GetEvalCtx()).GetFlen() + 7) / 8)
 		}
+	default:
+		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
+		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
@@ -2145,37 +2532,45 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
-func WrapWithCastAsInt(ctx BuildContext, expr Expression) Expression {
-	if expr.GetType().GetType() == mysql.TypeEnum {
+func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.FieldType) Expression {
+	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeEnum {
 		if col, ok := expr.(*Column); ok {
 			col = col.Clone().(*Column)
 			col.RetType = col.RetType.Clone()
 			expr = col
 		}
-		expr.GetType().AddFlag(mysql.EnumSetAsIntFlag)
+		expr.GetType(ctx.GetEvalCtx()).AddFlag(mysql.EnumSetAsIntFlag)
 	}
-	if expr.GetType().EvalType() == types.ETInt {
+	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.SetFlen(expr.GetType().GetFlen())
+	tp.SetFlen(expr.GetType(ctx.GetEvalCtx()).GetFlen())
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
+	// inherit NotNullFlag from source type
+	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag)
+	if targetType == nil {
+		// inherit UnsignedFlag from source type if targetType is nil
+		tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.UnsignedFlag)
+	} else {
+		// otherwise set UnsignedFlag based on targetType
+		tp.AddFlag(targetType.GetFlag() & mysql.UnsignedFlag)
+	}
 	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type of expr is not
 // type real, otherwise, returns `expr` directly.
 func WrapWithCastAsReal(ctx BuildContext, expr Expression) Expression {
-	if expr.GetType().EvalType() == types.ETReal {
+	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETReal {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.SetFlen(mysql.MaxRealWidth)
 	tp.SetDecimal(types.UnspecifiedLength)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
+	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2201,29 +2596,29 @@ func minimalDecimalLenForHoldingInteger(tp byte) int {
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
-	if expr.GetType().EvalType() == types.ETDecimal {
+	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETDecimal {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
-	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
+	tp.SetFlenUnderLimit(expr.GetType(ctx.GetEvalCtx()).GetFlen())
+	tp.SetDecimalUnderLimit(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 
-	if expr.GetType().EvalType() == types.ETInt {
-		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType().GetType()))
+	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
+		tp.SetFlen(minimalDecimalLenForHoldingInteger(expr.GetType(ctx.GetEvalCtx()).GetType()))
 		tp.SetDecimal(0)
 	}
 	if tp.GetFlen() == types.UnspecifiedLength || tp.GetFlen() > mysql.MaxDecimalWidth {
 		tp.SetFlen(mysql.MaxDecimalWidth)
 	}
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
+	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
-		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
-			castTp := castExpr.GetType()
+			castTp := castExpr.GetType(ctx.GetEvalCtx())
 			castTp.SetDecimalUnderLimit(frac)
 			castTp.SetFlenUnderLimit(precision)
 		}
@@ -2234,13 +2629,13 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
 // not type string, otherwise, returns `expr` directly.
 func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
-	exprTp := expr.GetType()
+	exprTp := expr.GetType(ctx.GetEvalCtx())
 	if exprTp.EvalType() == types.ETString {
 		return expr
 	}
 	argLen := exprTp.GetFlen()
 	// If expr is decimal, we should take the decimal point ,negative sign and the leading zero(0.xxx)
-	// into consideration, so we set `expr.GetType().GetFlen() + 3` as the `argLen`.
+	// into consideration, so we set `expr.GetType(ctx.GetEvalCtx()).GetFlen() + 3` as the `argLen`.
 	// Since the length of float and double is not accurate, we do not handle
 	// them.
 	if exprTp.GetType() == mysql.TypeNewDecimal && argLen != types.UnspecifiedFsp {
@@ -2270,7 +2665,7 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 	} else {
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
 	}
@@ -2282,21 +2677,21 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type of expr is not
 // same as type of the specified `tp` , otherwise, returns `expr` directly.
 func WrapWithCastAsTime(ctx BuildContext, expr Expression, tp *types.FieldType) Expression {
-	exprTp := expr.GetType().GetType()
+	exprTp := expr.GetType(ctx.GetEvalCtx()).GetType()
 	if tp.GetType() == exprTp {
 		return expr
 	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.GetType() == mysql.TypeDatetime {
 		return expr
 	}
-	switch x := expr.GetType().EvalType(); x {
+	switch x := expr.GetType(ctx.GetEvalCtx()).EvalType(); x {
 	case types.ETInt:
 		tp.SetDecimal(types.MinFsp)
 	case types.ETString, types.ETReal, types.ETJson:
 		tp.SetDecimal(types.MaxFsp)
 	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
-		tp.SetDecimal(expr.GetType().GetDecimal())
+		tp.SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 	case types.ETDecimal:
-		tp.SetDecimal(expr.GetType().GetDecimal())
+		tp.SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 		if tp.GetDecimal() > types.MaxFsp {
 			tp.SetDecimal(types.MaxFsp)
 		}
@@ -2318,11 +2713,11 @@ func WrapWithCastAsTime(ctx BuildContext, expr Expression, tp *types.FieldType) 
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type of expr is
 // not type duration, otherwise, returns `expr` directly.
 func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
-	if expr.GetType().GetType() == mysql.TypeDuration {
+	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDuration)
-	switch x := expr.GetType(); x.GetType() {
+	switch x := expr.GetType(ctx.GetEvalCtx()); x.GetType() {
 	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate:
 		tp.SetDecimal(x.GetDecimal())
 	default:
@@ -2338,10 +2733,20 @@ func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type of expr is not
 // type json, otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx BuildContext, expr Expression) Expression {
-	if expr.GetType().GetType() == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType().GetFlag()) {
+	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		return expr
 	}
 	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(12582912).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+	return BuildCastFunction(ctx, expr, tp)
+}
+
+// WrapWithCastAsVectorFloat32 wraps `expr` with `cast` if the return type of expr is not
+// type VectorFloat32, otherwise, returns `expr` directly.
+func WrapWithCastAsVectorFloat32(ctx BuildContext, expr Expression) Expression {
+	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeTiDBVectorFloat32 {
+		return expr
+	}
+	tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2361,7 +2766,9 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	var wrapCastFunc func(ctx BuildContext, expr Expression) Expression
 	switch tp.EvalType() {
 	case types.ETInt:
-		wrapCastFunc = WrapWithCastAsInt
+		wrapCastFunc = func(ctx BuildContext, expr Expression) Expression {
+			return WrapWithCastAsInt(ctx, expr, tp)
+		}
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
 	default:
@@ -2376,7 +2783,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	args := sf.GetArgs()
 	switch sf.FuncName.L {
 	case ast.If:
-		if isHybrid(args[1].GetType()) || isHybrid(args[2].GetType()) {
+		if isHybrid(args[1].GetType(ctx.GetEvalCtx())) || isHybrid(args[2].GetType(ctx.GetEvalCtx())) {
 			args[1] = wrapCastFunc(ctx, args[1])
 			args[2] = wrapCastFunc(ctx, args[2])
 			f, err := funcs[ast.If].getFunction(ctx, args)
@@ -2389,10 +2796,10 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	case ast.Case:
 		hasHybrid := false
 		for i := 0; i < len(args)-1; i += 2 {
-			hasHybrid = hasHybrid || isHybrid(args[i+1].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[i+1].GetType(ctx.GetEvalCtx()))
 		}
 		if len(args)%2 == 1 {
-			hasHybrid = hasHybrid || isHybrid(args[len(args)-1].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[len(args)-1].GetType(ctx.GetEvalCtx()))
 		}
 		if !hasHybrid {
 			return expr
@@ -2413,7 +2820,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	case ast.Elt:
 		hasHybrid := false
 		for i := 1; i < len(args); i++ {
-			hasHybrid = hasHybrid || isHybrid(args[i].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[i].GetType(ctx.GetEvalCtx()))
 		}
 		if !hasHybrid {
 			return expr

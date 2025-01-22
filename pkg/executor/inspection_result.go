@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -58,7 +59,7 @@ type (
 
 	inspectionFilter struct {
 		set       set.StringSet
-		timeRange plannercore.QueryTimeRange
+		timeRange plannerutil.QueryTimeRange
 	}
 
 	inspectionRule interface {
@@ -108,7 +109,7 @@ type inspectionResultRetriever struct {
 	dummyCloser
 	retrieved               bool
 	extractor               *plannercore.InspectionResultTableExtractor
-	timeRange               plannercore.QueryTimeRange
+	timeRange               plannerutil.QueryTimeRange
 	instanceToStatusAddress map[string]string
 	statusToInstanceAddress map[string]string
 }
@@ -490,7 +491,7 @@ func (nodeLoadInspection) inspect(ctx context.Context, sctx sessionctx.Context, 
 
 type inspectVirtualMemUsage struct{}
 
-func (inspectVirtualMemUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectVirtualMemUsage) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, max(value) as max_usage from metrics_schema.node_memory_usage %s group by instance having max_usage >= 70", timeRange.Condition())
 	return sql
 }
@@ -513,7 +514,7 @@ func (inspectVirtualMemUsage) getItem() string {
 
 type inspectSwapMemoryUsed struct{}
 
-func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectSwapMemoryUsed) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
 	return sql
 }
@@ -535,7 +536,7 @@ func (inspectSwapMemoryUsed) getItem() string {
 
 type inspectDiskUsage struct{}
 
-func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (inspectDiskUsage) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
 	return sql
 }
@@ -561,7 +562,7 @@ type inspectCPULoad struct {
 	tbl  string
 }
 
-func (i inspectCPULoad) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (i inspectCPULoad) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	sql := fmt.Sprintf(`select t1.instance, t1.max_load , 0.7*t2.cpu_count from
 			(select instance,max(value) as max_load  from metrics_schema.%[1]s %[2]s group by instance) as t1 join
 			(select instance,max(value) as cpu_count from metrics_schema.node_virtual_cpus %[2]s group by instance) as t2
@@ -1039,7 +1040,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 }
 
 type ruleChecker interface {
-	genSQL(timeRange plannercore.QueryTimeRange) string
+	genSQL(timeRange plannerutil.QueryTimeRange) string
 	genResult(sql string, row chunk.Row) inspectionResult
 	getItem() string
 }
@@ -1050,10 +1051,10 @@ type compareStoreStatus struct {
 	threshold float64
 }
 
-func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (c compareStoreStatus) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
-		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
-		timeRange.To.Format(plannercore.MetricTableTimeFormat))
+		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannerutil.MetricTableTimeFormat),
+		timeRange.To.Format(plannerutil.MetricTableTimeFormat))
 	return fmt.Sprintf(`
 		SELECT t1.address,
         	max(t1.value),
@@ -1097,7 +1098,7 @@ func (c compareStoreStatus) getItem() string {
 
 type checkRegionHealth struct{}
 
-func (checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (checkRegionHealth) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := timeRange.Condition()
 	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
 		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
@@ -1125,7 +1126,7 @@ func (checkRegionHealth) getItem() string {
 
 type checkStoreRegionTooMuch struct{}
 
-func (checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
+func (checkStoreRegionTooMuch) genSQL(timeRange plannerutil.QueryTimeRange) string {
 	condition := timeRange.Condition()
 	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
 }

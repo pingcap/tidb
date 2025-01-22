@@ -26,6 +26,7 @@ var (
 	PseudoEstimation          *prometheus.CounterVec
 	SyncLoadCounter           prometheus.Counter
 	SyncLoadTimeoutCounter    prometheus.Counter
+	SyncLoadDedupCounter      prometheus.Counter
 	SyncLoadHistogram         prometheus.Histogram
 	ReadStatsHistogram        prometheus.Histogram
 	StatsCacheCounter         *prometheus.CounterVec
@@ -89,6 +90,13 @@ func InitStatsMetrics() {
 			Subsystem: "statistics",
 			Name:      "sync_load_timeout_total",
 			Help:      "Counter of sync load timeout.",
+		})
+	SyncLoadDedupCounter = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "sync_load_dedup_total",
+			Help:      "Counter of deduplicated sync load.",
 		})
 
 	SyncLoadHistogram = NewHistogram(

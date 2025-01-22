@@ -1,8 +1,8 @@
-package(default_visibility = ["//visibility:public"])
-
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "nogo")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "nogo")
 load("//build/linter/staticcheck:def.bzl", "staticcheck_analyzers")
+
+package(default_visibility = ["//visibility:public"])
 
 bool_flag(
     name = "with_nogo_flag",
@@ -105,6 +105,7 @@ nogo(
     config = ":nogo_config.json",
     visibility = ["//visibility:public"],  # must have public visibility
     deps = [
+               "@org_golang_x_tools//go/analysis/passes/appends:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/asmdecl:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/assign:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/atomic:go_default_library",
@@ -117,6 +118,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/composite:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/copylock:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/ctrlflow:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/defers:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/deepequalerrors:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/errorsas:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/fieldalignment:go_default_library",
@@ -124,7 +126,6 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/httpresponse:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/ifaceassert:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/inspect:go_default_library",
-               "@org_golang_x_tools//go/analysis/passes/loopclosure:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/lostcancel:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/nilfunc:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/nilness:go_default_library",
@@ -142,25 +143,27 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/unusedwrite:go_default_library",
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
                "//build/linter/bootstrap",
                "//build/linter/constructor",
+               "//build/linter/copyloopvar",
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
                "//build/linter/etcdconfig",
-               "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
                "//build/linter/gci",
                "//build/linter/gosec",
                "//build/linter/ineffassign",
+               "//build/linter/intrange",
                "//build/linter/makezero",
                "//build/linter/mirror",
                "//build/linter/misspell",
-               "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
+               "//build/linter/printexpression",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
                "//build/linter/toomanytests",
@@ -176,7 +179,6 @@ nogo(
            }) +
            select({
                "//build:without_rbe": [
-                   "//build/linter/filepermission",
                ],
                "//conditions:default": [],
            }),

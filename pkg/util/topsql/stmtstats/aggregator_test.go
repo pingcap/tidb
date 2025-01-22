@@ -26,7 +26,7 @@ import (
 )
 
 func Test_SetupCloseAggregator(t *testing.T) {
-	for n := 0; n < 3; n++ {
+	for range 3 {
 		SetupAggregator()
 		time.Sleep(100 * time.Millisecond)
 		assert.False(t, globalAggregator.closed())
@@ -80,7 +80,7 @@ func Test_aggregator_run_close(t *testing.T) {
 	assert.True(t, a.closed())
 
 	// randomly start and close
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if rand.Intn(2) == 0 {
 			a.start()
 		} else {

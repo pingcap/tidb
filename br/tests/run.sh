@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+
 # Copyright 2019 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,11 +16,16 @@
 
 set -eu
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$CUR/_utils"
+export UTILS_DIR="$CUR/../../tests/_utils"
+export PATH="$CUR:$PATH:$CUR/../../bin:$CUR/../bin:$UTILS_DIR"
 export TEST_DIR=/tmp/backup_restore_test
 export COV_DIR="/tmp/group_cover"
 mkdir -p $COV_DIR || true
-source $CUR/_utils/run_services
+export TIDB_CONFIG="$CUR/config/tidb.toml"
+export TIKV_CONFIG="$CUR/config/tikv.toml"
+export PD_CONFIG="$CUR/config/pd.toml"
+export TESTS_ROOT="$CUR"
+source $UTILS_DIR/run_services
 
 # Create COV_DIR if not exists
 if [ -d "$COV_DIR" ]; then
@@ -33,8 +38,8 @@ rm -rf $TEST_DIR && mkdir -p $TEST_DIR
 # Generate TLS certs
 generate_certs &> /dev/null
 
-SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
-
+# Use the environment variable TEST_NAME if set, otherwise find all test cases
+SELECTED_TEST_NAME="${TEST_NAME:-$(find "$CUR" -mindepth 2 -maxdepth 2 -name run.sh | awk -F'/' '{print $(NF-1)}' | sort)}"
 trap stop_services EXIT
 start_services $@
 
@@ -43,12 +48,31 @@ start_services $@
 run_curl "https://$PD_ADDR/pd/api/v1/version" | grep -o 'v[0-9.]\+' > "$TEST_DIR/cluster_version.txt"
 IFS='.' read CLUSTER_VERSION_MAJOR CLUSTER_VERSION_MINOR CLUSTER_VERSION_REVISION < "$TEST_DIR/cluster_version.txt"
 
+# enable encryption validation for all tests if needed, it will check all backup files are encrypted or not
+# based on the encryption settings in the test case
+ENABLE_ENCRYPTION_CHECK=true
+export ENABLE_ENCRYPTION_CHECK
+
+# generate local disk master key file to enable local encryption
+MASTER_KEY_DIR="$TEST_DIR/master_key"
+mkdir -p "$MASTER_KEY_DIR"
+openssl rand -hex 32 > "$MASTER_KEY_DIR/master.key"
+MASTER_KEY_PATH="local://$MASTER_KEY_DIR/master.key"
+
+# testing encryption using local master key
+ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --master-key-crypter-method AES256-CTR --master-key $MASTER_KEY_PATH"
+
+# uncomment it to test plaintext data key manually.
+#ENCRYPTION_ARGS="--crypter.method aes128-ctr --crypter.key 0123456789abcdef0123456789abcdef --log.crypter.method AES256-CTR --log.crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+export ENCRYPTION_ARGS
+
 if [ "${1-}" = '--debug' ]; then
     echo 'You may now debug from another terminal. Press [ENTER] to continue.'
     read line
 fi
 
-echo "selected test cases: $SELECTED_TEST_NAME"
+echo "Selected test cases: $SELECTED_TEST_NAME"
 
 run_case() {
     local case=$1
@@ -70,7 +94,7 @@ run_case() {
     bash "$script" && echo "TEST: [$case] success!"
 }
 
-# wait for global variable cache invalid
+# Wait for global variable cache invalid
 sleep 2
 
 for casename in $SELECTED_TEST_NAME; do

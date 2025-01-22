@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -22,10 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -41,11 +42,11 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("create table t(a int, b varchar(10), index idx(a, b))")
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// 1. switch off the tidb_enable_historical_stats, and there is no records in table `mysql.stats_history`
@@ -74,6 +75,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	// 3. dump current stats json
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
+	dumpJSONTable.Sort()
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 
 	// 4. get the historical stats json
@@ -88,6 +90,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	}
 	jsonTbl, err := storage.BlocksToJSONTable(data)
 	require.NoError(t, err)
+	jsonTbl.Sort()
 	jsCur, err := json.Marshal(jsonTbl)
 	require.NoError(t, err)
 	// 5. historical stats must be equal to the current stats
@@ -102,12 +105,12 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("analyze table test.t")
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// 1. switch off the tidb_enable_historical_stats, and there is no record in table `mysql.stats_meta_history`
@@ -161,10 +164,10 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("create table t(a int, b varchar(10), index idx(a, b))")
 	tk.MustExec("analyze table test.t")
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// dump historical stats
 	h := dom.StatsHandle()
@@ -201,7 +204,7 @@ func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
 	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`))")
 	tk.MustExec("analyze table test.t")
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// dump historical stats
 	h := dom.StatsHandle()
@@ -247,10 +250,10 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("create table t(a int, b varchar(10), index idx(a, b))")
 	tk.MustExec("analyze table test.t")
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	// dump historical stats
 	h := dom.StatsHandle()
@@ -325,7 +328,7 @@ PARTITION p0 VALUES LESS THAN (6)
 
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 
@@ -384,7 +387,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	// dump historical stats
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 
@@ -399,4 +402,40 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NoError(t, err)
 	require.NotNil(t, jt)
 	require.False(t, jt.IsHistoricalStats)
+}
+
+func TestDumpHistoricalStatsMetaForMultiTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a int, b varchar(10), index idx(a, b))")
+	tk.MustExec("create table t2(a int, b varchar(10), index idx(a, b))")
+	// Insert some data.
+	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustExec("insert into t2 values (1, 'a'), (2, 'b'), (3, 'c')")
+	// Analyze the tables.
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	h := dom.StatsHandle()
+	// Update the stats cache.
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	// Insert more data.
+	tk.MustExec("insert into t1 values (4, 'd'), (5, 'e'), (6, 'f')")
+	tk.MustExec("insert into t2 values (4, 'd'), (5, 'e'), (6, 'f')")
+	// Dump stats delta to kv.
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	// Check historical stats meta.
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	rows := tk.MustQuery("select version from mysql.stats_meta_history where table_id = ? order by version desc limit 1", tbl1.Meta().ID).Rows()
+	version1 := rows[0][0].(string)
+	rows = tk.MustQuery("select version from mysql.stats_meta_history where table_id = ? order by version desc limit 1", tbl2.Meta().ID).Rows()
+	version2 := rows[0][0].(string)
+	require.Equal(t, version1, version2)
 }

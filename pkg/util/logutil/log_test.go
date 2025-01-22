@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -184,7 +187,7 @@ func TestSetLevel(t *testing.T) {
 func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 	var prop *log.ZapProperties
 	var err error
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		level := "Error"
 		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 		if i == 0 {
@@ -264,4 +267,64 @@ func TestGlobalLoggerReplace(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
+}
+
+func TestProxyFields(t *testing.T) {
+	revIndex := map[string]int{
+		"http_proxy":  0,
+		"https_proxy": 1,
+		"no_proxy":    2,
+	}
+	envs := [...]string{"http_proxy", "https_proxy", "no_proxy"}
+	envPreset := [...]string{"http://127.0.0.1:8080", "https://127.0.0.1:8443", "localhost,127.0.0.1"}
+
+	// Exhaust all combinations of those environment variables' selection.
+	// Each bit of the mask decided whether this index of `envs` would be set.
+	for mask := 0; mask <= 0b111; mask++ {
+		for _, env := range envs {
+			require.NoError(t, os.Unsetenv(env))
+		}
+
+		for i := range 3 {
+			if (1<<i)&mask != 0 {
+				require.NoError(t, os.Setenv(envs[i], envPreset[i]))
+			}
+		}
+
+		for _, field := range proxyFields() {
+			idx, ok := revIndex[field.Key]
+			require.True(t, ok)
+			require.NotZero(t, (1<<idx)&mask)
+			require.Equal(t, envPreset[idx], field.String)
+		}
+	}
+}
+
+func prepareStdoutLogger(t *testing.T) (*os.File, string) {
+	bak := os.Stdout
+	t.Cleanup(func() {
+		os.Stdout = bak
+	})
+	tempDir := t.TempDir()
+	fileName := path.Join(tempDir, "test.log")
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	os.Stdout = file
+	// InitLogger contains zap.AddStacktrace(zapcore.FatalLevel), so log level
+	// below fatal will not contain stack automatically.
+	require.NoError(t, InitLogger(&LogConfig{}))
+
+	return file, fileName
+}
+
+func TestSampleLoggerFactory(t *testing.T) {
+	file, filename := prepareStdoutLogger(t)
+	fac := SampleLoggerFactory(time.Minute, 3, zap.String(LogFieldCategory, "ddl"))
+	for range 100 {
+		fac().Info("sample log test")
+	}
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(filename)
+	require.NoError(t, err)
+	require.Equal(t, 3, strings.Count(string(content), "sample log test"))
 }

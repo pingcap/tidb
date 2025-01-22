@@ -15,28 +15,9 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
-
-type columnEvaluator struct {
-	inputIdxToOutputIdxes map[int][]int
-}
-
-// run evaluates "Column" expressions.
-// NOTE: It should be called after all the other expressions are evaluated
-//
-//	since it will change the content of the input Chunk.
-func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error {
-	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
-		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
-			return err
-		}
-		for i, length := 1, len(outputIdxes); i < length; i++ {
-			output.MakeRef(outputIdxes[0], outputIdxes[i])
-		}
-	}
-	return nil
-}
 
 type defaultEvaluator struct {
 	outputIdxes  []int
@@ -74,12 +55,37 @@ func (e *defaultEvaluator) run(ctx EvalContext, vecEnabled bool, input, output *
 	return nil
 }
 
+// RequiredOptionalEvalProps exposes all optional evaluation properties that this evaluator requires.
+func (e *defaultEvaluator) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+	props := exprctx.OptionalEvalPropKeySet(0)
+	for _, expr := range e.exprs {
+		props = props | GetOptionalEvalPropsForExpr(expr)
+	}
+
+	return props
+}
+
+// GetOptionalEvalPropsForExpr gets all optional evaluation properties that this expression requires.
+func GetOptionalEvalPropsForExpr(expr Expression) exprctx.OptionalEvalPropKeySet {
+	switch e := expr.(type) {
+	case *ScalarFunction:
+		props := e.Function.RequiredOptionalEvalProps()
+		for _, arg := range e.GetArgs() {
+			props = props | GetOptionalEvalPropsForExpr(arg)
+		}
+
+		return props
+	default:
+		return 0
+	}
+}
+
 // EvaluatorSuite is responsible for the evaluation of a list of expressions.
 // It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
 type EvaluatorSuite struct {
-	*columnEvaluator  // Evaluator for column expressions.
-	*defaultEvaluator // Evaluator for other expressions.
+	ColumnSwapHelper  *chunk.ColumnSwapHelper // Evaluator for column expressions.
+	*defaultEvaluator                         // Evaluator for other expressions.
 }
 
 // NewEvaluatorSuite creates an EvaluatorSuite to evaluate all the exprs.
@@ -89,11 +95,11 @@ func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *Evaluator
 
 	for i := 0; i < len(exprs); i++ {
 		if col, isCol := exprs[i].(*Column); isCol && !avoidColumnEvaluator {
-			if e.columnEvaluator == nil {
-				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
+			if e.ColumnSwapHelper == nil {
+				e.ColumnSwapHelper = &chunk.ColumnSwapHelper{InputIdxToOutputIdxes: make(map[int][]int)}
 			}
 			inputIdx, outputIdx := col.Index, i
-			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
+			e.ColumnSwapHelper.InputIdxToOutputIdxes[inputIdx] = append(e.ColumnSwapHelper.InputIdxToOutputIdxes[inputIdx], outputIdx)
 			continue
 		}
 		if e.defaultEvaluator == nil {
@@ -127,8 +133,19 @@ func (e *EvaluatorSuite) Run(ctx EvalContext, vecEnabled bool, input, output *ch
 		}
 	}
 
-	if e.columnEvaluator != nil {
-		return e.columnEvaluator.run(ctx, input, output)
+	// NOTE: It should be called after all the other expressions are evaluated
+	//	since it will change the content of the input Chunk.
+	if e.ColumnSwapHelper != nil {
+		return e.ColumnSwapHelper.SwapColumns(input, output)
 	}
 	return nil
+}
+
+// RequiredOptionalEvalProps exposes all optional evaluation properties that this evaluator requires.
+func (e *EvaluatorSuite) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+	if e.defaultEvaluator != nil {
+		return e.defaultEvaluator.RequiredOptionalEvalProps()
+	}
+
+	return 0
 }

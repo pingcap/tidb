@@ -289,7 +289,10 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 	// 3. handle verify Common Name
 
 	if len(builder.verifyCN) > 0 {
+		// set RequireAndVerifyClientCert so server can verify the Common Name of client
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		// set InsecureSkipVerify to false so client can verify the Common Name of server
+		tlsCfg.InsecureSkipVerify = false
 		verifyFuncs = append(verifyFuncs, verifyCommonName(builder.verifyCN))
 	}
 

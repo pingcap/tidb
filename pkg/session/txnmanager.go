@@ -333,6 +333,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	}
 
 	if r.StaleReadTS > 0 {
+		m.sctx.GetSessionVars().TxnCtx.StaleReadTs = r.StaleReadTS
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
@@ -372,4 +373,9 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
+}
+
+// SetOptionsBeforeCommit sets options before commit.
+func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
+	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
 }

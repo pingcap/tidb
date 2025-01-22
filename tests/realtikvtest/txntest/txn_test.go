@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -270,7 +273,7 @@ func TestSelectLockForPartitionTable(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk1.MustExec("analyze table t")
 	tk1.MustExec("begin")
-	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp")
+	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexReader")
 	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
 	ch := make(chan bool, 1)
 	go func() {
@@ -531,4 +534,96 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	tk2.MustQuery("select * from t order by id").Check(testkit.Rows("1 11", "2 21"))
 	tk2.MustExec("admin check table t2")
 	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 10", "2 11"))
+}
+
+func TestDMLWithAddForeignKey(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 10 * time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 500 * time.Millisecond
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_1pc='OFF';")
+	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	tk.MustExec("set global tidb_enable_async_commit='ON'")
+
+	tkDML := testkit.NewTestKit(t, store)
+	tkDML.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table parent (id int primary key, val int, index(val));")
+	tkDDL.MustExec("create table child (id int primary key, val int, index(val));")
+
+	// The fail path of this test is:
+	// tk:     INSERT -> ... -> Wait                                       -> PreWrite -> ... -> Async Commit -> Wait    -> ... -> Success.
+	// tkDDL:            DDL -> StateWriteOnly -> checkForeignKeyConstrain -> DDL                             -> Success
+	// After fixing, either the `tkDDL` or `tk` will fail.
+	testfailpoint.Enable(t, "tikvclient/beforePrewrite", "pause")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckForeignKeyConstrain", func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
+	})
+	testfailpoint.Enable(t, "tikvclient/asyncCommitDoNothing", "pause")
+
+	var wg sync.WaitGroup
+	var errDML, errDDL error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		var rs sqlexec.RecordSet
+		rs, errDML = tkDML.Exec("insert into child values (1, 1)")
+		if rs != nil {
+			rs.Close()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		var rs sqlexec.RecordSet
+		rs, errDDL = tkDDL.Exec("alter table child add foreign key fk(val) references parent (val);")
+		if rs != nil {
+			rs.Close()
+		}
+		require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing"))
+	}()
+
+	wg.Wait()
+
+	require.True(t, errDML != nil || errDDL != nil)
+}
+
+func TestLockKeysInDML(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
+
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t2 VALUES (1)")
+	var wg sync.WaitGroup
+	var tk2CommitTime time.Time
+	tk2StartTime := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("BEGIN")
+		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
+		tk2.MustExec("COMMIT")
+		tk2CommitTime = time.Now()
+	}()
+	sleepDuration := 500 * time.Millisecond
+	time.Sleep(sleepDuration)
+	tk.MustExec("COMMIT")
+	wg.Wait()
+	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
 }

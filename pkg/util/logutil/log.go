@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/trace"
+	"sync"
 	"time"
 
 	gzap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
@@ -27,10 +28,11 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/net/http/httpproxy"
 )
 
 const (
@@ -57,6 +59,8 @@ const (
 	LogFieldConn = "conn"
 	// LogFieldSessionAlias is the field name for session_alias in log
 	LogFieldSessionAlias = "session_alias"
+	// jsonLogFormat is the json format of the log.
+	jsonLogFormat = "json"
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -120,6 +124,9 @@ var SlowQueryLogger = log.L()
 // GeneralLogger is used to log general log, InitLogger will modify it according to config file.
 var GeneralLogger = log.L()
 
+// this logger will always output error verbose regardless of the log config.
+var errVerboseLogger = log.L()
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
@@ -128,6 +135,18 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		return errors.Trace(err)
 	}
 	log.ReplaceGlobals(gl, props)
+	// pingcap/log doesn't support DisableErrorVerbose for json format log.
+	if cfg.Config.Format == jsonLogFormat || !cfg.Config.DisableErrorVerbose {
+		errVerboseLogger = gl
+	} else {
+		newLogCfg := cfg.Config
+		newLogCfg.DisableErrorVerbose = false
+		logger, _, err := log.InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer, props.ErrSyncer, opts...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		errVerboseLogger = logger
+	}
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
@@ -222,9 +241,21 @@ func Logger(ctx context.Context) *zap.Logger {
 	return log.L()
 }
 
-// BgLogger is alias of `logutil.BgLogger()`
+// BgLogger is alias of `logutil.BgLogger()`. It's initialized in tidb-server's
+// main function. Don't use it in `init` or equivalent functions otherwise it
+// will print to stdout.
 func BgLogger() *zap.Logger {
-	return log.L()
+	return log.L().With()
+}
+
+// ErrVerboseLogger returns a logger that always output error verbose regardless
+// of the log config.
+// error verbose is disabled on default, but without stack it's harder to investigate
+// some issues, such as in DXF the error mostly happen in business logic, the
+// error stack is very deep, we want to log the stack to help us investigate.
+// Note: if stack is not that needed to investigate, use normal logger instead.
+func ErrVerboseLogger() *zap.Logger {
+	return errVerboseLogger
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger
@@ -366,5 +397,51 @@ func Eventf(ctx context.Context, format string, args ...any) {
 func SetTag(ctx context.Context, key string, value any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
+	}
+}
+
+// LogEnvVariables logs related environment variables.
+func LogEnvVariables() {
+	// log http proxy settings, it will be used in gRPC connection by default
+	fields := proxyFields()
+	if len(fields) > 0 {
+		log.Info("using proxy config", fields...)
+	}
+}
+
+func proxyFields() []zap.Field {
+	proxyCfg := httpproxy.FromEnvironment()
+	fields := make([]zap.Field, 0, 3)
+	if proxyCfg.HTTPProxy != "" {
+		fields = append(fields, zap.String("http_proxy", proxyCfg.HTTPProxy))
+	}
+	if proxyCfg.HTTPSProxy != "" {
+		fields = append(fields, zap.String("https_proxy", proxyCfg.HTTPSProxy))
+	}
+	if proxyCfg.NoProxy != "" {
+		fields = append(fields, zap.String("no_proxy", proxyCfg.NoProxy))
+	}
+	return fields
+}
+
+// SampleLoggerFactory returns a factory function that creates a sample logger.
+// the logger is used to sample the log to avoid too many logs, it will only log
+// the first 'first' log entries with the same level and message in 'tick' time.
+// NOTE: Because we need to record the log count with the same level and message
+// in this specific logger, the returned factory function will only create one logger.
+// this logger support at most 4096 types of logs with the same level and message.
+func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = BgLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
 	}
 }

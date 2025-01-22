@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"time"
@@ -22,12 +23,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -40,8 +43,34 @@ import (
 )
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+func StatsMetaCountAndModifyCount(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(ctx, sctx, tableID, false)
+}
+
+// StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
+func StatsMetaCountAndModifyCountForUpdate(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(ctx, sctx, tableID, true)
+}
+
+func statsMetaCountAndModifyCount(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+	forUpdate bool,
+) (count, modifyCount int64, isNull bool, err error) {
+	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
+	if forUpdate {
+		sql += " for update"
+	}
+	rows, _, err := util.ExecRowsWithCtx(ctx, sctx, sql, tableID)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -53,8 +82,8 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	return count, modifyCount, false, nil
 }
 
-// HistMetaFromStorage reads the meta info of the histogram from the storage.
-func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
+// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -64,26 +93,45 @@ func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possi
 		tp = &possibleColInfo.FieldType
 	}
 	rows, _, err := util.ExecRows(sctx,
-		"select distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
 		item.TableID,
 		item.ID,
 		isIndex,
 	)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, err
 	}
 	if len(rows) == 0 {
-		return nil, nil, 0, 0, nil
+		return nil, 0, nil
 	}
 	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
 	hist.Correlation = rows[0].GetFloat64(5)
-	lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
-	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
+	return hist, rows[0].GetInt64(4), nil
 }
 
-// HistogramFromStorage reads histogram from storage.
-func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+// HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
+// Sync load and async load will use high priority to get data.
+func HistogramFromStorageWithPriority(
+	sctx sessionctx.Context,
+	tableID int64,
+	colID int64,
+	tp *types.FieldType,
+	distinct int64,
+	isIndex int,
+	ver uint64,
+	nullCount int64,
+	totColSize int64,
+	corr float64,
+	priority int,
+) (*statistics.Histogram, error) {
+	selectPrefix := "select "
+	switch priority {
+	case kv.PriorityHigh:
+		selectPrefix += "high_priority "
+	case kv.PriorityLow:
+		selectPrefix += "low_priority "
+	}
+	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -99,10 +147,6 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
-			// Hence, when reading statistics, we should skip invalid date check. See #39336.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -114,12 +158,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			lowerBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			upperBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -131,11 +175,15 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 	return hg, nil
 }
 
-// CMSketchAndTopNFromStorage reads CMSketch and TopN from storage.
-func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+// CMSketchAndTopNFromStorageWithHighPriority reads CMSketch and TopN from storage.
+func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	topNRows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
+	}
+	// If we are on version higher than 1. Don't read Count-Min Sketch.
+	if statsVer > statistics.Version1 {
+		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
 	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
@@ -255,15 +303,13 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
-	idx := table.Indices[histID]
-	flag := row.GetInt64(8)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+	idx := table.GetIdx(histID)
 
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
-		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		// All the objects in the table shares the same stats version.
 		// Update here.
 		if statsVer != statistics.Version0 {
@@ -288,21 +334,19 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
 				StatsVer:   statsVer,
 				Info:       idxInfo,
-				Flag:       flag,
 				PhysicalID: table.PhysicalID,
 			}
 			if idx.IsAnalyzed() {
 				idx.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, table.PhysicalID, 1, idxInfo.ID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -322,13 +366,11 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 				FMSketch:   fmSketch,
 				Info:       idxInfo,
 				StatsVer:   statsVer,
-				Flag:       flag,
 				PhysicalID: table.PhysicalID,
 			}
 			if statsVer != statistics.Version0 {
 				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
 	}
@@ -336,7 +378,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if tracker != nil {
 			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
-		table.Indices[histID] = idx
+		table.SetIdx(histID, idx)
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
@@ -350,16 +392,14 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
 	statsVer := row.GetInt64(7)
-	correlation := row.GetFloat64(9)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	col := table.Columns[histID]
-	flag := row.GetInt64(8)
+	correlation := row.GetFloat64(8)
+	col := table.GetCol(histID)
 
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
 		}
-		table.ColAndIdxExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
+		table.ColAndIdxExistenceMap.InsertCol(histID, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
 		// All the objects in the table shares the same stats version.
 		// Update here.
 		if statsVer != statistics.Version0 {
@@ -397,22 +437,20 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
 				StatsVer:   statsVer,
 			}
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, table.PhysicalID, 0, colInfo.ID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -433,13 +471,11 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 				TopN:       topN,
 				FMSketch:   fmSketch,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
 				StatsVer:   statsVer,
 			}
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
 		if col.TotColSize != totColSize {
@@ -453,7 +489,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if tracker != nil {
 			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
 		}
-		table.Columns[col.ID] = col
+		table.SetCol(col.ID, col)
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
@@ -471,12 +507,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
-		histColl := statistics.HistColl{
-			PhysicalID:     tableID,
-			HavePhysicalID: true,
-			Columns:        make(map[int64]*statistics.Column, 4),
-			Indices:        make(map[int64]*statistics.Index, 4),
-		}
+		histColl := *statistics.NewHistColl(tableID, 0, 0, 4, 4)
 		table = &statistics.Table{
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
@@ -487,17 +518,20 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
 	table.ModifyCount = modidyCount
 	table.RealtimeCount = realtimeCount
 
-	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
-	// Check deleted table.
-	if err != nil || len(rows) == 0 {
-		return nil, nil
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %?", tableID)
+	if err != nil {
+		return nil, err
+	}
+	// Check table has no index/column stats.
+	if len(rows) == 0 {
+		return table, nil
 	}
 	for _, row := range rows {
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
@@ -512,12 +546,34 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, err
 		}
 	}
+	// If DROP STATS executes, we need to reset the stats version to 0.
+	if table.StatsVer != statistics.Version0 {
+		allZero := true
+		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			if c.StatsVer != statistics.Version0 {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			if idx.StatsVer != statistics.Version0 {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		if allZero {
+			table.StatsVer = statistics.Version0
+		}
+	}
+	table.ColAndIdxExistenceMap.SetChecked()
 	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
 func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
-	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
+	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
 	if err != nil || len(row) == 0 {
 		return nil, err
 	}
@@ -537,19 +593,20 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 			tp = colInfo.FieldType
 			break
 		}
-		return HistogramFromStorage(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+		return HistogramFromStorageWithPriority(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr, kv.PriorityNormal)
 	}
-	return HistogramFromStorage(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
+	return HistogramFromStorageWithPriority(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0, kv.PriorityNormal)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, loadFMSketch bool) (err error) {
-	items := statistics.HistogramNeededItems.AllItems()
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsCache, item, loadFMSketch)
+			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, loadFMSketch, item.FullLoad)
 		} else {
-			err = loadNeededIndexHistograms(sctx, statsCache, item, loadFMSketch)
+			// Index is always full load.
+			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -560,22 +617,24 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCa
 
 // CleanFakeItemsForShowHistInFlights cleans the invalid inserted items.
 func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
-	items := statistics.HistogramNeededItems.AllItems()
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	reallyNeeded := 0
 	for _, item := range items {
 		tbl, ok := statsCache.Get(item.TableID)
 		if !ok {
-			statistics.HistogramNeededItems.Delete(item)
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
 			continue
 		}
 		loadNeeded := false
 		if item.IsIndex {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
-			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID, true)
+			var analyzed bool
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
-			statistics.HistogramNeededItems.Delete(item)
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
 			continue
 		}
 		reallyNeeded++
@@ -583,38 +642,69 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
-	tbl, ok := statsCache.Get(col.TableID)
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		return nil
 	}
-	var colInfo *model.ColumnInfo
-	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID, true)
-	if !loadNeeded {
-		statistics.HistogramNeededItems.Delete(col)
+	// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+	// so we have to get the column info from the domain.
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
+	if !ok {
 		return nil
 	}
-	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
-	hgMeta, _, statsVer, _, err := HistMetaFromStorage(sctx, &col, colInfo)
-	if hgMeta == nil || err != nil {
-		statistics.HistogramNeededItems.Delete(col)
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.GetColumnByID(col.ID)
+	if colInfo == nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
+	if !loadNeeded || !analyzed {
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
+		if loadNeeded && !analyzed {
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl = statsTbl.Copy()
+			statsTbl.SetCol(col.ID, fakeCol)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
+		}
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
+	if hg == nil || err != nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
 	}
-	hg, err := HistogramFromStorage(sctx, col.TableID, col.ID, &colInfo.FieldType, hgMeta.NDV, 0, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cms, topN, err := CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+	var (
+		cms  *statistics.CMSketch
+		topN *statistics.TopN
+		fms  *statistics.FMSketch
+	)
+	if fullLoad {
+		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cms, topN, err = CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if loadFMSketch {
+			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
+
 	colHist := &statistics.Column{
 		PhysicalID: col.TableID,
 		Histogram:  *hg,
@@ -622,56 +712,70 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		CMSketch:   cms,
 		TopN:       topN,
 		FMSketch:   fms,
-		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	tbl, ok = statsCache.Get(col.TableID)
+	statsTbl, ok = statsHandle.Get(col.TableID)
 	if !ok {
 		return nil
 	}
-	tbl = tbl.Copy()
+	statsTbl = statsTbl.Copy()
 	if colHist.StatsAvailable() {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+		if fullLoad {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
 		if statsVer != statistics.Version0 {
-			tbl.StatsVer = int(statsVer)
+			statsTbl.LastAnalyzeVersion = max(statsTbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+			statsTbl.StatsVer = int(statsVer)
 		}
 	}
-	tbl.Columns[col.ID] = colHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
-	statistics.HistogramNeededItems.Delete(col)
+	statsTbl.SetCol(col.ID, colHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", c.PhysicalID),
-			zap.Int64("column_id", c.Info.ID),
-			zap.String("column_name", c.Info.Name.O))
+			zap.Int64("table_id", colHist.PhysicalID),
+			zap.Int64("column_id", colHist.Info.ID),
+			zap.String("column_name", colHist.Info.Name.O))
 	}
 	return nil
 }
 
-func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
-	tbl, ok := statsCache.Get(idx.TableID)
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
 	if !loadNeeded {
-		statistics.HistogramNeededItems.Delete(idx)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorage(sctx, &idx, nil)
+	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
-		statistics.HistogramNeededItems.Delete(idx)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
-	idxInfo := tbl.ColAndIdxExistenceMap.GetIndex(idx.ID)
-	hg, err := HistogramFromStorage(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
+	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
+	if !ok {
+		return nil
+	}
+	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
+	if idxInfo == nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+		return errors.NotFoundf("index %d in table %d", idx.ID, idx.TableID)
+	}
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cms, topN, err := CMSketchAndTopNFromStorage(sctx, idx.TableID, 1, idx.ID)
+	cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, idx.TableID, 1, idx.ID, statsVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -684,28 +788,29 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
 		Info: idxInfo, StatsVer: statsVer,
-		Flag: flag, PhysicalID: idx.TableID,
+		PhysicalID:        idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
-	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	tbl, ok = statsCache.Get(idx.TableID)
+	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
 	tbl = tbl.Copy()
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
-	tbl.Indices[idx.ID] = idxHist
-	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	tbl.SetIdx(idx.ID, idxHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", tbl.PhysicalID),
-			zap.Int64("column_id", idxHist.Info.ID),
-			zap.String("column_name", idxHist.Info.Name.O))
+		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
+			zap.Int64("table_id", idx.TableID),
+			zap.Int64("index_id", idxHist.Info.ID),
+			zap.String("index_name", idxHist.Info.Name.O))
 	}
-	statistics.HistogramNeededItems.Delete(idx)
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	return nil
 }
 

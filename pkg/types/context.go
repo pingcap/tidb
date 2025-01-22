@@ -34,7 +34,9 @@ const (
 	// FlagTruncateAsWarning indicates to append the truncate error to warnings instead of returning it to user.
 	FlagTruncateAsWarning
 	// FlagAllowNegativeToUnsigned indicates to allow the casting from negative to unsigned int.
-	// When this flag is not set by default, casting a negative value to unsigned results an overflow error.
+	// When this flag is not set by default, casting a negative value to unsigned
+	// results an overflow error, but if SQL mode is not strict, it's converted
+	// to 0 with a warning.
 	// Otherwise, a negative value will be cast to the corresponding unsigned value without any error.
 	// For example, when casting -1 to an unsigned bigint with `FlagAllowNegativeToUnsigned` set,
 	// we will get `18446744073709551615` which is the biggest unsigned value.
@@ -200,11 +202,11 @@ func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
 type Context struct {
 	flags       Flags
 	loc         *time.Location
-	warnHandler contextutil.WarnHandler
+	warnHandler contextutil.WarnAppender
 }
 
 // NewContext creates a new `Context`
-func NewContext(flags Flags, loc *time.Location, handler contextutil.WarnHandler) Context {
+func NewContext(flags Flags, loc *time.Location, handler contextutil.WarnAppender) Context {
 	intest.Assert(loc != nil && handler != nil)
 	return Context{
 		flags:       flags,

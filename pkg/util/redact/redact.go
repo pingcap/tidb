@@ -17,17 +17,28 @@ package redact
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
 	_ fmt.Stringer = redactStringer{}
+
+	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
+	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
+	reAccessSig       = regexp.MustCompile(`access_sig:\"[^\"]*\"`)
+	reEncryptKey      = regexp.MustCompile(`encryption_key:<.*?>`)
 )
 
 // String will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
@@ -49,7 +60,11 @@ func String(mode string, input string) string {
 		return b.String()
 	case "OFF":
 		return input
+	case "ON":
+		return ""
 	default:
+		// should never happen
+		intest.Assert(false, "invalid redact mode")
 		return ""
 	}
 }
@@ -171,4 +186,71 @@ func DeRedact(remove bool, input io.Reader, output io.Writer, sep string) error 
 	}
 
 	return nil
+}
+
+// InitRedact inits the enableRedactLog
+func InitRedact(redactLog bool) {
+	mode := errors.RedactLogDisable
+	if redactLog {
+		mode = errors.RedactLogEnable
+	}
+	errors.RedactLogEnabled.Store(mode)
+}
+
+// NeedRedact returns whether to redact log
+func NeedRedact() bool {
+	mode := errors.RedactLogEnabled.Load()
+	return mode != errors.RedactLogDisable && mode != ""
+}
+
+// Value receives string argument and return omitted information if redact log enabled
+func Value(arg string) string {
+	if NeedRedact() {
+		return "?"
+	}
+	return arg
+}
+
+// Key receives a key return omitted information if redact log enabled
+func Key(key []byte) string {
+	if NeedRedact() {
+		return "?"
+	}
+	return strings.ToUpper(hex.EncodeToString(key))
+}
+
+// WriteRedact is to write string with redact into `strings.Builder`
+func WriteRedact(build *strings.Builder, v string, redact string) {
+	if redact == errors.RedactLogMarker {
+		build.WriteString("‹")
+		build.WriteString(v)
+		build.WriteString("›")
+		return
+	} else if redact == errors.RedactLogEnable {
+		build.WriteString("?")
+		return
+	}
+	build.WriteString(v)
+}
+
+// TaskInfoRedacted is a wrapper of backup.StreamBackupTaskInfo to redact sensitive information
+type TaskInfoRedacted struct {
+	Info *backup.StreamBackupTaskInfo
+}
+
+func (TaskInfoRedacted) redact(input string) string {
+	// Replace the matched fields with redacted versions
+	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
+	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
+	output = reSharedKey.ReplaceAllString(output, `shared_key:"[REDACTED]"`)
+	output = reCredentialsBlob.ReplaceAllString(output, `CredentialsBlob:"[REDACTED]"`)
+	output = reAccessSig.ReplaceAllString(output, `access_sig:"[REDACTED]"`)
+	output = reEncryptKey.ReplaceAllString(output, `encryption_key:<[REDACTED]>`)
+
+	return output
+}
+
+// String returns the redacted string of the task info
+func (t TaskInfoRedacted) String() string {
+	return t.redact(t.Info.String())
 }

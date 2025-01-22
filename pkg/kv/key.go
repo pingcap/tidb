@@ -98,10 +98,6 @@ func (k Key) String() string {
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
-
-	XXXNoUnkeyedLiteral struct{}
-	XXXunrecognized     []byte
-	XXXsizecache        int32
 }
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
@@ -110,7 +106,7 @@ func KeyRangeSliceMemUsage(k []KeyRange) int64 {
 
 	res := sizeofKeyRange * int64(cap(k))
 	for _, m := range k {
-		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey))
 	}
 
 	return res
@@ -185,6 +181,8 @@ type Handle interface {
 	MemUsage() uint64
 	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
 	ExtraMemSize() uint64
+	// Copy returns a deep copy of the Handle.
+	Copy() Handle
 }
 
 var _ Handle = IntHandle(0)
@@ -193,6 +191,11 @@ var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
+
+// Copy implements the Handle interface.
+func (ih IntHandle) Copy() Handle {
+	return ih
+}
 
 // IsInt implements the Handle interface.
 func (IntHandle) IsInt() bool {
@@ -301,6 +304,21 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 		ch.colEndOffsets = append(ch.colEndOffsets, endOff)
 	}
 	return ch, nil
+}
+
+// Copy implements the Handle interface.
+func (ch *CommonHandle) Copy() Handle {
+	if ch == nil {
+		return nil
+	}
+	encoded := make([]byte, len(ch.encoded))
+	copy(encoded, ch.encoded)
+	colEndOffsets := make([]uint16, len(ch.colEndOffsets))
+	copy(colEndOffsets, ch.colEndOffsets)
+	return &CommonHandle{
+		encoded:       encoded,
+		colEndOffsets: colEndOffsets,
+	}
 }
 
 // IsInt implements the Handle interface.
@@ -553,9 +571,9 @@ func (m *HandleMap) Range(fn func(h Handle, val any) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}
@@ -661,9 +679,9 @@ func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v.M {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}
@@ -691,12 +709,23 @@ func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
 	}
 }
 
+// Copy implements the Handle interface.
+func (ph PartitionHandle) Copy() Handle {
+	return PartitionHandle{
+		Handle:      ph.Handle.Copy(),
+		PartitionID: ph.PartitionID,
+	}
+}
+
 // Equal implements the Handle interface.
 func (ph PartitionHandle) Equal(h Handle) bool {
+	// Compare pid and handle if both sides are `PartitionHandle`.
 	if ph2, ok := h.(PartitionHandle); ok {
 		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
 	}
-	return false
+
+	// Otherwise, use underlying handle to do comparation.
+	return ph.Handle.Equal(h)
 }
 
 // Compare implements the Handle interface.

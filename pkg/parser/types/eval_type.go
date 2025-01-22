@@ -13,6 +13,8 @@
 
 package types
 
+import "fmt"
+
 // EvalType indicates the specified types that arguments and result of a built-in function should be.
 type EvalType byte
 
@@ -33,10 +35,43 @@ const (
 	ETDuration
 	// ETJson represents type JSON in evaluation.
 	ETJson
+	// ETVectorFloat32 represents type VectorFloat32 in evaluation.
+	ETVectorFloat32
 )
 
 // IsStringKind returns true for ETString, ETDatetime, ETTimestamp, ETDuration, ETJson EvalTypes.
 func (et EvalType) IsStringKind() bool {
 	return et == ETString || et == ETDatetime ||
-		et == ETTimestamp || et == ETDuration || et == ETJson
+		et == ETTimestamp || et == ETDuration || et == ETJson || et == ETVectorFloat32
+}
+
+// IsVectorKind returns true for ETVectorXxx EvalTypes.
+func (et EvalType) IsVectorKind() bool {
+	return et == ETVectorFloat32
+}
+
+// String implements fmt.Stringer interface.
+func (et EvalType) String() string {
+	switch et {
+	case ETInt:
+		return "Int"
+	case ETReal:
+		return "Real"
+	case ETDecimal:
+		return "Decimal"
+	case ETString:
+		return "String"
+	case ETDatetime:
+		return "Datetime"
+	case ETTimestamp:
+		return "Timestamp"
+	case ETDuration:
+		return "Time"
+	case ETJson:
+		return "Json"
+	case ETVectorFloat32:
+		return "VectorFloat32"
+	default:
+		panic(fmt.Sprintf("invalid EvalType %d", et))
+	}
 }

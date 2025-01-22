@@ -64,9 +64,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	do.sysVarCache.RLock()
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
-	newMap := make(map[string]string, len(do.sysVarCache.session))
-	maps.Copy(newMap, do.sysVarCache.session)
-	return newMap, nil
+	return maps.Clone(do.sysVarCache.session), nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.
@@ -107,12 +105,11 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
-		sysSessionPool := do.SysSessionPool()
-		res, err := sysSessionPool.Get()
+		res, err := do.sysSessionPool.Get()
 		if err != nil {
 			return err
 		}
-		defer sysSessionPool.Put(res)
+		defer do.sysSessionPool.Put(res)
 		ctx = res.(sessionctx.Context)
 	}
 	// Only one rebuild can be in progress at a time, this prevents a lost update race

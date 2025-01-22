@@ -22,13 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -467,6 +468,19 @@ func TestSetPwd(t *testing.T) {
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
+
+	// Test running SET PASSWORD FOR without sufficient privileges.
+	// Create user u1 with super privilege.
+	tk.MustExec("create user 'u1'")
+	tk.MustExec("grant super on *.* to u1")
+	// Create user u2 with create user privilege.
+	tk.MustExec("create user 'u2'")
+	tk.MustExec("grant create user on *.* to u2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	// Should have the correct error message saying u2 does not have enough privileges.
+	tk2.MustContainErrMsg("set password for 'u1'='randompassword'", "[executor:1044]Access denied for user 'u2'")
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
@@ -513,40 +527,48 @@ partition by range (a) (
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
-	checkPartitionStats := func(names ...string) {
-		rs := tk.MustQuery("show stats_meta").Rows()
-		require.Equal(t, len(names), len(rs))
-		for i := range names {
-			require.Equal(t, names[i], rs[i][2].(string))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalID := tblInfo.ID
+	p0ID := tblInfo.Partition.Definitions[0].ID
+	p1ID := tblInfo.Partition.Definitions[1].ID
+	globalpID := tblInfo.Partition.Definitions[2].ID
+
+	checkPartitionStats := func(existingOnes ...int64) {
+		strs := make([]string, 0, len(existingOnes))
+		for _, id := range existingOnes {
+			strs = append(strs, strconv.FormatInt(id, 10))
 		}
+		tk.MustQuery("select table_id from mysql.stats_histograms where stats_ver > 0 group by table_id order by table_id").Check(testkit.Rows(strs...))
 	}
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1681|'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."))
-	checkPartitionStats("global", "p1", "global")
+	checkPartitionStats(globalID, p1ID, globalpID)
 
-	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
+	err = tk.ExecToErr("drop stats test_drop_gstats partition abcde")
 	require.Error(t, err)
 	require.Equal(t, "can not found the specified partition name abcde in the table definition", err.Error())
 
 	tk.MustExec("drop stats test_drop_gstats partition global")
-	checkPartitionStats("global", "p1")
+	checkPartitionStats(globalID, p1ID)
 
 	tk.MustExec("drop stats test_drop_gstats global")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1287|'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead"))
-	checkPartitionStats("p1")
+	checkPartitionStats(p1ID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
-	checkPartitionStats("global")
+	checkPartitionStats(globalID)
 
 	tk.MustExec("analyze table test_drop_gstats")
-	checkPartitionStats("global", "p0", "p1", "global")
+	checkPartitionStats(globalID, p0ID, p1ID, globalpID)
 
 	tk.MustExec("drop stats test_drop_gstats")
 	checkPartitionStats()
@@ -556,9 +578,9 @@ func TestDropStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -566,11 +588,23 @@ func TestDropStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.Equal(t, int(idx.StatsVer), statistics.Version0)
+		require.False(t, idx.IsStatsInitialized())
+		return false
+	})
 
 	testKit.MustExec("analyze table t")
 	statsTbl = h.GetTableStats(tableInfo)
@@ -578,9 +612,20 @@ func TestDropStats(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.Equal(t, int(idx.StatsVer), statistics.Version0)
+		require.False(t, idx.IsStatsInitialized())
+		return false
+	})
 	h.SetLease(0)
 }
 
@@ -588,15 +633,15 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t1 (c1 int, c2 int)")
-	testKit.MustExec("create table t2 (c1 int, c2 int)")
+	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1, c2))")
+	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 
@@ -605,29 +650,57 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	testKit.MustExec("analyze table t1, t2")
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.True(t, statsTbl1.Pseudo)
+	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.True(t, statsTbl2.Pseudo)
+	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 
 	testKit.MustExec("analyze table t1, t2")
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.True(t, statsTbl1.Pseudo)
+	require.False(t, statsTbl1.Pseudo)
+	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.True(t, statsTbl2.Pseudo)
+	require.False(t, statsTbl2.Pseudo)
+	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		require.Equal(t, int(col.StatsVer), statistics.Version0)
+		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
+		return false
+	})
 	h.SetLease(0)
 }
 

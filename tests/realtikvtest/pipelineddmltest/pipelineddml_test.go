@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -160,13 +159,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode")
 	tk.MustExec("insert into t values(2, 2)")
-	tk.MustExec("commit")
-
-	// binlog is enabled
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("insert into t values(4, 4)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
-	tk.Session().GetSessionVars().BinlogClient = nil
+	tk.MustExec("commit")
 
 	// in a running txn
 	tk.MustExec("set session tidb_dml_type = standard")
@@ -196,19 +190,24 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	variable.EnableBatchDML.Store(false)
 
 	// for explain and explain analyze
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("explain insert into t values(8, 8)")
 	// explain is read-only, so it doesn't warn.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("begin")
 	tk.MustExec("explain analyze insert into t values(9, 9)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
-	tk.Session().GetSessionVars().BinlogClient = nil
+	tk.MustExec("commit")
 
 	// disable MDL
 	tk.MustExec("set global tidb_enable_metadata_lock = off")
 	tk.MustExec("insert into t values(10, 10)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used without Metadata Lock. Fallback to standard mode")
 	tk.MustExec("set global tidb_enable_metadata_lock = on")
+
+	// tidb_constraint_check_in_place = ON
+	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
+	tk.MustExec("insert into t values(11, 11)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used when tidb_constraint_check_in_place=ON. Fallback to standard mode")
+	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {
@@ -568,92 +567,44 @@ func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
 	tk.MustQuery("select count(1) from t").Check(testkit.Rows("200"))
 }
 
-func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(128)`))
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(128)`))
+func TestPipelinedDMLDisableRetry(t *testing.T) {
+	// the case tests that
+	// 1. auto-retry for pipelined dml is disabled
+	// 2. the write conflict error message returned from a Flush (instead of from Commit) is correct
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(1)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(1)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(1)`))
 	defer func() {
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
 	}()
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, _t1")
-	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
-	tk.MustExec("create table _t1 like t1")
-	cnt := 1000
-
-	// insertStmt
-	buf := bytes.NewBuffer(make([]byte, 0, 10240))
-	buf.WriteString("insert into t1 values ")
-	for i := 0; i < cnt; i++ {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
-	}
-	tk.MustExec(buf.String())
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
-
-	// insert
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")    // query canceled by memory controller will return error.
-	tk.MustExec("set session tidb_mem_quota_query = 256 << 10") // 256KB limitation.
-	tk.MustExec("set session tidb_max_chunk_size = 32")
-	insertStmt := "insert into _t1 select * from t1"
-	err := tk.ExecToErr(insertStmt)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."), err.Error())
-	tk.MustExec("set session tidb_dml_type = bulk")
-	tk.MustExec(insertStmt)
-	tk.MustQuery("select count(*) from _t1").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
-
-	// update
-	tk.MustExec("set session tidb_mem_quota_query = 256 << 10") // 256KB limitation.
-	updateStmt := "update _t1 set c = 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_++++++'"
-	tk.MustExec("set session tidb_dml_type = standard")
-	err = tk.ExecToErr(updateStmt)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."), err.Error())
-	tk.MustExec("set session tidb_dml_type = bulk")
-	tk.MustExec(updateStmt)
-	tk.MustQuery("select count(*) from _t1 where c = 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_++++++'").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
-
-	// delete
-	tk.MustExec("set session tidb_mem_quota_query = 128 << 10") // 128KB limitation.
-	deleteStmt := "delete from _t1"
-	tk.MustExec("set session tidb_dml_type = standard")
-	err = tk.ExecToErr(deleteStmt)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."), err.Error())
-	tk.MustExec("set session tidb_dml_type = bulk")
-	tk.MustExec(deleteStmt)
-	tk.MustQuery("select count(*) from _t1").Check(testkit.Rows("0"))
-}
-
-func TestPipelinedDMLDisableRetry(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().GetSessionVars().InitChunkSize = 1
+	tk1.Session().GetSessionVars().MaxChunkSize = 1
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
 	tk1.MustExec("create table t1(a int primary key, b int)")
-	tk1.MustExec("insert into t1 values(1, 1)")
+	// we need to avoid inserting *literals* into t, so let t2 be the source table.
+	tk1.MustExec("create table t2(a int, b int)")
+	tk1.MustExec("insert into t2 values (1, 1), (2, 1)")
 	require.Nil(t, failpoint.Enable("tikvclient/beforePipelinedFlush", `pause`))
 	tk1.MustExec("set session tidb_dml_type = bulk")
 	errCh := make(chan error)
 	go func() {
-		errCh <- tk1.ExecToErr("update t1 set b = b + 20")
+		// we expect that this stmt triggers 2 flushes, each containing only 1 row.
+		errCh <- tk1.ExecToErr("insert into t1 select * from t2 order by a")
 	}()
 	time.Sleep(500 * time.Millisecond)
-	tk2.MustExec("update t1 set b = b + 10")
+	tk2.MustExec("insert into t1 values (1,2)")
 	require.Nil(t, failpoint.Disable("tikvclient/beforePipelinedFlush"))
 	err := <-errCh
 	require.Error(t, err)
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
+	require.ErrorContains(t, err, "tableName=test.t1")
 }
 
 func TestReplaceRowCheck(t *testing.T) {

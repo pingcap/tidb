@@ -15,14 +15,10 @@
 package aggregation
 
 import (
-	"context"
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -111,7 +107,7 @@ func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, store
 	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
-			return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+			return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
 		}
 		children = append(children, pbArg)
 	}
@@ -125,20 +121,12 @@ func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, store
 		for _, arg := range aggFunc.OrderByItems {
 			pbArg := expression.SortByItemToPB(ctx.EvalCtx(), client, arg.Expr, arg.Desc)
 			if pbArg == nil {
-				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+				return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
 			}
 			orderBy = append(orderBy, pbArg)
 		}
 		// encode GroupConcatMaxLen
-		gcMaxLen, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
-		if err != nil {
-			return nil, errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen)
-		}
-		maxLen, err := strconv.ParseUint(gcMaxLen, 10, 64)
-		// Should never happen
-		if err != nil {
-			return nil, errors.Errorf("Error happened when buildGroupConcat: %s", err.Error())
-		}
+		maxLen := ctx.GetGroupConcatMaxLen()
 		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: retType, HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
 	}
 	return &tipb.Expr{Tp: tp, Children: children, FieldType: retType, HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil

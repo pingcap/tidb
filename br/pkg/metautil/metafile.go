@@ -24,9 +24,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -38,7 +39,7 @@ const (
 	// MetaFile represents file name
 	MetaFile = "backupmeta"
 	// MetaJSONFile represents backup meta json file name
-	MetaJSONFile = "backupmeta.json"
+	MetaJSONFile = "jsons/backupmeta.json"
 	// MaxBatchSize represents the internal channel buffer size of MetaWriter and MetaReader.
 	MaxBatchSize = 1024
 
@@ -87,22 +88,17 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
-// Decrypt decrypts the content according to CipherInfo and IV.
-func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
-	if len(content) == 0 || cipher == nil {
-		return content, nil
+func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherInfo) ([]byte, error) {
+	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
+		return metaData, nil
 	}
-
-	switch cipher.CipherType {
-	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return content, nil
-	case encryptionpb.EncryptionMethod_AES128_CTR,
-		encryptionpb.EncryptionMethod_AES192_CTR,
-		encryptionpb.EncryptionMethod_AES256_CTR:
-		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
-	default:
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
+	iv := metaData[:CrypterIvLen]
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}
+	return decryptBackupMeta, nil
 }
 
 // walkLeafMetaFile walks the leaves of the given metafile, and deal with it by calling the function `output`.
@@ -121,16 +117,15 @@ func walkLeafMetaFile(
 		return nil
 	}
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(8, "download files workers")
-	for _, node_ := range file.MetaFiles {
-		node := node_
+	workers := tidbutil.NewWorkerPool(8, "download files workers")
+	for _, node := range file.MetaFiles {
 		workers.ApplyOnErrorGroup(eg, func() error {
 			content, err := storage.ReadFile(ectx, node.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			decryptContent, err := Decrypt(content, cipher, node.CipherIv)
+			decryptContent, err := utils.Decrypt(content, cipher, node.CipherIv)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -169,11 +164,6 @@ type Table struct {
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
-}
-
-// NoChecksum checks whether the table has a calculated checksum.
-func (tbl *Table) NoChecksum() bool {
-	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -240,12 +230,36 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
+func ArchiveSize(files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
 	}
 	return total
+}
+
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+func (stats ChecksumStats) ChecksumExists() bool {
+	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
+		return false
+	}
+	return true
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
 }
 
 // ReadDDLs reads the ddls from the backupmeta.
@@ -347,7 +361,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	go func() {
 		defer close(ch)
 		eg, ectx := errgroup.WithContext(cctx)
-		workers := utils.NewWorkerPool(8, "parse schema workers")
+		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
 		for {
 			select {
 			case <-ectx.Done():

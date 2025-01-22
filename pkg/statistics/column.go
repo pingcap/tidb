@@ -15,21 +15,21 @@
 package statistics
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // Column represents a column histogram.
 type Column struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.ColumnInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.ColumnInfo
 	Histogram
 
 	// StatsLoadedStatus indicates the status of column statistics
@@ -38,7 +38,6 @@ type Column struct {
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
-	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
@@ -51,11 +50,9 @@ func (c *Column) Copy() *Column {
 	}
 	nc := &Column{
 		PhysicalID: c.PhysicalID,
-		Flag:       c.Flag,
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}
-	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if c.CMSketch != nil {
 		nc.CMSketch = c.CMSketch.Copy()
 	}
@@ -132,14 +129,10 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	return columnMemUsage
 }
 
-// HistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.
-// Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
-var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
-
 // ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
-func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *HistColl, cid int64) (res bool) {
+func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
@@ -161,12 +154,12 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
 			!histColl.CanNotTriggerLoad {
-			HistogramNeededItems.Insert(model.TableItemID{
+			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 				TableID:          histColl.PhysicalID,
 				ID:               cid,
 				IsIndex:          false,
 				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			})
+			}, true)
 		}
 	}
 	if histColl.Pseudo {
@@ -262,4 +255,14 @@ func (c *Column) StatsAvailable() bool {
 	// However, when we add/modify a column, its stats are generated according to the default value without setting
 	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
 	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+}
+
+// EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
+func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column {
+	return &Column{
+		PhysicalID: tid,
+		Info:       colInfo,
+		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
+		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+	}
 }

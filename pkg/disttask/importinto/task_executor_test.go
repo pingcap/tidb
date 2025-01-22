@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,11 +27,10 @@ func TestImportTaskExecutor(t *testing.T) {
 	ctx := context.Background()
 	executor := NewImportExecutor(
 		ctx,
-		":4000",
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		nil,
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000"),
 		nil,
 	).(*importExecutor)
 
@@ -44,12 +44,12 @@ func TestImportTaskExecutor(t *testing.T) {
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
 	} {
-		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: []byte("{}")}, nil)
+		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: []byte("{}")})
 		require.NoError(t, err)
 		require.NotNil(t, exe)
 	}
-	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: []byte("{}")}, nil)
+	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: []byte("{}")})
 	require.Error(t, err)
-	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")}, nil)
+	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")})
 	require.Error(t, err)
 }

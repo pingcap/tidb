@@ -31,16 +31,16 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
@@ -63,10 +63,10 @@ const ( // GET_FORMAT location.
 )
 
 var (
-	// durationPattern checks whether a string matchs the format of duration.
+	// durationPattern checks whether a string matches the format of duration.
 	durationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
-	// timestampPattern checks whether a string matchs the format of timestamp.
+	// timestampPattern checks whether a string matches the format of timestamp.
 	timestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
 
 	// datePattern determine whether to match the format of date.
@@ -261,6 +261,9 @@ func (c *dateFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinDateSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDateSig) Clone() builtinFunc {
@@ -298,7 +301,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !ok {
 		panic("Unexpected parameter for date literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +309,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !datePattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
 	}
-	tm, err := types.ParseDate(ctx.TypeCtx(), str)
+	tm, err := types.ParseDate(ctx.GetEvalCtx().TypeCtx(), str)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +365,9 @@ func (c *dateDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDateDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDateDiffSig) Clone() builtinFunc {
@@ -411,7 +417,7 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 
-	arg0FieldTp, arg1FieldTp := args[0].GetType(), args[1].GetType()
+	arg0FieldTp, arg1FieldTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	arg0Tp, arg1Tp := c.getArgEvalTp(arg0FieldTp), c.getArgEvalTp(arg1FieldTp)
 	arg0Dec, err := getExpressionFsp(ctx, args[0])
 	if err != nil {
@@ -421,7 +427,7 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	fsp := mathutil.Max(arg0Dec, arg1Dec)
+	fsp := max(arg0Dec, arg1Dec)
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, arg0Tp, arg1Tp)
 	if err != nil {
 		return nil, err
@@ -473,6 +479,9 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDurationDurationTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDurationDurationTimeDiffSig) Clone() builtinFunc {
@@ -500,6 +509,9 @@ func (b *builtinDurationDurationTimeDiffSig) evalDuration(ctx EvalContext, row c
 
 type builtinTimeTimeTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimeTimeTimeDiffSig) Clone() builtinFunc {
@@ -528,6 +540,9 @@ func (b *builtinTimeTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinDurationStringTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDurationStringTimeDiffSig) Clone() builtinFunc {
@@ -561,6 +576,9 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(ctx EvalContext, row chu
 
 type builtinStringDurationTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStringDurationTimeDiffSig) Clone() builtinFunc {
@@ -619,6 +637,9 @@ func calculateDurationTimeDiff(ctx EvalContext, lhs, rhs types.Duration) (d type
 
 type builtinTimeStringTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimeStringTimeDiffSig) Clone() builtinFunc {
@@ -652,6 +673,9 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinStringTimeTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStringTimeTimeDiffSig) Clone() builtinFunc {
@@ -685,6 +709,9 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinStringStringTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStringStringTimeDiffSig) Clone() builtinFunc {
@@ -733,6 +760,9 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinNullTimeDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNullTimeDiffSig) Clone() builtinFunc {
@@ -754,7 +784,7 @@ func convertStringToDuration(tc types.Context, str string, fsp int) (d types.Dur
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		lenStrFsp := len(str[n+1:])
 		if lenStrFsp <= types.MaxFsp {
-			fsp = mathutil.Max(lenStrFsp, fsp)
+			fsp = max(lenStrFsp, fsp)
 		}
 	}
 	return types.StrToDuration(tc, str, fsp)
@@ -773,7 +803,7 @@ func (c *dateFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
+	bf.tp.SetFlen((args[1].GetType(ctx.GetEvalCtx()).GetFlen() + 1) / 2 * 11)
 	sig := &builtinDateFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil
@@ -781,6 +811,9 @@ func (c *dateFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinDateFormatSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDateFormatSig) Clone() builtinFunc {
@@ -843,6 +876,9 @@ func (c *fromDaysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinFromDaysSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFromDaysSig) Clone() builtinFunc {
@@ -887,6 +923,9 @@ func (c *hourFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinHourSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinHourSig) Clone() builtinFunc {
@@ -927,6 +966,9 @@ func (c *minuteFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinMinuteSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMinuteSig) Clone() builtinFunc {
@@ -967,6 +1009,9 @@ func (c *secondFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinSecondSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSecondSig) Clone() builtinFunc {
@@ -1007,6 +1052,9 @@ func (c *microSecondFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinMicroSecondSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMicroSecondSig) Clone() builtinFunc {
@@ -1047,6 +1095,9 @@ func (c *monthFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinMonthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMonthSig) Clone() builtinFunc {
@@ -1080,7 +1131,7 @@ func (c *monthNameFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
@@ -1091,6 +1142,9 @@ func (c *monthNameFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinMonthNameSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMonthNameSig) Clone() builtinFunc {
@@ -1125,7 +1179,7 @@ func (c *dayNameFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
@@ -1136,6 +1190,9 @@ func (c *dayNameFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinDayNameSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDayNameSig) Clone() builtinFunc {
@@ -1205,6 +1262,9 @@ func (c *dayOfMonthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinDayOfMonthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDayOfMonthSig) Clone() builtinFunc {
@@ -1243,6 +1303,9 @@ func (c *dayOfWeekFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinDayOfWeekSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDayOfWeekSig) Clone() builtinFunc {
@@ -1285,6 +1348,9 @@ func (c *dayOfYearFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinDayOfYearSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDayOfYearSig) Clone() builtinFunc {
@@ -1341,6 +1407,9 @@ func (c *weekFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinWeekWithModeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinWeekWithModeSig) Clone() builtinFunc {
@@ -1373,6 +1442,9 @@ func (b *builtinWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 
 type builtinWeekWithoutModeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinWeekWithoutModeSig) Clone() builtinFunc {
@@ -1428,6 +1500,9 @@ func (c *weekDayFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinWeekDaySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinWeekDaySig) Clone() builtinFunc {
@@ -1471,6 +1546,9 @@ func (c *weekOfYearFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinWeekOfYearSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinWeekOfYearSig) Clone() builtinFunc {
@@ -1517,6 +1595,9 @@ func (c *yearFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinYearSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinYearSig) Clone() builtinFunc {
@@ -1570,6 +1651,9 @@ func (c *yearWeekFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinYearWeekWithModeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinYearWeekWithModeSig) Clone() builtinFunc {
@@ -1607,6 +1691,9 @@ func (b *builtinYearWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (in
 
 type builtinYearWeekWithoutModeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinYearWeekWithoutModeSig) Clone() builtinFunc {
@@ -1651,7 +1738,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 
-	arg0Tp := args[0].GetType()
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx())
 	isArg0Str := arg0Tp.EvalType() == types.ETString
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTps...)
 	if err != nil {
@@ -1666,7 +1753,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 			if x.FuncName.L == ast.Cast {
 				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
-					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
+					fieldLen := min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
 					x.RetType.SetFlen(fieldLen)
 				}
 			}
@@ -1683,7 +1770,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	fsp := types.MaxFsp
 	if !isArg0Str {
 		if arg0Tp.GetDecimal() != types.UnspecifiedLength {
-			fsp = mathutil.Min(bf.tp.GetDecimal(), arg0Tp.GetDecimal())
+			fsp = min(bf.tp.GetDecimal(), arg0Tp.GetDecimal())
 		}
 	}
 	bf.setDecimalAndFlenForDatetime(fsp)
@@ -1753,6 +1840,9 @@ func fieldString(fieldType byte) bool {
 
 type builtinFromUnixTime1ArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFromUnixTime1ArgSig) Clone() builtinFunc {
@@ -1773,6 +1863,9 @@ func (b *builtinFromUnixTime1ArgSig) evalTime(ctx EvalContext, row chunk.Row) (r
 
 type builtinFromUnixTime2ArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFromUnixTime2ArgSig) Clone() builtinFunc {
@@ -1820,6 +1913,9 @@ func (c *getFormatFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinGetFormatSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetFormatSig) Clone() builtinFunc {
@@ -1854,7 +1950,7 @@ func (c *strToDateFunctionClass) getRetTp(ctx BuildContext, arg Expression) (tp 
 		return tp, types.MaxFsp
 	}
 	strArg := WrapWithCastAsString(ctx, arg)
-	format, isNull, err := strArg.EvalString(ctx, chunk.Row{})
+	format, isNull, err := strArg.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return
 	}
@@ -1908,6 +2004,9 @@ func (c *strToDateFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinStrToDateDateSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStrToDateDateSig) Clone() builtinFunc {
@@ -1941,6 +2040,9 @@ func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (type
 
 type builtinStrToDateDatetimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStrToDateDatetimeSig) Clone() builtinFunc {
@@ -1974,6 +2076,9 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 
 type builtinStrToDateDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
@@ -2013,7 +2118,7 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2042,6 +2147,9 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinSysDateWithFspSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSysDateWithFspSig) Clone() builtinFunc {
@@ -2069,6 +2177,9 @@ func (b *builtinSysDateWithFspSig) evalTime(ctx EvalContext, row chunk.Row) (val
 
 type builtinSysDateWithoutFspSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
@@ -2108,6 +2219,9 @@ func (c *currentDateFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinCurrentDateSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCurrentDateSig) Clone() builtinFunc {
@@ -2138,7 +2252,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2166,6 +2280,9 @@ func (c *currentTimeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinCurrentTime0ArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
@@ -2190,6 +2307,9 @@ func (b *builtinCurrentTime0ArgSig) evalDuration(ctx EvalContext, row chunk.Row)
 
 type builtinCurrentTime1ArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCurrentTime1ArgSig) Clone() builtinFunc {
@@ -2242,6 +2362,9 @@ func (c *timeFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimeSig) Clone() builtinFunc {
@@ -2289,7 +2412,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !ok {
 		panic("Unexpected parameter for time literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2297,7 +2420,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !isDuration(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, str)
 	}
-	duration, _, err := types.ParseDuration(ctx.TypeCtx(), str, types.GetFsp(str))
+	duration, _, err := types.ParseDuration(ctx.GetEvalCtx().TypeCtx(), str, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -2346,6 +2469,9 @@ func (c *utcDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinUTCDateSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUTCDateSig) Clone() builtinFunc {
@@ -2383,7 +2509,7 @@ func (c *utcTimestampFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2413,6 +2539,9 @@ func evalUTCTimestampWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error)
 
 type builtinUTCTimestampWithArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUTCTimestampWithArgSig) Clone() builtinFunc {
@@ -2424,24 +2553,28 @@ func (b *builtinUTCTimestampWithArgSig) Clone() builtinFunc {
 // evalTime evals UTC_TIMESTAMP(fsp).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	num, isNull, err := b.args[0].EvalInt(ctx, row)
+	fsp, isNull, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
 
-	if !isNull && num > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", num, types.MaxFsp)
-	}
-	if !isNull && num < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", num)
+	if !isNull {
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+		} else if fsp > int64(types.MaxFsp) {
+			return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_timestamp", types.MaxFsp)
+		}
 	}
 
-	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(num))
+	result, isNull, err := evalUTCTimestampWithFsp(ctx, int(fsp))
 	return result, isNull, err
 }
 
 type builtinUTCTimestampWithoutArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUTCTimestampWithoutArgSig) Clone() builtinFunc {
@@ -2474,7 +2607,7 @@ func (c *nowFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -2524,7 +2657,7 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 		return types.ZeroTime, true, err
 	}
 
-	err = result.ConvertTimeZone(time.Local, location(ctx))
+	err = result.ConvertTimeZone(nowTs.Location(), location(ctx))
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2534,6 +2667,9 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 
 type builtinNowWithArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNowWithArgSig) Clone() builtinFunc {
@@ -2553,10 +2689,10 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 	if isNull {
 		fsp = 0
+	} else if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+		return types.ZeroTime, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
 	} else if fsp > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsp, types.MaxFsp)
-	} else if fsp < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+		return types.ZeroTime, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "now", types.MaxFsp)
 	}
 
 	result, isNull, err := evalNowWithFsp(ctx, int(fsp))
@@ -2565,6 +2701,9 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 type builtinNowWithoutArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinNowWithoutArgSig) Clone() builtinFunc {
@@ -2590,7 +2729,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	unit, _, err := args[0].EvalString(ctx, chunk.Row{})
+	unit, _, err := args[0].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2609,14 +2748,14 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		// extract(day_second from '2001-01-01 02:03:04') = 1020304 // datetime
 		// extract(day_second from 20010101020304) = 1020304 // datetime
 		// extract(day_second from '01 02:03:04') = 260304 // time
-		if args[1].GetType().EvalType() == types.ETDatetime || args[1].GetType().EvalType() == types.ETTimestamp {
+		if args[1].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDatetime || args[1].GetType(ctx.GetEvalCtx()).EvalType() == types.ETTimestamp {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
 			if err != nil {
 				return nil, err
 			}
 			sig = &builtinExtractDatetimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
-		} else if args[1].GetType().EvalType() == types.ETDuration {
+		} else if args[1].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDuration {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 			if err != nil {
 				return nil, err
@@ -2628,7 +2767,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			if err != nil {
 				return nil, err
 			}
-			bf.args[1].GetType().SetDecimal(int(types.MaxFsp))
+			bf.args[1].GetType(ctx.GetEvalCtx()).SetDecimal(int(types.MaxFsp))
 			sig = &builtinExtractDatetimeFromStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetimeFromString)
 		}
@@ -2654,6 +2793,9 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinExtractDatetimeFromStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinExtractDatetimeFromStringSig) Clone() builtinFunc {
@@ -2698,6 +2840,9 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(ctx EvalContext, row chunk
 
 type builtinExtractDatetimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinExtractDatetimeSig) Clone() builtinFunc {
@@ -2723,6 +2868,9 @@ func (b *builtinExtractDatetimeSig) evalInt(ctx EvalContext, row chunk.Row) (int
 
 type builtinExtractDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinExtractDurationSig) Clone() builtinFunc {
@@ -2980,7 +3128,7 @@ func (du *baseDateArithmetical) getIntervalFromInt(ctx EvalContext, args []Expre
 		return "", true, err
 	}
 
-	if mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(args[1].GetType(ctx).GetFlag()) {
 		return strconv.FormatUint(uint64(interval), 10), false, nil
 	}
 
@@ -2992,7 +3140,7 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx EvalContext, args []Expr
 	if isNull || err != nil {
 		return "", true, err
 	}
-	return strconv.FormatFloat(interval, 'f', args[1].GetType().GetDecimal(), 64), false, nil
+	return strconv.FormatFloat(interval, 'f', args[1].GetType(ctx).GetDecimal(), 64), false, nil
 }
 
 func (du *baseDateArithmetical) add(ctx EvalContext, date types.Time, interval, unit string, resultFsp int) (types.Time, bool, error) {
@@ -3005,8 +3153,8 @@ func (du *baseDateArithmetical) add(ctx EvalContext, date types.Time, interval, 
 
 func (du *baseDateArithmetical) addDate(ctx EvalContext, date types.Time, year, month, day, nano int64, resultFsp int) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
-	if err := handleInvalidTimeError(ctx, err); err != nil {
-		return types.ZeroTime, true, err
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
@@ -3423,7 +3571,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, ctx Ev
 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
-	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -3449,7 +3597,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, ctx E
 
 	result.ReserveString(n)
 	f64s := buf.Float64s()
-	prec := b.args[1].GetType().GetDecimal()
+	prec := b.args[1].GetType(ctx).GetDecimal()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -3574,7 +3722,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 
-	dateEvalTp := args[0].GetType().EvalType()
+	dateEvalTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	// Some special evaluation type treatment.
 	// Note that it could be more elegant if we always evaluate datetime for int, real, decimal and string, by leveraging existing implicit casts.
 	// However, MySQL has a weird behavior for date_add(string, ...), whose result depends on the content of the first argument.
@@ -3588,21 +3736,21 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		dateEvalTp = types.ETString
 	}
 
-	intervalEvalTp := args[1].GetType().EvalType()
+	intervalEvalTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	if intervalEvalTp == types.ETJson {
 		intervalEvalTp = types.ETString
 	} else if intervalEvalTp != types.ETString && intervalEvalTp != types.ETDecimal && intervalEvalTp != types.ETReal {
 		intervalEvalTp = types.ETInt
 	}
 
-	unit, _, err := args[2].EvalString(ctx, chunk.Row{})
+	unit, _, err := args[2].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
 
 	resultTp := mysql.TypeVarString
 	resultEvalTp := types.ETString
-	if args[0].GetType().GetType() == mysql.TypeDate {
+	if args[0].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDate {
 		if !types.IsClockUnit(unit) {
 			// First arg is date and unit contains no HMS, return date.
 			resultTp = mysql.TypeDate
@@ -3645,10 +3793,10 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			if intervalEvalTp == types.ETString || intervalEvalTp == types.ETReal {
 				intervalFsp = types.MaxFsp
 			} else {
-				intervalFsp = mathutil.Min(types.MaxFsp, args[1].GetType().GetDecimal())
+				intervalFsp = min(types.MaxFsp, args[1].GetType(ctx.GetEvalCtx()).GetDecimal())
 			}
 		}
-		resultFsp = mathutil.Min(types.MaxFsp, mathutil.Max(args[0].GetType().GetDecimal(), intervalFsp))
+		resultFsp = min(types.MaxFsp, max(args[0].GetType(ctx.GetEvalCtx()).GetDecimal(), intervalFsp))
 	}
 	switch resultTp {
 	case mysql.TypeDate:
@@ -3875,7 +4023,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			timeOp:               c.timeOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeDecimal, tipb.ScalarFuncSig_SubDateDatetimeDecimal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3885,7 +4033,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationString, tipb.ScalarFuncSig_SubDateDurationString)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3895,7 +4043,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationInt, tipb.ScalarFuncSig_SubDateDurationInt)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3905,7 +4053,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationReal, tipb.ScalarFuncSig_SubDateDurationReal)
-	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal:
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDuration:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmetical: newDateArithmeticalUtil(),
@@ -3915,6 +4063,46 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			durationOp:           c.durationOp,
 		}
 		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimal, tipb.ScalarFuncSig_SubDateDurationDecimal)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromString,
+			vecGetInterval:       vecGetIntervalFromString,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationStringDatetime, tipb.ScalarFuncSig_SubDateDurationStringDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromInt,
+			vecGetInterval:       vecGetIntervalFromInt,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationIntDatetime, tipb.ScalarFuncSig_SubDateDurationIntDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromReal,
+			vecGetInterval:       vecGetIntervalFromReal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationRealDatetime, tipb.ScalarFuncSig_SubDateDurationRealDatetime)
+	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal && resultTp == mysql.TypeDatetime:
+		sig = &builtinAddSubDateDurationAnySig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmetical: newDateArithmeticalUtil(),
+			getInterval:          getIntervalFromDecimal,
+			vecGetInterval:       vecGetIntervalFromDecimal,
+			timeOp:               c.timeOp,
+			durationOp:           c.durationOp,
+		}
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimalDatetime, tipb.ScalarFuncSig_SubDateDurationDecimalDatetime)
 	}
 	return sig, nil
 }
@@ -4095,6 +4283,9 @@ func (c *timestampDiffFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinTimestampDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimestampDiffSig) Clone() builtinFunc {
@@ -4148,13 +4339,13 @@ func (c *unixTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 		retTp, retDecimal = types.ETInt, 0
 	} else {
 		argTps = []types.EvalType{types.ETDatetime}
-		argType := args[0].GetType()
+		argType := args[0].GetType(ctx.GetEvalCtx())
 		argEvaltp := argType.EvalType()
 		if argEvaltp == types.ETString {
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 			if cnst, ok := args[0].(*Constant); ok {
-				tmpStr, _, err := cnst.EvalString(ctx, chunk.Row{})
+				tmpStr, _, err := cnst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, err
 				}
@@ -4239,6 +4430,9 @@ func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, err
 
 type builtinUnixTimestampCurrentSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUnixTimestampCurrentSig) Clone() builtinFunc {
@@ -4267,6 +4461,9 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(ctx EvalContext, row chunk.Row)
 
 type builtinUnixTimestampIntSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUnixTimestampIntSig) Clone() builtinFunc {
@@ -4305,6 +4502,9 @@ func (b *builtinUnixTimestampIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 
 type builtinUnixTimestampDecSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUnixTimestampDecSig) Clone() builtinFunc {
@@ -4355,7 +4555,7 @@ func (c *timestampFunctionClass) getFunction(ctx BuildContext, args []Expression
 		}
 	}
 	isFloat := false
-	switch args[0].GetType().GetType() {
+	switch args[0].GetType(ctx.GetEvalCtx()).GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
@@ -4471,7 +4671,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if !ok {
 		panic("Unexpected parameter for timestamp literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -4482,7 +4682,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetEvalCtx().TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -4530,7 +4730,7 @@ func getFsp4TimeAddSub(s string) int {
 // getBf4TimeAddSub parses input types, generates baseBuiltinFunc and set related attributes for
 // builtin function 'ADDTIME' and 'SUBTIME'
 func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc, err error) {
-	tp1, tp2 = args[0].GetType(), args[1].GetType()
+	tp1, tp2 = args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	var argTp1, argTp2, retTp types.EvalType
 	switch tp1.GetType() {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -4538,7 +4738,7 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	case mysql.TypeDuration:
 		argTp1, retTp = types.ETDuration, types.ETDuration
 	case mysql.TypeDate:
-		argTp1, retTp = types.ETDuration, types.ETString
+		argTp1, retTp = types.ETDatetime, types.ETString
 	default:
 		argTp1, retTp = types.ETString, types.ETString
 	}
@@ -4563,9 +4763,9 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	}
 	switch retTp {
 	case types.ETDatetime:
-		bf.setDecimalAndFlenForDatetime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp))
+		bf.setDecimalAndFlenForDatetime(min(max(arg0Dec, arg1Dec), types.MaxFsp))
 	case types.ETDuration:
-		bf.setDecimalAndFlenForTime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp))
+		bf.setDecimalAndFlenForTime(min(max(arg0Dec, arg1Dec), types.MaxFsp))
 	case types.ETString:
 		bf.tp.SetType(mysql.TypeString)
 		bf.tp.SetFlen(mysql.MaxDatetimeWidthWithFsp)
@@ -4688,7 +4888,7 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndString)
 		}
 	case mysql.TypeDate:
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
@@ -4732,6 +4932,9 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinAddTimeDateTimeNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddTimeDateTimeNullSig) Clone() builtinFunc {
@@ -4748,6 +4951,9 @@ func (b *builtinAddTimeDateTimeNullSig) evalTime(ctx EvalContext, row chunk.Row)
 
 type builtinAddDatetimeAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDatetimeAndDurationSig) Clone() builtinFunc {
@@ -4763,16 +4969,28 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
 	result, err := arg0.Add(typeCtx(ctx), arg1)
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
 type builtinAddDatetimeAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDatetimeAndStringSig) Clone() builtinFunc {
@@ -4788,6 +5006,11 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
@@ -4805,11 +5028,18 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(tc, arg1)
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
 type builtinAddTimeDurationNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddTimeDurationNullSig) Clone() builtinFunc {
@@ -4826,6 +5056,9 @@ func (b *builtinAddTimeDurationNullSig) evalDuration(ctx EvalContext, row chunk.
 
 type builtinAddDurationAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDurationAndDurationSig) Clone() builtinFunc {
@@ -4854,6 +5087,9 @@ func (b *builtinAddDurationAndDurationSig) evalDuration(ctx EvalContext, row chu
 
 type builtinAddDurationAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDurationAndStringSig) Clone() builtinFunc {
@@ -4894,6 +5130,9 @@ func (b *builtinAddDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinAddTimeStringNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddTimeStringNullSig) Clone() builtinFunc {
@@ -4910,6 +5149,9 @@ func (b *builtinAddTimeStringNullSig) evalString(ctx EvalContext, row chunk.Row)
 
 type builtinAddStringAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddStringAndDurationSig) Clone() builtinFunc {
@@ -4951,6 +5193,9 @@ func (b *builtinAddStringAndDurationSig) evalString(ctx EvalContext, row chunk.R
 
 type builtinAddStringAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddStringAndStringSig) Clone() builtinFunc {
@@ -4970,7 +5215,7 @@ func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		return "", true, nil
 	}
@@ -5014,6 +5259,9 @@ func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinAddDateAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDateAndDurationSig) Clone() builtinFunc {
@@ -5025,20 +5273,34 @@ func (b *builtinAddDateAndDurationSig) Clone() builtinFunc {
 // evalString evals a builtinAddDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	result, err := arg0.Add(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(typeCtx(ctx), arg1)
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
 type builtinAddDateAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinAddDateAndStringSig) Clone() builtinFunc {
@@ -5050,10 +5312,15 @@ func (b *builtinAddDateAndStringSig) Clone() builtinFunc {
 // evalString evals a builtinAddDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -5070,7 +5337,13 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		}
 		return "", true, err
 	}
-	result, err := arg0.Add(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(tc, arg1)
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
@@ -5081,13 +5354,13 @@ type convertTzFunctionClass struct {
 func (c *convertTzFunctionClass) getDecimal(ctx BuildContext, arg Expression) int {
 	decimal := types.MaxFsp
 	if dt, isConstant := arg.(*Constant); isConstant {
-		switch arg.GetType().EvalType() {
+		switch arg.GetType(ctx.GetEvalCtx()).EvalType() {
 		case types.ETInt:
 			decimal = 0
 		case types.ETReal, types.ETDecimal:
-			decimal = arg.GetType().GetDecimal()
+			decimal = arg.GetType(ctx.GetEvalCtx()).GetDecimal()
 		case types.ETString:
-			str, isNull, err := dt.EvalString(ctx, chunk.Row{})
+			str, isNull, err := dt.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err == nil && !isNull {
 				decimal = types.DateFSP(str)
 			}
@@ -5224,6 +5497,9 @@ func (c *makeDateFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinMakeDateSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMakeDateSig) Clone() builtinFunc {
@@ -5273,11 +5549,11 @@ func (c *makeTimeFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, decimal := args[2].GetType().EvalType(), 0
+	tp, decimal := args[2].GetType(ctx.GetEvalCtx()).EvalType(), 0
 	switch tp {
 	case types.ETInt:
 	case types.ETReal, types.ETDecimal:
-		decimal = args[2].GetType().GetDecimal()
+		decimal = args[2].GetType(ctx.GetEvalCtx()).GetDecimal()
 		if decimal > 6 || decimal == types.UnspecifiedLength {
 			decimal = 6
 		}
@@ -5297,6 +5573,9 @@ func (c *makeTimeFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinMakeTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinMakeTimeSig) Clone() builtinFunc {
@@ -5355,7 +5634,7 @@ func (b *builtinMakeTimeSig) evalDuration(ctx EvalContext, row chunk.Row) (types
 	if second < 0 || second >= 60 {
 		return dur, true, nil
 	}
-	dur, err = b.makeTime(typeCtx(ctx), hour, minute, second, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()))
+	dur, err = b.makeTime(typeCtx(ctx), hour, minute, second, mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()))
 	if err != nil {
 		return dur, true, err
 	}
@@ -5420,6 +5699,9 @@ func month2Period(month uint64) uint64 {
 
 type builtinPeriodAddSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinPeriodAddSig) Clone() builtinFunc {
@@ -5469,6 +5751,9 @@ func (c *periodDiffFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinPeriodDiffSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinPeriodDiffSig) Clone() builtinFunc {
@@ -5523,6 +5808,9 @@ func (c *quarterFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinQuarterSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinQuarterSig) Clone() builtinFunc {
@@ -5551,7 +5839,7 @@ func (c *secToTimeFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	var retFsp int
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	argEvalTp := argType.EvalType()
 	if argEvalTp == types.ETString {
 		retFsp = types.UnspecifiedLength
@@ -5575,6 +5863,9 @@ func (c *secToTimeFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinSecToTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSecToTimeSig) Clone() builtinFunc {
@@ -5657,7 +5948,7 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndString)
 		}
 	case mysql.TypeDate:
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
@@ -5701,6 +5992,9 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinSubDatetimeAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDatetimeAndDurationSig) Clone() builtinFunc {
@@ -5716,17 +6010,29 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
 	tc := typeCtx(ctx)
 	result, err := arg0.Add(tc, arg1.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
 type builtinSubDatetimeAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDatetimeAndStringSig) Clone() builtinFunc {
@@ -5742,6 +6048,11 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
@@ -5759,11 +6070,18 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(tc, arg1.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
 type builtinSubTimeDateTimeNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubTimeDateTimeNullSig) Clone() builtinFunc {
@@ -5780,6 +6098,9 @@ func (b *builtinSubTimeDateTimeNullSig) evalTime(ctx EvalContext, row chunk.Row)
 
 type builtinSubStringAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubStringAndDurationSig) Clone() builtinFunc {
@@ -5821,6 +6142,9 @@ func (b *builtinSubStringAndDurationSig) evalString(ctx EvalContext, row chunk.R
 
 type builtinSubStringAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
@@ -5840,7 +6164,7 @@ func (b *builtinSubStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		return "", true, nil
 	}
@@ -5874,6 +6198,9 @@ func (b *builtinSubStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinSubTimeStringNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubTimeStringNullSig) Clone() builtinFunc {
@@ -5890,6 +6217,9 @@ func (b *builtinSubTimeStringNullSig) evalString(ctx EvalContext, row chunk.Row)
 
 type builtinSubDurationAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
@@ -5918,6 +6248,9 @@ func (b *builtinSubDurationAndDurationSig) evalDuration(ctx EvalContext, row chu
 
 type builtinSubDurationAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
@@ -5955,6 +6288,9 @@ func (b *builtinSubDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinSubTimeDurationNullSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubTimeDurationNullSig) Clone() builtinFunc {
@@ -5971,6 +6307,9 @@ func (b *builtinSubTimeDurationNullSig) evalDuration(ctx EvalContext, row chunk.
 
 type builtinSubDateAndDurationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
@@ -5982,20 +6321,34 @@ func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
 // evalString evals a builtinSubDateAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	result, err := arg0.Sub(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(typeCtx(ctx), arg1.Neg())
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
 type builtinSubDateAndStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
@@ -6007,10 +6360,15 @@ func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
 // evalString evals a builtinSubDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6027,11 +6385,14 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		}
 		return "", true, err
 	}
-	result, err := arg0.Sub(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(tc, arg1.Neg())
 	if err != nil {
 		return "", true, err
 	}
-	return result.String(), false, nil
+
+	return result.String(), err != nil, err
 }
 
 type timeFormatFunctionClass struct {
@@ -6047,7 +6408,7 @@ func (c *timeFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
+	bf.tp.SetFlen((args[1].GetType(ctx.GetEvalCtx()).GetFlen() + 1) / 2 * 11)
 	sig := &builtinTimeFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimeFormat)
 	return sig, nil
@@ -6055,6 +6416,9 @@ func (c *timeFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinTimeFormatSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimeFormatSig) Clone() builtinFunc {
@@ -6107,6 +6471,9 @@ func (c *timeToSecFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinTimeToSecSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimeToSecSig) Clone() builtinFunc {
@@ -6148,7 +6515,7 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 	if !ok {
 		return nil, errors.New("should not happened")
 	}
-	unit, null, err := con.EvalString(ctx, chunk.Row{})
+	unit, null, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if null || err != nil {
 		return nil, errors.New("should not happened")
 	}
@@ -6164,6 +6531,9 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinTimestampAddSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimestampAddSig) Clone() builtinFunc {
@@ -6231,7 +6601,12 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 		if !validAddMonth(v, t.Year(), int(t.Month())) {
 			return tb, true, nil
 		}
-		tb = t.AddDate(0, int(v), 0)
+
+		var err error
+		tb, err = types.AddDate(0, int64(v), 0, t)
+		if err != nil {
+			return tb, false, err
+		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil
@@ -6324,6 +6699,9 @@ func (c *toDaysFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinToDaysSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinToDaysSig) Clone() builtinFunc {
@@ -6369,6 +6747,9 @@ func (c *toSecondsFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinToSecondsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinToSecondsSig) Clone() builtinFunc {
@@ -6410,7 +6791,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	fsp, err := getFspByIntArg(ctx, args)
+	fsp, err := getFspByIntArg(ctx, args, c.funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -6432,6 +6813,9 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinUTCTimeWithoutArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUTCTimeWithoutArgSig) Clone() builtinFunc {
@@ -6453,6 +6837,9 @@ func (b *builtinUTCTimeWithoutArgSig) evalDuration(ctx EvalContext, row chunk.Ro
 
 type builtinUTCTimeWithArgSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinUTCTimeWithArgSig) Clone() builtinFunc {
@@ -6468,12 +6855,13 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-	if fsp > int64(types.MaxFsp) {
-		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
+
+	if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+		return types.Duration{}, true, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+	} else if fsp > int64(types.MaxFsp) {
+		return types.Duration{}, true, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, "utc_time", types.MaxFsp)
 	}
-	if fsp < int64(types.MinFsp) {
-		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
-	}
+
 	nowTs, err := getStmtTimestamp(ctx)
 	if err != nil {
 		return types.Duration{}, true, err
@@ -6502,6 +6890,9 @@ func (c *lastDayFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinLastDaySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinLastDaySig) Clone() builtinFunc {
@@ -6532,14 +6923,14 @@ func (b *builtinLastDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 func getExpressionFsp(ctx BuildContext, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
 	if isConstant {
-		str, isNil, err := constExp.EvalString(ctx, chunk.Row{})
+		str, isNil, err := constExp.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 		if isNil || err != nil {
 			return 0, err
 		}
 		return types.GetFsp(str), nil
 	}
 	warpExpr := WrapWithCastAsTime(ctx, expression, types.NewFieldType(mysql.TypeDatetime))
-	return mathutil.Min(warpExpr.GetType().GetDecimal(), types.MaxFsp), nil
+	return min(warpExpr.GetType(ctx.GetEvalCtx()).GetDecimal(), types.MaxFsp), nil
 }
 
 // tidbParseTsoFunctionClass extracts physical time from a tso
@@ -6551,7 +6942,7 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETInt)
 	if err != nil {
 		return nil, err
@@ -6566,6 +6957,9 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinTidbParseTsoSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
@@ -6610,6 +7004,9 @@ func (c *tidbParseTsoLogicalFunctionClass) getFunction(ctx BuildContext, args []
 
 type builtinTidbParseTsoLogicalSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTidbParseTsoLogicalSig) Clone() builtinFunc {
@@ -6650,8 +7047,8 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx BuildContext, args [
 
 type builtinTiDBBoundedStalenessSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.KVStorePropReader
+	expropt.SessionVarsPropReader
+	expropt.KVStorePropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -6759,7 +7156,7 @@ func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 }
 
 // getFspByIntArg is used by some time functions to get the result fsp. If len(expr) == 0, then the fsp is not explicit set, use 0 as default.
-func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
+func getFspByIntArg(ctx BuildContext, exps []Expression, funcName string) (int, error) {
 	if len(exps) == 0 {
 		return 0, nil
 	}
@@ -6768,15 +7165,16 @@ func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
 	}
 	_, ok := exps[0].(*Constant)
 	if ok {
-		fsp, isNuLL, err := exps[0].EvalInt(ctx, chunk.Row{})
+		fsp, isNuLL, err := exps[0].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil || isNuLL {
 			// If isNULL, it may be a bug of parser. Return 0 to be compatible with old version.
 			return 0, err
 		}
-		if fsp > int64(types.MaxFsp) {
-			return 0, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v", fsp, types.MaxFsp)
-		} else if fsp < int64(types.MinFsp) {
-			return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
+
+		if fsp > int64(math.MaxInt32) || fsp < int64(types.MinFsp) {
+			return 0, types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)
+		} else if fsp > int64(types.MaxFsp) {
+			return 0, types.ErrTooBigPrecision.GenWithStackByArgs(fsp, funcName, types.MaxFsp)
 		}
 		return int(fsp), nil
 	}
@@ -6802,7 +7200,7 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {

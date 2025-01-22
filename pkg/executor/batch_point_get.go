@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -55,7 +57,7 @@ type BatchPointGetExec struct {
 	planPhysIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
 	singlePartID   int64
-	partitionNames []model.CIStr
+	partitionNames []ast.CIStr
 	idxVals        [][]types.Datum
 	txn            kv.Transaction
 	lock           bool
@@ -107,7 +109,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -162,16 +164,29 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
+			if timeDetail != nil {
+				e.Ctx().GetSessionVars().SQLCPUUsages.MergeTikvCPUTime(timeDetail.ProcessTime)
+			}
+		}()
 	}
+
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil && e.idxInfo != nil {
+	if e.indexUsageReporter != nil && e.stats != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
 		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
 		// percentage according to the row counts for the whole table.
-		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		rows := e.RuntimeStats().GetActRows()
+		if e.idxInfo != nil {
+			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, kvReqTotal, rows)
+		} else {
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, kvReqTotal, rows)
+		}
 	}
 	e.inited = 0
 	e.index = 0
@@ -193,16 +208,24 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.index >= len(e.values) {
 		return nil
 	}
+
+	schema := e.Schema()
+	sctx := e.BaseExecutor.Ctx()
+	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
+	err := fillRowChecksum(sctx, start, e.index, schema, e.tblInfo, e.values, e.handles, req, nil)
+	if err != nil {
+		return err
+	}
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -214,6 +237,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
@@ -282,15 +311,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					segs := tablecodec.SplitIndexValue(handleVal)
-					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
 					if err != nil {
 						return err
 					}
@@ -417,9 +445,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
-					Tbl:  e.tblInfo,
-					Idx:  e.idxInfo,
-					Sctx: e.Ctx(),
+					Tbl:             e.tblInfo,
+					Idx:             e.idxInfo,
+					EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+					Storage:         e.Ctx().GetStore(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],

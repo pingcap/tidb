@@ -138,5 +138,14 @@
       // But fine grained shuffle doesn't support group by for now.
       "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);"
     ]
+  },
+  {
+    "name": "TestTiFlashExtraColumnPrune",
+    "cases": [
+      // 1. Add projection above DataSource to prune useless columns, and add projection above HashJoin
+      "explain format = 'brief' select ta.c1 from t1 ta, t1 tb where ta.c1 * ta.c1 > ta.c2 + 10;",
+      // 2. Test case that join's actual schema is empty
+      "explain format = 'brief' select count(*) from t1 ta, t1 tb where ta.c1 * ta.c1 > ta.c2 + 10;"
+    ]
   }
 ]

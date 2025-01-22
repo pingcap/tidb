@@ -173,7 +173,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		c.m.records.spillError = preSpillError
 		return
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
@@ -340,11 +340,14 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.cond.Broadcast()
 		c.actionSpill.SetFinished()
 	}
+	c.memTracker.Detach()
+	c.diskTracker.Detach()
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
 		c.m.records.inDisk = nil
 	}
 	c.m.records.inMemory.Clear()
+	c.m.records.inMemory = nil
 	return
 }
 
@@ -585,13 +588,13 @@ func (c *SortedRowContainer) Sort() (ret error) {
 		return
 	}
 	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
+	for chkIdx := range c.NumChunks() {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
 		if err != nil {
 			panic(err)
 		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+		for rowIdx := range rowChk.NumRows() {
 			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}

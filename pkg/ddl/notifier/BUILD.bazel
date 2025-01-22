@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "notifier",
+    srcs = [
+        "events.go",
+        "publish.go",
+        "store.go",
+        "subscribe.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/notifier",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/session",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/owner",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "notifier_test",
+    timeout = "short",
+    srcs = [
+        "events_test.go",
+        "store_test.go",
+        "testkit_test.go",
+    ],
+    embed = [":notifier"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//pkg/ddl",
+        "//pkg/ddl/session",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

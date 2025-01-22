@@ -51,7 +51,8 @@ func init() {
 }
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL() {
+func SetupTopSQL(updater collector.ProcessCPUTimeUpdater) {
+	globalTopSQLReport.BindProcessCPUTimeUpdater(updater)
 	globalTopSQLReport.Start()
 	singleTargetDataSink.Start()
 
@@ -97,11 +98,11 @@ func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
 
 // AttachAndRegisterSQLInfo attach the sql information into Top SQL and register the SQL meta information.
 func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
-	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
 		return ctx
 	}
 	sqlDigestBytes := sqlDigest.Bytes()
-	ctx = collector.CtxWithSQLDigest(ctx, sqlDigestBytes)
+	ctx = collector.CtxWithSQLDigest(ctx, sqlDigest.String())
 	pprof.SetGoroutineLabels(ctx)
 
 	linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
@@ -124,15 +125,15 @@ func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDige
 
 // AttachSQLAndPlanInfo attach the sql and plan information into Top SQL
 func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDigest *parser.Digest) context.Context {
-	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
 		return ctx
 	}
-	var planDigestBytes []byte
-	sqlDigestBytes := sqlDigest.Bytes()
+	var planDigestStr string
+	sqlDigestStr := sqlDigest.String()
 	if planDigest != nil {
-		planDigestBytes = planDigest.Bytes()
+		planDigestStr = planDigest.String()
 	}
-	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestStr, planDigestStr)
 	pprof.SetGoroutineLabels(ctx)
 
 	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
@@ -143,6 +144,13 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 			}
 		}
 	})
+	return ctx
+}
+
+// AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
+func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	ctx = collector.CtxWithProcessInfo(ctx, connID, sqlID)
+	pprof.SetGoroutineLabels(ctx)
 	return ctx
 }
 
@@ -167,7 +175,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
 			break
 		}
-		for i := 0; i < 10e5; i++ {
+		for range int(10e5) {
 			continue
 		}
 	}

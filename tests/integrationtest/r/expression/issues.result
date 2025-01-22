@@ -531,15 +531,14 @@ insert into t2 value (1,2,date'2020-05-08');
 explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─IndexMergeJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id
+└─IndexJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
   ├─TableReader(Build)	0.02	root		data:Selection
   │ └─Selection	0.02	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Selection(Probe)	0.03	root		eq(timestampdiff("MONTH", expression__issues.t2.begin_time, 2020-05-06), 0)
-    └─Projection	0.04	root		expression__issues.t2.order_id, expression__issues.t2.begin_time
-      └─IndexLookUp	0.04	root		
-        ├─IndexRangeScan(Build)	0.04	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:true, stats:pseudo
-        └─TableRowIDScan(Probe)	0.04	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─IndexLookUp	0.04	root		
+      ├─IndexRangeScan(Build)	0.04	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	0.04	cop[tikv]	table:t2	keep order:false, stats:pseudo
 SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 COUNT(*)
 1
@@ -839,7 +838,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -882,7 +881,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -1379,7 +1378,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -3183,8 +3182,8 @@ create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20)
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 id	estRows	task	access object	operator info
 Projection	8.00	root		test.ast.i, Column#32
-└─HashAgg	8.00	root		group by:Column#37, funcs:group_concat(Column#34 order by Column#35 separator "; ")->Column#32, funcs:firstrow(Column#36)->test.ast.i
-  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#35, test.ast.i->Column#36, test.ast.i->Column#37
+└─HashAgg	8.00	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
+  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
     └─HashJoin	100.00	root		CARTESIAN inner join
       ├─TableReader(Build)	10.00	root		data:Selection
       │ └─Selection	10.00	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
@@ -3192,3 +3191,64 @@ Projection	8.00	root		test.ast.i, Column#32
       └─TableReader(Probe)	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		eq("astp2019121731703151", test.acc.m)
           └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+drop table if exists test.t;
+create table test.t (a int);
+insert into test.t values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t;
+date_add(a, interval 12345 DAY_HOUR)
+NULL
+NULL
+NULL
+drop table if exists test.t;
+create table test.t(f1 char(1));
+insert into test.t values ('a'),('b'),('1');
+select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
+(cast(f1 as float) = 1) or (cast(f1 as float) = 2)
+0
+0
+1
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
+(cast(f1 as float) != 1) and (cast(f1 as float) != 2)
+1
+1
+0
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
+IFNULL(id, 'abcdef')
+1234567890123456
+drop table if exists test.t;
+create table test.t(a double);
+insert into test.t values('20000102030405.0078125');
+select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
+a
+20000102030405.008
+drop table if exists t0;
+create table `t0`
+(
+`vkey` integer,
+`pkey` integer,
+`c0`   integer
+);
+insert into `t0`
+values (1, 2, 3);
+select *
+from `t0`
+where (nullif(
+3 ^ 10 & (abs(-50)) ,
+round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
+)) in (select `vkey` from `t0` where false);
+vkey	pkey	c0

@@ -15,10 +15,11 @@
 package multivaluedindex
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +32,7 @@ func TestCreateMultiValuedIndexHasBinaryCollation(t *testing.T) {
 	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.NotNil(t, is)
 
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	foundIndex := false

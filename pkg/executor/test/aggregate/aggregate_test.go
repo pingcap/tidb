@@ -38,11 +38,9 @@ import (
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 5,
-		WallTime:    int64(time.Second * 20),
 	}
 	finalInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 8,
-		WallTime:    int64(time.Second * 10),
 	}
 	stats := &aggregate.HashAggRuntimeStats{
 		PartialConcurrency: 5,
@@ -283,6 +281,11 @@ func TestRandomPanicConsume(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName2))
 	}()
+	fpName3 := "github.com/pingcap/tidb/pkg/executor/join/ConsumeRandomPanic"
+	require.NoError(t, failpoint.Enable(fpName3, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName3))
+	}()
 
 	sqls := []string{
 		// Without index
@@ -421,7 +424,6 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec("create database list_partition_agg")
 	tk.MustExec("use list_partition_agg")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
 		`, partition p1 values in ` + genListPartition(20, 40) +

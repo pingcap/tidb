@@ -154,23 +154,24 @@ func TestSleepVectorized(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	input.AppendFloat64(0, 1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(0)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendFloat64(0, -1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
@@ -179,7 +180,7 @@ func TestSleepVectorized(t *testing.T) {
 	input.AppendNull(0)
 	input.AppendFloat64(0, 1)
 	input.AppendFloat64(0, -1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, int64(0), result.GetInt64(1))
@@ -188,17 +189,18 @@ func TestSleepVectorized(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	input.Reset()
 	input.AppendNull(0)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
 	sessVars.StmtCtx.SetWarnings(nil)
 	input.Reset()
 	input.AppendFloat64(0, -2.5)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
@@ -206,7 +208,7 @@ func TestSleepVectorized(t *testing.T) {
 	input.Reset()
 	input.AppendFloat64(0, 0.5)
 	start := time.Now()
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	sub := time.Since(start)
@@ -221,7 +223,7 @@ func TestSleepVectorized(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	sub = time.Since(start)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))

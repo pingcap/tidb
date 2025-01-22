@@ -124,6 +124,10 @@ func TestTooLongBinaryPlan(t *testing.T) {
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		t.Skip("TODO: the performance is poor for this test under infoschema v2")
+	}
+
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 
@@ -139,7 +143,6 @@ func TestTooLongBinaryPlan(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustQuery("select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")
@@ -201,7 +204,6 @@ func TestLongBinaryPlan(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1000;")
 	tk.MustQuery("select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")

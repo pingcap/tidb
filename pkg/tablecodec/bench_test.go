@@ -16,9 +16,12 @@ package tablecodec
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
@@ -52,6 +55,33 @@ func BenchmarkDecodeRowKey(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkDecodeIndexKeyIntHandle(b *testing.B) {
+	var idxVal []byte
+	// When handle values greater than 255, it will have a memory alloc.
+	idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(kv.IntHandle(256), false)...)
+
+	for i := 0; i < b.N; i++ {
+		DecodeHandleInIndexValue(idxVal)
+	}
+}
+
+func BenchmarkDecodeIndexKeyCommonHandle(b *testing.B) {
+	var idxVal []byte
+	idxVal = append(idxVal, 0)
+	// index version
+	idxVal = append(idxVal, IndexVersionFlag)
+	idxVal = append(idxVal, byte(1))
+
+	// common handle
+	encoded, _ := codec.EncodeKey(time.UTC, nil, types.MakeDatums(1, 2)...)
+	h, _ := kv.NewCommonHandle(encoded)
+	idxVal = encodeCommonHandle(idxVal, h)
+
+	for i := 0; i < b.N; i++ {
+		DecodeHandleInIndexValue(idxVal)
 	}
 }
 

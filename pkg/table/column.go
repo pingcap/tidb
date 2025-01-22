@@ -27,14 +27,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -234,10 +233,8 @@ func convertToIncorrectStringErr(err error, colName string) error {
 //	value (possibly adjusted)
 //	boolean; true if break error/warning handling in CastValue and return what was returned from this
 //	error
-func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
-	sc := sessVars.StmtCtx
+func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	tm := casted.GetMysqlTime()
-	mode := sessVars.SQLMode
 
 	var (
 		zeroV types.Time
@@ -260,7 +257,7 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 	// if NO_ZERO_IN_DATE is enabled, dates with zero parts are inserted as '0000-00-00' and produce a warning
 	// If NO_ZERO_IN_DATE mode and strict mode are enabled, dates with zero parts are not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, dates with zero parts are inserted as '0000-00-00' and produce a warning.
 
-	ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError
+	ignoreErr := ec.LevelForGroup(errctx.ErrGroupDupKey) != errctx.LevelError
 
 	// Timestamp in MySQL is since EPOCH 1970-01-01 00:00:00 UTC and can by definition not have invalid dates!
 	// Zero date is special for MySQL timestamp and *NOT* 1970-01-01 00:00:00, but 0000-00-00 00:00:00!
@@ -281,7 +278,7 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 		}
 
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
-			sc.AppendWarning(innerErr)
+			ec.AppendWarning(innerErr)
 		}
 		return types.NewDatum(zeroV), true, nil
 	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
@@ -291,7 +288,7 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 			return types.NewDatum(zeroV), true, errors.Trace(warn)
 		}
 		// no strict mode, truncate to 0000-00-00 00:00:00
-		sc.AppendWarning(warn)
+		ec.AppendWarning(warn)
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
@@ -313,7 +310,7 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 		// TODO: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,
 		// but this error message need a `rowIdx` argument, in this context, the `rowIdx` is missing.
 		// And refactor this function seems too complicated, so we set the warning message the same to error's.
-		sc.AppendWarning(innerErr)
+		ec.AppendWarning(innerErr)
 		return types.NewDatum(zeroV), true, nil
 	}
 
@@ -327,14 +324,21 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
-func CastValue(sctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
-	return CastColumnValue(sctx.GetSessionVars(), val, col, returnErr, forceIgnoreTruncate)
+func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	vars := sctx.GetSessionVars()
+	sc := vars.StmtCtx
+	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, vars.ConnectionID, returnErr, forceIgnoreTruncate)
 }
 
-// CastColumnValue casts a value based on column type.
-func CastColumnValue(vars *variable.SessionVars, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
-	sc := vars.StmtCtx
-	casted, err = val.ConvertTo(sc.TypeCtx(), &col.FieldType)
+// CastColumnValue casts a value based on column type with expression BuildContext
+func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	evalCtx := ctx.GetEvalCtx()
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+}
+
+// castColumnValue casts a value based on column type.
+func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	casted, err = val.ConvertTo(tc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err
@@ -345,23 +349,22 @@ func CastColumnValue(vars *variable.SessionVars, val types.Datum, col *model.Col
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
-	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
+	} else if !casted.IsNull() &&
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 			str = val.GetString()
 		}
-		if innCasted, exit, innErr := handleZeroDatetime(vars, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
+		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
 		err = convertToIncorrectStringErr(err, col.Name.O)
-		logutil.BgLogger().Debug("incorrect string value",
-			zap.Uint64("conn", vars.ConnectionID), zap.Error(err))
+		logutil.BgLogger().Debug("incorrect string value", zap.Uint64("conn", connID), zap.Error(err))
 	}
 
-	err = sc.HandleTruncate(err)
+	err = tc.HandleTruncate(err)
 
 	if forceIgnoreTruncate {
 		err = nil
@@ -490,6 +493,11 @@ func CheckOnce(cols []*Column) error {
 // Otherwise, it will return a ErrColumnCantNull when error.
 func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error {
 	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
+		if c.FieldType.EvalType().IsVectorKind() {
+			// Vector(N) is a special case because it does not have zero values as a fallback.
+			// So we always reject NULLs in NotNull context even if SQL mode is not strict.
+			return errors.Errorf("VECTOR column '%s' cannot be null", c.Name)
+		}
 		if rowCntInLoadData > 0 {
 			return ErrWarnNullToNotnull.GenWithStackByArgs(c.Name, rowCntInLoadData)
 		}
@@ -503,7 +511,10 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // error is ErrWarnNullToNotnull.
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
+func (c *Column) HandleBadNull(
+	ec errctx.Context,
+	d *types.Datum,
+	rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
 		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
@@ -546,7 +557,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx expression.BuildContext, c
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
+		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupNoDefault) != errctx.LevelError
 		if !ignoreErr {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}
@@ -573,7 +584,7 @@ func EvalColDefaultExpr(ctx expression.BuildContext, col *model.ColumnInfo, defa
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastColumnValue(ctx.GetSessionVars(), d, col, false, false)
+	value, err := CastColumnValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -592,7 +603,7 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastColumnValue(ctx.GetSessionVars(), d, col, false, false)
+	value, err := CastColumnValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -607,7 +618,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	switch col.GetType() {
 	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
 	default:
-		value, err := CastColumnValue(ctx.GetSessionVars(), types.NewDatum(defaultVal), col, false, false)
+		value, err := CastColumnValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -635,7 +646,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
-		err = t.ConvertTimeZone(explicitTz, ctx.GetSessionVars().Location())
+		err = t.ConvertTimeZone(explicitTz, ctx.GetEvalCtx().Location())
 		if err != nil {
 			return value, err
 		}
@@ -661,19 +672,18 @@ func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInf
 		// Auto increment column doesn't have default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
-	vars := ctx.GetSessionVars()
-	sc := vars.StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	var strictSQLMode bool
 	if args != nil {
 		strictSQLMode = args.StrictSQLMode
 	} else {
-		strictSQLMode = vars.SQLMode.HasStrictMode()
+		strictSQLMode = evalCtx.SQLMode().HasStrictMode()
 	}
 	if !strictSQLMode {
-		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
+		evalCtx.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	ec := sc.ErrCtx()
+	ec := evalCtx.ErrCtx()
 	var err error
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		err = ErrNoDefaultValue.FastGenByArgs(col.Name)
@@ -730,6 +740,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlEnum(types.Enum{}, col.GetCollate())
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(types.CreateBinaryJSON(nil))
+	case mysql.TypeTiDBVectorFloat32:
+		d.SetVectorFloat32(types.ZeroVectorFloat32)
 	}
 	return d
 }
@@ -753,21 +765,23 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
+	evalCtx := ectx.GetEvalCtx()
+	tc := evalCtx.TypeCtx()
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(ectx, row)
+			datum, err := expCols[idx].EvalVirtualColumn(evalCtx, row)
 			if err != nil {
 				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := CastColumnValue(ectx.GetSessionVars(), datum, colInfos[idx], false, true)
+			castDatum, err := CastColumnValue(ectx, datum, colInfos[idx], false, true)
 			if err != nil {
 				return err
 			}
 
 			// Clip to zero if get negative value after cast to unsigned.
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && ectx.GetSessionVars().StmtCtx.TypeFlags().AllowNegativeToUnsigned() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && tc.Flags().AllowNegativeToUnsigned() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {
