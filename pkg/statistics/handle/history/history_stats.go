@@ -68,7 +68,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	return version, err
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with a single transaction.
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
 func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64) {
 	if version == 0 {
 		return
@@ -129,7 +129,7 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta for multiple tables.
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
