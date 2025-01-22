@@ -57,6 +57,12 @@ type RewriteRules struct {
 	TableIDRemapHint []TableIDRemap
 }
 
+func (r *RewriteRules) SetTsRange(shiftStartTs, startTs, restoredTs uint64) {
+	r.ShiftStartTs = shiftStartTs
+	r.StartTs = startTs
+	r.RestoredTs = restoredTs
+}
+
 func (r *RewriteRules) RewriteSourceTableID(from, to int64) (rewritten bool) {
 	toPrefix := tablecodec.EncodeTablePrefix(to)
 	fromPrefix := tablecodec.EncodeTablePrefix(from)
@@ -224,9 +230,6 @@ func GetRewriteRulesMap(
 // GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
 func GetRewriteRuleOfTable(
 	oldTableID, newTableID int64,
-	shiftStartTs uint64,
-	startTs uint64,
-	restoredTs uint64,
 	indexIDs map[int64]int64,
 	getDetailRule bool,
 ) *RewriteRules {
@@ -250,7 +253,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules, NewTableID: newTableID, ShiftStartTs: shiftStartTs, StartTs: startTs, RestoredTs: restoredTs, TableIDRemapHint: remaps}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, TableIDRemapHint: remaps}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.

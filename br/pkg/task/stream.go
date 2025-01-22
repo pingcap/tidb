@@ -1932,8 +1932,10 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace, shiftStartTs, start
 				log.Info("add rewrite rule",
 					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
-				rules[oldTableID] = restoreutils.GetRewriteRuleOfTable(
-					oldTableID, tableReplace.TableID, shiftStartTs, startTs, restoredTs, tableReplace.IndexMap, false)
+				rule := restoreutils.GetRewriteRuleOfTable(
+					oldTableID, tableReplace.TableID, tableReplace.IndexMap, false)
+				rule.SetTsRange(shiftStartTs, startTs, restoredTs)
+				rules[oldTableID] = rule
 			}
 
 			for oldID, newID := range tableReplace.PartitionMap {
@@ -1941,7 +1943,9 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace, shiftStartTs, start
 					log.Info("add rewrite rule",
 						zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
-					rules[oldID] = restoreutils.GetRewriteRuleOfTable(oldID, newID, shiftStartTs, startTs, restoredTs, tableReplace.IndexMap, false)
+					rule := restoreutils.GetRewriteRuleOfTable(oldID, newID, tableReplace.IndexMap, false)
+					rule.SetTsRange(shiftStartTs, startTs, restoredTs)
+					rules[oldTableID] = rule
 				}
 			}
 		}

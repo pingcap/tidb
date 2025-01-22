@@ -400,7 +400,7 @@ func TestGetRewriteRulesMap(t *testing.T) {
 func TestGetRewriteRuleOfTable(t *testing.T) {
 	// Test basic table prefix rewrite without detailed rules
 	{
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, 0, 0, map[int64]int64{1: 1, 2: 2}, false)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 1, 2: 2}, false)
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
 		require.Len(t, rewriteRules.Data, 1) // Only one rule for table prefix
 		require.Equal(t, rewriteRules.NewTableID, int64(1))
@@ -410,7 +410,7 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 	// Test detailed rules including record and index prefixes
 	{
 		indexIDs := map[int64]int64{1: 1, 2: 2}
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, 0, 0, indexIDs, true)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, indexIDs, true)
 		// Check record prefix
 		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
 		// Check index prefixes
@@ -425,7 +425,8 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 		shiftStartTs := uint64(30)
 		startTs := uint64(50)
 		restoredTs := uint64(100)
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, shiftStartTs, startTs, restoredTs, map[int64]int64{1: 1}, true)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 1}, true)
+		rewriteRules.SetTsRange(shiftStartTs, startTs, restoredTs)
 
 		// Verify timestamp fields in RewriteRules
 		require.Equal(t, restoredTs, rewriteRules.RestoredTs)
@@ -441,7 +442,7 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 
 	// Test with empty index IDs
 	{
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, 0, 0, map[int64]int64{}, true)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{}, true)
 		require.Len(t, rewriteRules.Data, 1) // Only record rule, no index rules
 		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
 	}
@@ -468,7 +469,7 @@ func rewriteKey(key kv.Key, rule *import_sstpb.RewriteRule) kv.Key {
 }
 
 func TestFindMatchedRewriteRule(t *testing.T) {
-	rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, 0, 0, map[int64]int64{1: 10}, true)
+	rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 10}, true)
 	{
 		applyFile := fakeApplyFile{
 			StartKey: tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(100)),
