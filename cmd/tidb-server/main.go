@@ -294,6 +294,8 @@ func main() {
 	err = cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
+	startDebugHelpers()
+
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		err = tiflashcompute.InitGlobalTopoFetcher(
 			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
@@ -325,7 +327,7 @@ func main() {
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	signal.SetupCloseSignalHandler(func() {
 		svr.Close()
 		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
@@ -988,6 +990,25 @@ func enablePyroscope() {
 		})
 		if err != nil {
 			log.Fatal("fail to start pyroscope", zap.Error(err))
+		}
+	}
+}
+
+// startDebugHelpers starts the following tools to help debug
+// 1. Setup the signal handler of `SIGUSR1` to print stacks.
+// 2. Start the initial status server to handle `/debug/pprof` and `/metrics`
+//
+// Please remember to call `server.StopInitialStatusServer` before starting the
+// real status server, as they'll share the same address.
+func startDebugHelpers() {
+	// setup the
+	signal.SetupStackSignalHandler()
+
+	cfg := config.GetGlobalConfig()
+	if cfg.Status.ReportStatus {
+		err := server.StartInitialStatusServer(cfg)
+		if err != nil {
+			terror.MustNil(err)
 		}
 	}
 }

@@ -355,6 +355,8 @@ func (s *Server) initTiDBListener() (err error) {
 
 func (s *Server) initHTTPListener() (err error) {
 	if s.cfg.Status.ReportStatus {
+		StopInitialStatusServer()
+
 		if err = s.listenStatusHTTPServer(); err != nil {
 			return errors.Trace(err)
 		}

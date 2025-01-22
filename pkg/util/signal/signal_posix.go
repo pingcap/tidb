@@ -26,8 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// SetupSignalHandler setup signal handler for TiDB Server
-func SetupSignalHandler(shutdownFunc func()) {
+// SetupStackSignalHandler setup signal handler for `SIGUSR1`. It'll dump goroutine stack and print it out.
+func SetupStackSignalHandler() {
 	usrDefSignalChan := make(chan os.Signal, 1)
 
 	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
@@ -41,7 +41,11 @@ func SetupSignalHandler(shutdownFunc func()) {
 			}
 		}
 	}()
+}
 
+// SetupCloseSignalHandler setup signal handler for `SIGHUP`, `SIGINT`, `SIGTERM` and `SIGQUIT` for TiDB Server
+// These signals will close TiDB server.
+func SetupCloseSignalHandler(shutdownFunc func()) {
 	closeSignalChan := make(chan os.Signal, 1)
 	signal.Notify(closeSignalChan,
 		syscall.SIGHUP,
