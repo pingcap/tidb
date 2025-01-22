@@ -1565,12 +1565,20 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					continue
 				}
 				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
-				overlapping := calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
+				// calcFraction4Datums calc the value: (currentLeftMost - lower_bound) / (upper_bound - lower_bound)
+				overlapping := 1 - calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
 				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
 				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
 				sum += overlappedCount
 				buckets[i-1].Count -= overlappedCount
 				buckets[i-1].NDV -= overlappedNDV
+				buckets[i-1].Repeat = 0
+				if buckets[i-1].NDV < 0 {
+					buckets[i-1].NDV = 0
+				}
+				if buckets[i-1].Count < 0 {
+					buckets[i-1].Count = 0
+				}
 
 				// Cut it.
 				cutBkt := newbucket4MergingForRecycle()
@@ -1582,7 +1590,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
 
 				currentLeftMost.Copy(buckets[i-1].upper)
-				buckets[i-1].Repeat = 0
 			}
 			var merged *bucket4Merging
 			if len(cutAndFixBuffer) == 0 {
@@ -1618,12 +1625,24 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					if err != nil {
 						return nil, err
 					}
-					// Once the lower bound < currentLeftMost, we'll skip all the 1st kind of bucket.
+					// Once the lower bound < currentLeftMost, we've skipped all the 1st kind of bucket.
 					// We can break here.
 					if res < 0 {
 						break
 					}
 				}
+				intest.AssertFunc(func() bool {
+					for j := i; j < leftMostInvalidPosForNextRound; j++ {
+						res, err := buckets[j].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+						if err != nil {
+							return false
+						}
+						if res != 0 {
+							return false
+						}
+					}
+					return true
+				}, "the buckets are not sorted actually")
 				i = leftMostInvalidPosForNextRound
 			}
 			currentLeftMost.Copy(merged.lower)
