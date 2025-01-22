@@ -572,14 +572,12 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+				tbl.DelCol(col.ID)
 			}
 		}
 		for _, idx := range tbl.HistColl.GetIdxSlice() {
 			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+				tbl.DelIdx(idx.ID)
 			}
 		}
 		tbl.ColAndIdxExistenceMap.SetChecked()

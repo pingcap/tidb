@@ -3058,7 +3058,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_add")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_add")
 	}
 
 	// for period_diff
@@ -3070,7 +3070,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_diff")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_diff")
 	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
@@ -3844,12 +3844,12 @@ func TestSetVariables(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	require.Error(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -3893,10 +3893,10 @@ func TestSetVariables(t *testing.T) {
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
 	// Previously global values were cached. This is incorrect.
 	// See: https://github.com/pingcap/tidb/issues/24368
