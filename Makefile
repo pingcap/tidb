@@ -211,20 +211,13 @@ endif
 
 # default.pgo is the tidb cpu profile of TiDB, you can use make pgo-file to merge profile files from build/profile folder to produce default.pgo file.
 # default.pgo file needs to be updated frequently to ensure that the PGO optimization is effective.
-.PHONY: server_release
-server_release:
+.PHONY: server_with_pgo
+server_with_pgo:
 ifeq ($(TARGET), "")
-	@make pgo-file
 	CGO_ENABLED=1 $(GOBUILD) -pgo=default.pgo  $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
 else
-	@make pgo-file
 	CGO_ENABLED=1 $(GOBUILD) -pgo=default.pgo $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
-
-.PHONY: pgo-file
-pgo-file:
-	go tool pprof -proto build/profile/*.proto > default.pgo
-	@echo "Merge profile files from build/profile folder to produce default.pgo file"
 
 .PHONY: server_debug
 server_debug:
