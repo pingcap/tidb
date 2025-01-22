@@ -231,7 +231,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
 func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
-	sysVars := ObtainImportantVariables(ctx, g.db, g.cfg.IsTiDBBackend())
+	sysVars := ObtainImportantVariables(ctx, g.db, !g.cfg.IsTiDBBackend())
 	// override by manually set vars
 	maps.Copy(sysVars, g.cfg.TiDB.Vars)
 	return sysVars
