@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:statistics/histogram.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -38,6 +39,25 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
@@ -1232,12 +1252,18 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 // Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
 func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
 	res := right.Clone()
-	if left.NDV == 0 {
+	if left.Count == 0 {
 		return &res, nil
 	}
+<<<<<<< HEAD:statistics/histogram.go
 	if right.NDV == 0 {
 		res.lower = left.lower.Clone()
 		res.upper = left.upper.Clone()
+=======
+	if right.Count == 0 {
+		left.lower.Copy(res.lower)
+		left.upper.Copy(res.upper)
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 		res.NDV = left.NDV
 		return &res, nil
 	}
@@ -1384,30 +1410,44 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return &res, nil
 }
 
+<<<<<<< HEAD:statistics/histogram.go
 func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 	res := newBucket4Meging()
 	res.lower = d.Clone()
 	res.upper = d.Clone()
+=======
+func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4Merging {
+	res := newbucket4MergingForRecycle()
+	d.Copy(res.lower)
+	d.Copy(res.upper)
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
-	res.NDV = int64(1)
+	if analyzeVer <= Version2 {
+		res.NDV = 0
+	}
+	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
+		res.NDV = 1
+	})
+	intest.Assert(analyzeVer <= Version2)
 	return res
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
-	var totCount, totNull, bucketNumber, totColSize int64
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool, analyzeVer int) (*Histogram, error) {
+	var totCount, totNull, totColSize int64
+	var bucketNumber int
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-	// minValue is used to calc the bucket lower.
-	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
-		bucketNumber += int64(hist.Len())
-		if hist.Len() > 0 {
+		histLen := hist.Len()
+		if histLen > 0 {
+			bucketNumber += histLen
 			totCount += hist.Buckets[hist.Len()-1].Count
+<<<<<<< HEAD:statistics/histogram.go
 			if minValue == nil {
 				minValue = hist.GetLower(0).Clone()
 				continue
@@ -1419,10 +1459,17 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			if res < 0 {
 				minValue = hist.GetLower(0).Clone()
 			}
+=======
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 		}
 	}
 
-	bucketNumber += int64(len(popedTopN))
+	// If all the hist and the topn is empty, return a empty hist.
+	if bucketNumber+len(popedTopN) == 0 {
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+	}
+
+	bucketNumber += len(popedTopN)
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
@@ -1450,6 +1497,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				return nil, err
 			}
 		}
+<<<<<<< HEAD:statistics/histogram.go
 		if minValue == nil {
 			minValue = d.Clone()
 			continue
@@ -1462,6 +1510,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			minValue = d.Clone()
 		}
 		buckets = append(buckets, meta.buildBucket4Merging(&d))
+=======
+		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 	}
 
 	// Remove empty buckets
@@ -1474,6 +1525,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	buckets = buckets[:tail]
 
+<<<<<<< HEAD:statistics/histogram.go
 	var sortError error
 	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
@@ -1491,19 +1543,45 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	})
 	if sortError != nil {
 		return nil, sortError
+=======
+	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
+	if err != nil {
+		return nil, err
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 	}
 
 	var sum, prevSum int64
-	r, prevR := len(buckets), 0
+	r := len(buckets)
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	var bucketNDV int64
+	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
+	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
+	var currentLeftMost *types.Datum
 	for i := len(buckets) - 1; i >= 0; i-- {
+		if currentLeftMost == nil {
+			currentLeftMost = buckets[i].lower
+		} else {
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
+			}
+		}
 		sum += buckets[i].Count
-		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
+<<<<<<< HEAD:statistics/histogram.go
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.Compare(sc, buckets[i].upper, collate.GetBinaryCollator())
+=======
+			// If the buckets have the same upper, we merge them into the same new buckets.
+			// We don't need to update the currentLeftMost in the for loop because the leftmost bucket's lower
+			// will be the smallest when their upper is the same.
+			// We just need to update it after the for loop.
+			for ; i > 0; i-- {
+				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 				if err != nil {
 					return nil, err
 				}
@@ -1511,42 +1589,154 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					break
 				}
 				sum += buckets[i-1].Count
-				bucketNDV += buckets[i-1].NDV
 			}
-			merged, err := mergePartitionBuckets(sc, buckets[i:r])
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
+			}
+
+			// Iterate possible overlapped ones.
+			// We need to re-sort this part.
+			mergeBuffer = mergeBuffer[:0]
+			cutAndFixBuffer = cutAndFixBuffer[:0]
+			leftMostValidPosForNonOverlapping := i
+			for ; i > 0; i-- {
+				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].upper < currentLeftMost, this bucket has no overlap with current merging one. Break it.
+				if res < 0 {
+					break
+				}
+				// Now the bucket[i-1].upper >= currentLeftMost, they are overlapped.
+				res, err = buckets[i-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totally merged.
+				if res >= 0 {
+					sum += buckets[i-1].Count
+					mergeBuffer = append(mergeBuffer, buckets[i-1])
+					continue
+				}
+				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
+				// calcFraction4Datums calc the value: (currentLeftMost - lower_bound) / (upper_bound - lower_bound)
+				overlapping := 1 - calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
+				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
+				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
+				sum += overlappedCount
+				buckets[i-1].Count -= overlappedCount
+				buckets[i-1].NDV -= overlappedNDV
+				buckets[i-1].Repeat = 0
+				if buckets[i-1].NDV < 0 {
+					buckets[i-1].NDV = 0
+				}
+				if buckets[i-1].Count < 0 {
+					buckets[i-1].Count = 0
+				}
+
+				// Cut it.
+				cutBkt := newbucket4MergingForRecycle()
+				buckets[i-1].upper.Copy(cutBkt.upper)
+				currentLeftMost.Copy(cutBkt.lower)
+				currentLeftMost.Copy(buckets[i-1].upper)
+				cutBkt.Count = overlappedCount
+				cutBkt.NDV = overlappedNDV
+				mergeBuffer = append(mergeBuffer, cutBkt)
+				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
+			}
+			var merged *bucket4Merging
+			if len(cutAndFixBuffer) == 0 {
+				merged, err = mergePartitionBuckets(sc, buckets[i:r])
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
+				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
+				merged, err = mergePartitionBuckets(sc, mergeBuffer)
+				if err != nil {
+					return nil, err
+				}
+				for _, bkt := range cutAndFixBuffer {
+					releasebucket4MergingForRecycle(bkt)
+				}
+				// The buckets in buckets[i:origI] needs a re-sort.
+				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:leftMostValidPosForNonOverlapping])
+				if err != nil {
+					return nil, err
+				}
+				// After the operation, the buckets in buckets[i:origI] contains two kinds of buckets:
+				// 1. The buckets that are totally inside the merged bucket. => lower_bound >= currentLeftMost
+				//    It's not changed. [lower_bound_i, upper_bound_i] with lower_bound_i >= currentLeftMost
+				// 2. The buckets that are overlapped with the merged bucket. lower_bound < currentLeftMost < upper_bound
+				//    After cutting, the remained part is [lower_bound_i, currentLeftMost]
+				// To do the next round of merging, we need to kick out the 1st kind of buckets.
+				// And after the re-sort, the 2nd kind of buckets will be in the front.
+				leftMostInvalidPosForNextRound := leftMostValidPosForNonOverlapping
+				for ; leftMostInvalidPosForNextRound > i; leftMostInvalidPosForNextRound-- {
+					res, err := buckets[leftMostInvalidPosForNextRound-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+					if err != nil {
+						return nil, err
+					}
+					// Once the lower bound < currentLeftMost, we've skipped all the 1st kind of bucket.
+					// We can break here.
+					if res < 0 {
+						break
+					}
+				}
+				intest.AssertFunc(func() bool {
+					for j := i; j < leftMostInvalidPosForNextRound; j++ {
+						res, err := buckets[j].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+						if err != nil {
+							return false
+						}
+						if res != 0 {
+							return false
+						}
+					}
+					return true
+				}, "the buckets are not sorted actually")
+				i = leftMostInvalidPosForNextRound
+			}
+			currentLeftMost.Copy(merged.lower)
+			currentLeftMost = nil
 			globalBuckets = append(globalBuckets, merged)
-			prevR = r
 			r = i
 			bucketCount++
 			prevSum = sum
-			bucketNDV = 0
 		}
 	}
 	if r > 0 {
-		bucketSum := int64(0)
-		for _, b := range buckets[:r] {
-			bucketSum += b.Count
-		}
-
-		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
-			r = prevR
-			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		leftMost := buckets[0].lower
+		for i, b := range buckets[:r] {
+			if i == 0 {
+				continue
+			}
+			res, err := leftMost.Compare(sc.TypeCtx(), b.lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				leftMost = b.lower
+			}
 		}
 
 		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
+		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
 	// Because we merge backwards, we need to flip the slices.
-	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
-		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
-	}
+	slices.Reverse(globalBuckets)
 
+<<<<<<< HEAD:statistics/histogram.go
 	// Calc the bucket lower.
 	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
@@ -1558,6 +1748,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		} else {
 			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
 		}
+=======
+	for i := 1; i < len(globalBuckets); i++ {
+>>>>>>> a5d2d28d017 (statistics: fix the potential error when merging global stats (#52218)):pkg/statistics/histogram.go
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
 
@@ -1582,6 +1775,27 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+// sortBucketsByUpperBound the bucket by upper bound first, then by lower bound.
+// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bkt[i+1].lower.
+func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error {
+	var sortError error
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
+		res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		if res != 0 {
+			return res
+		}
+		res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		return res
+	})
+	return sortError
 }
 
 const (
