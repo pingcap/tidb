@@ -5837,16 +5837,31 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 	return nil
 }
 
-func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
-	p := &Traffic{
+func (b *PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
+	tf := &Traffic{
 		OpType:  pc.OpType,
 		Options: pc.Options,
 		Dir:     pc.Dir,
 	}
-	if pc.OpType == ast.TrafficOpShow {
-		p.setSchemaAndNames(buildShowTrafficJobsSchema())
+	var errMsg string
+	var privs []string
+	switch pc.OpType {
+	case ast.TrafficOpCapture:
+		errMsg = "SUPER or TRAFFIC_CAPTURE_ADMIN"
+		privs = []string{"TRAFFIC_CAPTURE_ADMIN"}
+	case ast.TrafficOpReplay:
+		errMsg = "SUPER or TRAFFIC_REPLAY_ADMIN"
+		privs = []string{"TRAFFIC_REPLAY_ADMIN"}
+	case ast.TrafficOpShow:
+		tf.setSchemaAndNames(buildShowTrafficJobsSchema())
+		fallthrough
+	case ast.TrafficOpCancel:
+		errMsg = "SUPER, TRAFFIC_CAPTURE_ADMIN or TRAFFIC_REPLAY_ADMIN"
+		privs = []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"}
 	}
-	return p
+	err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(errMsg)
+	b.visitInfo = appendDynamicVisitInfo(b.visitInfo, privs, false, err)
+	return tf
 }
 
 // buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.
