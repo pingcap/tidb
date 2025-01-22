@@ -471,7 +471,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return subtaskErr
 	}
 
-	err := e.finishSubtask(subtaskCtx, subtask)
+	err := e.finishSubtask(e.stepCtx, subtask)
 	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err
 }
