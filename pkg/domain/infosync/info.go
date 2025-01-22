@@ -912,6 +912,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 		clientv3.WithLease(is.topologySession.Lease()))
 }
 
+// RemoveTopologyInfo remove self server topology information from etcd.
 func (is *InfoSyncer) RemoveTopologyInfo() {
 	if is.etcdCli == nil {
 		return
