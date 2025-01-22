@@ -21,7 +21,6 @@ go_library(
         "//sessionctx/variable",
         "//util",
         "//util/disk",
-        "//util/logutil",
         "//util/memory",
         "//util/sli",
         "//util/sqlexec",
