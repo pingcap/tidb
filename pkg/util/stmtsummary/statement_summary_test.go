@@ -251,7 +251,7 @@ func TestAddStatement(t *testing.T) {
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 		Succeed:   true,
 		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:     100,
 				UnpackedBytesReceivedKVTotal: 200,
@@ -327,7 +327,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo2.TiKVExecDetails)
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -408,7 +408,7 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
 		ResourceGroupName: "rg1",
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:      1,
 				UnpackedBytesReceivedKVTotal:  300,
@@ -459,7 +459,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo3.TiKVExecDetails)
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -722,7 +722,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:         10,
 				UnpackedBytesReceivedKVTotal:     1000,

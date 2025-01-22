@@ -2672,7 +2672,7 @@ func TestRetry(t *testing.T) {
 	est := MigrationExtension(s)
 	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 	require.Len(t, mg.Warnings, 1)
-	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
+	require.ErrorContains(t, mg.Warnings[0], "this disk remembers nothing")
 	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
 	mg = est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
@@ -2703,7 +2703,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 	est := MigrationExtension(s)
 	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
-	require.Error(t, mg.Warnings[0], "this disk will never forget")
+	require.ErrorContains(t, mg.Warnings[0], "this disk will never forget")
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(placeholder(cDir(2)), placeholder(aDir(2)), 28, 32),
 		mTruncatedTo(27),

@@ -332,7 +332,7 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx expression.BuildContext) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0], nil)
 }
 
 func (a *baseFuncDesc) typeInfer4JsonArrayAgg() {
@@ -447,7 +447,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsInt(ctx, expr, retTp)
+		}
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETString:
