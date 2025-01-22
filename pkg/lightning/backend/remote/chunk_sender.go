@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // PutChunkResult is json data that returned by remote server PUT API.
@@ -86,7 +87,7 @@ type chunkSender struct {
 	chunksCache *chunkCache
 
 	// state is used to record the state of the chunks in remote worker.
-	state       atomic.Value
+	state       atomic.Pointer[chunksState]
 	nextChunkID atomic.Uint64
 
 	// the following channels should be closed by chunkSenderLoop
@@ -108,7 +109,7 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 		httpClient:  engine.httpClient,
 		chunksCache: chunksCache,
 
-		state:       atomic.Value{},
+		state:       atomic.Pointer[chunksState]{},
 		nextChunkID: atomic.Uint64{},
 
 		loopDoneChan: make(chan struct{}),
@@ -125,8 +126,7 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 }
 
 func (c *chunkSender) putChunk(ctx context.Context, data []byte) (uint64, error) {
-	data0 := make([]byte, len(data))
-	copy(data0, data)
+	data0 := slices.Clone(data)
 
 	task := newChunkTask(data0, false)
 	select {
@@ -137,16 +137,14 @@ func (c *chunkSender) putChunk(ctx context.Context, data []byte) (uint64, error)
 		return 0, c.err
 	}
 
-	newChunkID := uint64(0)
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case newChunkID = <-task.resp:
+	case newChunkID := <-task.resp:
+		return newChunkID, nil
 	case <-c.loopDoneChan:
 		return 0, c.err
 	}
-
-	return newChunkID, nil
 }
 
 func (c *chunkSender) flush(ctx context.Context) error {
@@ -183,7 +181,7 @@ func (c *chunkSender) getLastChunkID() uint64 {
 }
 
 func (c *chunkSender) getFlushedChunkID() uint64 {
-	return c.state.Load().(*chunksState).FlushedChunkID
+	return c.state.Load().FlushedChunkID
 }
 
 func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
@@ -205,8 +203,6 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 		case <-c.loopQuitChan:
 			return
 		case task := <-c.taskChan:
-			// Reset the ticker when a new task is received. Avoid sending empty chunks too frequently.
-			ticker.Reset(updateFlushedChunkDuration)
 			if !task.flush {
 				newChunkID := c.getNextChunkID()
 				task.done(newChunkID)
@@ -226,6 +222,8 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 				}
 				task.done(0)
 			}
+			// Reset the ticker when a new task is received. Avoid sending empty chunks too frequently.
+			ticker.Reset(updateFlushedChunkDuration)
 		case <-ticker.C:
 			// Periodically send empty chunks to update the flushed chunkID.
 			if c.getFlushedChunkID() == c.getLastChunkID() {
@@ -312,7 +310,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 		}
 	}
 
-	state := c.state.Load().(*chunksState)
+	state := c.state.Load()
 	lastFlushedChunkID := state.FlushedChunkID + 1
 	for lastFlushedChunkID <= result.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
@@ -363,7 +361,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		flushedChunkID := result.FlushedChunkIDs[c.id]
 		if flushedChunkID == c.getLastChunkID() {
 			// all chunks are flushed, clean cache and update state
-			state := c.state.Load().(*chunksState)
+			state := c.state.Load()
 			lastFlushedChunkID := state.FlushedChunkID + 1
 			for lastFlushedChunkID <= flushedChunkID {
 				err := c.chunksCache.clean(lastFlushedChunkID)

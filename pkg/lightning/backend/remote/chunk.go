@@ -17,17 +17,19 @@ package remote
 import (
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/pingcap/errors"
 )
 
 type chunkMeta struct {
-	size     int
-	checksum uint32
 	// if usingMem is true, chunkData will be used.
 	chunkData []byte
+	size      int
+	checksum  uint32
 }
 
 // chunkCache is a simple cache for chunks.
@@ -49,7 +51,11 @@ func newChunkCache(loadDataTaskID string, writerID uint64, basePath string, usin
 	if len(basePath) != 0 {
 		path = basePath
 	}
-	baseDir := filepath.Join(path, loadDataTaskID, fmt.Sprintf("%d", writerID))
+
+	baseDir := filepath.Join(path, loadDataTaskID, strconv.FormatUint(writerID, 10))
+	// cleanup the directory if it exists
+	_ = os.RemoveAll(baseDir)
+
 	err := os.MkdirAll(baseDir, 0o750)
 	if err != nil {
 		return nil, err
@@ -75,14 +81,16 @@ func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
 		return nil, err
 	}
 
-	buf := make([]byte, meta.size)
-	n, err := file.Read(buf)
+	buf, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
-	buf = buf[:n]
 
-	checksum := crc32.Checksum(buf, crc32.MakeTable(crc32.IEEE))
+	if len(buf) != meta.size {
+		return nil, errors.Errorf("chunk-%d size mismatch", chunkID)
+	}
+
+	checksum := crc32.ChecksumIEEE(buf)
 	if checksum != meta.checksum {
 		return nil, errors.Errorf("chunk-%d checksum mismatch", chunkID)
 	}
@@ -101,15 +109,20 @@ func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 		return err
 	}
 
-	checksum := crc32.Checksum(buf, crc32.MakeTable(crc32.IEEE))
+	checksum := crc32.ChecksumIEEE(buf)
 
-	_, err = file.Write(buf)
-	if err != nil {
-		file.Close()
-		_ = os.Remove(fileName)
-		return err
+	for {
+		n, err := file.Write(buf)
+		if err != nil {
+			file.Close()
+			_ = os.Remove(fileName)
+			return err
+		}
+		if n == len(buf) {
+			break
+		}
+		buf = buf[n:]
 	}
-
 	c.chunks[chunkID] = chunkMeta{size: len(buf), checksum: checksum}
 	return file.Close()
 }
