@@ -371,7 +371,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
-
+		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)

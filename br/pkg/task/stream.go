@@ -1511,8 +1511,7 @@ func restoreStream(
 		totalSize += size
 	}
 
-	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
-	if err = withProgress(pm, func(p glue.Progress) error {
+	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
 		return client.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
@@ -1745,12 +1744,6 @@ func checkLogRange(restoreFromTS, restoreToTS, logMinTS, logMaxTS uint64) error 
 		)
 	}
 	return nil
-}
-
-// withProgress execute some logic with the progress, and close it once the execution done.
-func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
-	defer p.Close()
-	return cc(p)
 }
 
 type backupLogInfo struct {
