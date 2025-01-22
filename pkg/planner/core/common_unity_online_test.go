@@ -22,9 +22,9 @@ func TestUnity(t *testing.T) {
 	tk.MustExec(`create table t3 (a int, b int, c int, key(a))`)
 	tk.MustExec(`create table t4 (a int, b int, c int, primary key (a), key(c))`)
 	tk.MustExec(`create table t5 (a int, b int, c int, primary key (a, b), key(c))`)
-	//formatPrint(tk, `explain format='unity' select * from t1, t2 where t1.a=t2.a`)
-	//formatPrint(tk, `explain format='unity' select 1 from t1, t2, t3 where t1.a=t2.a and t2.a=t3.a`)
-	formatPrint(tk, `explain format='unity' select a from t5`)
+	//formatPrint(tk, `explain format='unity_online' select * from t1, t2 where t1.a=t2.a`)
+	//formatPrint(tk, `explain format='unity_online' select 1 from t1, t2, t3 where t1.a=t2.a and t2.a=t3.a`)
+	formatPrint(tk, `explain format='unity_online' select a from t5`)
 }
 
 func TestUnityMCV(t *testing.T) {
@@ -41,8 +41,8 @@ func TestUnityMCV(t *testing.T) {
 		}
 	}
 	tk.MustExec(`analyze table t1 with 10 topn`)
-	formatPrint(tk, `explain format='unity' select a from t1`)
-	formatPrint(tk, `explain format='unity' select a from t1`)
+	formatPrint(tk, `explain format='unity_online' select a from t1`)
+	formatPrint(tk, `explain format='unity_online' select a from t1`)
 }
 
 func formatPrint(tk *testkit.TestKit, sql string) {
