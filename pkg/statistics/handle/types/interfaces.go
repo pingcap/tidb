@@ -108,7 +108,7 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with a single transaction.
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
 	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
