@@ -119,6 +119,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/types",
         "//pkg/planner/cardinality",
+        "//pkg/planner/cascades",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",

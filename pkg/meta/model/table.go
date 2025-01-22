@@ -103,10 +103,9 @@ type TableInfo struct {
 	Constraints []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys []*FKInfo         `json:"fk_info"`
 	State       SchemaState       `json:"state"`
-	// PKIsHandle is true when primary key is a single integer column.
+	// PKIsHandle is true when PK is clustered and a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
-	// IsCommonHandle is true when clustered index feature is
-	// enabled and the primary key is not a single integer column.
+	// IsCommonHandle is true when PK is clustered and not a single integer column.
 	IsCommonHandle bool `json:"is_common_handle"`
 	// CommonHandleVersion is the version of the clustered index.
 	// 0 for the clustered index created == 5.0.0 RC.
