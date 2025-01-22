@@ -1115,9 +1115,7 @@ func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	return ok
 }
 
-// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
-func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
-	var pi partitionItem
+func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi partitionItem, ok bool) {
 	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
@@ -1128,12 +1126,19 @@ func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (
 				return true
 			}
 			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
 				pi = item
+				ok = !item.tomb
 				return false
 			}
 			return true
-		})
+		},
+	)
+	return pi, ok
+}
+
+// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
+func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return
 	}
@@ -1142,23 +1147,7 @@ func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (
 
 // TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
 func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
-	var pi partitionItem
-	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
-		func(item partitionItem) bool {
-			if item.partitionID != partitionID {
-				return false
-			}
-			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
-				// Skip the record.
-				return true
-			}
-			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
-				pi = item
-				return false
-			}
-			return true
-		})
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return
 	}
@@ -1166,24 +1155,7 @@ func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, 
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	var ok bool
-	var pi partitionItem
-	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
-		func(item partitionItem) bool {
-			if item.partitionID != partitionID {
-				return false
-			}
-			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
-				// Skip the record.
-				return true
-			}
-			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
-				pi = item
-				return false
-			}
-			return true
-		})
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return nil, nil, nil
 	}

@@ -30,10 +30,14 @@ type InfoSchema interface {
 	context.MetaOnlyInfoSchema
 	TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
+	// SchemaNameAndTableNameByID is a pure memory operation.
 	SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool)
+	// SchemaNameByTableID is a pure memory operation.
 	SchemaNameByTableID(tableID int64) (ast.CIStr, bool)
+	// TableIDByPartitionID is a pure memory operation.
 	TableIDByPartitionID(partitionID int64) (tableID int64, ok bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// SchemaNameAndTableNameByPartitionID is a pure memory operation.
 	SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool)
 	base() *infoSchema
 }
