@@ -198,7 +198,8 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 		}
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
-		if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
+		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
+		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
 			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
 				zap.Int("tableCount", len(batchUpdates)),
 				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))

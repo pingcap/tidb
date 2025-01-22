@@ -17,6 +17,7 @@ package history
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +91,8 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 			filteredTableIDs = append(filteredTableIDs, tableID)
 		}
 	}
+	// Sort the tableIDs to avoid deadlocks.
+	slices.Sort(filteredTableIDs)
 
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
