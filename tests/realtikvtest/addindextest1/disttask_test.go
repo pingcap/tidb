@@ -99,7 +99,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
-		func(e taskexecutor.TaskExecutor, errP *error) {
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if counter.Add(1) == 1 {
 				*errP = context.Canceled
 			}
@@ -433,6 +433,14 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec(updateExecID)
 		})
 	})
+	var subtaskCtx context.Context
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
+			subtaskCtx = ctx
+		},
+	)
 	tk.MustExec("alter table t add index idx(b);")
 	require.NotEqual(t, int64(0), jobID.Load())
+	require.Error(t, subtaskCtx.Err())
+	require.Equal(t, context.Canceled, context.Cause(subtaskCtx))
 }
