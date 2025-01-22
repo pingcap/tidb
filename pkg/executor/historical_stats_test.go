@@ -403,3 +403,39 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jt)
 	require.False(t, jt.IsHistoricalStats)
 }
+
+func TestDumpHistoricalStatsMetaForMultiTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a int, b varchar(10), index idx(a, b))")
+	tk.MustExec("create table t2(a int, b varchar(10), index idx(a, b))")
+	// Insert some data.
+	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustExec("insert into t2 values (1, 'a'), (2, 'b'), (3, 'c')")
+	// Analyze the tables.
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	h := dom.StatsHandle()
+	// Update the stats cache.
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	// Insert more data.
+	tk.MustExec("insert into t1 values (4, 'd'), (5, 'e'), (6, 'f')")
+	tk.MustExec("insert into t2 values (4, 'd'), (5, 'e'), (6, 'f')")
+	// Dump stats delta to kv.
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	// Check historical stats meta.
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	rows := tk.MustQuery("select version from mysql.stats_meta_history where table_id = ? order by version desc limit 1", tbl1.Meta().ID).Rows()
+	version1 := rows[0][0].(string)
+	rows = tk.MustQuery("select version from mysql.stats_meta_history where table_id = ? order by version desc limit 1", tbl2.Meta().ID).Rows()
+	version2 := rows[0][0].(string)
+	require.Equal(t, version1, version2)
+}

@@ -97,12 +97,45 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 
+<<<<<<< HEAD
 	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		currentTime := time.Now()
 		for id, item := range deltaMap {
 			if !s.needDumpStatsDelta(is, dumpAll, id, item, currentTime) {
 				continue
+=======
+	// Sort table IDs to ensure a consistent dump order to reduce the chance of deadlock.
+	tableIDs := make([]int64, 0, len(deltaMap))
+	for id := range deltaMap {
+		tableIDs = append(tableIDs, id)
+	}
+	slices.Sort(tableIDs)
+
+	// Dump stats delta in batches.
+	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
+		end := i + dumpDeltaBatchSize
+		if end > len(tableIDs) {
+			end = len(tableIDs)
+		}
+
+		batchTableIDs := tableIDs[i:end]
+		var (
+			statsVersion uint64
+			batchUpdates []*storage.DeltaUpdate
+		)
+		batchStart := time.Now()
+		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
+			// Collect all updates in the batch.
+			for _, id := range batchTableIDs {
+				item := deltaMap[id]
+				if !s.needDumpStatsDelta(is, dumpAll, id, item, batchStart) {
+					continue
+				}
+				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
+>>>>>>> a1beeb1200e (statistics: update RecordHistoricalStatsMeta to handle multiple table IDs (#59037))
 			}
 			updated, err := s.dumpTableStatCountToKV(is, id, item)
 			if err != nil {
@@ -150,6 +183,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 
 		tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 		// Check if the table and its partitions are locked.
@@ -161,6 +195,79 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 		lockedTables, err := s.statsHandle.GetLockedTables(tidAndPid...)
 		if err != nil {
 			return err
+=======
+		startRecordHistoricalStatsMeta := time.Now()
+		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
+		for _, update := range batchUpdates {
+			if !update.IsLocked {
+				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+					panic("panic when record historical stats meta")
+				})
+				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
+			}
+		}
+		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
+		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
+		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+				zap.Int("tableCount", len(batchUpdates)),
+				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
+		}
+	}
+
+	return nil
+}
+
+// dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.
+// Note: The `batchUpdates` parameter may be modified during the execution of this function.
+//
+// 1. Handles partitioned tables:
+//   - For partitioned tables, the function ensures that the global statistics are updated appropriately
+//     in addition to the individual partition statistics.
+//
+// 2. Stashes lock information:
+//   - Records lock information for each table or partition.
+func (s *statsUsageImpl) dumpStatsDeltaToKV(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	updates []*storage.DeltaUpdate,
+) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
+	if len(updates) == 0 {
+		return 0, nil, nil
+	}
+	beforeLen := len(updates)
+	statsVersion, err = utilstats.GetStartTS(sctx)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Collect all table IDs that need lock checking.
+	allTableIDs := make([]int64, 0, len(updates))
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+		}
+		// Add psychical table ID.
+		allTableIDs = append(allTableIDs, update.TableID)
+		// Add parent table ID if it's a partition table.
+		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
+			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		}
+	}
+
+	// Batch get lock status for all tables.
+	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	// Prepare batch updates
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+>>>>>>> a1beeb1200e (statistics: update RecordHistoricalStatsMeta to handle multiple table IDs (#59037))
 		}
 
 		var affectedRows uint64

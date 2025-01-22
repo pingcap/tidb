@@ -304,9 +304,9 @@ func (h subscriber) recordHistoricalStatsMeta(
 	return history.RecordHistoricalStatsMeta(
 		ctx,
 		sctx,
-		id,
 		startTS,
 		util.StatsMetaHistorySourceSchemaChange,
+		id,
 	)
 }
 
