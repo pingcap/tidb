@@ -31,9 +31,9 @@ func TestHash64Equals(t *testing.T) {
 		t.Errorf("Generate XXXShallowRef code error: %v", err)
 		return
 	}
-	currentCode, err := os.ReadFile("../../operator/logicalop/hash64_equals_generated.go")
+	currentCode, err := os.ReadFile("../../operator/logicalop/shallow_ref_generated.go")
 	if err != nil {
-		t.Errorf("Read current hash64_equals_generated.go code error: %v", err)
+		t.Errorf("Read current shallow_ref_generated.go code error: %v", err)
 		return
 	}
 	updateLines := bufio.NewReader(strings.NewReader(string(updatedCode)))
@@ -50,6 +50,6 @@ func TestHash64Equals(t *testing.T) {
 		}
 	}
 	if !bytes.Equal(updatedCode, currentCode) {
-		t.Errorf("hash64_equals_generated.go should be updated, please run 'make gogenerate' to update it.")
+		t.Errorf("shallow_ref_generated.go should be updated, please run 'make gogenerate' to update it.")
 	}
 }

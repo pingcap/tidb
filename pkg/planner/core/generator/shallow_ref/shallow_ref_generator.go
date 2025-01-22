@@ -127,7 +127,7 @@ func (c *cc) shallowRefElement(fType reflect.Type, caller, fieldName string) str
 }
 
 func isShallowRefField(fType reflect.StructField) bool {
-	return fType.Tag.Get("shallow-clone") == "true"
+	return fType.Tag.Get("shallow-ref") == "true"
 }
 
 type cc struct {
