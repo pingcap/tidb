@@ -874,7 +874,33 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return checkInfo.FullRestoreCheckErr
 	}
 
+	if isFullRestore(cmdName) {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	//TODO: ris should mod this
 	restoreSchedulers, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	if err != nil {
 		return errors.Trace(err)
@@ -893,32 +919,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 		log.Info("finish removing pd scheduler")
 	}()
-
-	if isFullRestore(cmdName) {
-		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
-			if err = client.CheckTargetClusterFresh(ctx); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-		// to avoid import cycle problem which we won't do it in this pr, then refactor this
-		//
-		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-		if cfg.WithSysTable {
-			client.InitFullClusterRestore(cfg.ExplicitFilter)
-		}
-	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
-			schedulersRemovable = true
-			return errors.Trace(err)
-		}
-	}
-
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
-			return errors.Trace(err)
-		}
-	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	err = client.AllocTableIDs(ctx, tables)
