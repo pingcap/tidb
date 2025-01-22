@@ -1584,12 +1584,11 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				cutBkt := newbucket4MergingForRecycle()
 				buckets[i-1].upper.Copy(cutBkt.upper)
 				currentLeftMost.Copy(cutBkt.lower)
+				currentLeftMost.Copy(buckets[i-1].upper)
 				cutBkt.Count = overlappedCount
 				cutBkt.NDV = overlappedNDV
 				mergeBuffer = append(mergeBuffer, cutBkt)
 				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
-
-				currentLeftMost.Copy(buckets[i-1].upper)
 			}
 			var merged *bucket4Merging
 			if len(cutAndFixBuffer) == 0 {
