@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -101,13 +100,12 @@ func main() {
 		log.Printf("unable to resolve absolute representation of output path , %+v\n", err)
 		flag.Usage()
 	}
-	pgoFile, err := filepath.Abs(pgoFile)
-	if err != nil {
-		log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
-		flag.Usage()
-	}
-	if _, err := os.Stat(pgoFile); errors.Is(err, os.ErrNotExist) {
-		pgoFile = ""
+	if pgoFile != "" {
+		pgoFile, err = filepath.Abs(pgoFile)
+		if err != nil {
+			log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
+			flag.Usage()
+		}
 	}
 
 	var manifest map[string]any
