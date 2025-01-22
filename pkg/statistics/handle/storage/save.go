@@ -74,7 +74,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 	return nil
 }
 
-func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
+func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
 	if hg == nil {
 		return
 	}
@@ -96,9 +96,6 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
-			}
-			if j == len(hg.Buckets)-1 {
-				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
 			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
@@ -281,15 +278,9 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return 0, err
 			}
-			var lastAnalyzePos []byte
-			lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
+			err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
 			if err != nil {
 				return 0, err
-			}
-			if len(lastAnalyzePos) > 0 {
-				if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
-					return 0, err
-				}
 			}
 			if result.IsIndex == 0 {
 				if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
@@ -376,15 +367,9 @@ func SaveStatsToStorage(
 	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
 	}
-	var lastAnalyzePos []byte
-	lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
+	err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
 	if err != nil {
 		return 0, err
-	}
-	if len(lastAnalyzePos) > 0 {
-		if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
-			return 0, err
-		}
 	}
 	if updateAnalyzeTime && isIndex == 0 {
 		if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {

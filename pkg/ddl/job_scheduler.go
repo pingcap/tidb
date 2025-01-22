@@ -497,7 +497,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
 			if err != nil {
-				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", jobW))
+				logutil.DDLLogger().Info("transit one job step and wait sync failed", zap.Error(err), zap.Stringer("job", jobW))
 			} else if jobW.InFinalState() {
 				return
 			}
@@ -567,6 +567,8 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
+				jobCtx.logger.Info("the job have schema version un-synced",
+					zap.Int64("version", version), zap.Stringer("job", job))
 				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
@@ -588,7 +590,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 
 	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
 	if err != nil {
-		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {

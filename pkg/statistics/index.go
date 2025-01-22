@@ -27,11 +27,10 @@ import (
 
 // Index represents an index histogram.
 type Index struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.IndexInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
@@ -50,7 +49,6 @@ func (idx *Index) Copy() *Index {
 		PhysicalID: idx.PhysicalID,
 		StatsVer:   idx.StatsVer,
 	}
-	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if idx.CMSketch != nil {
 		nc.CMSketch = idx.CMSketch.Copy()
 	}

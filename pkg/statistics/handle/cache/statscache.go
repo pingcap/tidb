@@ -116,6 +116,10 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
 	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
+	}()
 	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		skipMoveForwardStatsCache bool
@@ -222,10 +226,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		}
 		tblToUpdateOrDelete.addToUpdate(tbl)
 	}
-
 	tblToUpdateOrDelete.flush()
-	dur := time.Since(start)
-	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
 }
 

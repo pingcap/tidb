@@ -1417,6 +1417,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
+
+	a.updateMPPNetworkTraffic()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1688,9 +1690,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
-		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
-		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        resultRows,
 		ExecRetryCount:    a.retryCount,
@@ -1797,6 +1797,28 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 		return 0
 	}
 	return runtimeStatsColl.GetPlanActRows(p.ID())
+}
+
+func (a *ExecStmt) updateMPPNetworkTraffic() {
+	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return
+	}
+	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	if tiflashNetworkStats == nil {
+		return
+	}
+	var tikvExecDetail *util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw == nil {
+		tikvExecDetailRaw = &util.ExecDetails{}
+		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
+	}
+
+	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
@@ -2007,7 +2029,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.StmtExecDetails = stmtDetail
 	stmtExecInfo.ResultRows = resultRows
-	stmtExecInfo.TiKVExecDetails = tikvExecDetail
+	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID

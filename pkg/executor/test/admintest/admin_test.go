@@ -1461,7 +1461,7 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.Error(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 12]\"")
+	require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2")
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)

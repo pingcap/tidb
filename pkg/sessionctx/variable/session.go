@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 )
@@ -3274,6 +3275,22 @@ const (
 	SlowLogPDTotal = "PD_total"
 	// SlowLogBackoffTotal is the total time doing backoff.
 	SlowLogBackoffTotal = "Backoff_total"
+	// SlowLogUnpackedBytesSentTiKVTotal is the total bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVTotal = "Unpacked_bytes_sent_tikv_total"
+	// SlowLogUnpackedBytesReceivedTiKVTotal is the total bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVTotal = "Unpacked_bytes_received_tikv_total"
+	// SlowLogUnpackedBytesSentTiKVCrossZone is the cross zone bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVCrossZone = "Unpacked_bytes_sent_tikv_cross_zone"
+	// SlowLogUnpackedBytesReceivedTiKVCrossZone is the cross zone bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVCrossZone = "Unpacked_bytes_received_tikv_cross_zone"
+	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
+	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
+	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
+	SlowLogUnpackedBytesReceivedTiFlashTotal = "Unpacked_bytes_received_tiflash_total"
+	// SlowLogUnpackedBytesSentTiFlashCrossZone is the cross zone bytes sent by tiflash.
+	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
+	// SlowLogUnpackedBytesReceivedTiFlashCrossZone is the cross zone bytes received by tiflash.
+	SlowLogUnpackedBytesReceivedTiFlashCrossZone = "Unpacked_bytes_received_tiflash_cross_zone"
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 	// SlowLogExecRetryCount is the execution retry count.
@@ -3348,9 +3365,7 @@ type SlowQueryLogItems struct {
 	PlanDigest        string
 	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
-	KVTotal           time.Duration
-	PDTotal           time.Duration
-	BackoffTotal      time.Duration
+	KVExecDetail      *util.ExecDetails
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
@@ -3532,9 +3547,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(logItems.KVExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedMPPTotal, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesSentMPPCrossZone, 10))
+	writeSlowLogItem(&buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(logItems.KVExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	if len(logItems.Warnings) > 0 {

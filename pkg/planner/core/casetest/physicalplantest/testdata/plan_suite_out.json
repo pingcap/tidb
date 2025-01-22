@@ -5,7 +5,7 @@
       {
         "SQL": "select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -20,7 +20,7 @@
       {
         "SQL": "select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -36,7 +36,7 @@
       {
         "SQL": "select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -53,7 +53,7 @@
       {
         "SQL": "select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -68,7 +68,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -83,7 +83,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -99,7 +99,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -116,7 +116,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -131,7 +131,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -148,7 +148,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -163,7 +163,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -180,7 +180,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -195,7 +195,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -210,7 +210,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -227,7 +227,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -242,7 +242,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -257,7 +257,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -274,7 +274,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -291,7 +291,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -308,7 +308,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -325,7 +325,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), hash_agg() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -340,7 +340,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), stream_agg() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -371,7 +371,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), ignore_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
         "Plan": [
-          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 2666.67 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 2666.67 mpp[tiflash]  Column#5, test.t.a",
@@ -402,7 +402,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), index_merge(t, idx_b, idx_a) */ a, sum(b) from t where b < 2 or a > 2 group by a, c",
         "Plan": [
-          "TableReader 4439.11 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 4439.11 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 4439.11 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 4439.11 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 4439.11 mpp[tiflash]  Column#5, test.t.a",
@@ -421,7 +421,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), straight_join() */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -445,7 +445,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), leading(t3, t1) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
         "Plan": [
-          "TableReader 124625374.88 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 124625374.88 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 124625374.88 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 124625374.88 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 124625374.88 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)]",
@@ -468,7 +468,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -488,7 +488,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), leading(t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -509,7 +509,7 @@
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -524,7 +524,7 @@
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_2PHASE_AGG(@qb) */ * from v",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -540,7 +540,7 @@
       {
         "SQL": "select /*+ qb_name(qb, v1), shuffle_join(t1@qb, t2@qb) */ * from v1",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12487.50 mpp[tiflash]  test.t.a",
           "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -558,7 +558,7 @@
       {
         "SQL": "select /*+ qb_name(qb, v1), broadcast_join(t1@qb, t2@qb) */ * from v1",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12487.50 mpp[tiflash]  test.t.a",
           "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -574,7 +574,7 @@
       {
         "SQL": "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
         "Plan": [
-          "TableReader 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
@@ -595,7 +595,7 @@
       {
         "SQL": "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
         "Plan": [
-          "TableReader 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
@@ -616,7 +616,7 @@
       {
         "SQL": "select * from t t1 where t1.a < (select /*+ MPP_1PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
         "Plan": [
-          "TableReader 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#9)",
@@ -637,7 +637,7 @@
       {
         "SQL": "select * from t t1 where t1.a < (select /*+ MPP_2PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
         "Plan": [
-          "TableReader 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 9990.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c",
           "    └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#9)",
@@ -666,7 +666,7 @@
           "  └─Selection 1701.55 root  gt(test.t.b, 1)",
           "    └─CTEFullScan 2126.93 root CTE:cte data:CTE_0",
           "CTE_0 2126.93 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 2126.93 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Seed Part) 2126.93 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 2126.93 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 2126.93 mpp[tiflash]  or(lt(Column#5, 18), gt(test.t.b, 1))",
           "      └─Projection 2658.67 mpp[tiflash]  Column#5, test.t.b",
@@ -688,7 +688,7 @@
           "  └─Selection 1701.55 root  gt(test.t.b, 1)",
           "    └─CTEFullScan 2126.93 root CTE:cte data:CTE_0",
           "CTE_0 2126.93 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 2126.93 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Seed Part) 2126.93 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 2126.93 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 2126.93 mpp[tiflash]  or(lt(Column#5, 18), gt(test.t.b, 1))",
           "      └─Projection 2658.67 mpp[tiflash]  Column#5, test.t.b",
@@ -711,7 +711,7 @@
           "  └─Selection 5543.34 root  gt(test.t.b, 1)",
           "    └─CTEFullScan 6929.18 root CTE:cte data:CTE_0",
           "CTE_0 6929.18 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 6929.18 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
           "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -736,7 +736,7 @@
           "  └─Selection 5543.34 root  gt(test.t.b, 1)",
           "    └─CTEFullScan 6929.18 root CTE:cte data:CTE_0",
           "CTE_0 6929.18 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 6929.18 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
           "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -752,7 +752,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-          "TableReader 3013.16 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3013.16 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3013.16 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3013.16 mpp[tiflash]  Column#20, Column#21",
           "    └─HashAgg 3013.16 mpp[tiflash]  group by:Column#20, Column#21, funcs:firstrow(Column#20)->Column#20, funcs:firstrow(Column#21)->Column#21",
@@ -778,7 +778,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-          "TableReader 3013.16 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3013.16 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3013.16 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3013.16 mpp[tiflash]  Column#20, Column#21",
           "    └─HashAgg 3013.16 mpp[tiflash]  group by:Column#20, Column#21, funcs:firstrow(Column#20)->Column#20, funcs:firstrow(Column#21)->Column#21",
@@ -806,7 +806,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-          "TableReader 5322.67 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 5322.67 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 5322.67 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 5322.67 mpp[tiflash]  Column#29, Column#30",
           "    └─HashAgg 5322.67 mpp[tiflash]  group by:Column#29, Column#30, funcs:firstrow(Column#29)->Column#29, funcs:firstrow(Column#30)->Column#30",
@@ -840,7 +840,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-          "TableReader 5322.67 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 5322.67 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 5322.67 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 5322.67 mpp[tiflash]  Column#29, Column#30",
           "    └─HashAgg 5322.67 mpp[tiflash]  group by:Column#29, Column#30, funcs:firstrow(Column#29)->Column#29, funcs:firstrow(Column#30)->Column#30",
@@ -870,7 +870,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -884,7 +884,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -900,7 +900,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -914,7 +914,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -931,7 +931,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -953,7 +953,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -969,7 +969,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -985,7 +985,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -1001,7 +1001,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -1022,7 +1022,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -1038,7 +1038,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -1054,7 +1054,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -1070,7 +1070,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -1086,7 +1086,7 @@
       {
         "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
@@ -1103,7 +1103,7 @@
       {
         "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
@@ -1122,7 +1122,7 @@
       {
         "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
@@ -1141,7 +1141,7 @@
       {
         "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
@@ -1168,7 +1168,7 @@
       {
         "SQL": "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
+          "TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
           "└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_5 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection_29 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -1183,7 +1183,7 @@
       {
         "SQL": "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-          "TableReader_35 8000.00 root  MppVersion: 2, data:ExchangeSender_34",
+          "TableReader_35 8000.00 root  MppVersion: 3, data:ExchangeSender_34",
           "└─ExchangeSender_34 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_5 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection_30 8000.00 mpp[tiflash]  Column#5, test.t.a",
@@ -1199,7 +1199,7 @@
       {
         "SQL": "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_22 12487.50 root  MppVersion: 2, data:ExchangeSender_21",
+          "TableReader_22 12487.50 root  MppVersion: 3, data:ExchangeSender_21",
           "└─ExchangeSender_21 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_20 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_13(Build) 9990.00 mpp[tiflash]  ",
@@ -1216,7 +1216,7 @@
       {
         "SQL": "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_20 12487.50 root  MppVersion: 2, data:ExchangeSender_19",
+          "TableReader_20 12487.50 root  MppVersion: 3, data:ExchangeSender_19",
           "└─ExchangeSender_19 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_18 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_13(Build) 9990.00 mpp[tiflash]  ",
@@ -1236,7 +1236,7 @@
       {
         "SQL": "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_69 12487.50 root  MppVersion: 2, data:ExchangeSender_68",
+          "TableReader_69 12487.50 root  MppVersion: 3, data:ExchangeSender_68",
           "└─ExchangeSender_68 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_61 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_65(Build) 9990.00 mpp[tiflash]  ",
@@ -1253,12 +1253,12 @@
         "Plan": [
           "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
           "├─Sort_49(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
+          "│ └─TableReader_45 9990.00 root  MppVersion: 3, data:ExchangeSender_44",
           "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─Sort_34(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "  └─TableReader_30 9990.00 root  MppVersion: 3, data:ExchangeSender_29",
           "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
@@ -1276,7 +1276,7 @@
       {
         "SQL": "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_69 12487.50 root  MppVersion: 2, data:ExchangeSender_68",
+          "TableReader_69 12487.50 root  MppVersion: 3, data:ExchangeSender_68",
           "└─ExchangeSender_68 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_61 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_65(Build) 9990.00 mpp[tiflash]  ",
@@ -1293,12 +1293,12 @@
         "Plan": [
           "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
           "├─Sort_49(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_45 9990.00 root  MppVersion: 2, data:ExchangeSender_44",
+          "│ └─TableReader_45 9990.00 root  MppVersion: 3, data:ExchangeSender_44",
           "│   └─ExchangeSender_44 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─Selection_43 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "│       └─TableFullScan_42 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─Sort_34(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_30 9990.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "  └─TableReader_30 9990.00 root  MppVersion: 3, data:ExchangeSender_29",
           "    └─ExchangeSender_29 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─Selection_28 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "        └─TableFullScan_27 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
@@ -1308,7 +1308,7 @@
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_29 12487.50 root  MppVersion: 2, data:ExchangeSender_28",
+          "TableReader_29 12487.50 root  MppVersion: 3, data:ExchangeSender_28",
           "└─ExchangeSender_28 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_21 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_25(Build) 9990.00 mpp[tiflash]  ",
@@ -1325,12 +1325,12 @@
         "Plan": [
           "MergeJoin_11 12487.50 root  inner join, left key:test.t.a, right key:test.t.a",
           "├─Sort_21(Build) 9990.00 root  test.t.a",
-          "│ └─TableReader_20 9990.00 root  MppVersion: 2, data:ExchangeSender_19",
+          "│ └─TableReader_20 9990.00 root  MppVersion: 3, data:ExchangeSender_19",
           "│   └─ExchangeSender_19 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─Selection_18 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "│       └─TableFullScan_17 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "└─Sort_16(Probe) 9990.00 root  test.t.a",
-          "  └─TableReader_15 9990.00 root  MppVersion: 2, data:ExchangeSender_14",
+          "  └─TableReader_15 9990.00 root  MppVersion: 3, data:ExchangeSender_14",
           "    └─ExchangeSender_14 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─Selection_13 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "        └─TableFullScan_12 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
@@ -1416,7 +1416,7 @@
       {
         "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_79 12487.50 root  MppVersion: 2, data:ExchangeSender_78",
+          "TableReader_79 12487.50 root  MppVersion: 3, data:ExchangeSender_78",
           "└─ExchangeSender_78 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_77 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
@@ -1436,7 +1436,7 @@
       {
         "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_81 12487.50 root  MppVersion: 2, data:ExchangeSender_80",
+          "TableReader_81 12487.50 root  MppVersion: 3, data:ExchangeSender_80",
           "└─ExchangeSender_80 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_79 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
@@ -1458,7 +1458,7 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_36 1.00 root  MppVersion: 2, data:ExchangeSender_35",
+          "TableReader_36 1.00 root  MppVersion: 3, data:ExchangeSender_35",
           "└─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_34 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
@@ -1478,7 +1478,7 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_38 1.00 root  MppVersion: 2, data:ExchangeSender_37",
+          "TableReader_38 1.00 root  MppVersion: 3, data:ExchangeSender_37",
           "└─ExchangeSender_37 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_36 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
@@ -1500,7 +1500,7 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_36 1.00 root  MppVersion: 2, data:ExchangeSender_35",
+          "TableReader_36 1.00 root  MppVersion: 3, data:ExchangeSender_35",
           "└─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_34 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
@@ -1530,7 +1530,7 @@
       {
         "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_81 12487.50 root  MppVersion: 2, data:ExchangeSender_80",
+          "TableReader_81 12487.50 root  MppVersion: 3, data:ExchangeSender_80",
           "└─ExchangeSender_80 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_79 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
@@ -1552,7 +1552,7 @@
       {
         "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader_79 12487.50 root  MppVersion: 2, data:ExchangeSender_78",
+          "TableReader_79 12487.50 root  MppVersion: 3, data:ExchangeSender_78",
           "└─ExchangeSender_78 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_77 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
@@ -1577,7 +1577,7 @@
       {
         "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
         "Plan": [
-          "TableReader_37 0.80 root  MppVersion: 2, data:ExchangeSender_36",
+          "TableReader_37 0.80 root  MppVersion: 3, data:ExchangeSender_36",
           "└─ExchangeSender_36 0.80 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_35 0.80 mpp[tiflash]  semi join, left side:Selection_14, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_18(Build) 8.00 mpp[tiflash]  ",
@@ -1607,7 +1607,7 @@
       {
         "SQL": "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
         "Plan": [
-          "TableReader_39 0.80 root  MppVersion: 2, data:ExchangeSender_38",
+          "TableReader_39 0.80 root  MppVersion: 3, data:ExchangeSender_38",
           "└─ExchangeSender_38 0.80 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_37 0.80 mpp[tiflash]  semi join, left side:ExchangeReceiver_16, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_16(Build) 1.00 mpp[tiflash]  ",
@@ -1634,7 +1634,7 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
         "Plan": [
-          "TableReader_32 3.00 root  MppVersion: 2, data:ExchangeSender_31",
+          "TableReader_32 3.00 root  MppVersion: 3, data:ExchangeSender_31",
           "└─ExchangeSender_31 3.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_30 3.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver_14, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
           "    ├─ExchangeReceiver_14(Build) 5.00 mpp[tiflash]  ",
@@ -1663,7 +1663,7 @@
       {
         "SQL": "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
         "Plan": [
-          "TableReader_34 3.00 root  MppVersion: 2, data:ExchangeSender_33",
+          "TableReader_34 3.00 root  MppVersion: 3, data:ExchangeSender_33",
           "└─ExchangeSender_33 3.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_32 3.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver_14, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
           "    ├─ExchangeReceiver_17(Build) 3.00 mpp[tiflash]  ",
@@ -2725,7 +2725,7 @@
       {
         "SQL": "select * from employee where deptid>1",
         "Plan": [
-          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:employee pushed down filter:empty, keep order:false, stats:pseudo"
@@ -2734,7 +2734,7 @@
       {
         "SQL": "select deptid+5, empid*10  from employee where deptid>1",
         "Plan": [
-          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3333.33 mpp[tiflash]  plus(test.employee.deptid, 5)->Column#5, mul(test.employee.empid, 10)->Column#6",
           "    └─Selection 3333.33 mpp[tiflash]  gt(test.employee.deptid, 1)",
@@ -2744,7 +2744,7 @@
       {
         "SQL": "select count(*) from employee group by deptid+1",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#5",
           "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#5",
@@ -2758,7 +2758,7 @@
       {
         "SQL": "select count(distinct deptid) a from employee",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#5",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#7)->Column#5",
@@ -2774,7 +2774,7 @@
       {
         "SQL": "select * from employee join employee e1 using(deptid)",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12487.50 mpp[tiflash]  test.employee.deptid, test.employee.empid, test.employee.salary, test.employee.empid, test.employee.salary",
           "    └─Projection 12487.50 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, test.employee.empid, test.employee.salary",
@@ -2790,7 +2790,7 @@
       {
         "SQL": "select count(distinct a) from (select count(distinct deptid) a from employee) x",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#6",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#5)->Column#6",
@@ -2808,7 +2808,7 @@
       {
         "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#7",
           "    └─HashAgg 1.00 mpp[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#7",
@@ -2827,7 +2827,7 @@
       {
         "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#7",
           "    └─HashAgg 1.00 mpp[tiflash]  group by:Column#6, funcs:count(Column#5)->Column#7",
@@ -2842,7 +2842,7 @@
       {
         "SQL": "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN inner join",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
@@ -2859,7 +2859,7 @@
       {
         "SQL": "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
         "Plan": [
-          "TableReader 1.25 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.25 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.25 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#9)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
@@ -2880,7 +2880,7 @@
       {
         "SQL": "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
         "Plan": [
-          "TableReader 1.25 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.25 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.25 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.25 mpp[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
@@ -2902,7 +2902,7 @@
       {
         "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
@@ -2930,7 +2930,7 @@
       {
         "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -2944,7 +2944,7 @@
       {
         "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
@@ -2966,7 +2966,7 @@
       {
         "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
           "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
@@ -2987,7 +2987,7 @@
       {
         "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
         "Plan": [
-          "TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 6400.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 6400.00 mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
           "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
@@ -3025,7 +3025,7 @@
         "Plan": [
           "Projection 1.25 root  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "└─HashJoin 1.25 root  inner join, equal:[eq(test.employee.deptid, Column#5)]",
-          "  ├─TableReader(Build) 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Projection 1.00 mpp[tiflash]  Column#5",
           "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#12)->Column#5",
@@ -3036,7 +3036,7 @@
           "  │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "  │                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
           "  │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
@@ -3046,7 +3046,7 @@
         "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
         "Plan": [
           "HashJoin 1.00 root  inner join, equal:[eq(Column#5, Column#10)]",
-          "├─TableReader(Build) 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 1.00 mpp[tiflash]  Column#10",
           "│     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#10",
@@ -3057,7 +3057,7 @@
           "│               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "│                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
           "│                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 1.00 mpp[tiflash]  Column#5",
           "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#5",
@@ -3073,7 +3073,7 @@
       {
         "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
         "Plan": [
-          "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -3089,7 +3089,7 @@
       {
         "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#6, Column#5, Column#26",
@@ -3115,7 +3115,7 @@
       {
         "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9",
           "    └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9, Column#26",
@@ -3141,7 +3141,7 @@
       {
         "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
         "Plan": [
-          "TableReader 6400.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 6400.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 6400.00 mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
           "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
@@ -3328,7 +3328,7 @@
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -3342,7 +3342,7 @@
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -3356,7 +3356,7 @@
       {
         "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -3370,7 +3370,7 @@
       {
         "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -3390,7 +3390,7 @@
         "SQL": "select count(*) from t",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#10",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#12",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -3401,7 +3401,7 @@
         "SQL": "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#18)->Column#10, funcs:count(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:count(Column#21)->Column#13",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#18, funcs:count(test.t.d)->Column#19, funcs:count(test.t.d)->Column#20, funcs:count(NULL)->Column#21",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -3412,7 +3412,7 @@
         "SQL": "select count(*) from t where a=1",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#10",
-          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 10.00 mpp[tiflash]  eq(test.t.a, 1)",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
@@ -3423,7 +3423,7 @@
         "SQL": "select count(*) from t_pick_row_id",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#5",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t_pick_row_id keep order:false, stats:pseudo"
@@ -3435,11 +3435,11 @@
         "Plan": [
           "HashJoin 1.25 root  inner join, equal:[eq(test.t.a, Column#10)]",
           "├─HashAgg(Build) 1.00 root  funcs:count(Column#22)->Column#10",
-          "│ └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "│   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t.d)->Column#22",
           "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -3450,11 +3450,11 @@
         "Plan": [
           "Projection 10000.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(test.t.a, Column#19)",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:outTable keep order:false, stats:pseudo",
           "  └─HashAgg(Probe) 10000.00 root  funcs:count(Column#21)->Column#19",
-          "    └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─HashAgg 10000.00 mpp[tiflash]  funcs:count(1)->Column#21",
           "          └─Selection 80000000.00 mpp[tiflash]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
@@ -3466,7 +3466,7 @@
         "SQL": "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#20)->Column#19",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#20",
           "      └─Projection 12500.00 mpp[tiflash]  test.t.a",
@@ -3481,7 +3481,7 @@
       {
         "SQL": "select count(distinct 1) from t -- shouldn't be rewritten",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#10",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#12)->Column#10",
@@ -3496,7 +3496,7 @@
         "SQL": "select count(1), count(a), count(b) from t -- keep count(1)",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#16)->Column#10, funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#16, funcs:count(test.t.a)->Column#17, funcs:count(test.t.b)->Column#18",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -3506,7 +3506,7 @@
       {
         "SQL": "select a, count(*) from t group by a -- shouldn't be rewritten",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#10",
           "    └─Projection 8000.00 mpp[tiflash]  Column#10, test.t.a",
@@ -3521,7 +3521,7 @@
         "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#12)->Column#10",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#12",
           "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#15",
@@ -3542,7 +3542,7 @@
           "  └─HashAgg 1.00 root  funcs:avg(distinct Column#89)->Column#11, funcs:min(Column#90)->Column#12, funcs:sum(distinct Column#91)->Column#13, funcs:max(Column#92)->Column#14",
           "    └─Projection 7100.44 root  cast(test.tbl_15.col_96, decimal(10,0) UNSIGNED BINARY)->Column#89, Column#15->Column#90, cast(test.tbl_15.col_91, decimal(3,0) UNSIGNED BINARY)->Column#91, Column#16->Column#92",
           "      └─PartitionUnion 7100.44 root  ",
-          "        ├─TableReader 1775.11 root  MppVersion: 2, data:ExchangeSender",
+          "        ├─TableReader 1775.11 root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender 1775.11 mpp[tiflash]  ExchangeType: PassThrough",
           "        │   └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#18)->Column#15, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#20)->Column#16, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "        │     └─ExchangeReceiver 1775.11 mpp[tiflash]  ",
@@ -3550,7 +3550,7 @@
           "        │         └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#18, funcs:max(test.tbl_15.col_92)->Column#20",
           "        │           └─Selection 2218.89 mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-          "        ├─TableReader 1775.11 root  MppVersion: 2, data:ExchangeSender",
+          "        ├─TableReader 1775.11 root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender 1775.11 mpp[tiflash]  ExchangeType: PassThrough",
           "        │   └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#30)->Column#15, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#32)->Column#16, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "        │     └─ExchangeReceiver 1775.11 mpp[tiflash]  ",
@@ -3558,7 +3558,7 @@
           "        │         └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#30, funcs:max(test.tbl_15.col_92)->Column#32",
           "        │           └─Selection 2218.89 mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
-          "        ├─TableReader 1775.11 root  MppVersion: 2, data:ExchangeSender",
+          "        ├─TableReader 1775.11 root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender 1775.11 mpp[tiflash]  ExchangeType: PassThrough",
           "        │   └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#42)->Column#15, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#44)->Column#16, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "        │     └─ExchangeReceiver 1775.11 mpp[tiflash]  ",
@@ -3566,7 +3566,7 @@
           "        │         └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#42, funcs:max(test.tbl_15.col_92)->Column#44",
           "        │           └─Selection 2218.89 mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo",
-          "        └─TableReader 1775.11 root  MppVersion: 2, data:ExchangeSender",
+          "        └─TableReader 1775.11 root  MppVersion: 3, data:ExchangeSender",
           "          └─ExchangeSender 1775.11 mpp[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1775.11 mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#54)->Column#15, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#56)->Column#16, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "              └─ExchangeReceiver 1775.11 mpp[tiflash]  ",
@@ -3583,22 +3583,22 @@
           "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
           "└─PartitionUnion 4.00 root  ",
           "  ├─HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "  │ └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  │ └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#13",
           "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p0 keep order:false, stats:pseudo",
           "  ├─HashAgg 1.00 root  funcs:count(Column#14)->Column#12",
-          "  │ └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  │ └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#14",
           "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p1 keep order:false, stats:pseudo",
           "  ├─HashAgg 1.00 root  funcs:count(Column#15)->Column#12",
-          "  │ └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  │ └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#15",
           "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p2 keep order:false, stats:pseudo",
           "  └─HashAgg 1.00 root  funcs:count(Column#16)->Column#12",
-          "    └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#16",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p3 keep order:false, stats:pseudo"
@@ -3614,14 +3614,14 @@
           "    ├─StreamAgg 31.98 root  group by:Column#19, funcs:count(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:firstrow(Column#21)->test.tbl_16.col_100",
           "    │ └─Projection 39.97 root  test.tbl_16.col_100->Column#19, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column#20, test.tbl_16.col_100->Column#21",
           "    │   └─Sort 39.97 root  test.tbl_16.col_100",
-          "    │     └─TableReader 39.97 root  MppVersion: 2, data:ExchangeSender",
+          "    │     └─TableReader 39.97 root  MppVersion: 3, data:ExchangeSender",
           "    │       └─ExchangeSender 39.97 mpp[tiflash]  ExchangeType: PassThrough",
           "    │         └─Selection 39.97 mpp[tiflash]  or(eq(test.tbl_16.col_100, 10672141), in(test.tbl_16.col_104, \"yfEG1t!*b\", \"C1*bqx_qyO\", \"vQ^yUpKHr&j#~\"))",
           "    │           └─TableFullScan 10000.00 mpp[tiflash] table:tbl_16, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
           "    └─StreamAgg 31.98 root  group by:Column#22, funcs:count(Column#22)->Column#11, funcs:sum(Column#23)->Column#12, funcs:firstrow(Column#24)->test.tbl_16.col_100",
           "      └─Projection 39.97 root  test.tbl_16.col_100->Column#22, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column#23, test.tbl_16.col_100->Column#24",
           "        └─Sort 39.97 root  test.tbl_16.col_100",
-          "          └─TableReader 39.97 root  MppVersion: 2, data:ExchangeSender",
+          "          └─TableReader 39.97 root  MppVersion: 3, data:ExchangeSender",
           "            └─ExchangeSender 39.97 mpp[tiflash]  ExchangeType: PassThrough",
           "              └─Selection 39.97 mpp[tiflash]  or(eq(test.tbl_16.col_100, 10672141), in(test.tbl_16.col_104, \"yfEG1t!*b\", \"C1*bqx_qyO\", \"vQ^yUpKHr&j#~\"))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:tbl_16, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo"
