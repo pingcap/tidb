@@ -364,7 +364,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 	tests := []struct {
 		name     string
 		initial  map[UpstreamID]*DBReplace
-		filter   *utils.PiTRTableTracker
+		filter   *utils.PiTRIdTracker
 		expected map[UpstreamID]*DBReplace
 	}{
 		{
@@ -378,8 +378,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					},
 				},
 			},
-			filter: &utils.PiTRTableTracker{
-				DBIdToTable: map[int64]map[int64]struct{}{},
+			filter: &utils.PiTRIdTracker{
+				DBIdToPhysicalId: map[int64]map[int64]struct{}{},
 			},
 			expected: map[UpstreamID]*DBReplace{},
 		},
@@ -401,8 +401,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					},
 				},
 			},
-			filter: &utils.PiTRTableTracker{
-				DBIdToTable: map[int64]map[int64]struct{}{
+			filter: &utils.PiTRIdTracker{
+				DBIdToPhysicalId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 				},
 			},
@@ -429,8 +429,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					},
 				},
 			},
-			filter: &utils.PiTRTableTracker{
-				DBIdToTable: map[int64]map[int64]struct{}{
+			filter: &utils.PiTRIdTracker{
+				DBIdToPhysicalId: map[int64]map[int64]struct{}{
 					1: {
 						10: struct{}{},
 						12: struct{}{},
@@ -474,8 +474,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					},
 				},
 			},
-			filter: &utils.PiTRTableTracker{
-				DBIdToTable: map[int64]map[int64]struct{}{
+			filter: &utils.PiTRIdTracker{
+				DBIdToPhysicalId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 				},
 			},
@@ -523,8 +523,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					},
 				},
 			},
-			filter: &utils.PiTRTableTracker{
-				DBIdToTable: map[int64]map[int64]struct{}{
+			filter: &utils.PiTRIdTracker{
+				DBIdToPhysicalId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 					2: {
 						20: struct{}{},

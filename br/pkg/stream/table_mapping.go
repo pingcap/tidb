@@ -179,7 +179,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 				if _, exists := existingDBReplace.TableMap[tableUpID]; !exists {
 					existingDBReplace.TableMap[tableUpID] = baseTableReplace
 				} else {
-					// Merge partition mappings for existing tables
+					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
 						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
@@ -293,10 +293,10 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	return nil
 }
 
-func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRTableTracker) {
+func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRIdTracker) {
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
-		// remove entire database if not in filter
+		// remove entire database if not in tracker
 		if !tracker.ContainsDB(dbID) {
 			delete(tm.DBReplaceMap, dbID)
 			continue
@@ -304,7 +304,7 @@ func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRTableTracke
 
 		// filter tables in this database
 		for tableID := range dbReplace.TableMap {
-			if !tracker.ContainsTable(dbID, tableID) {
+			if !tracker.ContainsPhysicalId(dbID, tableID) {
 				delete(dbReplace.TableMap, tableID)
 			}
 		}

@@ -14,40 +14,62 @@
 
 package stream
 
-// DBIDAndTableName stores db id and the table name to locate the table
-type DBIDAndTableName struct {
-	DbID      int64
-	TableName string
+const defaultParentTableID = 0
+
+// TableLocationInfo stores the table name, db id, and parent table id if is a partition
+type TableLocationInfo struct {
+	DbID          int64
+	TableName     string
+	ParentTableID int64 // tracking parent table if is a partition
+}
+
+func (t *TableLocationInfo) IsPartition() bool {
+	return t.ParentTableID != defaultParentTableID
 }
 
 type LogBackupTableHistoryManager struct {
-	// maps table ID to its original and current names
-	// [0] is original location, [1] is current location
-	tableNameHistory map[int64][2]DBIDAndTableName
-	// record all the db id to name that were seen during log backup DDL history
+	// maps table/partition ID to [original, current] location info
+	tableNameHistory map[int64][2]TableLocationInfo
 	dbIdToName       map[int64]string
-	needToBuildIdMap bool
 }
 
 func NewTableHistoryManager() *LogBackupTableHistoryManager {
 	return &LogBackupTableHistoryManager{
-		tableNameHistory: make(map[int64][2]DBIDAndTableName),
+		tableNameHistory: make(map[int64][2]TableLocationInfo),
 		dbIdToName:       make(map[int64]string),
 	}
 }
 
+// AddTableHistory adds or updates history for a regular table
 func (info *LogBackupTableHistoryManager) AddTableHistory(tableId int64, tableName string, dbID int64) {
-	tableLocationInfo := DBIDAndTableName{
-		DbID:      dbID,
-		TableName: tableName,
+	locationInfo := TableLocationInfo{
+		DbID:          dbID,
+		TableName:     tableName,
+		ParentTableID: defaultParentTableID,
 	}
-	names, exists := info.tableNameHistory[tableId]
+	info.addHistory(tableId, locationInfo)
+}
+
+// AddPartitionHistory adds or updates history for a partition
+func (info *LogBackupTableHistoryManager) AddPartitionHistory(
+	partitionId int64, dbID int64, parentTableID int64, parentTableName string) {
+	locationInfo := TableLocationInfo{
+		DbID:          dbID,
+		TableName:     parentTableName,
+		ParentTableID: parentTableID,
+	}
+	info.addHistory(partitionId, locationInfo)
+}
+
+// addHistory is a helper method to maintain the history
+func (info *LogBackupTableHistoryManager) addHistory(id int64, locationInfo TableLocationInfo) {
+	existing, exists := info.tableNameHistory[id]
 	if !exists {
-		// first occurrence - store as original name
-		info.tableNameHistory[tableId] = [2]DBIDAndTableName{tableLocationInfo, tableLocationInfo}
+		// first occurrence - store as both original and current
+		info.tableNameHistory[id] = [2]TableLocationInfo{locationInfo, locationInfo}
 	} else {
-		// update current name while preserving original name
-		info.tableNameHistory[tableId] = [2]DBIDAndTableName{names[0], tableLocationInfo}
+		// update current while preserving original
+		info.tableNameHistory[id] = [2]TableLocationInfo{existing[0], locationInfo}
 	}
 }
 
@@ -57,7 +79,7 @@ func (info *LogBackupTableHistoryManager) RecordDBIdToName(dbId int64, dbName st
 
 // GetTableHistory returns information about all tables that have been renamed.
 // Returns a map of table IDs to their original and current locations
-func (info *LogBackupTableHistoryManager) GetTableHistory() map[int64][2]DBIDAndTableName {
+func (info *LogBackupTableHistoryManager) GetTableHistory() map[int64][2]TableLocationInfo {
 	return info.tableNameHistory
 }
 

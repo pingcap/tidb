@@ -33,6 +33,11 @@ func LogDBReplaceMap(title string, dbReplaces map[UpstreamID]*DBReplace) {
 					zap.String("table", tableReplace.Name),
 					zap.Int64("upstreamId", upstreamTableID),
 					zap.Int64("downstreamId", tableReplace.TableID))
+				for upPartId, downPartId := range tableReplace.PartitionMap {
+					fields = append(fields,
+						zap.Int64("up partition", upPartId),
+						zap.Int64("down partition", downPartId))
+				}
 			}
 			return fields
 		}()...)

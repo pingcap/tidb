@@ -948,10 +948,10 @@ func (rc *LogClient) loadSchemasMap(
 func readFilteredFullBackupTables(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	piTRTableFilter *utils.PiTRTableTracker,
+	piTRIdTracker *utils.PiTRIdTracker,
 	cipherInfo *backuppb.CipherInfo,
 ) (map[int64]*metautil.Table, error) {
-	if piTRTableFilter == nil {
+	if piTRIdTracker == nil {
 		return nil, errors.Errorf("missing pitr table tracker information")
 	}
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -979,7 +979,7 @@ func readFilteredFullBackupTables(
 
 	tables := make(map[int64]*metautil.Table)
 	for _, db := range databases {
-		if !piTRTableFilter.ContainsDB(db.Info.ID) {
+		if !piTRIdTracker.ContainsDB(db.Info.ID) {
 			continue
 		}
 
@@ -991,7 +991,7 @@ func readFilteredFullBackupTables(
 				tableAdded = true
 				continue
 			}
-			if !piTRTableFilter.ContainsTable(db.Info.ID, table.Info.ID) {
+			if !piTRIdTracker.ContainsPhysicalId(db.Info.ID, table.Info.ID) {
 				continue
 			}
 			tables[table.Info.ID] = table
@@ -1023,7 +1023,7 @@ type GetIDMapConfig struct {
 	FullBackupStorageConfig *FullBackupStorageConfig
 	CipherInfo              *backuppb.CipherInfo
 	// generated at full restore step that contains all the table ids that need to restore
-	PiTRTableTracker *utils.PiTRTableTracker
+	PiTRTableTracker *utils.PiTRIdTracker
 }
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
@@ -1965,5 +1965,15 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 	if err != nil {
 		return errors.Errorf("failed to put raw kv after retry")
 	}
+	return nil
+}
+
+// DropTable drops a table with the given database and table name
+func (rc *LogClient) DropTable(ctx context.Context, dbName, tableName string) error {
+	dropSQL := "DROP TABLE IF EXISTS %n.%n"
+	if err := rc.unsafeSession.ExecuteInternal(ctx, dropSQL, dbName, tableName); err != nil {
+		return errors.Annotatef(err, "failed to drop table %s.%s", dbName, tableName)
+	}
+	log.Info("dropped table", zap.String("db", dbName), zap.String("table", tableName))
 	return nil
 }

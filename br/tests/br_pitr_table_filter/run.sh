@@ -415,7 +415,6 @@ test_exchange_partition() {
 
     # exchange partition and create some new tables with log_ prefix
     run_sql "ALTER TABLE $DB.full_partitioned EXCHANGE PARTITION p0 WITH TABLE $DB.log_table;"
-    # some sanity check
     run_sql "CREATE TABLE $DB.log_after_exchange (id INT, value INT);"
     run_sql "INSERT INTO $DB.log_after_exchange VALUES (1, 1);"
 
@@ -423,22 +422,50 @@ test_exchange_partition() {
 
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
+    # Test case 1: Restore with full* filter
+    echo "Testing restoration with full* filter"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.full*"
 
-    # verify the results
-    run_sql "SELECT count(*) = 1 FROM $DB.log_after_exchange WHERE id = 1 AND value = 1" || {
-        echo "Table log_after_exchange doesn't have expected values"
+    # Verify full_partitioned table has the exchanged data
+    run_sql "SELECT count(*) = 1 FROM $DB.full_partitioned WHERE id = 75 AND value = 3" || {
+        echo "full_partitioned doesn't have the exchanged partition data (75,3)"
+        exit 1
+    }
+    run_sql "SELECT count(*) = 1 FROM $DB.full_partitioned WHERE id = 150 AND value = 2" || {
+        echo "full_partitioned missing original data (150,2)"
         exit 1
     }
 
-    # table should be exchanged and kept after restore
+    # log_table and log_after_exchange should not exist with full* filter
+    if run_sql "SELECT * FROM $DB.log_table" 2>/dev/null; then
+        echo "log_table exists but should not with full* filter"
+        exit 1
+    fi
+    if run_sql "SELECT * FROM $DB.log_after_exchange" 2>/dev/null; then
+        echo "log_after_exchange exists but should not with full* filter"
+        exit 1
+    fi
+
+    # Clean up for next test
+    run_sql "drop schema $DB;"
+
+    # Test case 2: Restore with log* filter
+    echo "Testing restoration with log* filter"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
+
+    # Verify log tables exist with correct data
     run_sql "SELECT count(*) = 1 FROM $DB.log_table WHERE id = 50 AND value = 1" || {
         echo "log_table doesn't have the exchanged partition data (50,1)"
         exit 1
     }
+    run_sql "SELECT count(*) = 1 FROM $DB.log_after_exchange WHERE id = 1 AND value = 1" || {
+        echo "log_after_exchange missing its data (1,1)"
+        exit 1
+    }
 
-    if run_sql "SELECT * FROM $DB.full_partitioned" 2>/dev/null; then
-        echo "Table full_partitioned exists but should not"
+    # full_partitioned should not exist with log* filter
+    if run_sql "SELECT * FROM $DB.full_partitioned" 2>/dev/null; then 
+        echo "full_partitioned exists but should not with log* filter"
         exit 1
     fi
 

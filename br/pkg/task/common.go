@@ -256,8 +256,8 @@ type Config struct {
 	TableFilter filter.Filter `json:"-" toml:"-"`
 	// PiTRTableTracker generated from TableFilter during snapshot restore, it has all the db id and table id that needs
 	// to be restored
-	PiTRTableTracker   *utils.PiTRTableTracker `json:"-" toml:"-"`
-	SwitchModeInterval time.Duration           `json:"switch-mode-interval" toml:"switch-mode-interval"`
+	PiTRTableTracker   *utils.PiTRIdTracker `json:"-" toml:"-"`
+	SwitchModeInterval time.Duration        `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
 	Schemas map[string]struct{}
 	// Tables is a table name set, to check whether the restore table has been backup

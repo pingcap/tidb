@@ -485,9 +485,9 @@ func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
 
 type RestoreGcFunc func(string) error
 
-// DisableGc disables and returns a function that can enable gc back.
+// DisableGC disables and returns a function that can enable gc back.
 // gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
-func DisableGc(g glue.Glue, store kv.Storage) (RestoreGcFunc, string, error) {
+func DisableGC(g glue.Glue, store kv.Storage) (RestoreGcFunc, string, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -1464,6 +1464,14 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
+	migs, err := client.GetMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client.BuildMigrations(migs.Migs)
+	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	defer client.RestoreSSTStatisticFields(&extraFields)
+
 	ddlFiles := cfg.ddlFiles
 	tableMappingManager := cfg.tableMappingManager
 
@@ -1487,7 +1495,7 @@ func restoreStream(
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGcFunc, oldGcRatio, err := DisableGc(g, mgr.GetStorage())
+	restoreGcFunc, oldGcRatio, err := DisableGC(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1643,6 +1651,12 @@ func restoreStream(
 		return errors.Annotate(err, "failed to clean up")
 	}
 
+	// we could restore some extra tables if exchange partition happens
+	// clean up tables that's not in the filter range
+	if err = cleanUpFilteredOutTables(ctx, client, cfg.RestoreConfig, schemasReplace); err != nil {
+		return errors.Annotate(err, "failed to drop filtered tables")
+	}
+
 	// to delete range(table, schema) that's dropped during log backup
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
@@ -1737,12 +1751,6 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	if err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize, encryptionManager); err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	migs, err := client.GetMigrations(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	client.BuildMigrations(migs)
 
 	return client, nil
 }
@@ -1929,6 +1937,10 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
 				rules[oldTableID] = restoreutils.GetRewriteRuleOfTable(
 					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
+			} else {
+				log.Info("skip adding table rewrite rule, already exists",
+					zap.Int64("oldID", oldTableID),
+					zap.Int64("newID", tableReplace.TableID))
 			}
 
 			for oldID, newID := range tableReplace.PartitionMap {
@@ -1937,6 +1949,10 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 						zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
 					rules[oldID] = restoreutils.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
+				} else {
+					log.Info("skip adding partition rewrite rule, already exists",
+						zap.Int64("oldID", oldID),
+						zap.Int64("newID", newID))
 				}
 			}
 		}
@@ -2149,4 +2165,66 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func cleanUpFilteredOutTables(ctx context.Context, client *logclient.LogClient, cfg *RestoreConfig,
+	schemaReplace *stream.SchemasReplace) error {
+	if cfg.PiTRTableTracker == nil || cfg.PiTRTableTracker.TableToCleanup == nil {
+		return nil
+	}
+	tablesToCleanup := cfg.PiTRTableTracker.TableToCleanup
+	tableFilter := cfg.TableFilter
+	infoSchema := client.GetDomain().InfoSchema()
+	log.Info("start to drop filtered out tables post restore")
+	for upDbID, tables := range tablesToCleanup {
+		dbReplace, exist := schemaReplace.DbReplaceMap[upDbID]
+		if !exist {
+			return errors.Errorf("database ID mapping not found in schema replace for upstream DB ID %d", upDbID)
+		}
+		downDbID := dbReplace.DbID
+
+		dbInfo, exist := infoSchema.SchemaByID(downDbID)
+		if !exist {
+			log.Info("database not found during cleanup, skipping",
+				zap.Int64("upstream_db_id", upDbID),
+				zap.Int64("downstream_db_id", downDbID))
+			continue
+		}
+
+		for upTableID := range tables {
+			// get downstream table ID from schema replace
+			tableReplace, exist := dbReplace.TableMap[upTableID]
+			if !exist {
+				return errors.Errorf("table ID mapping not found in schema replace for upstream table ID %d in DB %d",
+					upTableID, upDbID)
+			}
+			downTableID := tableReplace.TableID
+			tbl, exist := infoSchema.TableByID(ctx, downTableID)
+			if !exist {
+				log.Info("table not found during cleanup, skipping",
+					zap.Int64("upstream_db_id", upDbID),
+					zap.Int64("downstream_db_id", downDbID),
+					zap.Int64("upstream_table_id", upTableID),
+					zap.Int64("downstream_table_id", downTableID))
+				continue
+			}
+
+			// check if table matches filter
+			if !tableFilter.MatchTable(dbInfo.Name.O, tbl.Meta().Name.O) {
+				log.Info("dropping filtered out table",
+					zap.String("db", dbInfo.Name.O),
+					zap.String("table", tbl.Meta().Name.O),
+					zap.Int64("upstream_db_id", upDbID),
+					zap.Int64("downstream_db_id", downDbID),
+					zap.Int64("upstream_table_id", upTableID),
+					zap.Int64("downstream_table_id", downTableID))
+
+				err := client.DropTable(ctx, dbInfo.Name.O, tbl.Meta().Name.O)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+	return nil
 }
