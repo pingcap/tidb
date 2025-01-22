@@ -21,14 +21,37 @@
 // or to indirectly influence the cost model and stats so that the optimizer can select the best plan more intelligently and adaptively.
 package workloadbasedlearning
 
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
+
+const batchInsertSize = 1000
+const (
+	// The category of workload-based learning
+	feedbackCategory = "Feedback"
+)
+const (
+	// The type of workload-based learning
+	tableCostType = "TableCost"
+)
+
 // Handle The entry point for all workload-based learning related tasks
 type Handle struct {
+	sysSessionPool util.SessionPool
 }
 
 // NewWorkloadBasedLearningHandle Create a new WorkloadBasedLearningHandle
 // WorkloadBasedLearningHandle is Singleton pattern
-func NewWorkloadBasedLearningHandle() *Handle {
-	return &Handle{}
+func NewWorkloadBasedLearningHandle(pool util.SessionPool) *Handle {
+	return &Handle{pool}
 }
 
 // HandleReadTableCost Start a new round of analysis of all historical read queries.
@@ -46,7 +69,7 @@ func NewWorkloadBasedLearningHandle() *Handle {
 // 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.workload_values"
 func (handle *Handle) HandleReadTableCost() {
 	// step1: abstract middle table cost metrics from every record in statement_summary
-	middleMetrics := handle.analyzeBasedOnStatementSummary()
+	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
 	if len(middleMetrics) == 0 {
 		return
 	}
@@ -74,7 +97,8 @@ func (handle *Handle) HandleReadTableCost() {
 	for _, metric := range tableNameToMetrics {
 		metric.tableCost = metric.tableScanTime/totalScanTime + metric.tableMemUsage/totalMemUsage
 	}
-	// TODO step5: save the table cost metrics to table "mysql.workload_values"
+	// step5: save the table cost metrics to table "mysql.workload_values"
+	handle.saveReadTableCostMetrics(tableNameToMetrics, startTime, endTime)
 }
 
 func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
@@ -84,8 +108,75 @@ func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
 }
 
 // TODO
-func (handle *Handle) analyzeBasedOnStatementStats() []*ReadTableCostMetrics {
+func (handle *Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, time.Time, time.Time) {
 	// step1: get all record from statement_stats
 	// step2: abstract table cost metrics from each record
-	return nil
+	// TODO change the mock value
+	return nil, time.Now(), time.Now()
+}
+
+// table cost metrics, workload-based start and end time, version,
+func (handle *Handle) saveReadTableCostMetrics(metrics map[string]*ReadTableCostMetrics, startTime, endTime time.Time) {
+	// step1: create a new session, context, txn for saving table cost metrics
+	// TODO enable the plan cache
+	se, err := handle.sysSessionPool.Get()
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
+		return
+	}
+	defer handle.sysSessionPool.Put(se)
+	sctx := se.(sessionctx.Context)
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		logutil.BgLogger().Warn("get txn failed when saving table cost metrics", zap.Error(err))
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
+	exec := sctx.GetRestrictedSQLExecutor()
+
+	// step2: insert new version table cost metrics by batch using one common txn and context
+	version := txn.StartTS()
+	// build insert stringBuilder by batch(1000 tables)
+	i := 0
+	stringBuilder := new(strings.Builder)
+	stringBuilder.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
+	for tableName, metric := range metrics {
+		stringBuilder.WriteString("(")
+		stringBuilder.WriteString(version)
+		stringBuilder.WriteString(", ")
+		stringBuilder.WriteString(feedbackCategory)
+		stringBuilder.WriteString(", ")
+		stringBuilder.WriteString(tableCostType)
+		stringBuilder.WriteString(", ")
+		// TODO get the table id by table name
+		tableId := 0
+		stringBuilder.WriteString(tableId)
+		stringBuilder.WriteString("', ")
+		// TODO build the value and start end time to json
+		stringBuilder.WriteString(metric)
+		stringBuilder.WriteString(")")
+		if i%batchInsertSize == batchInsertSize-1 {
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, stringBuilder.String())
+			if err != nil {
+				logutil.BgLogger().Warn("insert new version table cost metrics failed", zap.Error(err))
+				return
+			}
+			stringBuilder.Reset()
+			stringBuilder.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
+		} else {
+			stringBuilder.WriteString(", ")
+		}
+		i++
+	}
+	// insert the last batch
+	if stringBuilder.Len() != 0 {
+		// remove the tail comma
+		sql := stringBuilder.String()[:stringBuilder.Len()-2]
+		_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+		if err != nil {
+			logutil.BgLogger().Warn("insert new version table cost metrics failed", zap.Error(err))
+			return
+		}
+	}
+
 }
