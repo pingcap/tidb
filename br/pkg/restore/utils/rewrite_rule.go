@@ -49,9 +49,9 @@ type RewriteRules struct {
 	// used to record checkpoint data
 	NewTableID int64
 
-	shiftStartTs uint64
-	startTs      uint64
-	restoredTs   uint64
+	ShiftStartTs uint64
+	StartTs      uint64
+	RestoredTs   uint64
 	// used to record backup files to pitr.
 	// note: should NewTableID merged with this?
 	TableIDRemapHint []TableIDRemap
@@ -98,23 +98,29 @@ func (r *RewriteRules) Append(other RewriteRules) {
 }
 
 func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
-	if r.startTs == 0 || r.restoredTs == 0 {
+	// for some sst files like db restore copy ssts, we don't need to set the time range filter
+	if r.StartTs == 0 || r.RestoredTs == 0 {
 		return nil
+	}
+
+	// check if shift start ts is greater than start ts
+	if r.ShiftStartTs > r.StartTs {
+		return errors.Errorf("shift start ts %d is greater than start ts %d", r.ShiftStartTs, r.StartTs)
 	}
 
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = r.shiftStartTs
+		ignoreBeforeTs = r.ShiftStartTs
 	case strings.Contains(cfName, WriteCFName):
-		ignoreBeforeTs = r.startTs
+		ignoreBeforeTs = r.StartTs
 	default:
 		return errors.Errorf("unsupported column family type: %s", cfName)
 	}
 
 	for _, rule := range r.Data {
 		rule.IgnoreBeforeTimestamp = ignoreBeforeTs
-		rule.IgnoreAfterTimestamp = r.restoredTs
+		rule.IgnoreAfterTimestamp = r.RestoredTs
 	}
 	return nil
 }
@@ -244,7 +250,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules, NewTableID: newTableID, shiftStartTs: shiftStartTs, startTs: startTs, restoredTs: restoredTs, TableIDRemapHint: remaps}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, ShiftStartTs: shiftStartTs, StartTs: startTs, RestoredTs: restoredTs, TableIDRemapHint: remaps}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.
