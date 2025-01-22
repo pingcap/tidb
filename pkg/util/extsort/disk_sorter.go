@@ -168,7 +168,6 @@ func newSSTWriter(
 	}
 	writable := objstorageprovider.NewFileWritable(f)
 	w := sstable.NewWriter(writable, sstable.WriterOptions{
-		BlockSize: 16 * 1024,
 		TablePropertyCollectors: []func() sstable.TablePropertyCollector{
 			func() sstable.TablePropertyCollector {
 				return newKVStatsCollector(kvStatsBucketSize)
