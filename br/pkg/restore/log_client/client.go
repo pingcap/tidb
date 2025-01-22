@@ -827,6 +827,7 @@ func (rc *LogClient) RestoreKVFiles(
 		}
 	}()
 
+	log.Info("starting to restore kv files")
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -843,10 +844,6 @@ func (rc *LogClient) RestoreKVFiles(
 		// because the tableID of files is the same.
 		rule, ok := rules[files[0].TableId]
 		if !ok {
-			// TODO handle new created table
-			// For this version we do not handle new created table after full backup.
-			// in next version we will perform rewrite and restore meta key to restore new created tables.
-			// so we can simply skip the file that doesn't have the rule here.
 			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
@@ -1502,7 +1499,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
 }
 
-// WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
+// WrapLogFilesIterWithSplitHelper applies a splitting strategy to the log files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules.
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	ctx context.Context,

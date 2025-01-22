@@ -483,11 +483,11 @@ func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
 	return nil
 }
 
-type RestoreGcFunc func(string) error
+type RestoreGCFunc func(string) error
 
 // DisableGC disables and returns a function that can enable gc back.
 // gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
-func DisableGC(g glue.Glue, store kv.Storage) (RestoreGcFunc, string, error) {
+func DisableGC(g glue.Glue, store kv.Storage) (RestoreGCFunc, string, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -1328,6 +1328,8 @@ func RunStreamRestore(
 		failpoint.Return(errors.New("failpoint: failed before full restore"))
 	})
 
+	// restore log.
+	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
 	logClient, err := createLogClient(ctx, g, cfg, mgr)
 	if err != nil {
@@ -1385,8 +1387,6 @@ func RunStreamRestore(
 			cfg.tiflashRecorder.Load(taskInfo.CheckpointInfo.Metadata.TiFlashItems)
 		}
 	}
-	// restore log.
-	cfg.adjustRestoreConfigForStreamRestore()
 	logRestoreConfig := &LogRestoreConfig{
 		RestoreConfig:       cfg,
 		checkpointTaskInfo:  taskInfo.CheckpointInfo,
@@ -1495,7 +1495,7 @@ func restoreStream(
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGcFunc, oldGcRatio, err := DisableGC(g, mgr.GetStorage())
+	restoreGCFunc, oldGCRatio, err := DisableGC(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1509,12 +1509,12 @@ func restoreStream(
 
 		// If the oldGcRatio is negative, which is not normal status.
 		// It should set default value "1.1" after PiTR finished.
-		if strings.HasPrefix(oldGcRatio, "-") {
-			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGcRatio))
-			oldGcRatio = utils.DefaultGcRatioVal
+		if strings.HasPrefix(oldGCRatio, "-") {
+			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGCRatio))
+			oldGCRatio = utils.DefaultGcRatioVal
 		}
-		log.Info("start to restore gc", zap.String("ratio", oldGcRatio))
-		if err := restoreGcFunc(oldGcRatio); err != nil {
+		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
+		if err := restoreGCFunc(oldGCRatio); err != nil {
 			log.Error("failed to restore gc", zap.Error(err))
 		}
 		log.Info("finish restoring gc")
@@ -1522,11 +1522,11 @@ func restoreStream(
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
-		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldGcRatio, cfg.tiflashRecorder)
+		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		oldGcRatio = gcRatioFromCheckpoint
+		oldGCRatio = gcRatioFromCheckpoint
 		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1734,7 +1734,8 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		}
 		return nil, nil
 	}
-	err = client.InitClients(ctx, u, createCheckpointSessionFn, uint(cfg.Concurrency), cfg.ConcurrencyPerStore.Value)
+
+	err = client.InitClients(ctx, u, createCheckpointSessionFn, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
