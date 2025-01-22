@@ -209,11 +209,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
-# default.pgo is the tidb cpu profile of TiDB, you need to grab TiDB's cpu profile as default.pgo file from your real workload scenario.
 .PHONY: server_with_pgo
 server_with_pgo:
+	@echo "You need to grab TiDB's cpu profile as default.pgo file from your real workload scenario.\n"
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -pgo=default.pgo  $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
+	CGO_ENABLED=1 $(GOBUILD) -pgo=default.pgo $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
 else
 	CGO_ENABLED=1 $(GOBUILD) -pgo=default.pgo $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
