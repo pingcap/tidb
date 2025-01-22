@@ -94,13 +94,14 @@ type chunkSender struct {
 	loopDoneChan chan struct{} // notify chunkSenderLoop is done
 
 	// the following channels should be closed by closed method
-	taskChan     chan *chunkTask
-	loopQuitChan chan struct{} // notify chunkSenderLoop to quit
+	taskChan chan *chunkTask
+	cancel   context.CancelFunc
 
 	err error
 }
 
 func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache *chunkCache) *chunkSender {
+	ctx, cancel := context.WithCancel(ctx)
 	c := &chunkSender{
 		id: id,
 		wg: sync.WaitGroup{},
@@ -113,8 +114,8 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 		nextChunkID: atomic.Uint64{},
 
 		loopDoneChan: make(chan struct{}),
-		loopQuitChan: make(chan struct{}),
 		taskChan:     make(chan *chunkTask),
+		cancel:       cancel,
 	}
 	c.state.Store(&chunksState{})
 
@@ -126,9 +127,8 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 }
 
 func (c *chunkSender) putChunk(ctx context.Context, data []byte) (uint64, error) {
-	data0 := slices.Clone(data)
+	task := newChunkTask(slices.Clone(data), false)
 
-	task := newChunkTask(data0, false)
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -199,8 +199,6 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-c.loopQuitChan:
 			return
 		case task := <-c.taskChan:
 			if !task.flush {
@@ -387,7 +385,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 
 func (c *chunkSender) close() error {
 	// notify chunkSenderLoop to quit
-	close(c.loopQuitChan)
+	c.cancel()
 	c.wg.Wait()
 
 	return c.err
