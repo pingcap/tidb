@@ -252,6 +252,14 @@ func TestSlowLogFormat(t *testing.T) {
 # KV_total: 10
 # PD_total: 11
 # Backoff_total: 12
+# Unpacked_bytes_sent_tikv_total: 0
+# Unpacked_bytes_received_tikv_total: 0
+# Unpacked_bytes_sent_tikv_cross_zone: 0
+# Unpacked_bytes_received_tikv_cross_zone: 0
+# Unpacked_bytes_sent_tiflash_total: 0
+# Unpacked_bytes_received_tiflash_total: 0
+# Unpacked_bytes_sent_tiflash_cross_zone: 0
+# Unpacked_bytes_received_tiflash_cross_zone: 0
 # Write_sql_response_total: 1
 # Result_rows: 12345
 # Succ: true
@@ -264,6 +272,11 @@ func TestSlowLogFormat(t *testing.T) {
 # Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
+	tikvExecDetail := util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
+	}
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -284,9 +297,7 @@ func TestSlowLogFormat(t *testing.T) {
 		PlanFromCache:     true,
 		PlanFromBinding:   true,
 		HasMoreResults:    true,
-		KVTotal:           10 * time.Second,
-		PDTotal:           11 * time.Second,
-		BackoffTotal:      12 * time.Second,
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: 1 * time.Second,
 		ResultRows:        12345,
 		Succ:              true,
