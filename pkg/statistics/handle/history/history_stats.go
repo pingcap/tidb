@@ -129,7 +129,7 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with the given version and source.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
