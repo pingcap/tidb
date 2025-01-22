@@ -504,10 +504,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.Concurrency)
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
-	randPos := rand.Intn(len(adjustedEligibleNodes))
 	for i, meta := range metas {
-		// we assign the subtask to the instance in a round-robin way at the random start position.
-		pos := (i + randPos) % len(adjustedEligibleNodes)
+		// we assign the subtask to the instance in a round-robin way.
+		pos := i % len(adjustedEligibleNodes)
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
