@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/lock/context"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -68,7 +68,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// TODO: try to remove this get for speed up.
-	tb, err := c.is.TableByName(stdctx.Background(), model.NewCIStr(db), model.NewCIStr(table))
+	tb, err := c.is.TableByName(stdctx.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	// Ignore this error for "drop table if not exists t1" when t1 doesn't exists.
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil
@@ -84,9 +84,9 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		for _, lockT := range lockTables {
 			if lockT.TableID == tb.Meta().ID {
 				switch tb.Meta().Lock.Tp {
-				case model.TableLockWrite:
+				case ast.TableLockWrite:
 					return ErrLockedTableDropped
-				case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
+				case ast.TableLockRead, ast.TableLockWriteLocal, ast.TableLockReadOnly:
 					return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
 				}
 			}
@@ -105,23 +105,23 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 
 	if privilege == mysql.SelectPriv {
 		switch tb.Meta().Lock.Tp {
-		case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
+		case ast.TableLockRead, ast.TableLockWriteLocal, ast.TableLockReadOnly:
 			return nil
 		}
 	}
-	if alterWriteable && tb.Meta().Lock.Tp == model.TableLockReadOnly {
+	if alterWriteable && tb.Meta().Lock.Tp == ast.TableLockReadOnly {
 		return nil
 	}
 
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tb.Meta().Name.L, tb.Meta().Lock.Tp, tb.Meta().Lock.Sessions[0])
 }
 
-func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeType) bool {
+func checkLockTpMeetPrivilege(tp ast.TableLockType, privilege mysql.PrivilegeType) bool {
 	// TableLockReadOnly doesn't need to check in this, because it is session unrelated.
 	switch tp {
-	case model.TableLockWrite, model.TableLockWriteLocal:
+	case ast.TableLockWrite, ast.TableLockWriteLocal:
 		return true
-	case model.TableLockRead:
+	case ast.TableLockRead:
 		// ShowDBPriv, AllPrivMask, CreatePriv, CreateViewPriv already checked before.
 		// The other privilege in read lock was not allowed.
 		if privilege == mysql.SelectPriv {

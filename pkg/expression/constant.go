@@ -175,20 +175,21 @@ func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 
 // StringWithCtx implements Expression interface.
 func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
+	v := c.Value
 	if c.ParamMarker != nil {
 		dt, err := c.ParamMarker.GetUserVar(ctx)
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			return "?"
 		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		v = dt
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
-		return c.Value.TruncatedStringify()
+		return v.TruncatedStringify()
 	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%s›", c.Value.TruncatedStringify())
+		return fmt.Sprintf("‹%s›", v.TruncatedStringify())
 	}
 	return "?"
 }
@@ -319,8 +320,7 @@ func (c *Constant) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 			return c.Value, err
 		}
 		if dt.IsNull() {
-			c.Value.SetNull()
-			return c.Value, nil
+			return dt, nil
 		}
 		if c.DeferredExpr != nil {
 			if dt.Kind() != types.KindMysqlDecimal {

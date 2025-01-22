@@ -11,6 +11,7 @@ go_library(
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/config",
+        "//pkg/ddl/placement",
         "//pkg/distsql",
         "//pkg/executor/internal/builder",
         "//pkg/executor/internal/util",
@@ -25,6 +26,7 @@ go_library(
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/error",
+        "//pkg/store/helper",
         "//pkg/util",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
@@ -34,6 +36,7 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],

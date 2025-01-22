@@ -404,7 +404,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	hg, statsVer, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +451,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			FMSketch:   fms,
 			Info:       w.idxInfo,
 			StatsVer:   statsVer,
-			Flag:       flag,
 			PhysicalID: item.TableID,
 		}
 		if statsVer != statistics.Version0 {
@@ -461,7 +460,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 				idxHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 		}
-		lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
@@ -574,14 +572,12 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+				tbl.DelCol(col.ID)
 			}
 		}
 		for _, idx := range tbl.HistColl.GetIdxSlice() {
 			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+				tbl.DelIdx(idx.ID)
 			}
 		}
 		tbl.ColAndIdxExistenceMap.SetChecked()

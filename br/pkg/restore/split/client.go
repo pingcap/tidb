@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -210,7 +211,7 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
+	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}
@@ -237,7 +238,7 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 }
 
 func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*RegionInfo, error) {
-	region, err := c.client.GetRegion(ctx, key)
+	region, err := c.client.GetRegion(ctx, key, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -251,7 +252,7 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*RegionInfo, erro
 }
 
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error) {
-	region, err := c.client.GetRegionByID(ctx, regionID)
+	region, err := c.client.GetRegionByID(ctx, regionID, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -747,7 +748,7 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 	})
 
 	//nolint:staticcheck
-	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
+	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -98,10 +98,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/workloadbasedlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1002,7 +1004,7 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	}
 }
 
-func (do *Domain) refreshMDLCheckTableInfo() {
+func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	se, err := do.sysSessionPool.Get()
 
 	if err != nil {
@@ -1011,7 +1013,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
 		se.Close()
 		return
@@ -1180,7 +1182,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 		case <-do.exit:
 			return
 		}
-		do.refreshMDLCheckTableInfo()
+		do.refreshMDLCheckTableInfo(ctx)
 		select {
 		case do.mdlCheckCh <- struct{}{}:
 		default:
@@ -1480,24 +1482,8 @@ func (do *Domain) Init(
 		return err
 	}
 
-	startReloadTime := time.Now()
 	// step 3: domain reload the infoSchema.
-	err = do.Reload()
-	if err != nil {
-		return err
-	}
-
-	sub := time.Since(startReloadTime)
-	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
-	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
-	if sub > (do.schemaLease / 2) {
-		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
-		err = do.Reload()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return do.Reload()
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
@@ -1661,7 +1647,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return nil
 	}
 
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return err
 	}
@@ -1900,7 +1886,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
+	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -2085,15 +2071,10 @@ func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
 	return v.(bindinfo.GlobalBindingHandle)
 }
 
-// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
+// InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
-func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
-	ctxForHandle.GetSessionVars().InRestrictedSQL = true
-	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewGlobalBindingHandle(do.sysSessionPool)) {
-		do.BindHandle().Reset()
-	}
-
+func (do *Domain) InitBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
 	err := do.BindHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
@@ -2125,6 +2106,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
+				do.BindHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
@@ -2132,12 +2114,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
-				}
-				bindHandle.DropInvalidGlobalBinding()
-				// Get Global
-				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
-				if err == nil && variable.TiDBOptOn(optVal) {
-					bindHandle.CaptureBaselines()
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -2445,13 +2421,11 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
-	do.wg.Run(func() {
-		do.handleDDLEvent()
-	}, "handleDDLEvent")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2541,9 +2515,9 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
+		statsOwner = owner.NewMockManager(do.ctx, id, do.store, ownerKey)
 	} else {
-		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
+		statsOwner = owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
 	}
 	return statsOwner
 }
@@ -2599,11 +2573,38 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.Update(ctx, do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2651,24 +2652,6 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle)
 	}
 }
 
-func (do *Domain) handleDDLEvent() {
-	logutil.BgLogger().Info("handleDDLEvent started.")
-	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
-	statsHandle := do.StatsHandle()
-	for {
-		select {
-		case <-do.exit:
-			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
-		}
-	}
-}
-
 func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
@@ -2700,7 +2683,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
 			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
@@ -2708,16 +2691,17 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
 			if err != nil {
-				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
 			do.CheckAutoAnalyzeWindows()
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
-				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
+			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
 		}
@@ -2735,6 +2719,22 @@ func (do *Domain) autoAnalyzeWorker() {
 	for {
 		select {
 		case <-analyzeTicker.C:
+			// In order to prevent tidb from being blocked by the auto analyze task during shutdown,
+			// a stopautoanalyze is added here for judgment.
+			//
+			// The reason for checking of stopAutoAnalyze is following:
+			// According to the issue#41318, if we don't check stopAutoAnalyze here, the autoAnalyzeWorker will be tricker
+			// again when domain.exit is true.
+			// The "case <-analyzeTicker.C" condition and "case <-do.exit" condition are satisfied at the same time
+			// when the system is already executing the shutdown task.
+			// At this time, the Go language will randomly select a case that meets the conditions to execute,
+			// and there is a probability that a new autoanalyze task will be started again
+			// when the system has already executed the shutdown.
+			// Because the time interval of statsLease is much smaller than the execution speed of auto analyze.
+			// Therefore, when the current auto analyze is completed,
+			// the probability of this happening is very high that the ticker condition and exist condition will be met
+			// at the same time.
+			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
@@ -3333,6 +3333,40 @@ func (do *Domain) planCacheEvictTrigger() {
 					zap.String("detail", detailInfo),
 					zap.Int64("num_evicted", int64(numEvicted)),
 					zap.Duration("time_spent", time.Since(begin)))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+// SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
+func (do *Domain) SetupWorkloadBasedLearningWorker() {
+	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle()
+	// Start the workload based learning worker to analyze the read workload by statement_summary.
+	do.wg.Run(
+		func() {
+			do.readTableCostWorker(wbLearningHandle)
+		},
+		"readTableCostWorker",
+	)
+	// TODO: Add more workers for other workload based learning tasks.
+}
+
+// readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
+	// Recover the panic and log the error when worker exit.
+	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
+	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
+	defer func() {
+		readTableCostTicker.Stop()
+		logutil.BgLogger().Info("readTableCostWorker exited.")
+	}()
+	for {
+		select {
+		case <-readTableCostTicker.C:
+			if variable.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
+				wbLearningHandle.HandleReadTableCost()
 			}
 		case <-do.exit:
 			return

@@ -48,9 +48,6 @@ type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
-	// GetEncodedPassword shows the encoded password for user.
-	GetEncodedPassword(ctx context.Context, user, host string) string
-
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
 	// If table is not "", check global/db/table scope privileges.
@@ -119,9 +116,6 @@ type Manager interface {
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 	GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error)
-
-	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-	GetAuthPlugin(ctx context.Context, user, host string) (string, error)
 }
 
 const key keyType = 0

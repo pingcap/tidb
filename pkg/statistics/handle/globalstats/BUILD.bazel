@@ -49,11 +49,12 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

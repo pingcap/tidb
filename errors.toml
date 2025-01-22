@@ -56,6 +56,11 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
 ["BR:Common:ErrMigrationVersionNotSupported"]
 error = '''
 the migration version isn't supported
@@ -2934,6 +2939,11 @@ Too many connections
 ["server:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1053"]
+error = '''
+Server shutdown in progress
 '''
 
 ["server:1148"]

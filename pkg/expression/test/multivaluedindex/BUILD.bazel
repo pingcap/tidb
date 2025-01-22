@@ -13,7 +13,7 @@ go_test(
         "//pkg/config",
         "//pkg/errno",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessiontxn",
         "//pkg/table",
         "//pkg/tablecodec",

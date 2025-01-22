@@ -57,10 +57,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -544,7 +548,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
@@ -593,11 +597,11 @@ func NewBackend(
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
 	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -692,7 +696,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1366,7 +1370,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
@@ -1602,21 +1606,31 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
+// invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
-// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// SetTSBeforeImportEngine allocates a new TS for the engine before it is imported.
 // This is typically called after persisting the chosen TS of the engine to make
 // sure TS is not changed after task failover.
-func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
 	}
 	defer e.unlock()
+	if ts == 0 {
+		p, l, err := local.pdCli.GetTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
+			failpoint.Return(errors.Errorf("mock err"))
+		})
+		ts = oracle.ComposeTS(p, l)
+	}
 	e.engineMeta.TS = ts
 	return e.saveEngineMeta()
 }
@@ -1810,7 +1824,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 // GetRegionSplitSizeKeys return region split size, region split keys, error
 func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
-	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := cli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
 	}

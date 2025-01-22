@@ -45,7 +45,7 @@ go_test(
         "//pkg/distsql",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -118,7 +117,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	domain.BindDomain(ctx, do)
+	ctx.BindDomain(do)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -512,27 +511,27 @@ func TestTablePartition(t *testing.T) {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     pmodel.NewCIStr("p1"),
+			Name:     ast.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     pmodel.NewCIStr("p2"),
+			Name:     ast.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     pmodel.NewCIStr("p3"),
+			Name:     ast.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     pmodel.NewCIStr("p4"),
+			Name:     ast.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     pmodel.NewCIStr("p5"),
+			Name:     ast.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}
@@ -1048,21 +1047,21 @@ func TestValidate(t *testing.T) {
 func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	testdata.OnRecord(func() {
-		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
+		ans[p.ID()] = make([][]string, len(p.Schema().PKOrUK))
 	})
 	keyList, ok := ans[p.ID()]
 	require.True(t, ok, fmt.Sprintf("for %s, %v not found", sql, p.ID()))
-	require.Equal(t, len(keyList), len(p.Schema().Keys), fmt.Sprintf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
+	require.Equal(t, len(keyList), len(p.Schema().PKOrUK), fmt.Sprintf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i := range keyList {
 		testdata.OnRecord(func() {
-			keyList[i] = make([]string, len(p.Schema().Keys[i]))
+			keyList[i] = make([]string, len(p.Schema().PKOrUK[i]))
 		})
-		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
+		require.Equal(t, len(keyList[i]), len(p.Schema().PKOrUK[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
 			testdata.OnRecord(func() {
-				keyList[i][j] = p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable)
+				keyList[i][j] = p.Schema().PKOrUK[i][j].StringWithCtx(ectx, errors.RedactLogDisable)
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().PKOrUK[i][j].StringWithCtx(ectx, errors.RedactLogDisable), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {
@@ -2032,7 +2031,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2538,7 +2537,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
-				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+				if colsLayout.IndexesRowLayout == nil {
 					sb.Reset()
 					fmt.Fprintf(&sb, "no column-pruning happened")
 					innerRet = append(innerRet, sb.String())

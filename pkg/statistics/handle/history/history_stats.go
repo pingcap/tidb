@@ -16,17 +16,22 @@ package history
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -56,7 +61,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 		return 0, errors.Trace(err)
 	}
 	if js == nil {
-		logutil.BgLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
+		statslogutil.StatsLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
 		return 0, nil
 	}
 	var version uint64
@@ -67,31 +72,41 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	return version, err
 }
 
-// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
-func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool) {
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with a single transaction.
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64) {
 	if version == 0 {
 		return
 	}
-	if !enforce {
-		tbl, ok := sh.statsHandle.Get(tableID)
-		if !ok {
-			return
-		}
-		if !tbl.IsInitialized() {
-			return
+
+	var targetedTableIDs []int64
+	if enforce {
+		targetedTableIDs = tableIDs
+	} else {
+		targetedTableIDs = make([]int64, 0, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tbl, ok := sh.statsHandle.Get(tableID)
+			if tableID == 0 || !ok || !tbl.IsInitialized() {
+				continue
+			}
+			targetedTableIDs = append(targetedTableIDs, tableID)
 		}
 	}
+	// Sort the tableIDs to avoid deadlocks.
+	slices.Sort(targetedTableIDs)
+
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			return nil
 		}
-		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, tableID, version, source)
+		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, targetedTableIDs...)
 	}, handleutil.FlagWrapTxn)
-	if err != nil { // just log the error, hide the error from the outside caller.
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
+
+	if err != nil {
+		statslogutil.StatsLogger().Error("record historical stats meta failed",
 			zap.Uint64("version", version),
 			zap.String("source", source),
+			zap.Int64s("tableIDs", tableIDs),
+			zap.Int64s("targetedTableIDs", targetedTableIDs),
 			zap.Error(err))
 	}
 }
@@ -105,46 +120,96 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta.
+// RecordHistoricalStatsMeta records the historical stats meta for multiple tables.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	tableID int64,
 	version uint64,
 	source string,
+	tableIDs ...int64,
 ) error {
-	if tableID == 0 || version == 0 {
-		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
+	intest.Assert(version != 0, "version should not be zero")
+	intest.AssertFunc(func() bool {
+		for _, id := range tableIDs {
+			if id == 0 {
+				return false
+			}
+		}
+		return true
+	}, "tableIDs should not contain 0")
+	intest.AssertFunc(func() bool {
+		return slices.IsSorted(tableIDs)
+	}, "tableIDs should be sorted")
+	if len(tableIDs) == 0 {
+		return nil
 	}
-	rows, _, err := handleutil.ExecRowsWithCtx(
-		ctx,
-		sctx,
-		"select modify_count, count from mysql.stats_meta where table_id = %? and version = %?",
-		tableID,
-		version,
-	)
+
+	// Enable prepared statement cache to avoid repeated compilation of the same statement.
+	if _, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = ON"); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, "SET tidb_enable_prepared_plan_cache = OFF")
+		if err != nil {
+			statslogutil.StatsLogger().Error("failed to disable prepared statement cache", zap.Error(errors.Trace(err)))
+		}
+	}()
+	prepareSelectForUpdate := `
+		PREPARE select_stmt FROM 'SELECT * FROM mysql.stats_meta WHERE table_id = ? AND version = ? FOR UPDATE'
+	`
+	if _, err := handleutil.ExecWithCtx(ctx, sctx, prepareSelectForUpdate); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, "DEALLOCATE PREPARE select_stmt")
+		if err != nil {
+			statslogutil.StatsLogger().Error("failed to deallocate prepared statement", zap.Error(errors.Trace(err)))
+		}
+	}()
+
+	// Lock the rows one by one to avoid deadlocks.
+	for _, tableID := range tableIDs {
+		_, err := handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %d, @version = %d", tableID, version))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, _, err := handleutil.ExecRowsWithCtx(ctx, sctx, "EXECUTE select_stmt USING @table_id, @version")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		intest.Assert(len(rows) != 0, "no historical meta stats can be recorded")
+		if len(rows) == 0 {
+			statslogutil.StatsLogger().Warn("no historical meta stats can be recorded",
+				zap.Int64("tableID", tableID),
+				zap.Uint64("version", version),
+			)
+		}
+	}
+
+	// Convert tableIDs to string for SQL IN clause
+	tableIDStrs := make([]string, 0, len(tableIDs))
+	for _, id := range tableIDs {
+		tableIDStrs = append(tableIDStrs, strconv.FormatInt(id, 10))
+	}
+	tableIDsStr := strings.Join(tableIDStrs, ",")
+
+	// Single query that combines SELECT and INSERT
+	sql := fmt.Sprintf(`REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time)
+		SELECT table_id, modify_count, count, %d, '%s', NOW()
+		FROM mysql.stats_meta
+		WHERE table_id IN (%s) AND version = %d`,
+		version, source, tableIDsStr, version)
+
+	_, err := handleutil.ExecWithCtx(ctx, sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(rows) == 0 {
-		return errors.New("no historical meta stats can be recorded")
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
-	if _, err := handleutil.ExecWithCtx(
-		ctx,
-		sctx,
-		sql,
-		tableID,
-		modifyCount,
-		count,
-		version,
-		source,
-	); err != nil {
-		return errors.Trace(err)
+	// Invalidate cache for all tables
+	for _, tableID := range tableIDs {
+		cache.TableRowStatsCache.Invalidate(tableID)
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
+
 	return nil
 }
 

@@ -886,15 +886,13 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
-		if resp.AuthPlugin != mysql.AuthNativePassword {
-			if resp.Capability&mysql.ClientPluginAuth > 0 {
-				resp.AuthPlugin = mysql.AuthNativePassword
-				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-				if err != nil {
-					return nil, err
-				}
-				return authData, nil
+		if resp.AuthPlugin != mysql.AuthNativePassword && resp.Capability&mysql.ClientPluginAuth > 0 {
+			resp.AuthPlugin = mysql.AuthNativePassword
+			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+			if err != nil {
+				return nil, err
 			}
+			return authData, nil
 		}
 		return nil, nil
 	}
@@ -1390,7 +1388,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeStats(ctx)
 	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
-		return cc.writeOK(ctx)
+		if cc.server.health.Load() {
+			return cc.writeOK(ctx)
+		}
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave

@@ -70,6 +70,8 @@ var dynamicPrivs = []string{
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
+	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
+	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -317,22 +319,6 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
-// GetEncodedPassword implements the Manager interface.
-func (p *UserPrivileges) GetEncodedPassword(ctx context.Context, user, host string) string {
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
-			zap.String("user", user), zap.String("host", host))
-		return ""
-	}
-	if p.isValidHash(record) {
-		return record.AuthenticationString
-	}
-	return ""
-}
-
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {
@@ -363,24 +349,6 @@ func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, h
 		return record.AuthPlugin, nil
 	}
 	return "", errors.New("Failed to get plugin for user")
-}
-
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(ctx context.Context, user, host string) (string, error) {
-	if SkipWithGrant {
-		return mysql.AuthNativePassword, nil
-	}
-
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		return "", errors.New("Failed to get user record")
-	}
-	if !p.isValidHash(record) {
-		return "", errors.New("Failed to get plugin for user")
-	}
-	return record.AuthPlugin, nil
 }
 
 // MatchIdentity implements the Manager interface.

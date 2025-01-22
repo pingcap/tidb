@@ -698,9 +698,39 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	return err
 }
 
+// resolveIndexForInlineProjection ensures that during the execution of the physical plan, the column index can
+// be correctly mapped to the column in its subplan.
+func resolveIndexForInlineProjection(p *physicalSchemaProducer) error {
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < p.Schema().Len() && j < p.Children()[0].Schema().Len(); {
+		if !p.Schema().Columns[i].Equal(nil, p.Children()[0].Schema().Columns[j]) {
+			j++
+			continue
+		}
+		p.Schema().Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < p.Schema().Len() {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	}
+	return nil
+}
+
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
+	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -716,6 +746,9 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 			return err
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	if err := resolveIndexForInlineProjection(&p.physicalSchemaProducer); err != nil {
+		return err
 	}
 	return
 }
@@ -733,29 +766,8 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
-	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.schema.Len())
-	copy(shallowColSlice, p.schema.Columns)
-	p.schema = expression.NewSchema(shallowColSlice...)
-	foundCnt := 0
-	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
-	// So we can just move forward j if there's no matching is found.
-	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
-	//   e.g. The schema of child_0 is [col0, col0, col1]
-	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
-	for i, j := 0, 0; i < p.schema.Len() && j < p.Children()[0].Schema().Len(); {
-		if !p.schema.Columns[i].EqualColumn(p.Children()[0].Schema().Columns[j]) {
-			j++
-			continue
-		}
-		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
-		p.schema.Columns[i].Index = j
-		i++
-		j++
-		foundCnt++
-	}
-	if foundCnt < p.schema.Len() {
-		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	if err := resolveIndexForInlineProjection(&p.physicalSchemaProducer); err != nil {
+		return err
 	}
 	return
 }

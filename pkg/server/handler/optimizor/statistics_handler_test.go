@@ -26,13 +26,14 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -69,7 +70,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)
@@ -151,7 +152,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("create database tidb")
 	tk.MustExec("use tidb")
 	tk.MustExec("create table test (a int, b varchar(20))")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
@@ -344,4 +345,62 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, snapshot.CurrentJobs)
 	require.Empty(t, snapshot.MustRetryTables)
+}
+
+// fix issue 53966
+func TestLoadNullStatsFile(t *testing.T) {
+	// Setting up the mock store
+	store := testkit.CreateMockStore(t)
+
+	// Creating a new TiDB driver and client
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+
+	// Creating and running the server
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	// Creating the stats file
+	path := "/tmp/stats.json"
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	fp.Write([]byte("null"))
+	require.NoError(t, err)
+
+	// Connecting to the database and executing SQL commands
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}))
+	require.NoError(t, err, "Error connecting")
+	tk := testkit.NewDBTestKit(t, db)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
 }

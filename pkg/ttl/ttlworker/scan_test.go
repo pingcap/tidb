@@ -487,7 +487,7 @@ func TestScanTaskCheck(t *testing.T) {
 	ch := make(chan *ttlDeleteTask, 1)
 	result := task.doScan(context.Background(), ch, pool)
 	require.Equal(t, task, result.task)
-	require.EqualError(t, result.err, "current expire time is after safe expire time. (161 > 160)")
+	require.ErrorContains(t, result.err, "current expire time is after safe expire time. (161 > 160,")
 	require.Equal(t, 0, len(ch))
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
@@ -554,3 +554,21 @@ func TestScanTaskCancelStmt(t *testing.T) {
 	task.ctx, cancel = context.WithCancel(context.Background())
 	testCancel(context.Background(), cancel)
 }
+
+// NewTTLScanTask creates a new TTL scan task for test.
+func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cache.TTLTask) *ttlScanTask {
+	return &ttlScanTask{
+		ctx:        ctx,
+		tbl:        tbl,
+		TTLTask:    ttlTask,
+		statistics: &ttlStatistics{},
+	}
+}
+
+// DoScan is an exported version of `doScan` for test.
+func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+	return t.doScan(ctx, delCh, sessPool)
+}
+
+// TTLDeleteTask is an exported version of `ttlDeleteTask` for test.
+type TTLDeleteTask = ttlDeleteTask

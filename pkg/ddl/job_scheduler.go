@@ -436,8 +436,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 			continue
 		}
 
-		s.deliveryJob(wk, targetPool, &job)
-
+		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
@@ -467,44 +466,48 @@ func (s *jobScheduler) mustReloadSchemas() {
 // deliveryJob deliver the job to the worker to run it asynchronously.
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
-func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job) {
-	failpoint.InjectCall("beforeDeliveryJob", job)
-	injectFailPointForGetJob(job)
-	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
+func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.JobW) {
+	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
+	injectFailPointForGetJob(jobW.Job)
+	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
+	jobCtx := s.getJobRunCtx(jobW.ID, jobW.TraceInfo)
 
 	s.wg.Run(func() {
+		start := time.Now()
+		defer func() {
+			metrics.DDLRunJobOpHist.Observe(time.Since(start).Seconds())
+		}()
 		defer func() {
 			r := recover()
 			if r != nil {
 				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			failpoint.InjectCall("afterDeliveryJob", job)
+			failpoint.InjectCall("afterDeliveryJob", jobW)
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
-			// chosing another runnable job that involves the same schema object.
-			moveRunningJobsToPending := r != nil || (job != nil && !job.IsFinished())
+			// choosing another runnable job that involves the same schema object.
+			moveRunningJobsToPending := r != nil || (jobW != nil && !jobW.IsFinished())
 			s.runningJobs.finishOrPendJob(jobID, involvedSchemaInfos, moveRunningJobsToPending)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
 		}()
 		for {
-			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, job)
+			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
 			if err != nil {
-				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
-			} else if job.InFinalState() {
+				logutil.DDLLogger().Info("transit one job step and wait sync failed", zap.Error(err), zap.Stringer("job", jobW))
+			} else if jobW.InFinalState() {
 				return
 			}
 			// we have to refresh the job, to handle cases like job cancel or pause
 			// or the job is finished by another owner.
 			// TODO for JobStateRollbackDone we have to query 1 additional time when the
 			// job is already moved to history.
-			failpoint.InjectCall("beforeRefreshJob", job)
+			failpoint.InjectCall("beforeRefreshJob", jobW.Job)
 			for {
-				job, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
+				jobW, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {
 					break
@@ -551,7 +554,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
-func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
+func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *model.JobW) error {
 	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
@@ -559,10 +562,13 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// if owner not change, we need try to sync when it's un-synced.
 	// if owner changed, we need to try sync it if the job is not started by
 	// current owner.
+	job := jobW.Job
 	if jobCtx.isUnSynced(job.ID) || (job.Started() && !jobCtx.maybeAlreadyRunOnce(job.ID)) {
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
+				jobCtx.logger.Info("the job have schema version un-synced",
+					zap.Int64("version", version), zap.Stringer("job", job))
 				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
@@ -582,9 +588,9 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, job, s.sysTblMgr)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
 	if err != nil {
-		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
@@ -612,6 +618,10 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 
 // cleanMDLInfo cleans metadata lock info.
 func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
+	start := time.Now()
+	defer func() {
+		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
+	}()
 	if !variable.EnableMDL.Load() {
 		return
 	}

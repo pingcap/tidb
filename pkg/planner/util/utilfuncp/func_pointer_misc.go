@@ -135,7 +135,7 @@ var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.Phy
 // ****************************************** stats related **********************************************
 
 // DeriveStats4DataSource will be called by LogicalDataSource in logicalOp pkg.
-var DeriveStats4DataSource func(lp base.LogicalPlan, colGroups [][]*expression.Column) (*property.StatsInfo, error)
+var DeriveStats4DataSource func(lp base.LogicalPlan) (*property.StatsInfo, error)
 
 // DeriveStats4LogicalIndexScan will be called by LogicalIndexScan in logicalOp pkg.
 var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error)

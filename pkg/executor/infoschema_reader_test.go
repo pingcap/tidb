@@ -31,13 +31,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/zap"
 )
 
 func TestInspectionTables(t *testing.T) {
@@ -173,37 +176,45 @@ func TestDataForTableStatsField(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("3 18 54 6"))
+		testkit.Rows("3 16 48 0"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("4 18 72 8"))
+		testkit.Rows("4 16 64 0"))
 	tk.MustExec("delete from t where c >= 3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 18 36 4"))
+		testkit.Rows("2 16 32 0"))
 	tk.MustExec("delete from t where c=3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("2 16 32 0"))
+	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
 
 	// Test partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("3 16 48 0"))
+	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
 }
@@ -219,38 +230,41 @@ func TestPartitionsTable(t *testing.T) {
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
 		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"p0 6]\n" +
-				"[p1 11]\n" +
-				"[p2 16"))
+			testkit.Rows("p0 6", "p1 11", "p2 16"))
 
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"0 0 0 0]\n" +
-				"[0 0 0 0]\n" +
-				"[0 0 0 0"))
+			testkit.Rows(
+				"0 0 0 0",
+				"0 0 0 0",
+				"0 0 0 0",
+			),
+		)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"1 18 18 2]\n" +
-				"[1 18 18 2]\n" +
-				"[1 18 18 2"))
+			testkit.Rows(
+				"1 16 16 0",
+				"1 16 16 0",
+				"1 16 16 0",
+			),
+		)
 	})
 
 	// Test for table has no partitions.
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
 	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
-		testkit.Rows("<nil> 3 18 54 6"))
+		testkit.Rows("<nil> 3 16 48 0"))
 
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 	tk.MustExec(`CREATE TABLE test_partitions1 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
@@ -626,30 +640,39 @@ func TestIndexUsageTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));")
 	tk.MustExec("create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));")
+	tk.MustExec("create table idt3(col_1 varchar(255) primary key);")
+	tk.MustExec("create table idt4(col_1 varchar(255) primary key NONCLUSTERED);")
+	tk.MustExec("create table idt5(col_1 int);")
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test';`).Check(
+				where TABLE_SCHEMA = 'test';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
 			"test|idt1|idx_3",
+			"test|idt1|primary",
 			"test|idt2|idx_1",
 			"test|idt2|idx_2",
-			"test|idt2|idx_4"))
-	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Check(
+			"test|idt2|idx_4",
+			"test|idt2|primary",
+			"test|idt3|primary",
+			"test|idt4|primary"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
-			"test|idt1|idx_3"))
+			"test|idt1|idx_3",
+			"test|idt1|primary"))
 	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Check(
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
-			"test|idt1|idx_3"))
+			"test|idt1|idx_3",
+			"test|idt1|primary"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Sort().Check(
 		testkit.RowsWithSep("|",
@@ -664,13 +687,13 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage
-				where TABLE_SCHEMA = 'test' and TABLE_NAME in ('idt1', 'idt2');`).Check(
-		testkit.RowsWithSep("|", "6"))
+	where TABLE_SCHEMA = 'test' and TABLE_NAME in ('idt1', 'idt2');`).Check(
+		testkit.RowsWithSep("|", "8"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_NAME = 'idt3';`).Check(testkit.Rows())
+				where TABLE_NAME = 'idt3';`).Check(testkit.Rows("test idt3 primary"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where INDEX_NAME = 'IDX_5';`).Check(testkit.Rows())
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
@@ -746,21 +769,23 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		// infoschema v2 requires network, so it cannot be tested this way.
-		t.Skip()
-	}
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_schema_cache_size = default;")
+	})
 
 	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
 	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
 	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
 	// Show columns should not send coprocessor request to the storage.
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	testfailpoint.Enable(t, "tikvclient/tikvStoreSendReqResult", `return("timeout")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/BuildDataSourceFailed", "panic")
+
 	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
 		"id int(11) YES  <nil> ",
 		"name text YES  <nil> ",
 		"some_date timestamp YES  <nil> "))
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	tk.MustQuery("select COLUMN_NAME from information_schema.columns where table_name = 'temp_view';").Check(testkit.Rows("id", "name", "some_date"))
 }
 
 // Code below are helper utilities for the test cases.
@@ -1081,4 +1106,154 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		tk.MustQueryWithContext(ctx, testCase.sql)
 		require.Equal(t, testCase.expect, covered, testCase.sql)
 	}
+}
+
+func TestIndexUsageWithData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Some bad tests will set the global variable to 0, and they don't set it back. So even if the default value for this variable is 1,
+	// we'll need to set it to 1 here.
+	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
+	tk.RefreshSession()
+
+	insertDataAndScanToT := func(indexName string) {
+		// insert 1000 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		tk.MustExec("ANALYZE TABLE t")
+
+		// full scan
+		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
+		rows := tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 1000)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+
+		// scan 1/4 of the rows
+		sql = fmt.Sprintf("SELECT * FROM t use index(%s) WHERE a <= 250 ORDER BY a", indexName)
+		rows = tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 250)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+	}
+
+	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
+		require.Eventually(t, func() bool {
+			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
+
+			if len(rows) != 1 {
+				return false
+			}
+			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+				return false
+			}
+			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
+			if err != nil {
+				return false
+			}
+			if lastAccessTime.Unix() < startQuery.Unix() || lastAccessTime.Unix() > endQuery.Unix() {
+				return false
+			}
+
+			return true
+		}, 5*time.Second, 100*time.Millisecond)
+	}
+
+	t.Run("test index usage with normal index", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int, index idx(a));")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t idx 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("idx")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with integer primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int primary key);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with integer clustered primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a bigint primary key clustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with string primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a varchar(16) primary key clustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		tk.MustExec("ANALYZE TABLE t")
+
+		// full scan
+		rows := tk.MustQuery("SELECT * FROM t ORDER BY a").Rows()
+		require.Len(t, rows, 1000)
+
+		// scan 1/4 of the rows
+		startQuery := time.Now()
+		rows = tk.MustQuery("select * from t where a < '3'").Rows()
+		require.Len(t, rows, 223)
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
+
+	t.Run("test index usage with nonclustered primary key", func(t *testing.T) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int primary key nonclustered);")
+		defer tk.MustExec("drop table t")
+
+		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+		))
+
+		startQuery := time.Now()
+		insertDataAndScanToT("primary")
+		endQuery := time.Now()
+
+		checkIndexUsage(startQuery, endQuery)
+	})
 }

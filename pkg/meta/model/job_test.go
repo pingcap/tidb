@@ -21,7 +21,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +63,9 @@ func TestJobCodec(t *testing.T) {
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
-	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: model.NewCIStr("table1")})
-	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: model.NewCIStr("test_history_db")})
-	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: model.NewCIStr("test_history_tbl")})
+	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: ast.NewCIStr("table1")})
+	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: ast.NewCIStr("test_history_db")})
+	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: ast.NewCIStr("test_history_tbl")})
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)

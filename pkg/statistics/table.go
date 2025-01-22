@@ -91,13 +91,13 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -119,6 +119,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -233,10 +235,7 @@ type HistColl struct {
 
 	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
 	StatsVer int
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Pseudo         bool
+	Pseudo   bool
 
 	/*
 		Fields below are only used in a query, like for estimation, and they will be useless when stored in
@@ -258,12 +257,11 @@ type HistColl struct {
 }
 
 // NewHistColl creates a new HistColl.
-func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
+func NewHistColl(id int64, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
 	return &HistColl{
 		columns:            make(map[int64]*Column, colNum),
 		indices:            make(map[int64]*Index, idxNum),
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -274,12 +272,11 @@ func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, co
 }
 
 // NewHistCollWithColsAndIdxs creates a new HistColl with given columns and indices.
-func NewHistCollWithColsAndIdxs(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
+func NewHistCollWithColsAndIdxs(id int64, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
 	return &HistColl{
 		columns:            cols,
 		indices:            idxs,
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -342,13 +339,15 @@ func (coll *HistColl) IdxNum() int {
 }
 
 // DelCol deletes the column with the given id.
-func (coll *HistColl) DelCol(id int64) {
-	delete(coll.columns, id)
+func (t *Table) DelCol(id int64) {
+	delete(t.columns, id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
-func (coll *HistColl) DelIdx(id int64) {
-	delete(coll.indices, id)
+func (t *Table) DelIdx(id int64) {
+	delete(t.indices, id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -591,14 +590,13 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        make(map[int64]*Column, len(t.columns)),
-		indices:        make(map[int64]*Index, len(t.indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       make(map[int64]*Column, len(t.columns)),
+		indices:       make(map[int64]*Index, len(t.indices)),
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	for id, col := range t.columns {
 		newHistColl.columns[id] = col.Copy()
@@ -633,14 +631,13 @@ func (t *Table) Copy() *Table {
 // The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        t.columns,
-		indices:        t.indices,
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	nt := &Table{
 		HistColl:              newHistColl,
@@ -928,12 +925,11 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 		}
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		columns:        cols,
+		PhysicalID:    coll.PhysicalID,
+		Pseudo:        coll.Pseudo,
+		RealtimeCount: coll.RealtimeCount,
+		ModifyCount:   coll.ModifyCount,
+		columns:       cols,
 	}
 	return newColl
 }
@@ -994,7 +990,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	}
 	newColl := &HistColl{
 		PhysicalID:         coll.PhysicalID,
-		HavePhysicalID:     coll.HavePhysicalID,
 		Pseudo:             coll.Pseudo,
 		RealtimeCount:      coll.RealtimeCount,
 		ModifyCount:        coll.ModifyCount,
@@ -1016,7 +1011,6 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	pseudoHistColl := HistColl{
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
-		HavePhysicalID:    true,
 		columns:           make(map[int64]*Column, 2),
 		indices:           make(map[int64]*Index, 2),
 		Pseudo:            true,

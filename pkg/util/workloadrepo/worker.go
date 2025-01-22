@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -77,8 +79,8 @@ var workloadTables = []repositoryTable{
 			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
 		"",
 	},
-	//{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
-	//{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
@@ -104,29 +106,37 @@ type sessionPool interface {
 // worker is the main struct for workload repository.
 type worker struct {
 	sync.Mutex
-	etcdClient *clientv3.Client
-	sesspool   sessionPool
-	cancel     context.CancelFunc
-	newOwner   func(string, string) owner.Manager
-	owner      owner.Manager
-	wg         *util.WaitGroupEnhancedWrapper
-	enabled    bool
-	instanceID string
+	etcdClient     *clientv3.Client
+	sesspool       sessionPool
+	cancel         context.CancelFunc
+	newOwner       func(string, string) owner.Manager
+	owner          owner.Manager
+	wg             *util.WaitGroupEnhancedWrapper
+	enabled        bool
+	instanceID     string
+	workloadTables []repositoryTable
 
 	samplingInterval int32
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
+	snapshotChan     chan struct{}
 	retentionDays    int32
 }
 
-var workerCtx = worker{
-	samplingInterval: defSamplingInterval,
-	snapshotInterval: defSnapshotInterval,
-	retentionDays:    defRententionDays,
+var workerCtx = worker{}
+
+func takeSnapshot() error {
+	if workerCtx.snapshotChan == nil {
+		return errors.New("Workload repository is not enabled yet")
+	}
+	workerCtx.snapshotChan <- struct{}{}
+	return nil
 }
 
 func init() {
+	executor.TakeSnapshot = takeSnapshot
+
 	variable.RegisterSysVar(&variable.SysVar{
 		Scope: variable.ScopeGlobal,
 		Name:  repositoryDest,
@@ -174,10 +184,20 @@ func init() {
 	})
 }
 
-func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string, string) owner.Manager, sesspool sessionPool) {
+func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string, string) owner.Manager, sesspool sessionPool, workloadTables []repositoryTable) {
 	w.etcdClient = etcdCli
 	w.sesspool = sesspool
 	w.newOwner = newOwner
+	w.workloadTables = workloadTables
+	w.samplingInterval = defSamplingInterval
+	w.snapshotInterval = defSnapshotInterval
+	w.retentionDays = defRententionDays
+
+	w.snapshotTicker = time.NewTicker(time.Second)
+	w.snapshotTicker.Stop()
+	w.samplingTicker = time.NewTicker(time.Second)
+	w.samplingTicker.Stop()
+
 	w.wg = util.NewWaitGroupEnhancedWrapper("workloadrepo", nil, false)
 }
 
@@ -186,7 +206,7 @@ func SetupRepository(dom *domain.Domain) {
 	workerCtx.Lock()
 	defer workerCtx.Unlock()
 
-	initializeWorker(&workerCtx, dom.GetEtcdClient(), dom.NewOwnerManager, dom.SysSessionPool())
+	initializeWorker(&workerCtx, dom.GetEtcdClient(), dom.NewOwnerManager, dom.SysSessionPool(), workloadTables)
 
 	if workerCtx.enabled {
 		if err := workerCtx.start(); err != nil {
@@ -261,6 +281,17 @@ func (w *worker) readInstanceID() error {
 	return nil
 }
 
+func (w *worker) fillInTableNames() {
+	for rtIdx := range w.workloadTables {
+		rt := &w.workloadTables[rtIdx]
+		if rt.table != "" {
+			if rt.destTable == "" {
+				rt.destTable = "HIST_" + rt.table
+			}
+		}
+	}
+}
+
 func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -271,14 +302,7 @@ func (w *worker) startRepository(ctx context.Context) func() {
 		}
 		ticker := time.NewTicker(time.Second)
 
-		for rtIdx := range workloadTables {
-			rt := &workloadTables[rtIdx]
-			if rt.table != "" {
-				if rt.destTable == "" {
-					rt.destTable = "HIST_" + rt.table
-				}
-			}
-		}
+		w.fillInTableNames()
 
 		for {
 			select {
@@ -287,12 +311,12 @@ func (w *worker) startRepository(ctx context.Context) func() {
 			case <-ticker.C:
 				if w.owner.IsOwner() {
 					logutil.BgLogger().Info("repository has owner!")
-					if err := w.createAllTables(ctx); err != nil {
+					if err := w.createAllTables(ctx, time.Now()); err != nil {
 						logutil.BgLogger().Error("workload repository cannot create tables", zap.NamedError("err", err))
 					}
 				}
 
-				if !w.checkTablesExists(ctx) {
+				if !w.checkTablesExists(ctx, time.Now()) {
 					continue
 				}
 
@@ -334,6 +358,8 @@ func (w *worker) start() error {
 		return errors.New("etcd client required for workload repository")
 	}
 
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
+	w.snapshotChan = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -342,6 +368,7 @@ func (w *worker) start() error {
 	return nil
 }
 
+// stop will stop the worker.
 func (w *worker) stop() {
 	w.enabled = false
 
@@ -352,6 +379,7 @@ func (w *worker) stop() {
 
 	w.cancel()
 	w.wg.Wait()
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(true)
 
 	if w.owner != nil {
 		w.owner.Close()
@@ -359,8 +387,10 @@ func (w *worker) stop() {
 	}
 
 	w.cancel = nil
+	w.snapshotChan = nil
 }
 
+// setRepositoryDest will change the dest of workload snapshot.
 func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
 	w.Lock()
 	defer w.Unlock()
