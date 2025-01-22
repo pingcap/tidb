@@ -280,6 +280,10 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 	var err error
 	var path string
 	if variable.EnableMDL.Load() {
+		// If jobID is 0, it doesn't need to put into etcd `DDLAllSchemaVersionsByJob` key.
+		if jobID == 0 {
+			return nil
+		}
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
 		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {

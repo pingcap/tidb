@@ -4594,6 +4594,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	countCnt := len(columns) + 1 // +1 for an extra handle column
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4604,16 +4605,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IndexHints:          b.TableHints().IndexHintList,
 		IndexMergeHints:     indexMergeHints,
 		PossibleAccessPaths: possiblePaths,
-		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		Columns:             make([]*model.ColumnInfo, 0, countCnt),
 		PartitionNames:      tn.PartitionNames,
-		TblCols:             make([]*expression.Column, 0, len(columns)),
+		TblCols:             make([]*expression.Column, 0, countCnt),
 		PreferPartitions:    make(map[int][]ast.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
-	names := make([]*types.FieldName, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
+	names := make([]*types.FieldName, 0, countCnt)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{

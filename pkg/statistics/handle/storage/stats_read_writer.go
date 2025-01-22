@@ -57,7 +57,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
 		}
 	}()
 
@@ -77,7 +77,7 @@ func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID 
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
 		}
 	}()
 
@@ -104,7 +104,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
 		}
 	}()
 
@@ -135,7 +135,7 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, true)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, true, tableID)
 	}
 	return err
 }
@@ -185,7 +185,7 @@ func (s *statsReadWriter) SaveStatsToStorage(
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
 }
@@ -198,7 +198,7 @@ func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, s
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
 }
@@ -211,7 +211,7 @@ func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, 
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }
@@ -224,7 +224,7 @@ func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }
@@ -237,7 +237,7 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }

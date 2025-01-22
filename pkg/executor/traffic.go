@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,9 +45,11 @@ import (
 // The keys for the mocked data that stored in context. They are only used for test.
 type tiproxyAddrKeyType struct{}
 type trafficPathKeyType struct{}
+type trafficPrivKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
 var trafficPathKey trafficPathKeyType
+var trafficPrivKey trafficPrivKeyType
 
 type trafficJob struct {
 	Instance  string `json:"-"` // not passed from TiProxy
@@ -135,12 +139,25 @@ type TrafficCancelExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (*TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "get tiproxy addresses failed")
 	}
-	_, err = request(ctx, addrs, nil, http.MethodPost, cancelPath)
+	// Cancel all traffic jobs by default.
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
+	args := make(map[string]string, 2)
+	if hasCapturePriv && !hasReplayPriv {
+		args["type"] = "capture"
+	} else if hasReplayPriv && !hasCapturePriv {
+		args["type"] = "replay"
+	}
+	form := getForm(args)
+	readers := make([]io.Reader, len(addrs))
+	for i := range readers {
+		readers[i] = strings.NewReader(form)
+	}
+	_, err = request(ctx, addrs, readers, http.MethodPost, cancelPath)
 	return err
 }
 
@@ -164,6 +181,8 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Filter the jobs by privilege.
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
 	allJobs := make([]trafficJob, 0, len(resps))
 	for addr, resp := range resps {
 		var jobs []trafficJob
@@ -172,9 +191,12 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 			return err
 		}
 		for i := range len(jobs) {
+			if (jobs[i].Type == "capture" && !hasCapturePriv) || (jobs[i].Type == "replay" && !hasReplayPriv) {
+				continue
+			}
 			jobs[i].Instance = addr
+			allJobs = append(allJobs, jobs[i])
 		}
-		allJobs = append(allJobs, jobs...)
 	}
 	sort.Slice(allJobs, func(i, j int) bool {
 		if allJobs[i].StartTime > allJobs[j].StartTime {
@@ -196,7 +218,12 @@ func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		job := e.jobs[e.cursor]
 		e.cursor++
 		req.AppendTime(0, parseTime(ctx, e.BaseExecutor, job.StartTime))
-		req.AppendTime(1, parseTime(ctx, e.BaseExecutor, job.EndTime))
+		// running jobs don't have end time
+		if job.EndTime == "" {
+			req.AppendNull(1)
+		} else {
+			req.AppendTime(1, parseTime(ctx, e.BaseExecutor, job.EndTime))
+		}
 		req.AppendString(2, job.Instance)
 		req.AppendString(3, job.Type)
 		req.AppendString(4, job.Progress)
@@ -366,4 +393,20 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		readers = append(readers, strings.NewReader(form))
 	}
 	return readers, nil
+}
+
+func hasTrafficPriv(ctx context.Context, sctx sessionctx.Context) (capturePriv, replayPriv bool) {
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		// in test
+		if privs := ctx.Value(trafficPrivKey); privs != nil {
+			array := privs.([]bool)
+			return array[0], array[1]
+		}
+		return true, true
+	}
+	roles := sctx.GetSessionVars().ActiveRoles
+	capturePriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
+	replayPriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
+	return
 }
