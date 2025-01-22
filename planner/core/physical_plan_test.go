@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -546,31 +547,51 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	p, ok := info.Plan.(core.Plan)
 	require.True(t, ok)
 
-	var findTableScan func(p core.Plan) *core.PhysicalTableScan
-	findTableScan = func(p core.Plan) *core.PhysicalTableScan {
+	var findSelection func(p core.Plan) *core.PhysicalSelection
+	findSelection = func(p core.Plan) *core.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
 		switch v := p.(type) {
-		case *core.PhysicalTableScan:
-			if v.Table.Name.L == "t1" {
-				return v
+		case *core.PhysicalSelection:
+			if len(v.Children()) == 1 {
+				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
+					return v
+				}
 			}
 			return nil
 		case *core.PhysicalTableReader:
-			return findTableScan(v.TablePlans[0])
+			for _, child := range v.TablePlans {
+				if sel := findSelection(child); sel != nil {
+					return sel
+				}
+			}
+			return nil
 		default:
 			physicayPlan := p.(core.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
-				if ts := findTableScan(child); ts != nil {
-					return ts
+				if sel := findSelection(child); sel != nil {
+					return sel
 				}
 			}
 			return nil
 		}
 	}
-	ts := findTableScan(p)
+	sel := findSelection(p)
+	require.NotNil(t, sel)
+	ts := sel.Children()[0].(*core.PhysicalTableScan)
 	require.NotNil(t, ts)
+	// manually push down the condition `client_no = c.company_no`
+	var selected expression.Expression
+	for _, cond := range sel.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
+			selected = cond
+			break
+		}
+	}
+	if selected != nil {
+		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
+	}
 
 	pb, err := ts.ToPB(tk.Session(), kv.TiFlash)
 	require.NoError(t, err)
