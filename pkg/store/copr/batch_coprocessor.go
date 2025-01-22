@@ -555,7 +555,7 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 	}
 	wg.Wait()
 
-	logutil.BgLogger().Info("detecting available mpp stores", zap.Any("total", len(stores)), zap.Any("alive", len(aliveIdx)))
+	logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
 	return aliveIdx
 }
 
@@ -648,7 +648,7 @@ func buildBatchCopTasksConsistentHash(
 		}
 		storesBefFilter := len(storesStr)
 		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
-		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
+		logutil.BgLogger().Info("topo filter alive", zap.Strings("topo", storesStr))
 		if len(storesStr) == 0 {
 			errMsg := "Cannot find proper topo to dispatch MPPTask: "
 			if storesBefFilter == 0 {
@@ -707,16 +707,16 @@ func buildBatchCopTasksConsistentHash(
 		}
 	}
 	logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done",
-		zap.Any("len(tasks)", len(taskMap)),
-		zap.Any("len(tiflash_compute)", len(storesStr)),
-		zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
+		zap.Int("len(tasks)", len(taskMap)),
+		zap.Int("len(tiflash_compute)", len(storesStr)),
+		zap.String("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 
 	if log.GetLevel() <= zap.DebugLevel {
 		debugTaskMap := make(map[string]string, len(taskMap))
 		for s, b := range taskMap {
 			debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 		}
-		logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHash", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
+		logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHash", zap.Any("taskMap", debugTaskMap), zap.Strings("allStores", storesStr))
 	}
 
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
@@ -1115,6 +1115,13 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 
+	if req.MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
+		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
+	}
+
 	var tasks []*batchCopTask
 	var err error
 	if req.PartitionIDAndRanges != nil {
@@ -1320,7 +1327,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 const TiFlashReadTimeoutUltraLong = 3600 * time.Second
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.store.store.GetOracle(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
@@ -1368,10 +1375,10 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		return nil, errors.Trace(err)
 	}
 	defer cancel()
-	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
+	return nil, b.handleStreamedBatchCopResponse(bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
@@ -1568,15 +1575,15 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			}
 		}
 		logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD done",
-			zap.Any("len(tasks)", len(taskMap)),
-			zap.Any("len(tiflash_compute)", len(stores)),
-			zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
+			zap.Int("len(tasks)", len(taskMap)),
+			zap.Int("len(tiflash_compute)", len(stores)),
+			zap.String("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 		if log.GetLevel() <= zap.DebugLevel {
 			debugTaskMap := make(map[string]string, len(taskMap))
 			for s, b := range taskMap {
 				debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 			}
-			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
+			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Strings("allStores", storesStr))
 		}
 		break
 	}

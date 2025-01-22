@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -31,11 +30,11 @@ import (
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
 	PreferLimitToCop bool
 	IsPartial        bool
 }
@@ -44,45 +43,6 @@ type LogicalLimit struct {
 func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
-}
-
-// ************************ start implementation of HashEquals interface ************************
-
-// Hash64 returns the hash code for the operator.
-func (p *LogicalLimit) Hash64(h base2.Hasher) {
-	h.HashString(plancodec.TypeLimit)
-	h.HashInt(len(p.PartitionBy))
-	for _, one := range p.PartitionBy {
-		one.Hash64(h)
-	}
-	h.HashUint64(p.Offset)
-	h.HashUint64(p.Count)
-}
-
-// Equals checks whether the operator is equal to another operator.
-func (p *LogicalLimit) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	var p2 *LogicalLimit
-	switch x := other.(type) {
-	case *LogicalLimit:
-		p2 = x
-	case LogicalLimit:
-		p2 = &x
-	default:
-		return false
-	}
-	ok := len(p.PartitionBy) == len(p2.PartitionBy) && p.Offset == p2.Offset && p.Count == p2.Count
-	if !ok {
-		return false
-	}
-	for i, one := range p.PartitionBy {
-		if !one.Equals(p2.PartitionBy[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // *************************** start implementation of Plan interface ***************************
@@ -169,7 +129,7 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

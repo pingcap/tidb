@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -173,6 +172,7 @@ type builtinInternalFromBinarySig struct {
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
 
@@ -258,7 +258,7 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncToBinary),
+		FuncName: ast.NewCIStr(InternalFuncToBinary),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
@@ -273,7 +273,7 @@ func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldT
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncFromBinary),
+		FuncName: ast.NewCIStr(InternalFuncFromBinary),
 		RetType:  tp,
 		Function: f,
 	}

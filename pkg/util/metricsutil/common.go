@@ -17,7 +17,6 @@ package metricsutil
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -41,12 +40,16 @@ import (
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
+
+var componentName = caller.Component("tidb-metrics-util")
 
 // RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
-	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
+	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
 		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
 	}
 
@@ -56,11 +59,11 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
+	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, pd.WithCustomTimeoutOption(timeoutSec))
+	}, opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -81,8 +84,8 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	}
 
 	timeoutSec := 10 * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{},
-		pd.WithCustomTimeoutOption(timeoutSec))
+	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{},
+		opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -117,7 +120,7 @@ func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
 
-	if config.GetGlobalConfig().Store == "unistore" {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		unimetrics.RegisterMetrics()
 	}
 	return nil

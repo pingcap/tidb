@@ -60,9 +60,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -353,6 +356,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -587,6 +591,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -662,14 +667,14 @@ func TestMergeSSTsDuplicated(t *testing.T) {
 type mockPdClient struct {
 	pd.Client
 	stores  []*metapb.Store
-	regions []*pd.Region
+	regions []*router.Region
 }
 
-func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, nil
 }
 
-func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
 	return c.regions, nil
 }
 
@@ -797,7 +802,7 @@ type mockImportClientFactory struct {
 	apiInvokeRecorder map[string][]uint64
 }
 
-func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	for _, store := range f.stores {
 		if store.Id == storeID {
 			return f.createClientFn(store), nil
@@ -806,7 +811,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
-func (f *mockImportClientFactory) Close() {}
+func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
@@ -1176,7 +1181,7 @@ func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
 
-func (m mockIngestData) GetTS() uint64 { return 0 }
+func (m mockIngestData) GetTS() uint64 { return oracle.GoTimeToTS(time.Now()) }
 
 func (m mockIngestData) IncRef() {}
 
@@ -1223,7 +1228,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1347,7 +1352,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1446,7 +1451,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1542,7 +1547,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1565,6 +1570,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err = db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -1708,6 +1714,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		regionSplitKeysCache: [][]byte{{1}, {11}},
 		regionSplitSize:      1 << 30,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {

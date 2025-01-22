@@ -297,14 +297,12 @@ func TestJoinTableMetaNullMapLength(t *testing.T) {
 		// nullmap only used for columns that needed to be converted to rows
 		{[]int{0}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{}, false, 0},
 		{[]int{0}, []*types.FieldType{stringTp, intTp, intTp, intTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{}, false, 0},
-		// usedFlag is true
-		// the row length is at least 4 bytes, so nullmap is 1 byte alignment
-		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, nil, true, 1},
-		{[]int{0}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{1}, true, 1},
-		{[]int{0}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{0}, true, 1},
-		{[]int{0, 1}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp, intTp}, []int{}, true, 1},
-		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{uintTp}, []int{}, true, 1},
-		// the row length is not guaranteed to be at least 4 bytes, nullmap is 4 bytes alignment
+		// usedFlag is true, nullmap is 4 byte alignment
+		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, nil, true, 4},
+		{[]int{0}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{1}, true, 4},
+		{[]int{0}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{0}, true, 4},
+		{[]int{0, 1}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp, intTp}, []*types.FieldType{stringTp, intTp}, []int{}, true, 4},
+		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{uintTp}, []int{}, true, 4},
 		{[]int{0}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []int{}, true, 4},
 		{[]int{0, 1}, []*types.FieldType{stringTp, stringTp}, []*types.FieldType{stringTp, stringTp}, []*types.FieldType{stringTp, stringTp}, []int{}, true, 4},
 	}

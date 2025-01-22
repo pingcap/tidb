@@ -1025,6 +1025,194 @@ func TestAddTimeSig(t *testing.T) {
 		require.Equal(t, i+1+beforeWarnCnt, len(warnings))
 		require.Truef(t, terror.ErrorEqual(c.warning, warnings[i].Err), "err %v", warnings[i].Err)
 	}
+
+	addTimeTestForIssue56861(t, ctx, fc)
+}
+
+func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass) {
+	dateStringCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         string
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true},
+	}
+
+	for _, c := range dateStringCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewStringDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	dateDurationCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         types.Duration
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+	}
+
+	for _, c := range dateDurationCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewDurationDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	datetimeStringCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         string
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true},
+	}
+
+	for _, c := range datetimeStringCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewStringDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	datetimeDurationCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         types.Duration
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+	}
+
+	for _, c := range datetimeDurationCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewDurationDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
 }
 
 func TestSubTimeSig(t *testing.T) {
@@ -1124,6 +1312,192 @@ func TestSubTimeSig(t *testing.T) {
 		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 		require.Equal(t, i+1+beforeWarnCnt, len(warnings))
 		require.Truef(t, terror.ErrorEqual(c.warning, warnings[i].Err), "err %v", warnings[i].Err)
+	}
+
+	subTimeTestForIssue56861(t, ctx, fc)
+}
+
+func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass) {
+	dateStringCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         string
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true},
+	}
+
+	for _, c := range dateStringCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewStringDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	dateDurationCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         types.Duration
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+	}
+
+	for _, c := range dateDurationCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewDurationDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeDuration)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	datetimeStringCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         string
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true},
+	}
+
+	for _, c := range datetimeStringCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewStringDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeVarString)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
+	}
+
+	datetimeDurationCases := []struct {
+		arg0         types.Time
+		isArg0Null   bool
+		arg1         types.Duration
+		isArg1Null   bool
+		expect       string
+		isExpectNull bool
+	}{
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+	}
+
+	for _, c := range datetimeDurationCases {
+		exprs := make([]Expression, 2)
+		arg0Datum := types.NewTimeDatum(c.arg0)
+		if c.isArg0Null {
+			arg0Datum.SetNull()
+		}
+		arg1Datum := types.NewDurationDatum(c.arg1)
+		if c.isArg1Null {
+			arg1Datum.SetNull()
+		}
+		exprs[0] = &Constant{Value: arg0Datum, RetType: types.NewFieldType(mysql.TypeDate)}
+		exprs[1] = &Constant{Value: arg1Datum, RetType: types.NewFieldType(mysql.TypeDuration)}
+		f, err := fc.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if c.isExpectNull {
+			require.True(t, d.IsNull())
+			continue
+		}
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, c.expect, result)
 	}
 }
 

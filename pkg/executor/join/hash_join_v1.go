@@ -306,7 +306,7 @@ func (w *ProbeWorkerV1) runJoinWorker() {
 			t := time.Since(start)
 			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
 			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			w.HashJoinCtx.stats.setMaxFetchAndProbeTime(int64(t))
+			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
 		}()
 	}
 

@@ -189,7 +189,7 @@
         "SQL": "select (select /*+ use_index_merge(t1,ia,ibc,ic) */ a from t1 where t1.a > 10 and t1.b = 20 and t1.c = t2.a) from t2",
         "Plan": [
           "Projection 3.00 root  test.t1.a",
-          "└─Apply 3.00 root  CARTESIAN left outer join",
+          "└─Apply 3.00 root  CARTESIAN left outer join, left side:IndexReader",
           "  ├─IndexReader(Build) 3.00 root partition:all index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:ia(a) keep order:false",
           "  └─MaxOneRow(Probe) 3.00 root  ",
@@ -208,7 +208,7 @@
         "SQL": "select (select /*+ use_index_merge(t1,ia,ibc,ic) */ a from t1 where t1.a > 10 and t1.b = 20 and t1.c > t2.a) from t2",
         "Plan": [
           "Projection 3.00 root  test.t1.a",
-          "└─Apply 3.00 root  CARTESIAN left outer join",
+          "└─Apply 3.00 root  CARTESIAN left outer join, left side:IndexReader",
           "  ├─IndexReader(Build) 3.00 root partition:all index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:ia(a) keep order:false",
           "  └─MaxOneRow(Probe) 3.00 root  ",
@@ -228,7 +228,7 @@
         "SQL": "select (select /*+ use_index_merge(t1,ia,ibc,ic) */ a from t1 where t1.a > 10 and t1.b = 20 and t1.e > t2.a) from t2",
         "Plan": [
           "Projection 3.00 root  test.t1.a",
-          "└─Apply 3.00 root  CARTESIAN left outer join",
+          "└─Apply 3.00 root  CARTESIAN left outer join, left side:IndexReader",
           "  ├─IndexReader(Build) 3.00 root partition:all index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:ia(a) keep order:false",
           "  └─MaxOneRow(Probe) 3.00 root  ",

@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -135,9 +134,9 @@ func TestColInfo2Col(t *testing.T) {
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: pmodel.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: pmodel.NewCIStr("0")}, &model.IndexColumn{Name: pmodel.NewCIStr("1")}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
@@ -492,4 +491,23 @@ func TestColumnHashEuqals4VirtualExpr(t *testing.T) {
 	col2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, col1.Equals(col2))
+}
+
+func TestColumnEqualsWithNilWrappedInAny(t *testing.T) {
+	col1 := &Column{UniqueID: 1}
+	// Test: other is nil
+	require.False(t, col1.Equals(nil))
+	// Test: other is *Column(nil) wrapped in any
+	var col2 *Column = nil
+	var col2AsAny any = col2
+	require.False(t, col1.Equals(col2AsAny))
+	// Test: both Columns are nil
+	var col3 *Column = nil
+	require.True(t, col3.Equals(col2AsAny))
+	// Test: two Columns with the same values
+	col4 := &Column{UniqueID: 1}
+	require.True(t, col1.Equals(col4))
+	// Test: two Columns with different values
+	col5 := &Column{UniqueID: 2}
+	require.False(t, col1.Equals(col5))
 }

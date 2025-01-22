@@ -73,7 +73,8 @@ const (
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt          = "ddl"
+	// Prompt is the prompt for ddl owner manager.
+	Prompt = "ddl"
 
 	batchAddingJobs = 100
 
@@ -391,40 +392,50 @@ func newSchemaVersionManager(store kv.Storage) *schemaVersionManager {
 	}
 }
 
-func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion int64, err error) {
-	err = sv.lockSchemaVersion(job.ID)
+func (sv *schemaVersionManager) setSchemaVersion(jobCtx *jobContext, job *model.Job) (schemaVersion int64, err error) {
+	err = sv.lockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
 	// TODO we can merge this txn into job transaction to avoid schema version
 	//  without differ.
+	start := time.Now()
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
+	defer func() {
+		metrics.DDLIncrSchemaVerOpHist.Observe(time.Since(start).Seconds())
+	}()
 	return schemaVersion, err
 }
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
-func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
+func (sv *schemaVersionManager) lockSchemaVersion(jobCtx *jobContext, jobID int64) error {
 	ownerID := sv.lockOwner.Load()
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
 	// if they are the same job.
 	if ownerID != jobID {
+		start := time.Now()
 		sv.schemaVersionMu.Lock()
+		defer func() {
+			metrics.DDLLockSchemaVerOpHist.Observe(time.Since(start).Seconds())
+		}()
+		jobCtx.lockStartTime = time.Now()
 		sv.lockOwner.Store(jobID)
 	}
 	return nil
 }
 
 // unlockSchemaVersion releases the lock.
-func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
+func (sv *schemaVersionManager) unlockSchemaVersion(jobCtx *jobContext, jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
+		metrics.DDLLockVerDurationHist.Observe(time.Since(jobCtx.lockStartTime).Seconds())
 	}
 }
 
@@ -587,18 +598,26 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	ch := jobCtx.oldDDLCtx.ddlEventCh
-	if ch != nil {
-	forLoop:
-		for i := 0; i < 10; i++ {
-			select {
-			case ch <- e:
-				break forLoop
-			default:
-				time.Sleep(time.Microsecond * 10)
+	// In test environments, we use a channel-based approach to handle DDL events.
+	// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+	// In production, DDL events are handled by the notifier system instead.
+	if intest.InTest {
+		ch := jobCtx.oldDDLCtx.ddlEventCh
+		if ch != nil {
+		forLoop:
+			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
+			// Since most unit tests don't consume events, we make a few attempts and then give up rather
+			// than blocking the DDL job forever on a full channel.
+			for i := 0; i < 10; i++ {
+				select {
+				case ch <- e:
+					break forLoop
+				default:
+					time.Sleep(time.Microsecond * 10)
+				}
 			}
+			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 		}
-		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
 	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
@@ -638,19 +657,21 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		o(opt)
 	}
 
-	id := uuid.New().String()
+	var id string
 	var manager owner.Manager
 	var schemaVerSyncer schemaver.Syncer
 	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
+		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
+		id = globalOwnerManager.ID()
+		manager = globalOwnerManager.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -690,8 +711,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, task, param, d)
 		},
 	)
 
@@ -1002,8 +1023,14 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	failpoint.InjectCall("afterDDLCloseCancel")
 	d.wg.Wait()
-	d.ownerManager.Cancel()
+	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
+	// when run with uni-store BreakCampaignLoop is same as Close.
+	// hope we can unify it after refactor to let some components only start once.
+	if d.ownerManager != nil {
+		d.ownerManager.BreakCampaignLoop()
+	}
 	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.
@@ -1300,7 +1327,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 }
 
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
-func cancelRunningJob(_ *sess.Session, job *model.Job,
+func cancelRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	// These states can't be cancelled.
 	if job.IsDone() || job.IsSynced() {
@@ -1321,7 +1348,7 @@ func cancelRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // pauseRunningJob check and pause the running Job
-func pauseRunningJob(_ *sess.Session, job *model.Job,
+func pauseRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if job.IsPausing() || job.IsPaused() {
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -1340,7 +1367,7 @@ func pauseRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // resumePausedJob check and resume the Paused Job
-func resumePausedJob(_ *sess.Session, job *model.Job,
+func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
 		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
@@ -1362,7 +1389,7 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 // processJobs command on the Job according to the process
 func processJobs(
 	ctx context.Context,
-	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	process func(*model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator,
@@ -1409,7 +1436,7 @@ func processJobs(
 			}
 			delete(jobMap, job.ID)
 
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1481,7 +1508,7 @@ func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
 func processAllJobs(
 	ctx context.Context,
-	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	process func(*model.Job, model.AdminCommandOperator) (err error),
 	se sessionctx.Context,
 	byWho model.AdminCommandOperator,
 ) (map[int64]error, error) {
@@ -1509,7 +1536,7 @@ func processAllJobs(
 		}
 
 		for _, job := range jobs {
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue

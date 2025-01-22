@@ -227,37 +227,7 @@ func (s *builtinReleaseAllLocksSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinRealIsTrueSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinDecimalIsTrueSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinIntIsTrueSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinVectorFloat32IsTrueSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinRealIsFalseSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinDecimalIsFalseSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinIntIsFalseSig) SafeToShareAcrossSession() bool {
 	return false
 }
 
@@ -268,36 +238,6 @@ func (s *builtinVectorFloat32IsFalseSig) SafeToShareAcrossSession() bool {
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinUnaryMinusDecimalSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInIntSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInStringSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInRealSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInDecimalSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInTimeSig) SafeToShareAcrossSession() bool {
-	return false
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinInDurationSig) SafeToShareAcrossSession() bool {
 	return false
 }
 

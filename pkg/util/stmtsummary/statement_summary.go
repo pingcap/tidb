@@ -40,33 +40,38 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
+// StmtDigestKeyPool is the pool for StmtDigestKey.
+var StmtDigestKeyPool = sync.Pool{
+	New: func() any {
+		return &StmtDigestKey{}
+	},
+}
+
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// `hash` is the hash value of this object.
 	hash []byte
+}
+
+// Init initialize the hash key.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+	if cap(key.hash) < length {
+		key.hash = make([]byte, 0, length)
+	} else {
+		key.hash = key.hash[:0]
+	}
+	key.hash = append(key.hash, hack.Slice(digest)...)
+	key.hash = append(key.hash, hack.Slice(schemaName)...)
+	key.hash = append(key.hash, hack.Slice(prevDigest)...)
+	key.hash = append(key.hash, hack.Slice(planDigest)...)
+	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
-	}
+func (key *StmtDigestKey) Hash() []byte {
 	return key.hash
 }
 
@@ -81,6 +86,7 @@ type stmtSummaryByDigestMap struct {
 	// These options are set by global system variables and are accessed concurrently.
 	optEnabled             *atomic2.Bool
 	optEnableInternalQuery *atomic2.Bool
+	optHistoryEnabled      *atomic2.Bool
 	optMaxStmtCount        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Int64
 	optHistorySize         *atomic2.Int32
@@ -99,6 +105,7 @@ type stmtSummaryByDigest struct {
 	// Mutex is only used to lock `history`.
 	sync.Mutex
 	initialized bool
+	cumulative  stmtSummaryStats
 	// Each element in history is a summary in one interval.
 	history *list.List
 	// Following fields are common for each summary element.
@@ -118,6 +125,12 @@ type stmtSummaryByDigestElement struct {
 	// Each summary is summarized between [beginTime, endTime).
 	beginTime int64
 	endTime   int64
+	stmtSummaryStats
+}
+
+// stmtSummaryStats is the collection of statistics tracked for each statement summary,
+// both cumulatively and for each interval.
+type stmtSummaryStats struct {
 	// basic
 	sampleSQL        string
 	charset          string
@@ -140,8 +153,10 @@ type stmtSummaryByDigestElement struct {
 	maxCompileLatency time.Duration
 	// coprocessor
 	sumNumCopTasks       int64
+	sumCopProcessTime    time.Duration
 	maxCopProcessTime    time.Duration
 	maxCopProcessAddress string
+	sumCopWaitTime       time.Duration
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
@@ -220,41 +235,39 @@ type stmtSummaryByDigestElement struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
 }
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName          string
-	OriginalSQL         fmt.Stringer
-	Charset             string
-	Collation           string
-	NormalizedSQL       string
-	Digest              string
-	PrevSQL             string
-	PrevSQLDigest       string
-	PlanGenerator       func() (string, string, any)
-	BinaryPlanGenerator func() string
-	PlanDigest          string
-	PlanDigestGen       func() string
-	User                string
-	TotalLatency        time.Duration
-	ParseLatency        time.Duration
-	CompileLatency      time.Duration
-	StmtCtx             *stmtctx.StatementContext
-	CopTasks            *execdetails.CopTasksDetails
-	ExecDetail          *execdetails.ExecDetails
-	MemMax              int64
-	DiskMax             int64
-	StartTime           time.Time
-	IsInternal          bool
-	Succeed             bool
-	PlanInCache         bool
-	PlanInBinding       bool
-	ExecRetryCount      uint
-	ExecRetryTime       time.Duration
+	SchemaName     string
+	Charset        string
+	Collation      string
+	NormalizedSQL  string
+	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
+	PlanDigest     string
+	User           string
+	TotalLatency   time.Duration
+	ParseLatency   time.Duration
+	CompileLatency time.Duration
+	StmtCtx        *stmtctx.StatementContext
+	CopTasks       *execdetails.CopTasksSummary
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	DiskMax        int64
+	StartTime      time.Time
+	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	PlanInBinding  bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
 	TiKVExecDetails   util.ExecDetails
@@ -266,6 +279,16 @@ type StmtExecInfo struct {
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
+
+	LazyInfo StmtExecLazyInfo
+}
+
+// StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
+type StmtExecLazyInfo interface {
+	GetOriginalSQL() string
+	GetEncodedPlan() (string, string, any)
+	GetBinaryPlan() string
+	GetPlanDigest() string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -284,6 +307,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optMaxStmtCount:        atomic2.NewUint32(uint32(maxStmtCount)),
 		optEnabled:             atomic2.NewBool(true),
 		optEnableInternalQuery: atomic2.NewBool(false),
+		optHistoryEnabled:      atomic2.NewBool(true),
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
 		optMaxSQLLength:        atomic2.NewInt32(4096),
@@ -291,7 +315,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -313,18 +337,16 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	})
 
 	intervalSeconds := ssMap.refreshInterval()
-	historySize := ssMap.historySize()
-
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
+	historySize := 0
+	if ssMap.historyEnabled() {
+		historySize = ssMap.historySize()
 	}
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
 
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
+
+	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
 	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
@@ -345,9 +367,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
-		value, ok := ssMap.summaryMap.Get(key)
+		var value kvcache.Value
+		value, exist = ssMap.summaryMap.Get(key)
 		var summary *stmtSummaryByDigest
-		if !ok {
+		if !exist {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			ssMap.summaryMap.Put(key, summary)
@@ -360,6 +383,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
 	}
 }
 
@@ -386,6 +412,22 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 		if summary.(*stmtSummaryByDigest).isInternal {
 			ssMap.summaryMap.Delete(key)
 		}
+	}
+}
+
+// clearHistory removes history for all statement summaries, leaving only the current interval.
+func (ssMap *stmtSummaryByDigestMap) clearHistory() {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		ssbd.Lock()
+		newHistory := list.New()
+		newHistory.PushFront(ssbd.history.Front().Value)
+		ssbd.history = newHistory
+		ssbd.Unlock()
 	}
 }
 
@@ -470,6 +512,21 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
 	return ssMap.optEnableInternalQuery.Load()
+}
+
+// SetHistoryEnabled enables or disables maintaining the history of statement summary intervals.
+// When history is disabled, any existing history is cleared.
+func (ssMap *stmtSummaryByDigestMap) SetHistoryEnabled(value bool) error {
+	ssMap.optHistoryEnabled.Store(value)
+	if !value {
+		ssMap.clearHistory()
+	}
+	return nil
+}
+
+// historyEnabled returns whether the history of statement summary intervals is maintained.
+func (ssMap *stmtSummaryByDigestMap) historyEnabled() bool {
+	return ssMap.optHistoryEnabled.Load()
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
@@ -565,10 +622,12 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	}
 	tableNames := buffer.String()
 
+	ssbd.cumulative = *newStmtSummaryStats(sei)
+
 	planDigest := sei.PlanDigest
-	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
+	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
-		planDigest = sei.PlanDigestGen()
+		planDigest = sei.LazyInfo.GetPlanDigest()
 	}
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
@@ -589,6 +648,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
+		ssbd.cumulative.add(sei)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -649,26 +709,22 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 // MaxEncodedPlanSizeInBytes is the upper limit of the size of the plan and the binary plan in the stmt summary.
 var MaxEncodedPlanSizeInBytes = 1024 * 1024
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, e := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
 		return nil
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := ""
-	if sei.BinaryPlanGenerator != nil {
-		binPlan = sei.BinaryPlanGenerator()
-		if len(binPlan) > MaxEncodedPlanSizeInBytes {
-			binPlan = plancodec.BinaryPlanDiscardedEncoded
-		}
+	binPlan := sei.LazyInfo.GetBinaryPlan()
+	if len(binPlan) > MaxEncodedPlanSizeInBytes {
+		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
-	ssElement := &stmtSummaryByDigestElement{
-		beginTime: beginTime,
-		sampleSQL: formatSQL(sei.OriginalSQL.String()),
+	return &stmtSummaryStats{
+		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL()),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -689,6 +745,13 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		prepared:          sei.Prepared,
 		minResultRows:     math.MaxInt64,
 		resourceGroupName: sei.ResourceGroupName,
+	}
+}
+
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+	ssElement := &stmtSummaryByDigestElement{
+		beginTime:        beginTime,
+		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -712,215 +775,225 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	}
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
-		ssElement.authUsers[sei.User] = struct{}{}
+		ssStats.authUsers[sei.User] = struct{}{}
 	}
 
-	// refreshInterval may change anytime, update endTime ASAP.
-	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.execCount++
+	ssStats.execCount++
 	if !sei.Succeed {
-		ssElement.sumErrors++
+		ssStats.sumErrors++
 	}
-	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
 
 	// latency
-	ssElement.sumLatency += sei.TotalLatency
-	if sei.TotalLatency > ssElement.maxLatency {
-		ssElement.maxLatency = sei.TotalLatency
+	ssStats.sumLatency += sei.TotalLatency
+	if sei.TotalLatency > ssStats.maxLatency {
+		ssStats.maxLatency = sei.TotalLatency
 	}
-	if sei.TotalLatency < ssElement.minLatency {
-		ssElement.minLatency = sei.TotalLatency
+	if sei.TotalLatency < ssStats.minLatency {
+		ssStats.minLatency = sei.TotalLatency
 	}
-	ssElement.sumParseLatency += sei.ParseLatency
-	if sei.ParseLatency > ssElement.maxParseLatency {
-		ssElement.maxParseLatency = sei.ParseLatency
+	ssStats.sumParseLatency += sei.ParseLatency
+	if sei.ParseLatency > ssStats.maxParseLatency {
+		ssStats.maxParseLatency = sei.ParseLatency
 	}
-	ssElement.sumCompileLatency += sei.CompileLatency
-	if sei.CompileLatency > ssElement.maxCompileLatency {
-		ssElement.maxCompileLatency = sei.CompileLatency
+	ssStats.sumCompileLatency += sei.CompileLatency
+	if sei.CompileLatency > ssStats.maxCompileLatency {
+		ssStats.maxCompileLatency = sei.CompileLatency
 	}
 
 	// coprocessor
-	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.sumNumCopTasks += numCopTasks
-	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
-		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
-	}
-	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
-		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+	if sei.CopTasks != nil {
+		ssStats.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
+		ssStats.sumCopProcessTime += sei.CopTasks.TotProcessTime
+		if sei.CopTasks.MaxProcessTime > ssStats.maxCopProcessTime {
+			ssStats.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+			ssStats.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+		}
+		ssStats.sumCopWaitTime += sei.CopTasks.TotWaitTime
+		if sei.CopTasks.MaxWaitTime > ssStats.maxCopWaitTime {
+			ssStats.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+			ssStats.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+		}
 	}
 
 	// TiKV
-	ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
-	if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
-		ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
+	ssStats.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
+	if sei.ExecDetail.TimeDetail.ProcessTime > ssStats.maxProcessTime {
+		ssStats.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
 	}
-	ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
-	if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
-		ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
+	ssStats.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
+	if sei.ExecDetail.TimeDetail.WaitTime > ssStats.maxWaitTime {
+		ssStats.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
 	}
-	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
-	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
-		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
+	ssStats.sumBackoffTime += sei.ExecDetail.BackoffTime
+	if sei.ExecDetail.BackoffTime > ssStats.maxBackoffTime {
+		ssStats.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
 
 	if sei.ExecDetail.ScanDetail != nil {
-		ssElement.sumTotalKeys += sei.ExecDetail.ScanDetail.TotalKeys
-		if sei.ExecDetail.ScanDetail.TotalKeys > ssElement.maxTotalKeys {
-			ssElement.maxTotalKeys = sei.ExecDetail.ScanDetail.TotalKeys
+		ssStats.sumTotalKeys += sei.ExecDetail.ScanDetail.TotalKeys
+		if sei.ExecDetail.ScanDetail.TotalKeys > ssStats.maxTotalKeys {
+			ssStats.maxTotalKeys = sei.ExecDetail.ScanDetail.TotalKeys
 		}
-		ssElement.sumProcessedKeys += sei.ExecDetail.ScanDetail.ProcessedKeys
-		if sei.ExecDetail.ScanDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-			ssElement.maxProcessedKeys = sei.ExecDetail.ScanDetail.ProcessedKeys
+		ssStats.sumProcessedKeys += sei.ExecDetail.ScanDetail.ProcessedKeys
+		if sei.ExecDetail.ScanDetail.ProcessedKeys > ssStats.maxProcessedKeys {
+			ssStats.maxProcessedKeys = sei.ExecDetail.ScanDetail.ProcessedKeys
 		}
-		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
-		if sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
-			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
+		ssStats.sumRocksdbDeleteSkippedCount += sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount > ssStats.maxRocksdbDeleteSkippedCount {
+			ssStats.maxRocksdbDeleteSkippedCount = sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
 		}
-		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
-		if sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
-			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
+		ssStats.sumRocksdbKeySkippedCount += sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount > ssStats.maxRocksdbKeySkippedCount {
+			ssStats.maxRocksdbKeySkippedCount = sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
 		}
-		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
-		if sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
-			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
+		ssStats.sumRocksdbBlockCacheHitCount += sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount > ssStats.maxRocksdbBlockCacheHitCount {
+			ssStats.maxRocksdbBlockCacheHitCount = sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
 		}
-		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
-		if sei.ExecDetail.ScanDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
-			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
+		ssStats.sumRocksdbBlockReadCount += sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadCount > ssStats.maxRocksdbBlockReadCount {
+			ssStats.maxRocksdbBlockReadCount = sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
 		}
-		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
-		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
-			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		ssStats.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssStats.maxRocksdbBlockReadByte {
+			ssStats.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 	}
 
 	// txn
 	commitDetails := sei.ExecDetail.CommitDetail
 	if commitDetails != nil {
-		ssElement.commitCount++
-		ssElement.sumPrewriteTime += commitDetails.PrewriteTime
-		if commitDetails.PrewriteTime > ssElement.maxPrewriteTime {
-			ssElement.maxPrewriteTime = commitDetails.PrewriteTime
+		ssStats.commitCount++
+		ssStats.sumPrewriteTime += commitDetails.PrewriteTime
+		if commitDetails.PrewriteTime > ssStats.maxPrewriteTime {
+			ssStats.maxPrewriteTime = commitDetails.PrewriteTime
 		}
-		ssElement.sumCommitTime += commitDetails.CommitTime
-		if commitDetails.CommitTime > ssElement.maxCommitTime {
-			ssElement.maxCommitTime = commitDetails.CommitTime
+		ssStats.sumCommitTime += commitDetails.CommitTime
+		if commitDetails.CommitTime > ssStats.maxCommitTime {
+			ssStats.maxCommitTime = commitDetails.CommitTime
 		}
-		ssElement.sumGetCommitTsTime += commitDetails.GetCommitTsTime
-		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
-			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
+		ssStats.sumGetCommitTsTime += commitDetails.GetCommitTsTime
+		if commitDetails.GetCommitTsTime > ssStats.maxGetCommitTsTime {
+			ssStats.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
-		ssElement.sumResolveLockTime += resolveLockTime
-		if resolveLockTime > ssElement.maxResolveLockTime {
-			ssElement.maxResolveLockTime = resolveLockTime
+		ssStats.sumResolveLockTime += resolveLockTime
+		if resolveLockTime > ssStats.maxResolveLockTime {
+			ssStats.maxResolveLockTime = resolveLockTime
 		}
-		ssElement.sumLocalLatchTime += commitDetails.LocalLatchTime
-		if commitDetails.LocalLatchTime > ssElement.maxLocalLatchTime {
-			ssElement.maxLocalLatchTime = commitDetails.LocalLatchTime
+		ssStats.sumLocalLatchTime += commitDetails.LocalLatchTime
+		if commitDetails.LocalLatchTime > ssStats.maxLocalLatchTime {
+			ssStats.maxLocalLatchTime = commitDetails.LocalLatchTime
 		}
-		ssElement.sumWriteKeys += int64(commitDetails.WriteKeys)
-		if commitDetails.WriteKeys > ssElement.maxWriteKeys {
-			ssElement.maxWriteKeys = commitDetails.WriteKeys
+		ssStats.sumWriteKeys += int64(commitDetails.WriteKeys)
+		if commitDetails.WriteKeys > ssStats.maxWriteKeys {
+			ssStats.maxWriteKeys = commitDetails.WriteKeys
 		}
-		ssElement.sumWriteSize += int64(commitDetails.WriteSize)
-		if commitDetails.WriteSize > ssElement.maxWriteSize {
-			ssElement.maxWriteSize = commitDetails.WriteSize
+		ssStats.sumWriteSize += int64(commitDetails.WriteSize)
+		if commitDetails.WriteSize > ssStats.maxWriteSize {
+			ssStats.maxWriteSize = commitDetails.WriteSize
 		}
 		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
-		ssElement.sumPrewriteRegionNum += int64(prewriteRegionNum)
-		if prewriteRegionNum > ssElement.maxPrewriteRegionNum {
-			ssElement.maxPrewriteRegionNum = prewriteRegionNum
+		ssStats.sumPrewriteRegionNum += int64(prewriteRegionNum)
+		if prewriteRegionNum > ssStats.maxPrewriteRegionNum {
+			ssStats.maxPrewriteRegionNum = prewriteRegionNum
 		}
-		ssElement.sumTxnRetry += int64(commitDetails.TxnRetry)
-		if commitDetails.TxnRetry > ssElement.maxTxnRetry {
-			ssElement.maxTxnRetry = commitDetails.TxnRetry
+		ssStats.sumTxnRetry += int64(commitDetails.TxnRetry)
+		if commitDetails.TxnRetry > ssStats.maxTxnRetry {
+			ssStats.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
-		ssElement.sumCommitBackoffTime += commitBackoffTime
-		if commitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitBackoffTime
+		ssStats.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssStats.maxCommitBackoffTime {
+			ssStats.maxCommitBackoffTime = commitBackoffTime
 		}
-		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.PrewriteBackoffTypes))
+		ssStats.sumBackoffTimes += int64(len(commitDetails.Mu.PrewriteBackoffTypes))
 		for _, backoffType := range commitDetails.Mu.PrewriteBackoffTypes {
-			ssElement.backoffTypes[backoffType]++
+			ssStats.backoffTypes[backoffType]++
 		}
-		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.CommitBackoffTypes))
+		ssStats.sumBackoffTimes += int64(len(commitDetails.Mu.CommitBackoffTypes))
 		for _, backoffType := range commitDetails.Mu.CommitBackoffTypes {
-			ssElement.backoffTypes[backoffType]++
+			ssStats.backoffTypes[backoffType]++
 		}
 		commitDetails.Mu.Unlock()
 	}
 
 	// plan cache
 	if sei.PlanInCache {
-		ssElement.planInCache = true
-		ssElement.planCacheHits++
+		ssStats.planInCache = true
+		ssStats.planCacheHits++
 	} else {
-		ssElement.planInCache = false
+		ssStats.planInCache = false
 	}
 	if sei.PlanCacheUnqualified != "" {
-		ssElement.planCacheUnqualifiedCount++
-		ssElement.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
+		ssStats.planCacheUnqualifiedCount++
+		ssStats.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
 	}
 
 	// SPM
 	if sei.PlanInBinding {
-		ssElement.planInBinding = true
+		ssStats.planInBinding = true
 	} else {
-		ssElement.planInBinding = false
+		ssStats.planInBinding = false
 	}
 
 	// other
-	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
-	ssElement.sumMem += sei.MemMax
-	if sei.MemMax > ssElement.maxMem {
-		ssElement.maxMem = sei.MemMax
+	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumMem += sei.MemMax
+	if sei.MemMax > ssStats.maxMem {
+		ssStats.maxMem = sei.MemMax
 	}
-	ssElement.sumDisk += sei.DiskMax
-	if sei.DiskMax > ssElement.maxDisk {
-		ssElement.maxDisk = sei.DiskMax
+	ssStats.sumDisk += sei.DiskMax
+	if sei.DiskMax > ssStats.maxDisk {
+		ssStats.maxDisk = sei.DiskMax
 	}
-	if sei.StartTime.Before(ssElement.firstSeen) {
-		ssElement.firstSeen = sei.StartTime
+	if sei.StartTime.Before(ssStats.firstSeen) {
+		ssStats.firstSeen = sei.StartTime
 	}
-	if ssElement.lastSeen.Before(sei.StartTime) {
-		ssElement.lastSeen = sei.StartTime
+	if ssStats.lastSeen.Before(sei.StartTime) {
+		ssStats.lastSeen = sei.StartTime
 	}
 	if sei.ExecRetryCount > 0 {
-		ssElement.execRetryCount += sei.ExecRetryCount
-		ssElement.execRetryTime += sei.ExecRetryTime
+		ssStats.execRetryCount += sei.ExecRetryCount
+		ssStats.execRetryTime += sei.ExecRetryTime
 	}
 	if sei.ResultRows > 0 {
-		ssElement.sumResultRows += sei.ResultRows
-		if ssElement.maxResultRows < sei.ResultRows {
-			ssElement.maxResultRows = sei.ResultRows
+		ssStats.sumResultRows += sei.ResultRows
+		if ssStats.maxResultRows < sei.ResultRows {
+			ssStats.maxResultRows = sei.ResultRows
 		}
-		if ssElement.minResultRows > sei.ResultRows {
-			ssElement.minResultRows = sei.ResultRows
+		if ssStats.minResultRows > sei.ResultRows {
+			ssStats.minResultRows = sei.ResultRows
 		}
 	} else {
-		ssElement.minResultRows = 0
+		ssStats.minResultRows = 0
 	}
-	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
-	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
-	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
-	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
-	ssElement.sumTidbCPU += sei.CPUUsages.TidbCPUTime
-	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
+	ssStats.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
+	ssStats.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
+	ssStats.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
+	ssStats.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
+	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
+
+	// network traffic
+	ssStats.StmtNetworkTrafficSummary.Add(&sei.TiKVExecDetails)
 
 	// request-units
-	ssElement.StmtRUSummary.Add(sei.RUDetail)
+	ssStats.StmtRUSummary.Add(sei.RUDetail)
+}
+
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
+	ssElement.Lock()
+	defer ssElement.Unlock()
+
+	// refreshInterval may change anytime, update endTime ASAP.
+	ssElement.endTime = ssElement.beginTime + intervalSeconds
+	ssElement.stmtSummaryStats.add(sei)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -1040,5 +1113,46 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+}
+
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
+type StmtNetworkTrafficSummary struct {
+	UnpackedBytesSentKVTotal          int64 `json:"unpacked_bytes_send_kv_total"`
+	UnpackedBytesReceivedKVTotal      int64 `json:"unpacked_bytes_received_kv_total"`
+	UnpackedBytesSentKVCrossZone      int64 `json:"unpacked_bytes_send_kv_cross_zone"`
+	UnpackedBytesReceivedKVCrossZone  int64 `json:"unpacked_bytes_received_kv_cross_zone"`
+	UnpackedBytesSentMPPTotal         int64 `json:"unpacked_bytes_send_mpp_total"`
+	UnpackedBytesReceivedMPPTotal     int64 `json:"unpacked_bytes_received_mpp_total"`
+	UnpackedBytesSentMPPCrossZone     int64 `json:"unpacked_bytes_send_mpp_cross_zone"`
+	UnpackedBytesReceivedMPPCrossZone int64 `json:"unpacked_bytes_received_mpp_cross_zone"`
+}
+
+// Merge merges the value of 2 network traffic summary records.
+func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
+	if other == nil {
+		return
+	}
+	s.UnpackedBytesSentKVTotal += other.UnpackedBytesSentKVTotal
+	s.UnpackedBytesReceivedKVTotal += other.UnpackedBytesReceivedKVTotal
+	s.UnpackedBytesSentKVCrossZone += other.UnpackedBytesSentKVCrossZone
+	s.UnpackedBytesReceivedKVCrossZone += other.UnpackedBytesReceivedKVCrossZone
+	s.UnpackedBytesSentMPPTotal += other.UnpackedBytesSentMPPTotal
+	s.UnpackedBytesReceivedMPPTotal += other.UnpackedBytesReceivedMPPTotal
+	s.UnpackedBytesSentMPPCrossZone += other.UnpackedBytesSentMPPCrossZone
+	s.UnpackedBytesReceivedMPPCrossZone += other.UnpackedBytesReceivedMPPCrossZone
+}
+
+// Add add a new sample value to the ru summary record.
+func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
+	if info != nil {
+		s.UnpackedBytesSentKVTotal += info.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedKVTotal += info.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentKVCrossZone += info.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentMPPTotal += info.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedMPPTotal += info.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentMPPCrossZone += info.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedMPPCrossZone += info.UnpackedBytesReceivedMPPCrossZone
 	}
 }

@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -135,6 +135,13 @@ func (ctx *ExprContext) GetGroupConcatMaxLen() uint64 {
 // If the context is not in a session, it should return 0.
 func (ctx *ExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
+}
+
+// IsReadonlyUserVar checks whether the user variable is readonly.
+func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
+	m := ctx.sctx.GetPlanCtx().GetReadonlyUserVarMap()
+	_, ok := m[name]
+	return ok
 }
 
 // IntoStatic turns the ExprContext into a ExprContext.
@@ -387,7 +394,7 @@ func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
 
 func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
 	return func(db, name string) (expropt.SequenceOperator, error) {
-		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(name))
+		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), ast.NewCIStr(db), ast.NewCIStr(name))
 		if err != nil {
 			return nil, err
 		}

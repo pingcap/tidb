@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -200,9 +201,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency flush, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
 	// for consistency snapshot, we should use the snapshot that we get/set at first in metadata. TiDB will assure the snapshot of TSO.
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
-	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
+	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, false)
 	if err != nil {
-		tctx.L().Info("get global metadata failed", log.ShortError(err))
+		tctx.L().Warn("get global metadata failed", log.ShortError(err))
 	}
 
 	if d.conf.CollationCompatible == StrictCollationCompatible {
@@ -239,7 +240,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		conn = newConn
 		// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
 		if updateMeta && conf.PosAfterConnect {
-			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
+			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo, true)
 			if err1 != nil {
 				return conn, errors.Trace(err1)
 			}
@@ -284,7 +285,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
+		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
 		if err != nil {
 			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
 		}
@@ -1150,15 +1151,21 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 		return nil
 	}
 
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
 	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
+
+	// TiDB has optimized the performance of reading INFORMATION_SCHEMA.TABLES
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
+		listType = listTableByInfoSchema
 	} else {
-		listType = getListTableTypeByConf(conf)
+		ifSeqExists, err := checkIfSeqExists(db)
+		if err != nil {
+			return err
+		}
+		if ifSeqExists {
+			listType = listTableByShowFullTables
+		} else {
+			listType = getListTableTypeByConf(conf)
+		}
 	}
 
 	if conf.SpecifiedTables {
@@ -1456,7 +1463,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		if err != nil {
 			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
+			pdClient, err := pd.NewClientWithContext(tctx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{})
 			if err != nil {
 				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 			}

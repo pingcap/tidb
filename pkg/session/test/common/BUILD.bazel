@@ -12,7 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/expression",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/table/tables",

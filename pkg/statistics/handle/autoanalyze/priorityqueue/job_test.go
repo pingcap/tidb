@@ -31,7 +31,7 @@ func TestStringer(t *testing.T) {
 			name: "analyze non-partitioned table",
 			job: &priorityqueue.NonPartitionedTableAnalysisJob{
 				TableID:       1,
-				TableSchema:   "test_schema",
+				SchemaName:    "test_schema",
 				TableName:     "test_table",
 				TableStatsVer: 1,
 				Weight:        1.999999,
@@ -44,10 +44,13 @@ func TestStringer(t *testing.T) {
 		{
 			name: "analyze non-partitioned table index",
 			job: &priorityqueue.NonPartitionedTableAnalysisJob{
-				TableID:       2,
-				TableSchema:   "test_schema",
-				TableName:     "test_table",
-				Indexes:       []string{"idx"},
+				TableID:    2,
+				SchemaName: "test_schema",
+				TableName:  "test_table",
+				IndexIDs: map[int64]struct{}{
+					1: {},
+				},
+				IndexNames:    []string{"idx"},
 				TableStatsVer: 1,
 				Weight:        1.999999,
 				Indicators: priorityqueue.Indicators{
@@ -60,11 +63,15 @@ func TestStringer(t *testing.T) {
 			name: "analyze dynamic partition",
 			job: &priorityqueue.DynamicPartitionedTableAnalysisJob{
 				GlobalTableID:   3,
-				TableSchema:     "test_schema",
+				SchemaName:      "test_schema",
 				GlobalTableName: "test_table",
-				Partitions:      []string{"p0", "p1"},
-				TableStatsVer:   1,
-				Weight:          1.999999,
+				PartitionNames:  []string{"p0", "p1"},
+				PartitionIDs: map[int64]struct{}{
+					1: {},
+					2: {},
+				},
+				TableStatsVer: 1,
+				Weight:        1.999999,
 				Indicators: priorityqueue.Indicators{
 					ChangePercentage: 0.5,
 				},
@@ -75,10 +82,14 @@ func TestStringer(t *testing.T) {
 			name: "analyze dynamic partition's indexes",
 			job: &priorityqueue.DynamicPartitionedTableAnalysisJob{
 				GlobalTableID:   4,
-				TableSchema:     "test_schema",
+				SchemaName:      "test_schema",
 				GlobalTableName: "test_table",
-				PartitionIndexes: map[string][]string{
+				PartitionIndexNames: map[string][]string{
 					"idx": {"p0", "p1"},
+				},
+				PartitionIndexIDs: map[int64][]int64{
+					1: {1, 2},
+					2: {1, 2},
 				},
 				TableStatsVer: 1,
 				Weight:        1.999999,
@@ -92,7 +103,7 @@ func TestStringer(t *testing.T) {
 			name: "analyze static partition",
 			job: &priorityqueue.StaticPartitionedTableAnalysisJob{
 				GlobalTableID:       5,
-				TableSchema:         "test_schema",
+				SchemaName:          "test_schema",
 				GlobalTableName:     "test_table",
 				StaticPartitionName: "p0",
 				StaticPartitionID:   6,
@@ -108,13 +119,16 @@ func TestStringer(t *testing.T) {
 			name: "analyze static partition's index",
 			job: &priorityqueue.StaticPartitionedTableAnalysisJob{
 				GlobalTableID:       7,
-				TableSchema:         "test_schema",
+				SchemaName:          "test_schema",
 				GlobalTableName:     "test_table",
 				StaticPartitionName: "p0",
 				StaticPartitionID:   8,
 				TableStatsVer:       1,
 				Weight:              1.999999,
-				Indexes:             []string{"idx"},
+				IndexIDs: map[int64]struct{}{
+					1: {},
+				},
+				IndexNames: []string{"idx"},
 				Indicators: priorityqueue.Indicators{
 					ChangePercentage: 0.5,
 				},

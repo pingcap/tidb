@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -347,7 +346,7 @@ func TestDoDDLJobQuit(t *testing.T) {
 	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: ast.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -579,24 +578,24 @@ func TestMatchIdentity(t *testing.T) {
 
 	// The MySQL matching rule is most specific to least specific.
 	// So if I log in from 192.168.1.1 I should match that entry always.
-	identity, err := tk.Session().MatchIdentity("useridentity", "192.168.1.1")
+	identity, err := tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "192.168.1.1", identity.Hostname)
 
 	// If I log in from localhost, I should match localhost
-	identity, err = tk.Session().MatchIdentity("useridentity", "localhost")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "localhost")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
 
 	// If I log in from 192.168.1.2 I should match wildcard.
-	identity, err = tk.Session().MatchIdentity("useridentity", "192.168.1.2")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.2")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "%", identity.Hostname)
 
-	identity, err = tk.Session().MatchIdentity("useridentity", "127.0.0.1")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "127.0.0.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
@@ -606,7 +605,7 @@ func TestMatchIdentity(t *testing.T) {
 	// entry in the privileges table (by reverse lookup).
 	ips, err := net.LookupHost("example.com")
 	require.NoError(t, err)
-	identity, err = tk.Session().MatchIdentity("useridentity", ips[0])
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", ips[0])
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	// FIXME: we *should* match example.com instead
@@ -685,6 +684,7 @@ func TestRequestSource(t *testing.T) {
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				tikvrpc.AttachContext(req, req.Context)
 				requestSource := ""
 				readType := ""
 				switch r := req.Req.(type) {

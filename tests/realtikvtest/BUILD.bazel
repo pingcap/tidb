@@ -7,6 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/session",

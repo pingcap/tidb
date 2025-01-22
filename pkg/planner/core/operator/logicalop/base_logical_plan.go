@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -40,6 +42,8 @@ type BaseLogicalPlan struct {
 	taskMap map[string]base.Task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
 	taskMapBak []string
+	// planIDsHash is the hash of the subtree root from this logical plan.
+	planIDsHash uint64
 	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []uint64
 	self         base.LogicalPlan
@@ -56,13 +60,21 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	intest.Assert(false, "Hash64 should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Hash64 should not be called directly")
+	}
 	h.HashInt(p.ID())
 }
 
 // Equals implements HashEquals.<1st> interface.
 func (p *BaseLogicalPlan) Equals(other any) bool {
-	intest.Assert(false, "Equals should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Equals should not be called directly")
+	}
 	if other == nil {
 		return false
 	}
@@ -208,11 +220,11 @@ func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema)
 }
 
 // DeriveStats implements LogicalPlan.<11th> interface.
-func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.SetStats(childStats[0])
 		return p.StatsInfo(), nil
@@ -351,20 +363,20 @@ func (p *BaseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 
 // GetTask returns the history recorded Task for specified property.
 func (p *BaseLogicalPlan) GetTask(prop *property.PhysicalProperty) base.Task {
-	key := prop.HashCode()
-	return p.taskMap[string(key)]
+	key := strconv.FormatUint(p.planIDsHash, 10) + string(prop.HashCode())
+	return p.taskMap[key]
 }
 
 // StoreTask records Task for specified property as <k,v>.
 func (p *BaseLogicalPlan) StoreTask(prop *property.PhysicalProperty, task base.Task) {
-	key := prop.HashCode()
+	key := strconv.FormatUint(p.planIDsHash, 10) + string(prop.HashCode())
 	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
 		ts := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, ts)
-		p.taskMapBak = append(p.taskMapBak, string(key))
+		p.taskMapBak = append(p.taskMapBak, key)
 	}
-	p.taskMap[string(key)] = task
+	p.taskMap[key] = task
 }
 
 // ChildLen returns the child length of BaseLogicalPlan.
@@ -395,6 +407,16 @@ func (p *BaseLogicalPlan) FDs() *fd.FDSet {
 // SetMaxOneRow sets the maxOneRow of BaseLogicalPlan.
 func (p *BaseLogicalPlan) SetMaxOneRow(b bool) {
 	p.maxOneRow = b
+}
+
+// SetPlanIDsHash set the hash of the subtree rooted from this logical plan.
+func (p *BaseLogicalPlan) SetPlanIDsHash(hash uint64) {
+	p.planIDsHash = hash
+}
+
+// GetPlanIDsHash return the plan ids hash rooted from this logical plan.
+func (p *BaseLogicalPlan) GetPlanIDsHash() uint64 {
+	return p.planIDsHash
 }
 
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.

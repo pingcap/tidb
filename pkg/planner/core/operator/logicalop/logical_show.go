@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -32,7 +31,7 @@ import (
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor
@@ -43,9 +42,9 @@ type ShowContents struct {
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            string
 	Table             *resolve.TableNameW // Used for showing columns.
-	Partition         model.CIStr         // Use for showing partition
+	Partition         ast.CIStr           // Use for showing partition
 	Column            *ast.ColumnName     // Used for `desc table column`.
-	IndexName         model.CIStr
+	IndexName         ast.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	User              *auth.UserIdentity   // Used for show grants.
@@ -109,7 +108,7 @@ func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

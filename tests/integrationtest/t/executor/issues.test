@@ -767,3 +767,6 @@ explain analyze select * from pt where val = 126 order by id limit 100;  # expec
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
 select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;
+
+# TestIssue56641
+select ((exists (select 1)) * -5) as c1;

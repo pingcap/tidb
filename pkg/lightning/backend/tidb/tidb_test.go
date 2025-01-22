@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -65,11 +65,11 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	}
 	cols := make([]*model.ColumnInfo, 0, len(tys))
 	for i, ty := range tys {
-		col := &model.ColumnInfo{ID: int64(i + 1), Name: pmodel.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
+		col := &model.ColumnInfo{ID: int64(i + 1), Name: ast.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -289,12 +289,12 @@ func testStrictMode(t *testing.T) {
 	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
 	ft.SetCharset(charset.CharsetUTF8MB4)
-	col0 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
+	col0 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
 	ft.SetCharset(charset.CharsetASCII)
-	col1 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
+	col1 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -334,48 +334,12 @@ func testStrictMode(t *testing.T) {
 	require.Regexp(t, "incorrect ascii value .* for column s1$", err.Error())
 }
 
-func TestFetchRemoteTableModels_3_x(t *testing.T) {
-	s := createMysqlSuite(t)
-	defer s.TearDownTest(t)
-	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v3.0.18"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
-		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
-			AddRow("t", "id", "int(10)", "", "auto_increment"))
-	s.mockDB.ExpectCommit()
-
-	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
-	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
-	require.NoError(t, err)
-	ft := types.FieldType{}
-	ft.SetFlag(mysql.AutoIncrementFlag)
-	require.Equal(t, []*model.TableInfo{
-		{
-			Name:       pmodel.NewCIStr("t"),
-			State:      model.StatePublic,
-			PKIsHandle: true,
-			Columns: []*model.ColumnInfo{
-				{
-					Name:      pmodel.NewCIStr("id"),
-					Offset:    0,
-					State:     model.StatePublic,
-					FieldType: ft,
-				},
-			},
-		},
-	}, tableInfos)
-}
-
 func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.0"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
-		WithArgs("test").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t").
 		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
 			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
@@ -384,18 +348,18 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
-	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test", []string{"t"})
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
-	require.Equal(t, []*model.TableInfo{
-		{
-			Name:       pmodel.NewCIStr("t"),
+	require.Equal(t, map[string]*model.TableInfo{
+		"t": {
+			Name:       ast.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -409,10 +373,8 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
-		WithArgs("test").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t").
 		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
 			AddRow("t", "id", "bigint(20)", "", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
@@ -421,18 +383,18 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
-	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test", []string{"t"})
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag)
-	require.Equal(t, []*model.TableInfo{
-		{
-			Name:       pmodel.NewCIStr("t"),
+	require.Equal(t, map[string]*model.TableInfo{
+		"t": {
+			Name:       ast.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -446,10 +408,8 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT version()").
-		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
-		WithArgs("test").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t").
 		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
 			AddRow("t", "id", "bigint(20)", "1 + 2", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
@@ -458,19 +418,19 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
-	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test")
+	tableInfos, err := targetInfoGetter.FetchRemoteTableModels(context.Background(), "test", []string{"t"})
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.PriKeyFlag)
-	require.Equal(t, []*model.TableInfo{
-		{
-			Name:           pmodel.NewCIStr("t"),
+	require.Equal(t, map[string]*model.TableInfo{
+		"t": {
+			Name:           ast.NewCIStr("t"),
 			State:          model.StatePublic,
 			PKIsHandle:     true,
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:                pmodel.NewCIStr("id"),
+					Name:                ast.NewCIStr("id"),
 					Offset:              0,
 					State:               model.StatePublic,
 					FieldType:           ft,
@@ -485,10 +445,8 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT tidb_version()").
-		WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).AddRow(`Release Version: v99.0.0`)) // this is a fake version number
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
-		WithArgs("test").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?,?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "tbl01", "tbl02").
 		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
 			AddRow("tbl01", "id", "bigint(20)", "", "auto_increment").
 			AddRow("tbl01", "val", "varchar(255)", "", "").
@@ -503,30 +461,106 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 	s.mockDB.ExpectCommit()
 
 	infoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
-	tableInfos, err := infoGetter.FetchRemoteTableModels(context.Background(), "test")
+	tableInfos, err := infoGetter.FetchRemoteTableModels(
+		context.Background(),
+		"test",
+		[]string{"tbl01", "tbl02"},
+	)
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag)
-	require.Equal(t, []*model.TableInfo{
-		{
-			Name:       pmodel.NewCIStr("tbl01"),
+	require.Equal(t, map[string]*model.TableInfo{
+		"tbl01": {
+			Name:       ast.NewCIStr("tbl01"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
 				},
 				{
-					Name:   pmodel.NewCIStr("val"),
+					Name:   ast.NewCIStr("val"),
 					Offset: 1,
 					State:  model.StatePublic,
 				},
 			},
 		},
 	}, tableInfos)
+}
+
+func TestFetchRemoteTableModelsConcurrency(t *testing.T) {
+	backupConcurrency := tidb.FetchRemoteTableModelsConcurrency
+	tidb.FetchRemoteTableModelsConcurrency = 2
+	backupBatchSize := tidb.FetchRemoteTableModelsBatchSize
+	tidb.FetchRemoteTableModelsBatchSize = 3
+	t.Cleanup(func() {
+		tidb.FetchRemoteTableModelsConcurrency = backupConcurrency
+		tidb.FetchRemoteTableModelsBatchSize = backupBatchSize
+	})
+
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	s.mockDB.MatchExpectationsInOrder(false)
+
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?,?,?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t1", "t2", "t3").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t1", "id", "bigint(20)", "", "").
+			AddRow("t2", "id", "bigint(20)", "", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t1` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t1", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t2` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t2", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectCommit()
+
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?,?,?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t4", "t5", "t6").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t4", "id", "bigint(20)", "", "").
+			AddRow("t6", "id", "bigint(20)", "", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t4` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t4", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t6` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t6", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectCommit()
+
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? AND table_name IN (?,?,?) ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test", "t7", "t8", "t9").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t8", "id", "bigint(20)", "", "").
+			AddRow("t9", "id", "bigint(20)", "", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t8` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t8", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t9` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t9", "id", int64(1), "_TIDB_ROWID"))
+	s.mockDB.ExpectCommit()
+
+	infoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := infoGetter.FetchRemoteTableModels(
+		context.Background(),
+		"test",
+		[]string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"},
+	)
+	require.NoError(t, err)
+	require.Len(t, tableInfos, 6)
+	require.Contains(t, tableInfos, "t1")
+	require.Contains(t, tableInfos, "t2")
+	require.Contains(t, tableInfos, "t4")
+	require.Contains(t, tableInfos, "t6")
+	require.Contains(t, tableInfos, "t8")
+	require.Contains(t, tableInfos, "t9")
 }
 
 func TestWriteRowsErrorNoRetry(t *testing.T) {
@@ -572,35 +606,35 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "11.csv", int64(0), nonRetryableError.Error(), "(5)").
 		WillReturnResult(driver.ResultNoRows)
 
@@ -637,21 +671,21 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	// the forth row will exceed the error threshold, won't record this error
@@ -698,7 +732,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 
@@ -1011,7 +1045,7 @@ func TestLogicalImportBatchPrepStmt(t *testing.T) {
 
 // TestWriteRowsRecordOneErrorPrepStmt tests that when LogicalImportPrepStmt is true and the batch insert fails,
 // it will fallback to a single row insert,
-// the error will be recorded in tidb_lightning_errors.conflict_records.
+// the error will be recorded in tidb_lightning_errors.conflict_records_v2.
 func TestWriteRowsRecordOneErrorPrepStmt(t *testing.T) {
 	dupErr := &gmysql.MySQLError{Number: errno.ErrDupEntry, Message: "Duplicate entry '2' for key 'PRIMARY'"}
 	s := createMysqlSuite(t)
@@ -1034,7 +1068,7 @@ func TestWriteRowsRecordOneErrorPrepStmt(t *testing.T) {
 		WithArgs(2).
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 

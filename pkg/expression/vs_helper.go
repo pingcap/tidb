@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -34,18 +33,21 @@ var (
 	}
 )
 
-// VectorHelper is a helper struct for vector indexes.
-type VectorHelper struct {
-	DistanceFnName model.CIStr
+// VSInfo is an easy to use struct for interpreting a VectorSearch expression.
+// NOTE: not all VectorSearch functions are supported by the index. The caller
+// needs to check the distance function name.
+type VSInfo struct {
+	DistanceFnName ast.CIStr
 	FnPbCode       tipb.ScalarFuncSig
 	Vec            types.VectorFloat32
 	Column         *Column
 }
 
-// ExtractVectorHelper extracts a VectorSearchExpr from an expression.
+// InterpretVectorSearchExpr try to interpret a VectorSearch expression.
+// If interpret successfully, return a VSInfo struct, otherwise return nil.
 // NOTE: not all VectorSearch functions are supported by the index. The caller
 // needs to check the distance function name.
-func ExtractVectorHelper(expr Expression) *VectorHelper {
+func InterpretVectorSearchExpr(expr Expression) *VSInfo {
 	x, ok := expr.(*ScalarFunction)
 	if !ok {
 		return nil
@@ -82,7 +84,7 @@ func ExtractVectorHelper(expr Expression) *VectorHelper {
 
 	intest.Assert(vectorConstant.Value.Kind() == types.KindVectorFloat32, "internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
 
-	return &VectorHelper{
+	return &VSInfo{
 		DistanceFnName: x.FuncName,
 		FnPbCode:       x.Function.PbCode(),
 		Vec:            vectorConstant.Value.GetVectorFloat32(),

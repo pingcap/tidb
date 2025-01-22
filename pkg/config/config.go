@@ -33,7 +33,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -100,15 +99,11 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
+	UnavailableIP  = "<nil>"
 )
 
 // Valid config maps
 var (
-	ValidStorage = map[string]bool{
-		"mocktikv": true,
-		"tikv":     true,
-		"unistore": true,
-	}
 	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
@@ -174,18 +169,18 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	TempDir          string `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	Host             string    `toml:"host" json:"host"`
+	AdvertiseAddress string    `toml:"advertise-address" json:"advertise-address"`
+	Port             uint      `toml:"port" json:"port"`
+	Cors             string    `toml:"cors" json:"cors"`
+	Store            StoreType `toml:"store" json:"store"`
+	Path             string    `toml:"path" json:"path"`
+	Socket           string    `toml:"socket" json:"socket"`
+	Lease            string    `toml:"lease" json:"lease"`
+	SplitTable       bool      `toml:"split-table" json:"split-table"`
+	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
+	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -460,13 +455,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
-}
-
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -897,7 +885,7 @@ var defaultConf = Config{
 	Port:                         DefPort,
 	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
-	Store:                        "unistore",
+	Store:                        StoreTypeUniStore,
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
@@ -1321,16 +1309,10 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if !ValidStorage[c.Store] {
-		nameList := make([]string, 0, len(ValidStorage))
-		for k, v := range ValidStorage {
-			if v {
-				nameList = append(nameList, k)
-			}
-		}
-		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
+	if !c.Store.Valid() {
+		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
-	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
+	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {

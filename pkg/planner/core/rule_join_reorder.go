@@ -796,8 +796,7 @@ func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 	if t.TP == plancodec.TypeJoin || t.TP == plancodec.TypeDataSource {
 		return []*tracing.PlanTrace{t}
 	}
-	//nolint: prealloc
-	var r []*tracing.PlanTrace
+	r := make([]*tracing.PlanTrace, 0, 5)
 	for _, child := range t.Children {
 		r = append(r, findRoots(child)...)
 	}

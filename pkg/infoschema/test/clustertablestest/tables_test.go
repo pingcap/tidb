@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -93,7 +93,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int auto_increment primary key, d int)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("1"))
+		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
@@ -343,7 +343,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	testFunc := func(dbName string, expectInfo any) {
 		tableInfo := model.TableInfo{}
 
-		info := infoschema.GetShardingInfo(pmodel.NewCIStr(dbName), &tableInfo)
+		info := infoschema.GetShardingInfo(ast.NewCIStr(dbName), &tableInfo)
 		require.Equal(t, expectInfo, info)
 	}
 
@@ -614,11 +614,11 @@ func TestReloadDropDatabase(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	t2, err := is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	_, err = is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	_, err = is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
 	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
@@ -636,11 +636,11 @@ func TestSystemSchemaID(t *testing.T) {
 func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	db, ok := is.SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := is.SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), ast.NewCIStr(dbName))
 	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
@@ -673,7 +673,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test_hidden"), pmodel.NewCIStr("hidden"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_hidden"), ast.NewCIStr("hidden"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	colInfo := tbInfo.Columns
@@ -972,61 +972,6 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 	require.Equal(t, 2, len(result.Rows()))
 	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	require.Equal(t, 2, len(result.Rows()))
-}
-
-func TestCapturePrivilege(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
-	defer tk.MustExec("drop table if exists t")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int, b varchar(10), key k(a))")
-	defer tk.MustExec("drop table if exists t1")
-
-	// Disable refreshing summary.
-	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
-	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
-	// Clear all statements.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-
-	// Create a new user to test statements summary table privilege
-	tk.MustExec("drop user if exists 'test_user'@'localhost'")
-	tk.MustExec("create user 'test_user'@'localhost'")
-	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
-	tk.MustExec("grant select on test.t1 to 'test_user'@'localhost'")
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.Session().Auth(&auth.UserIdentity{
-		Username:     "test_user",
-		Hostname:     "localhost",
-		AuthUsername: "test_user",
-		AuthHostname: "localhost",
-	}, nil, nil, nil)
-
-	rows = tk1.MustQuery("show global bindings").Rows()
-	// Ordinary users can not see others' records
-	require.Len(t, rows, 0)
-	tk1.MustExec("select * from t1 where b=1")
-	tk1.MustExec("select * from t1 where b=1")
-	tk1.MustExec("admin capture bindings")
-	rows = tk1.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-
-	tk.MustExec("grant all on *.* to 'test_user'@'localhost'")
-	tk1.MustExec("admin capture bindings")
-	rows = tk1.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
 }
 
 // TestStmtSummaryInternalQuery Test statements_summary_history.

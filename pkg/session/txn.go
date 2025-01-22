@@ -669,17 +669,17 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
+			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithDefaultPipelinedTxn())
 		}
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == "unistore" {
+	} else if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	if tf.pipelined {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
+		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithDefaultPipelinedTxn())
 	}
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }
