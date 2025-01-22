@@ -172,6 +172,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 }
 
 func (s *schemaValidator) IsLeaseExpired() bool {
+	s.mux.Lock()
+	defer s.mux.Unlock()
 	return time.Now().After(s.latestSchemaExpire)
 }
 
