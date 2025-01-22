@@ -288,6 +288,27 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 	return errors.Trace(err)
 }
 
+// DeleteKeysWithPrefixFromEtcd deletes keys with prefix from etcd.
+func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := 0; i < retryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, prefix, clientv3.WithPrefix())
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.DDLLogger().Warn(
+			"etcd-cli delete prefix failed",
+			zap.String("prefix", prefix),
+			zap.Error(err),
+			zap.Int("retryCnt", i),
+		)
+	}
+	return errors.Trace(err)
+}
+
 // PutKVToEtcdMono puts key value to etcd monotonously.
 // etcdCli is client of etcd.
 // retryCnt is retry time when an error occurs.
