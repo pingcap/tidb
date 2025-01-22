@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -68,7 +67,7 @@ type wrapTxn struct {
 }
 
 func (txn *wrapTxn) validOrPending() bool {
-	return txn.tsFuture != nil || (txn.Transaction != nil && txn.Transaction.Valid())
+	return txn.tsFuture != nil || txn.Transaction.Valid()
 }
 
 func (txn *wrapTxn) pending() bool {
@@ -174,15 +173,7 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(active bool) (kv.Transaction, error) {
-	if active {
-		if !c.txn.validOrPending() {
-			err := c.newTxn(context.Background())
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
+func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
 }
 
@@ -262,12 +253,10 @@ func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
 	return c.pcache
 }
 
-// newTxn Creates new transaction on the session context.
-func (c *Context) newTxn(ctx context.Context) error {
+// NewTxn implements the sessionctx.Context interface.
+func (c *Context) NewTxn(context.Context) error {
 	if c.Store == nil {
-		logutil.Logger(ctx).Warn("mock.Context: No store is specified when trying to create new transaction. A fake transaction will be created. Note that this is unrecommended usage.")
-		c.fakeTxn()
-		return nil
+		return errors.New("store is not set")
 	}
 	if c.txn.Valid() {
 		err := c.txn.Commit(c.ctx)
@@ -284,46 +273,14 @@ func (c *Context) newTxn(ctx context.Context) error {
 	return nil
 }
 
-// fakeTxn is used to let some tests pass in the context without an available kv.Storage. Once usages to access
-// transactions without a kv.Storage are removed, this type should also be removed.
-// New code should never use this.
-type fakeTxn struct {
-	// The inner should always be nil.
-	kv.Transaction
-	startTS uint64
-}
-
-func (t *fakeTxn) StartTS() uint64 {
-	return t.startTS
-}
-
-func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
-
-func (*fakeTxn) SetOption(_ int, _ any) {}
-
-func (*fakeTxn) Get(ctx context.Context, _ kv.Key) ([]byte, error) {
-	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
-	// read result is faked.
-	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
-	return nil, nil
-}
-
-func (*fakeTxn) Valid() bool { return true }
-
-func (c *Context) fakeTxn() {
-	c.txn.Transaction = &fakeTxn{
-		startTS: 1,
-	}
-}
-
 // NewStaleTxnWithStartTS implements the sessionctx.Context interface.
 func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, _ uint64) error {
-	return c.newTxn(ctx)
+	return c.NewTxn(ctx)
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.newTxn(ctx))
+	return errors.Trace(c.NewTxn(ctx))
 }
 
 // RefreshVars implements the sessionctx.Context interface.
