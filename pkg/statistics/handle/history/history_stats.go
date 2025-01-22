@@ -78,27 +78,27 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 		return
 	}
 
-	var filteredTableIDs []int64
+	var targetedTableIDs []int64
 	if enforce {
-		filteredTableIDs = tableIDs
+		targetedTableIDs = tableIDs
 	} else {
-		filteredTableIDs = make([]int64, 0, len(tableIDs))
+		targetedTableIDs = make([]int64, 0, len(tableIDs))
 		for _, tableID := range tableIDs {
 			tbl, ok := sh.statsHandle.Get(tableID)
 			if tableID == 0 || !ok || !tbl.IsInitialized() {
 				continue
 			}
-			filteredTableIDs = append(filteredTableIDs, tableID)
+			targetedTableIDs = append(targetedTableIDs, tableID)
 		}
 	}
 	// Sort the tableIDs to avoid deadlocks.
-	slices.Sort(filteredTableIDs)
+	slices.Sort(targetedTableIDs)
 
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			return nil
 		}
-		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, filteredTableIDs...)
+		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, targetedTableIDs...)
 	}, handleutil.FlagWrapTxn)
 
 	if err != nil {
@@ -106,7 +106,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 			zap.Uint64("version", version),
 			zap.String("source", source),
 			zap.Int64s("tableIDs", tableIDs),
-			zap.Int64s("filteredTableIDs", filteredTableIDs),
+			zap.Int64s("targetedTableIDs", targetedTableIDs),
 			zap.Error(err))
 	}
 }
