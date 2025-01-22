@@ -2420,38 +2420,27 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
 		return nil
 	}
+	waitStartTask := func(do *Domain, fn func()) {
+		select {
+		case <-do.StatsHandle().InitStatsDone:
+		case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+			return
+		}
+		fn()
+	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
-	// The gcStatsWorker/dumpColStatsUsageWorker/deltaUpdateTickerWorker doesn't require the stats initialization to be completed.
+	// The asyncLoadHistogram/dumpColStatsUsageWorker/deltaUpdateTickerWorker doesn't require the stats initialization to be completed.
 	// This is because thos workers' primary responsibilities are to update the change delta and handle DDL operations.
-	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(do.gcStatsWorker, "gcStatsWorker")
-	do.wg.Run(do.dumpColStatsUsageWorker, "dumpColStatsUsageWorker")
+	// These tasks need to be in work mod as soon as possible to avoid the problem.
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
+	do.wg.Run(do.dumpColStatsUsageWorker, "dumpColStatsUsageWorker")
+	do.wg.Run(func() { waitStartTask(do, do.gcStatsWorker) }, "gcStatsWorker")
+
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.autoAnalyzeWorker()
-		},
-		"autoAnalyzeWorker",
-	)
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.analyzeJobsCleanupWorker()
-		},
-		"analyzeJobsCleanupWorker",
-	)
+	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
 	do.wg.Run(
 		func() {
 			// The initStatsCtx is used to store the internal session for initializing stats,
