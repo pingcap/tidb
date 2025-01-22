@@ -1525,10 +1525,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	var bucketNDV int64
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
@@ -1539,7 +1537,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					break
 				}
 				sum += buckets[i-1].Count
-				bucketNDV += buckets[i-1].NDV
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
@@ -1550,7 +1547,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			r = i
 			bucketCount++
 			prevSum = sum
-			bucketNDV = 0
 		}
 	}
 	if r > 0 {
