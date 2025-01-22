@@ -327,5 +327,22 @@ func TestRetry(t *testing.T) {
 		require.True(t, ok1)
 		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
+<<<<<<< HEAD:statistics/handle/handle_hist_test.go
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail"))
+=======
+	task1.Retry = 0
+	for i := 0; i < syncload.RetryCount*5; i++ {
+		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		require.Error(t, err1)
+		require.NotNil(t, task1)
+		select {
+		case <-task1.ResultCh:
+			t.Logf("task1.ResultCh should not get nothing")
+			t.FailNow()
+		default:
+		}
+		task1.Retry = 0
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
+>>>>>>> 8629068c0f0 (*: avoid concurrently using the session in the syncload (#52830)):pkg/statistics/handle/syncload/stats_syncload_test.go
 }
