@@ -76,7 +76,7 @@ func PluginManifest() *plugin.Manifest {
 func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
-	flag.StringVar(&pgoFile, "pgo-file", "default.pgo", "go profile-guided optimization(pgo) file path")
+	flag.StringVar(&pgoFile, "pgo-file", "", "go profile-guided optimization(pgo) file path")
 	flag.Usage = usage
 }
 

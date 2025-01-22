@@ -209,8 +209,7 @@ else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
-# default.pgo is the tidb cpu profile of TiDB, you can use make pgo-file to merge profile files from build/profile folder to produce default.pgo file.
-# default.pgo file needs to be updated frequently to ensure that the PGO optimization is effective.
+# default.pgo is the tidb cpu profile of TiDB, you need to grab TiDB's cpu profile as default.pgo file from your real workload scenario.
 .PHONY: server_with_pgo
 server_with_pgo:
 ifeq ($(TARGET), "")
