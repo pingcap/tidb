@@ -434,13 +434,9 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
-	var (
-		subtaskCtx    context.Context
-		subtaskCancel context.CancelFunc
-	)
+	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
-		subtaskCtx, subtaskCancel = context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
@@ -462,9 +458,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		}()
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
-	defer func() {
-		subtaskCancel()
-	}()
+	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
@@ -703,7 +697,7 @@ func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 			return e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
 		}
 
-		e.logger.Info("meet context canceled for gracefully shutdown", zap.Error(ctx.Err()))
+		e.logger.Info("meet context canceled for gracefully shutdown")
 	} else if e.IsRetryableError(stErr) {
 		e.logger.Warn("meet retryable error", zap.Error(stErr))
 	} else {

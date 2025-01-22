@@ -433,14 +433,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec(updateExecID)
 		})
 	})
-	var subtaskCtx context.Context
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
 		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
-			subtaskCtx = ctx
+			require.Error(t, ctx.Err())
+			require.Equal(t, context.Canceled, context.Cause(ctx))
 		},
 	)
 	tk.MustExec("alter table t add index idx(b);")
 	require.NotEqual(t, int64(0), jobID.Load())
-	require.Error(t, subtaskCtx.Err())
-	require.Equal(t, context.Canceled, context.Cause(subtaskCtx))
 }
