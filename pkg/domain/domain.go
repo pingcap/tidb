@@ -1919,19 +1919,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			var err error
+			var event PrivilegeEvent
 			select {
 			case <-do.exit:
 				return
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event := decodePrivilegeEvent(resp)
-					if event.All {
-						err = do.privHandle.UpdateAll()
-					} else {
-						err = do.privHandle.Update(event.UserList)
-					}
+					event = decodePrivilegeEvent(resp)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1940,11 +1935,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 						if count > 10 {
 							time.Sleep(time.Duration(count) * time.Second)
 						}
+						continue
 					}
 				}
 			case <-time.After(duration):
-				err = do.privHandle.UpdateAll()
+				event.All = true
 			}
+
+			err := privReloadEvent(do.privHandle, &event)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1952,6 +1950,16 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
+}
+
+func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	switch {
+	case event.All:
+		err = h.UpdateAllActive()
+	default:
+		err = h.Update(event.UserList)
+	}
+	return
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,

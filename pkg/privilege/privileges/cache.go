@@ -511,6 +511,9 @@ func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraph
 }
 
 func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
+	if len(userList) > 512 {
+		logutil.BgLogger().Warn("loadSomeUsers called with a long user list", zap.Int("len", len(userList)))
+	}
 	// Load the full role edge table first.
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
@@ -2053,11 +2056,27 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
+	logutil.BgLogger().Warn("update all called")
+	priv := newMySQLPrivilege()
+	err := priv.LoadAll(h.sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.priv.Store(priv)
+	return nil
+}
+
+// UpdateAllActive loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAllActive() error {
 	userList := make([]string, 0, 20)
 	h.activeUsers.Range(func(key, _ any) bool {
 		userList = append(userList, key.(string))
 		return true
 	})
+	if len(userList) > 1024 {
+		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
+		return h.UpdateAll()
+	}
 
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
@@ -2071,6 +2090,9 @@ func (h *Handle) UpdateAll() error {
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
+	if len(userList) > 100 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
 	needReload := false
 	for _, user := range userList {
 		if _, ok := h.activeUsers.Load(user); ok {
