@@ -734,26 +734,14 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-// SchemaNameAndTableNameByID implements the InfoSchema interface.
-func (is *infoschemaV2) SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool) {
+// TableItemByID implements the InfoSchema interface.
+// It only contains memory operations, no worries about accessing the storage.
+func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	itm, ok := is.searchTableItemByID(tableID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-	return itm.dbName, itm.tableName, true
-}
-
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
-		return
-	}
-
-	itm, ok := is.searchTableItemByID(tableID)
-	if !ok {
-		return
-	}
-
-	return itm.dbName, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
 }
 
 // TableItem is exported from tableItem.
@@ -1136,13 +1124,14 @@ func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi 
 	return pi, ok
 }
 
-// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
-func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
+// TableItemByPartitionID implements InfoSchema.TableItemByPartitionID.
+// It returns the lightweight meta info, no worries about access the storage.
+func (is *infoschemaV2) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
 	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-	return is.SchemaNameAndTableNameByID(pi.tableID)
+	return is.TableItemByID(pi.tableID)
 }
 
 // TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.

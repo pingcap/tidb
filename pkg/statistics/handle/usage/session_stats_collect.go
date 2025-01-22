@@ -55,11 +55,11 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	dbName, _, ok := s.statsHandle.SchemaNameAndTableNameByID(is, id)
+	tableItem, ok := s.statsHandle.TableItemByID(is, id)
 	if !ok {
 		return false
 	}
-	if util.IsMemOrSysDB(dbName.L) {
+	if util.IsMemOrSysDB(tableItem.DBName.L) {
 		return false
 	}
 	if dumpAll {

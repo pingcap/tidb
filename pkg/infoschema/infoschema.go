@@ -315,30 +315,17 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
-// SchemaNameAndTableNameByID implements InfoSchema.SchemaNameAndTableNameByID.
-func (is *infoSchema) SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool) {
-	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+// TableItemByID implements InfoSchema.TableItemByID.
+func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
 	db, ok := is.SchemaByID(tbl.Meta().DBID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-	return db.Name, tbl.Meta().Name, true
-}
-
-func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
-	tbl, ok := is.TableByID(stdctx.Background(), tableID)
-	if !ok {
-		return
-	}
-	db, ok := is.SchemaByID(tbl.Meta().DBID)
-	if !ok {
-		return
-	}
-
-	return db.Name, true
+	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
 }
 
 // TableInfoByID implements InfoSchema.TableInfoByID
@@ -425,13 +412,12 @@ func (is *infoSchema) AllSchemaNames() (schemas []ast.CIStr) {
 	return rs
 }
 
-// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
-func (is *infoSchema) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
+func (is *infoSchema) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
 	tbl, db, _ := is.FindTableByPartitionID(partitionID)
 	if tbl == nil {
-		return
+		return TableItem{}, false
 	}
-	return db.Name, tbl.Meta().Name, true
+	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
 }
 
 // TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
