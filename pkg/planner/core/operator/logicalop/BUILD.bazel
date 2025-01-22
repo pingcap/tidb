@@ -33,6 +33,7 @@ go_library(
         "logical_union_all.go",
         "logical_union_scan.go",
         "logical_window.go",
+        "shallow_ref_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],
