@@ -162,6 +162,7 @@ func RecordHistoricalStatsMeta(
 		}
 	}()
 
+	// Lock the rows one by one to avoid deadlocks.
 	for _, tableID := range tableIDs {
 		_, err := handleutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("SET @table_id = %d, @version = %d", tableID, version))
 		if err != nil {
