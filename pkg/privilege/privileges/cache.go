@@ -511,6 +511,9 @@ func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraph
 }
 
 func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
+	if len(userList) > 512 {
+		logutil.BgLogger().Warn("loadSomeUsers called with a long user list", zap.Int("len", len(userList)))
+	}
 	// Load the full role edge table first.
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
@@ -2064,21 +2067,21 @@ func (h *Handle) UpdateAll() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.priv.Store(&priv)
+	h.priv.Store(priv)
 	h.fullData.Store(true)
 	return nil
 }
 
 // UpdateAllActive loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAllActive() error {
-	h.fullData.Store(false)
 	userList := make([]string, 0, 20)
 	h.activeUsers.Range(func(key, _ any) bool {
 		userList = append(userList, key.(string))
 		return true
 	})
-	if len(userList) > 200 {
-		logutil.BgLogger().Warn("UpdateAllActive called with a log active user", zap.Int("len", len(userList)))
+	if len(userList) > 1024 {
+		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
+		return h.UpdateAll()
 	}
 
 	priv := newMySQLPrivilege()
@@ -2087,6 +2090,7 @@ func (h *Handle) UpdateAllActive() error {
 	if err != nil {
 		return err
 	}
+	h.fullData.Store(false)
 	h.merge(priv, userList)
 	return nil
 }
@@ -2096,7 +2100,6 @@ func (h *Handle) Update(userList []string) error {
 	if len(userList) > 200 {
 		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
 	}
-	h.fullData.Store(false)
 	needReload := false
 	for _, user := range userList {
 		if _, ok := h.activeUsers.Load(user); ok {
@@ -2108,6 +2111,7 @@ func (h *Handle) Update(userList []string) error {
 		return nil
 	}
 
+	h.fullData.Store(false)
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
 	userList, err := priv.loadSomeUsers(h.sctx, userList...)
