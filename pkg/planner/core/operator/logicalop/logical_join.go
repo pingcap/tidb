@@ -112,12 +112,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
-	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
-	RightConditions expression.CNFExprs          `hash64-equals:"true"`
-	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
