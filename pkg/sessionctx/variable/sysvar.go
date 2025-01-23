@@ -124,27 +124,6 @@ var defaultSysVars = []*SysVar{
 		return "", false, nil
 	}},
 	/* TiDB specific variables */
-	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope, SetSession: func(s *SessionVars, val string) error {
-		switch val {
-		case kv.GlobalTxnScope:
-			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		case kv.LocalTxnScope:
-			if !EnableLocalTxn.Load() {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when tidb_enable_local_txn is off")
-			}
-			txnScope := config.GetTxnScopeFromConfig()
-			if txnScope == kv.GlobalTxnScope {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when zone label is empty or \"global\"")
-			}
-			s.TxnScope = kv.NewLocalTxnScopeVar(txnScope)
-		default:
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
-		}
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return s.TxnScope.GetVarValue(), nil
-	}},
 	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
