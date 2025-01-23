@@ -168,7 +168,7 @@ func isConstFalse(expr Expression) bool {
 			if len(args) != 2 {
 				return false
 			}
-			if _, ok := args[1].(*Column); !ok {
+			if _, ok := args[0].(*Column); !ok {
 				return false
 			}
 			if constExpr, ok := args[1].(*Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
@@ -193,7 +193,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			return function(ctx, x)
 		}
 		if isConstFalse(expr) {
-			return NewZero(), false
+			return NewZero(), true
 		}
 
 		args := x.GetArgs()
