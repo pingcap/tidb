@@ -72,12 +72,14 @@ type Table struct {
 	// 1. Initialized by snapshot when loading stats_meta.
 	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
-	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
-	// It is the schema version of the corresponding table. It is used to skip redundant
-	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
-	// and the schema of the table does not change, we don't need to load the stats for this
-	// table again.
-	TblInfoUpdateTS uint64
+	// LastStatsUpdateVersion is the mvcc version of the last full update of histograms.
+	// It differs from LastAnalyzeVersion because it can be influenced by some DDL.
+	// e.g. When we execute ALTER TABLE ADD COLUMN, there'll be new record inserted into mysql.stats_histograms.
+	//      We need to load the corresponding one into memory too.
+	// It's used to skip redundant loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this table again.
+	// Stats' sync load/async load should not change this field since they are not table-level update.
+	LastStatsUpdateVersion uint64
 
 	IsPkIsHandle bool
 }
@@ -158,6 +160,11 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // ColNum returns the number of columns in the map.
 func (m *ColAndIdxExistenceMap) ColNum() int {
 	return len(m.colAnalyzed)
+}
+
+// IdxNum returns the number of indices in the map.
+func (m *ColAndIdxExistenceMap) IdxNum() int {
+	return len(m.idxAnalyzed)
 }
 
 // Clone deeply copies the map.
@@ -348,6 +355,16 @@ func (t *Table) DelCol(id int64) {
 func (t *Table) DelIdx(id int64) {
 	delete(t.indices, id)
 	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
+}
+
+// ResetToEmpty reset the stats of the table to no stats.
+// The clean up is called when we find the `mysql.stats_histograms` has no record of this table.
+func (t *Table) ResetToEmpty() {
+	t.columns = make(map[int64]*Column, 0)
+	t.indices = make(map[int64]*Index, 0)
+	t.ColAndIdxExistenceMap = NewColAndIndexExistenceMapWithoutSize()
+	t.LastAnalyzeVersion = 0
+	t.StatsVer = Version0
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -605,10 +622,10 @@ func (t *Table) Copy() *Table {
 		newHistColl.indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:           newHistColl,
-		Version:            t.Version,
-		TblInfoUpdateTS:    t.TblInfoUpdateTS,
-		LastAnalyzeVersion: t.LastAnalyzeVersion,
+		HistColl:               newHistColl,
+		Version:                t.Version,
+		LastAnalyzeVersion:     t.LastAnalyzeVersion,
+		LastStatsUpdateVersion: t.LastStatsUpdateVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -640,12 +657,12 @@ func (t *Table) ShallowCopy() *Table {
 		StatsVer:      t.StatsVer,
 	}
 	nt := &Table{
-		HistColl:              newHistColl,
-		Version:               t.Version,
-		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
-		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		HistColl:               newHistColl,
+		Version:                t.Version,
+		ExtendedStats:          t.ExtendedStats,
+		ColAndIdxExistenceMap:  t.ColAndIdxExistenceMap,
+		LastAnalyzeVersion:     t.LastAnalyzeVersion,
+		LastStatsUpdateVersion: t.LastStatsUpdateVersion,
 	}
 	return nt
 }

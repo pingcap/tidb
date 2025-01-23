@@ -188,6 +188,11 @@ func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float6
 	tblCnt := float64(tblStats.RealtimeCount)
 	colCnt := float64(tblStats.ColAndIdxExistenceMap.ColNum())
 	intest.Assert(colCnt != 0, "Column count should not be 0")
+	// As the intest.Assert above, colCnt should not be 0.
+	// But it's possible in old versions, so we set it to 5 as the default value.
+	if colCnt == 0 {
+		colCnt = 5
+	}
 
 	return tblCnt * colCnt
 }
@@ -256,6 +261,11 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	partitionIDs = make(map[int64]struct{}, len(partitionStats))
 	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
 	intest.Assert(cols != 0, "Column count should not be 0")
+	// As the intest.Assert above, cols should not be 0.
+	// But it's possible in old versions, so we set it to 5 as the default value.
+	if cols == 0 {
+		cols = 5
+	}
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {

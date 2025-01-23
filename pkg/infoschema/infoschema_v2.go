@@ -734,6 +734,15 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+// SchemaNameAndTableNameByID implements the InfoSchema interface.
+func (is *infoschemaV2) SchemaNameAndTableNameByID(tableID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	itm, ok := is.searchTableItemByID(tableID)
+	if !ok {
+		return
+	}
+	return itm.dbName, itm.tableName, true
+}
+
 func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
 	if !tableIDIsValid(tableID) {
 		return
@@ -1104,6 +1113,55 @@ func (is *infoschemaV2) AllSchemaNames() []ast.CIStr {
 func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	_, ok := is.SchemaByName(schema)
 	return ok
+}
+
+// SchemaNameAndTableNameByPartitionID implements InfoSchema.SchemaNameAndTableNameByPartitionID.
+func (is *infoschemaV2) SchemaNameAndTableNameByPartitionID(partitionID int64) (schemaName, tableName ast.CIStr, ok bool) {
+	var pi partitionItem
+	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
+			}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
+			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return
+	}
+	return is.SchemaNameAndTableNameByID(pi.tableID)
+}
+
+func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	var pi partitionItem
+	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
+			}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
+			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return
+	}
+	return pi.tableID, true
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {

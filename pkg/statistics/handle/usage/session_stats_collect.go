@@ -55,15 +55,11 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tbl, ok := s.statsHandle.TableInfoByID(is, id)
+	dbName, _, ok := s.statsHandle.SchemaNameAndTableNameByID(is, id)
 	if !ok {
 		return false
 	}
-	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
-	if !ok {
-		return false
-	}
-	if util.IsMemOrSysDB(dbInfo.Name.L) {
+	if util.IsMemOrSysDB(dbName.L) {
 		return false
 	}
 	if dumpAll {
@@ -76,8 +72,8 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
-	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
-	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -242,8 +238,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
-			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
 
@@ -260,9 +256,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tbl, _, _ := is.FindTableByPartitionID(update.TableID)
-		if tbl != nil { // It's a partition table.
-			tableID := tbl.Meta().ID
+		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false
 

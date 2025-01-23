@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -316,6 +317,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, histVer)
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -406,6 +408,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, histVer)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -531,6 +534,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	// Check table has no index/column stats.
 	if len(rows) == 0 {
+		table.ResetToEmpty()
 		return table, nil
 	}
 	for _, row := range rows {
@@ -738,7 +742,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		Updated: []*statistics.Table{statsTbl},
 	})
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
-	if col.IsSyncLoadFailed {
+	if col.IsSyncLoadFailed && rand.Float64() < 0.0001 {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", colHist.PhysicalID),
 			zap.Int64("column_id", colHist.Info.ID),
@@ -804,7 +808,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
-	if idx.IsSyncLoadFailed {
+	if idx.IsSyncLoadFailed && rand.Float64() < 0.0001 {
 		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
 			zap.Int64("index_id", idxHist.Info.ID),

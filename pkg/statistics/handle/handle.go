@@ -204,6 +204,34 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 	return tbl
 }
 
+// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
+	return h.getPartitionStatsByID(is, pid, false)
+}
+
+func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64, returnPseudo bool) *statistics.Table {
+	var statsTbl *statistics.Table
+	intest.Assert(h != nil, "handle is nil")
+	tbl, ok := h.Get(pid)
+	if !ok {
+		if returnPseudo {
+			tbl, ok := h.TableInfoByID(is, pid)
+			if !ok {
+				return nil
+			}
+			statsTbl = statistics.PseudoTable(tbl.Meta(), false, true)
+			statsTbl.PhysicalID = pid
+			if tbl.Meta().GetPartitionInfo() == nil || h.Len() < 64 {
+				h.UpdateStatsCache(types.CacheUpdate{
+					Updated: []*statistics.Table{statsTbl},
+				})
+			}
+		}
+		return nil
+	}
+	return tbl
+}
+
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
