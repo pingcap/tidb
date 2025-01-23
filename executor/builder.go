@@ -3444,6 +3444,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
 	return e, nil
 }
 
@@ -3501,10 +3504,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ret.ranges = ts.Ranges
@@ -3730,6 +3729,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
 	return e, nil
 }
 
@@ -3744,10 +3746,6 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ret.ranges = is.Ranges
@@ -3901,6 +3899,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		e.handleCols = v.CommonHandleCols
 		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
 	}
+
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
 	return e, nil
 }
 
@@ -3915,10 +3917,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
