@@ -84,6 +84,9 @@ go_library(
 
 filegroup(
     name = "generator_files",
-    srcs = ["hash64_equals_generated.go"],
+    srcs = [
+        "hash64_equals_generated.go",
+        "shallow_ref_generated.go",
+    ],
     visibility = ["//visibility:public"],
 )

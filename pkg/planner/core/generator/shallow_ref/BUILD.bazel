@@ -18,6 +18,9 @@ go_test(
     name = "shallow_ref_test",
     timeout = "short",
     srcs = ["shallow_ref_test.go"],
+    data = [
+        "//pkg/planner/core/operator/logicalop:generator_files",
+    ],
     embed = [":shallow_ref_lib"],
     flaky = True,
     deps = ["//pkg/util"],
