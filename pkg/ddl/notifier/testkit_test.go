@@ -489,3 +489,101 @@ func TestBeginTwice(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(content), "context provider not set")
 }
+
+func TestHandlersSeePessimisticTxnError(t *testing.T) {
+	// 1. One always fails
+	// 2. One always succeeds
+	// Make sure events don't get lost after the second handler succeeds.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
+	tk.MustExec(ddl.NotifierTableSQL)
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		4,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+	)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Always fails
+	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
+		// Mock a duplicate key error
+		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+ddl.NotifierTableName+" VALUES(1, -1, 'some', 0)")
+		return err
+	}
+	// Always succeeds
+	successHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		return nil
+	}
+	n.RegisterHandler(2, successHandler)
+	n.RegisterHandler(1, failHandler)
+	n.OnBecomeOwner()
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	require.Never(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+}
+
+func TestCommitFailed(t *testing.T) {
+	// Make sure events don't get lost if internal txn commit failed.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
+	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
+	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
+
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		4,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+	)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	handler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
+		// pessimistic + DDL will cause an "infoschema is changed" error at commit time.
+		_, err := sctx.GetSQLExecutor().Execute(
+			ctx, "UPDATE test.subscribe_table SET c = c + 1 WHERE id = 1",
+		)
+		require.NoError(t, err)
+
+		tk.MustExec("TRUNCATE test.subscribe_table")
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, handler)
+	n.OnBecomeOwner()
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	require.Never(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+	n.OnRetireOwner()
+}
