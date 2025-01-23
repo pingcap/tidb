@@ -567,6 +567,19 @@ func TestSetTimeRangeFilter(t *testing.T) {
 			expectError: true,
 		},
 		{
+			name: "write cf valid shift start ts (greater than start ts)",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 150, // Greater than StartTs
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "write",
+			expectError: false,
+		},
+		{
 			name: "invalid cf name",
 			rules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
