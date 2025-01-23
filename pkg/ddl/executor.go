@@ -5677,6 +5677,7 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		// TODO(xiaoyuan): when is this information needed?
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
 				Database: schema.Name.L,

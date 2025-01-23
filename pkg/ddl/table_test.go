@@ -163,6 +163,54 @@ func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, 
 	require.NoError(t, err)
 }
 
+func testAlterTableMode(
+	t *testing.T,
+	ctx sessionctx.Context,
+	d ddl.ExecutorForTest,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	mode model.TableModeState,
+) *model.Job {
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  dbInfo.ID,
+		TableID:   tblInfo.ID,
+	}
+	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterTableMode,
+		BinlogInfo: &model.HistoryInfo{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: dbInfo.Name.L,
+				Table:    tblInfo.Name.L,
+			},
+		},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+	require.NoError(t, err)
+
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func checkTableModeTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableModeState) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMutator(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.Equal(t, mode, info.TableMode)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
@@ -269,6 +317,12 @@ func TestTable(t *testing.T) {
 	job = testRenameTable(t, ctx, de, dbInfo1.ID, dbInfo.ID, dbInfo.Name, dbInfo1.Name, tblInfo)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
+
+	// for alter table mode
+	job = testAlterTableMode(t, ctx, de, dbInfo1, tblInfo, model.TableModeImport)
+	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+	checkTableModeTest(t, store, dbInfo1, tblInfo, model.TableModeImport)
 
 	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, ast.TableLockWrite)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
