@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/external"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -67,7 +67,8 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 	})
 
-	name, err := eh.ExtractHandler.ExtractTask(context.Background(), task)
+	ctx := context.Background()
+	name, err := eh.ExtractHandler.ExtractTask(ctx, task)
 	if err != nil {
 		logutil.BgLogger().Error("extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
@@ -81,7 +82,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		return
 	}
-	content, err := loadExtractResponse(name)
+	content, err := loadExtractResponse(ctx, name)
 	if err != nil {
 		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
@@ -96,10 +97,11 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", name))
 }
 
-func loadExtractResponse(name string) ([]byte, error) {
+func loadExtractResponse(ctx context.Context, name string) ([]byte, error) {
 	path := filepath.Join(domain.GetExtractTaskDirName(), name)
 	//nolint: gosec
-	file, err := os.Open(path)
+	storage := external.GetExternalStorage()
+	file, err := storage.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}

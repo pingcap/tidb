@@ -14,14 +14,8 @@
 
 package domain
 
-import (
-	"os"
-	"path/filepath"
-	"strconv"
-)
-
 // GetOptimizerTraceDirName returns optimizer trace directory path.
 // The path is related to the process id.
 func GetOptimizerTraceDirName() string {
-	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
+	return "optimizer_trace"
 }
