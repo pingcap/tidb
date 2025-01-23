@@ -157,7 +157,7 @@ func (cb *CommonHandleCols) IterColumns() iter.Seq[*expression.Column] {
 	return slices.Values(cb.columns)
 }
 
-// IterColumns implements the kv.HandleCols interface.
+// IterColumns2 implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
 	return slices.All(cb.columns)
 }
@@ -363,12 +363,14 @@ func (ib *IntHandleCols) Clone(*stmtctx.StatementContext) HandleCols {
 	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
 }
 
-func (cb *IntHandleCols) IterColumns() iter.Seq[*expression.Column] {
-	return slices.Values([]*expression.Column{cb.col})
+// IterColumns implements the kv.HandleCols interface.
+func (ib *IntHandleCols) IterColumns() iter.Seq[*expression.Column] {
+	return slices.Values([]*expression.Column{ib.col})
 }
 
-func (cb *IntHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
-	return slices.All([]*expression.Column{cb.col})
+// IterColumns2 implements the kv.HandleCols interface.
+func (ib *IntHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
+	return slices.All([]*expression.Column{ib.col})
 }
 
 // BuildHandle implements the kv.HandleCols interface.
