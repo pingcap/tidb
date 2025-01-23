@@ -1185,6 +1185,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
+	log.Info("restoring system schemas", zap.Bool("withSys", cfg.WithSysTable),
+		zap.Strings("filter", cfg.FilterStr))
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
 	if err != nil {
 		return errors.Trace(err)
