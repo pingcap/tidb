@@ -69,7 +69,7 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
