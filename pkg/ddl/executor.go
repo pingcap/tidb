@@ -5671,7 +5671,7 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
 		Type:           model.ActionAlterTableMode,
