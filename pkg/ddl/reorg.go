@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -225,7 +226,7 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.Exchang
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
 func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
 	rowEncoder := &rowcodec.Encoder{
-		Enable: variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1,
+		Enable: vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1,
 	}
 
 	encodingConfig := tblctx.RowEncodingConfig{
@@ -241,7 +242,7 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
 		shardID: variable.NewRowIDShardGenerator(
 			rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404
-			variable.DefTiDBShardAllocateStep,
+			vardef.DefTiDBShardAllocateStep,
 		),
 	}
 }

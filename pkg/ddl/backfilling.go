@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -211,7 +211,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		}
 	}
 
-	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	return &backfillCtx{
 		id:            id,
 		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
@@ -239,7 +239,7 @@ func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
-	if entrySizeLimit := variable.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+	if entrySizeLimit := vardef.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
 		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
 			Entry: entrySizeLimit,
 			Total: kv.TxnTotalSizeLimit.Load(),
@@ -458,7 +458,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
-		targetBatchSize := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		targetBatchSize := job.ReorgMeta.GetBatchSize()
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
 			logger.Info("adjust ddl job config success",
@@ -664,7 +664,7 @@ var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
 	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(variable.DefTiDBDDLReorgWorkerCount)
+	TestCheckWorkerNumber = int32(vardef.DefTiDBDDLReorgWorkerCount)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
 	TestCheckReorgTimeout = int32(0)
 )
@@ -765,7 +765,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	importConc := job.ReorgMeta.GetConcurrency()
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -823,7 +823,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
@@ -831,7 +831,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
-			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			concurrency := job.ReorgMeta.GetConcurrency()
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
@@ -1060,7 +1060,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				break outer
 			case <-ticker.C:
 				currentWorkerCnt := exec.currentWorkerSize()
-				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency()
 				if currentWorkerCnt != targetWorkerCnt {
 					err := exec.adjustWorkerSize()
 					if err != nil {
@@ -1209,7 +1209,7 @@ func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorI
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
 	if threshold == 0 {
-		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+		threshold = atomic.LoadUint32(&vardef.DDLSlowOprThreshold)
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {

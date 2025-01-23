@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -920,7 +921,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 	var value UserRecord
 	defaultAuthPlugin := ""
 	if p.globalVars != nil {
-		val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
+		val, err := p.globalVars.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 		if err == nil {
 			defaultAuthPlugin = val
 		}
@@ -1256,7 +1257,7 @@ func (p *MySQLPrivilege) matchIdentity(sctx sqlexec.RestrictedSQLExecutor, user,
 	// If skip-name resolve is not enabled, and the host is not localhost
 	// we can fallback and try to resolve with all addrs that match.
 	// TODO: this is imported from previous code in session.Auth(), and can be improved in future.
-	if !skipNameResolve && host != variable.DefHostname {
+	if !skipNameResolve && host != vardef.DefHostname {
 		addrs, err := net.LookupAddr(host)
 		if err != nil {
 			logutil.BgLogger().Warn(

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timerrt "github.com/pingcap/tidb/pkg/timer/runtime"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -86,7 +86,7 @@ func (t *ttlTimerHook) Stop() {
 }
 
 func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerShedEvent) (r timerapi.PreSchedEventResult, err error) {
-	if !variable.EnableTTLJob.Load() {
+	if !vardef.EnableTTLJob.Load() {
 		r.Delay = time.Minute
 		return
 	}
@@ -96,7 +96,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return r, err
 	}
 
-	windowStart, windowEnd := variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load()
+	windowStart, windowEnd := vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load()
 	if !timeutil.WithinDayTimePeriod(windowStart, windowEnd, now) {
 		r.Delay = time.Minute
 		return

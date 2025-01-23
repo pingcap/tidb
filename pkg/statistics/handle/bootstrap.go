@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
@@ -820,6 +820,6 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 var IsFullCacheFunc func(cache statstypes.StatsCache, total uint64) bool = isFullCache
 
 func isFullCache(cache statstypes.StatsCache, total uint64) bool {
-	memQuota := variable.StatsCacheMemQuota.Load()
+	memQuota := vardef.StatsCacheMemQuota.Load()
 	return (uint64(cache.MemConsumed()) >= total/4) || (cache.MemConsumed() >= memQuota && memQuota != 0)
 }
