@@ -12,28 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package ruleset
 
-// Type indicates the rule type.
-type Type int
-
-const (
-	// DefaultNone indicates this is none rule.
-	DefaultNone Type = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-	// XFDeCorrelateApply try to decorate apply to a join.
-	XFDeCorrelateApply
-	// XFPullCorrExprsFromProj try to pull correlated expression from proj from outer child of a apply.
-	XFPullCorrExprsFromProj
+import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
 )
 
-// String implements the fmt.Stringer interface.
-func (tp *Type) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
+// DefaultRuleSet is default set of a series of rules.
+var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
+	pattern.OperandApply: {
+		decorrelateapply.NewXFDeCorrelateApply(),
+	},
 }

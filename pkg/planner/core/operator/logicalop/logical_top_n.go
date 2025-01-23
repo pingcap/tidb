@@ -128,12 +128,16 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if lt.StatsInfo() != nil {
-		return lt.StatsInfo(), nil
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && lt.StatsInfo() != nil {
+		return lt.StatsInfo(), false, nil
 	}
 	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
-	return lt.StatsInfo(), nil
+	return lt.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

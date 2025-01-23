@@ -278,7 +278,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	var cas *cascades.Optimizer
-	if cas, err = cascades.NewCascades(logic); err == nil {
+	if cas, err = cascades.NewOptimizer(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
 	}
@@ -303,6 +303,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		}
 		if tmpCost < cost {
 			physical = tmpPhysical
+			cost = tmpCost
 		}
 		return true
 	})
@@ -1113,7 +1114,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
+	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 
