@@ -6,10 +6,11 @@ go_test(
     srcs = [
         "hash64_equals_test.go",
         "logical_mem_table_predicate_extractor_test.go",
+        "logical_operator_test.go",
         "plan_execute_test.go",
     ],
     flaky = True,
-    shard_count = 34,
+    shard_count = 36,
     deps = [
         "//pkg/domain",
         "//pkg/expression",

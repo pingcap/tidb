@@ -98,6 +98,10 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
+	// For now, those metrics are initialized but not registered.
+	// They will be printed to log during restoring...
+	InitBRMetrics()
+
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -288,6 +292,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
 	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(InfoSchemaV2CacheObjCnt)
 	prometheus.MustRegister(TableByNameDuration)
 
 	prometheus.MustRegister(BindingCacheHitCounter)
