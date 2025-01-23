@@ -317,7 +317,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, 3, "", []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, 3, "", 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.EqualValues(t, []byte("init"), task.Meta)
