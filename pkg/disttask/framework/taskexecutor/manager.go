@@ -42,7 +42,7 @@ import (
 var (
 	// TaskCheckInterval is the interval to check whether there are tasks to run.
 	// TODO maybe change this interval larger for performance.
-	TaskCheckInterval = 300 * time.Millisecond
+	TaskCheckInterval = 3 * time.Second
 	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
 	// exported for testing.
 	SubtaskCheckInterval = 300 * time.Millisecond
