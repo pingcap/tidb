@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",

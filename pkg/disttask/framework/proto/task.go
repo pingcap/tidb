@@ -129,9 +129,10 @@ type Task struct {
 	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
 	// 	- on task cleanup, we might do some redaction on the meta.
 	// 	- on task 'modifying', params inside the meta can be changed.
-	Meta        []byte
-	Error       error
-	ModifyParam ModifyParam
+	Meta         []byte
+	Error        error
+	ModifyParam  ModifyParam
+	MaxNodeCount int
 }
 
 var (
