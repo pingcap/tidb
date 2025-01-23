@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -82,6 +83,7 @@ func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 
 func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 	metrics.UpdateCounter.Inc()
+	intest.Assert(t.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
 	ok := sc.c.Put(id, t)
 	if ok {
 		return ok

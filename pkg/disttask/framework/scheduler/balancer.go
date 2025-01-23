@@ -74,7 +74,7 @@ func (b *balancer) balanceLoop(ctx context.Context, sm *Manager) {
 func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
 	// it's initial value depends on the managed nodes, to have a consistent view,
-	// DO NOT call getManagedNodes twice during 1 balance.
+	// DO NOT call getNodes twice during 1 balance.
 	managedNodes := b.nodeMgr.getNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {

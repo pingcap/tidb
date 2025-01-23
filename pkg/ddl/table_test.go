@@ -791,3 +791,27 @@ func TestDropTableAccessibleInInfoSchema(t *testing.T) {
 	}
 	require.True(t, len(errs) > 0)
 }
+
+func TestCreateViewTwice(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_raw (id int)")
+	tk2.MustExec("use test")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	first := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+		if first {
+			first = false
+			go func() {
+				defer wg.Done()
+				tk2.MustExecToErr("create view v as select * from t_raw where id > 666")
+			}()
+		}
+	})
+	tk.MustExec("create view v as select * from t_raw")
+	wg.Wait()
+}

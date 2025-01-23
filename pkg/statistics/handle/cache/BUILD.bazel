@@ -27,6 +27,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
