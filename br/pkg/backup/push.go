@@ -127,6 +127,16 @@ func (push *pushDown) pushBackup(
 				// Finished.
 				return res, nil
 			}
+<<<<<<< HEAD
+=======
+			failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
+				msg := val.(string)
+				logutil.CL(ctx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
+				resp.Error = &backuppb.Error{
+					Msg: msg,
+				}
+			})
+>>>>>>> 8c5ca7b2008 (restore: precheck cluster is empty when first time full restore (#45014))
 			failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))

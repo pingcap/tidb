@@ -425,6 +425,76 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
+=======
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
+		cfg.UseCheckpoint = false
+	}
+
+	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schedulersRemovable := false
+	defer func() {
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !schedulersRemovable {
+			log.Info("skip removing pd schehduler for next retry")
+			return
+		}
+		log.Info("start to remove the pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restorePostWork(ctx, client, restoreSchedulers)
+		log.Info("finish removing pd scheduler")
+	}()
+
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
+		}()
+	}
+
+	if isFullRestore(cmdName) {
+		// we need check cluster is fresh every time. except restore from a checkpoint.
+		if client.IsFull() && len(checkpointSetWithTableID) == 0 {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+>>>>>>> 8c5ca7b2008 (restore: precheck cluster is empty when first time full restore (#45014))
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
