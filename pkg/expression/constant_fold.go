@@ -193,7 +193,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			return function(ctx, x)
 		}
 		if isConstFalse(expr) {
-			return NewZero(), true
+			return NewNull(), true
 		}
 
 		args := x.GetArgs()
