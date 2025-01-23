@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -359,6 +360,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		tableID2   int64 = 106
 		tableName2       = "t2"
 		tableInfo  model.TableInfo
+		ts         uint64 = 400036290571534337
 	)
 
 	// construct table t1 with the partition pi(pt1, pt2).
@@ -400,8 +402,8 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	dbMap[dbID2] = NewDBReplace(db2.Name.O, dbID2+100)
 	dbMap[dbID2].TableMap[tableID2] = NewTableReplace(t2.Name.O, tableID2+100)
 
-	tc := NewTableMappingManager()
-	tc.MergeBaseDBReplace(dbMap)
+	tm := NewTableMappingManager()
+	tm.MergeBaseDBReplace(dbMap)
 
 	//exchange partition, t1 partition0 with the t2
 	t1Copy := t1.Clone()
@@ -411,11 +413,17 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	value, err := json.Marshal(&t1Copy)
 	require.Nil(t, err)
 
-	err = tc.ProcessTableValueAndUpdateIdMapping(dbID1, t1Copy)
+	// Create an entry for parsing
+	txnKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID1), meta.TableKey(tableID1), ts)
+	entry := &kv.Entry{
+		Key:   txnKey,
+		Value: value,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
-		tc.DBReplaceMap,
+		tm.DBReplaceMap,
 		nil,
 		0,
 		nil,
@@ -433,8 +441,16 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// rewrite no partition table
 	value, err = json.Marshal(&t2Copy)
 	require.Nil(t, err)
-	err = tc.ProcessTableValueAndUpdateIdMapping(dbID2, t2Copy)
+
+	// Create an entry for parsing the second table
+	txnKey = utils.EncodeTxnMetaKey(meta.DBkey(dbID2), meta.TableKey(pt1ID), ts)
+	entry = &kv.Entry{
+		Key:   txnKey,
+		Value: value,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
 	require.Nil(t, err)
+
 	value, err = sr.rewriteTableInfo(value, dbID2)
 	require.Nil(t, err)
 	err = json.Unmarshal(value, &tableInfo)

@@ -16,6 +16,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
@@ -76,46 +78,181 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 	return nil
 }
 
-func (tm *TableMappingManager) ProcessDBValueAndUpdateIdMapping(dbInfo *model.DBInfo) error {
-	if dr, exist := tm.DBReplaceMap[dbInfo.ID]; !exist {
-		newID := tm.generateTempID()
-		tm.DBReplaceMap[dbInfo.ID] = NewDBReplace(dbInfo.Name.O, newID)
-		tm.globalIdMap[dbInfo.ID] = newID
-	} else {
-		dr.Name = dbInfo.Name.O
+// ParseMetaKvAndUpdateIdMapping collect table information
+// the keys and values that are selected to parse here follows the implementation in rewrite_meta_rawkv. Maybe
+// parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
+// in rewrite_meta_rawkv.
+func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string) error {
+	if !utils.IsMetaDBKey(e.Key) {
+		return nil
 	}
+
+	rawKey, err := ParseTxnMetaKeyFrom(e.Key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if meta.IsDBkey(rawKey.Field) {
+		// parse db key
+		err := tm.parseDBKeyAndUpdateIdMapping(rawKey.Field)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// parse value and update if exists
+		value, err := ExtractValue(e, cf)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value != nil {
+			return tm.parseDBValueAndUpdateIdMapping(value)
+		}
+	} else if !meta.IsDBkey(rawKey.Key) {
+		return nil
+	}
+
+	if meta.IsTableKey(rawKey.Field) {
+		dbID, err := meta.ParseDBKey(rawKey.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// parse table key and update
+		err = tm.parseTableIdAndUpdateIdMapping(rawKey.Key, rawKey.Field, meta.ParseTableKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// parse value and update if exists
+		value, err := ExtractValue(e, cf)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value != nil {
+			return tm.parseTableValueAndUpdateIdMapping(dbID, value)
+		}
+	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
+		// parse auto increment key and update
+		err = tm.parseTableIdAndUpdateIdMapping(rawKey.Key, rawKey.Field, meta.ParseAutoIncrementIDKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if meta.IsAutoTableIDKey(rawKey.Field) {
+		// parse auto table key and update
+		err = tm.parseTableIdAndUpdateIdMapping(rawKey.Key, rawKey.Field, meta.ParseAutoTableIDKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if meta.IsSequenceKey(rawKey.Field) {
+		// parse sequence key and update
+		err = tm.parseTableIdAndUpdateIdMapping(rawKey.Key, rawKey.Field, meta.ParseSequenceKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
+		// parse sequence key and update
+		err = tm.parseTableIdAndUpdateIdMapping(rawKey.Key, rawKey.Field, meta.ParseAutoRandomTableIDKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 
-func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, tableInfo *model.TableInfo) error {
-	var (
-		exist        bool
-		dbReplace    *DBReplace
-		tableReplace *TableReplace
-	)
+func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error {
+	dbID, err := meta.ParseDBKey(field)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	// construct or find the id map.
-	dbReplace, exist = tm.DBReplaceMap[dbID]
+	_, err = tm.getOrCreateDBReplace(dbID)
+	return errors.Trace(err)
+}
+
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) error {
+	dbInfo := new(model.DBInfo)
+	if err := json.Unmarshal(value, dbInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	dbReplace, err := tm.getOrCreateDBReplace(dbInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	dbReplace.Name = dbInfo.Name.O
+	return nil
+}
+
+// getOrCreateDBReplace gets an existing DBReplace or creates a new one if not found
+func (tm *TableMappingManager) getOrCreateDBReplace(dbID int64) (*DBReplace, error) {
+	dbReplace, exist := tm.DBReplaceMap[dbID]
 	if !exist {
 		newID := tm.generateTempID()
 		tm.globalIdMap[dbID] = newID
 		dbReplace = NewDBReplace("", newID)
 		tm.DBReplaceMap[dbID] = dbReplace
 	}
+	return dbReplace, nil
+}
 
-	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
+// getOrCreateTableReplace gets an existing TableReplace or creates a new one if not found
+func (tm *TableMappingManager) getOrCreateTableReplace(dbReplace *DBReplace, tableID int64) (*TableReplace, error) {
+	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		newID, exist := tm.globalIdMap[tableInfo.ID]
+		newID, exist := tm.globalIdMap[tableID]
 		if !exist {
 			newID = tm.generateTempID()
-			tm.globalIdMap[tableInfo.ID] = newID
+			tm.globalIdMap[tableID] = newID
 		}
-
-		tableReplace = NewTableReplace(tableInfo.Name.O, newID)
-		dbReplace.TableMap[tableInfo.ID] = tableReplace
-	} else {
-		tableReplace.Name = tableInfo.Name.O
+		tableReplace = NewTableReplace("", newID)
+		dbReplace.TableMap[tableID] = tableReplace
 	}
+	return tableReplace, nil
+}
+
+func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
+	key []byte,
+	field []byte,
+	parseField func([]byte) (tableID int64, err error)) error {
+	dbID, err := meta.ParseDBKey(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableID, err := parseField(field)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	dbReplace, err := tm.getOrCreateDBReplace(dbID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = tm.getOrCreateTableReplace(dbReplace, tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte) error {
+	var tableInfo model.TableInfo
+	if err := json.Unmarshal(value, &tableInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	dbReplace, err := tm.getOrCreateDBReplace(dbID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableReplace, err := tm.getOrCreateTableReplace(dbReplace, tableInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableReplace.Name = tableInfo.Name.O
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -296,16 +433,15 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRIdTracker) {
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
-		// remove entire database if not in tracker
 		if !tracker.ContainsDB(dbID) {
-			delete(tm.DBReplaceMap, dbID)
+			dbReplace.Filtered = true
 			continue
 		}
 
 		// filter tables in this database
-		for tableID := range dbReplace.TableMap {
+		for tableID, tableReplace := range dbReplace.TableMap {
 			if !tracker.ContainsPhysicalId(dbID, tableID) {
-				delete(dbReplace.TableMap, tableID)
+				tableReplace.Filtered = true
 			}
 		}
 	}
@@ -381,7 +517,7 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		}
 		return nil, nil
 	default:
-		panic(fmt.Sprintf("not support cf:%s", cf))
+		return nil, errors.Errorf("unsupported column family: %s", cf)
 	}
 }
 

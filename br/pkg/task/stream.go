@@ -1931,7 +1931,13 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 	rules := make(map[int64]*restoreutils.RewriteRules)
 
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.Filtered {
+			continue
+		}
 		for oldTableID, tableReplace := range dbReplace.TableMap {
+			if tableReplace.Filtered {
+				continue
+			}
 			if _, exist := rules[oldTableID]; !exist {
 				log.Info("add rewrite rule",
 					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),

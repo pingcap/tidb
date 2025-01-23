@@ -159,13 +159,18 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 
 	// process entries to collect table IDs
 	for _, entry := range curSortedEntries {
+		// parse entry and do the table mapping
+		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// collect rename/partition exchange history
 		// get value from default cf and get the short value if possible from write cf
 		value, err := stream.ExtractValue(&entry.E, cf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		log.Info("######### getting key", zap.Any("key", entry.E.Key))
 		// write cf doesn't have short value in it
 		if value == nil {
 			continue
@@ -182,14 +187,8 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 				if err := json.Unmarshal(value, &dbInfo); err != nil {
 					return nil, errors.Trace(err)
 				}
-
 				// collect db id -> name mapping during log backup, it will contain information about newly created db
 				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
-
-				// update the id map
-				if err = mp.tableMappingManager.ProcessDBValueAndUpdateIdMapping(&dbInfo); err != nil {
-					return nil, errors.Trace(err)
-				}
 			} else if !meta.IsDBkey(rawKey.Key) {
 				// also see RewriteMetaKvEntry
 				continue
@@ -214,12 +213,6 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 					for _, def := range tableInfo.Partition.Definitions {
 						mp.tableHistoryManager.AddPartitionHistory(def.ID, dbID, tableInfo.ID, tableInfo.Name.O)
 					}
-				}
-
-				// update the id map
-				log.Info("######### processing table", zap.Any("tableInfo", tableInfo))
-				if err = mp.tableMappingManager.ProcessTableValueAndUpdateIdMapping(dbID, &tableInfo); err != nil {
-					return nil, errors.Trace(err)
 				}
 			}
 		}

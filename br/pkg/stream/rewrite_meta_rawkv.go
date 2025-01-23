@@ -42,6 +42,7 @@ type TableReplace struct {
 	TableID      DownstreamID
 	PartitionMap map[UpstreamID]DownstreamID
 	IndexMap     map[UpstreamID]DownstreamID
+	Filtered     bool
 }
 
 // DBReplace specifies database information mapping from up-stream cluster to down-stream cluster.
@@ -49,6 +50,7 @@ type DBReplace struct {
 	Name     string
 	DbID     DownstreamID
 	TableMap map[UpstreamID]*TableReplace
+	Filtered bool
 }
 
 // SchemasReplace specifies schemas information mapping from up-stream cluster to down-stream cluster.
@@ -70,6 +72,7 @@ func NewTableReplace(name string, newID DownstreamID) *TableReplace {
 		TableID:      newID,
 		PartitionMap: make(map[UpstreamID]DownstreamID),
 		IndexMap:     make(map[UpstreamID]DownstreamID),
+		Filtered:     false,
 	}
 }
 
@@ -79,6 +82,7 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 		Name:     name,
 		DbID:     newID,
 		TableMap: make(map[UpstreamID]*TableReplace),
+		Filtered: false,
 	}
 }
 
@@ -91,7 +95,13 @@ func NewSchemasReplace(
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbReplaceMap {
+		if dr.Filtered {
+			continue
+		}
 		for tblID, tr := range dr.TableMap {
+			if tr.Filtered {
+				continue
+			}
 			globalTableIdMap[tblID] = tr.TableID
 			for oldpID, newpID := range tr.PartitionMap {
 				globalTableIdMap[oldpID] = newpID
@@ -123,6 +133,9 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
+	if dbMap.Filtered {
+		return nil, nil
+	}
 
 	rawMetaKey.UpdateField(meta.DBkey(dbMap.DbID))
 	if cf == consts.WriteCF {
@@ -140,6 +153,9 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	dbMap, exist := sr.DbReplaceMap[dbInfo.ID]
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
+	}
+	if dbMap.Filtered {
+		return nil, nil
 	}
 
 	dbInfo.ID = dbMap.DbID
@@ -166,6 +182,9 @@ func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, 
 	newKey, err := sr.rewriteKeyForDB(e.Key, cf)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if newKey == nil {
+		return nil, nil
 	}
 
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
@@ -200,11 +219,18 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
+	if dbReplace.Filtered {
+		return nil, nil
+	}
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
+	if tableReplace.Filtered {
+		return nil, nil
+	}
+
 	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
 	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
 	if cf == consts.WriteCF {
@@ -230,10 +256,16 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
+	if dbReplace.Filtered {
+		return nil, nil
+	}
 
 	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
+	}
+	if tableReplace.Filtered {
+		return nil, nil
 	}
 
 	// update table ID and partition ID.
@@ -291,6 +323,10 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// got filtered
+	if newKey == nil {
+		return nil, nil
+	}
 
 	// NOTE: the normal path is in the `SchemaReplace.rewriteTableInfo`
 	//       for now, we rewrite key and value separately hence we cannot
@@ -313,6 +349,9 @@ func (sr *SchemasReplace) rewriteEntryForAutoIncrementIDKey(e *kv.Entry, cf stri
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if newKey == nil {
+		return nil, nil
+	}
 
 	return &kv.Entry{Key: newKey, Value: e.Value}, nil
 }
@@ -326,6 +365,9 @@ func (sr *SchemasReplace) rewriteEntryForAutoTableIDKey(e *kv.Entry, cf string) 
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if newKey == nil {
+		return nil, nil
 	}
 
 	return &kv.Entry{Key: newKey, Value: e.Value}, nil
@@ -341,6 +383,9 @@ func (sr *SchemasReplace) rewriteEntryForSequenceKey(e *kv.Entry, cf string) (*k
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if newKey == nil {
+		return nil, nil
+	}
 
 	return &kv.Entry{Key: newKey, Value: e.Value}, nil
 }
@@ -354,6 +399,9 @@ func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf st
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if newKey == nil {
+		return nil, nil
 	}
 
 	return &kv.Entry{Key: newKey, Value: e.Value}, nil
