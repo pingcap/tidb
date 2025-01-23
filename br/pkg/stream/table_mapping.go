@@ -201,7 +201,6 @@ func (tc *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	key []byte,
 	field []byte,
 	parseField func([]byte) (tableID int64, err error)) error {
-
 	dbID, err := meta.ParseDBKey(key)
 	if err != nil {
 		return errors.Trace(err)
