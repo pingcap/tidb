@@ -544,6 +544,9 @@ func TestCommitFailed(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_metadata_lock=1")
+	})
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
 	tk.MustExec(ddl.NotifierTableSQL)
 	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
