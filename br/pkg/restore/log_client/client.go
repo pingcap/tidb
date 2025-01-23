@@ -1616,7 +1616,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[SSTs]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy := NewCompactedFileSplitStrategy(rules, rc.shiftStartTS, rc.startTS, rc.restoreTS, checkpointSets, updateStatsFn)
+	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
 	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
 }
 
