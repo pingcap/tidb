@@ -213,6 +213,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		/* ast.LastDay */
 		ast.Sysdate,
+		ast.UnixTimestamp,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
