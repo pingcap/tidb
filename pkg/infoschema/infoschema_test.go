@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -104,7 +104,7 @@ func TestBasic(t *testing.T) {
 	internal.AddDB(t, re.Store(), dbInfo)
 	internal.AddTable(t, re.Store(), dbInfo.ID, tblInfo)
 
-	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
@@ -334,7 +334,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -395,7 +395,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	dbInfo.Deprecated.Tables = []*model.TableInfo{}
 	dbInfos := []*model.DBInfo{dbInfo}
 	data := infoschema.NewData()
-	builder := infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(re, nil, data, vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -416,7 +416,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMutator(txn)
 			for _, change := range changes {
-				builder = infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+				builder = infoschema.NewBuilder(re, nil, data, vardef.SchemaCacheSize.Load() > 0)
 				err := builder.InitWithOldInfoSchema(curIs)
 				require.NoError(t, err)
 				change(m, builder)
@@ -500,7 +500,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 	newDB.Deprecated.Tables = tblInfos
 	require.True(t, ok)
-	builder = infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+	builder = infoschema.NewBuilder(re, nil, data, vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
@@ -631,7 +631,7 @@ func TestBuildBundle(t *testing.T) {
 		db.Deprecated.Tables, err = is.SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)
 	}
-	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
@@ -1052,13 +1052,13 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 	// Test the @@tidb_enable_infoschema_v2 variable.
 	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
-	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(0))
+	require.Equal(t, vardef.SchemaCacheSize.Load(), uint64(0))
 
 	// Modify it.
 	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824")
 	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("1073741824"))
 	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("1073741824"))
-	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(1073741824))
+	require.Equal(t, vardef.SchemaCacheSize.Load(), uint64(1073741824))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table v2 (id int)")
@@ -1081,7 +1081,7 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 	// Change infoschema back to v1 and check again.
 	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
 	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
-	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(0))
+	require.Equal(t, vardef.SchemaCacheSize.Load(), uint64(0))
 
 	tk.MustExec("drop table v1")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
@@ -1104,7 +1104,7 @@ func (tc *infoschemaTestContext) createSchema() {
 	internal.AddDB(tc.t, tc.re.Store(), dbInfo)
 	tc.dbInfo = dbInfo
 	// init infoschema
-	builder := infoschema.NewBuilder(tc.re, nil, tc.data, variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(tc.re, nil, tc.data, vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
 	require.NoError(tc.t, err)
 	tc.is = builder.Build(math.MaxUint64)
@@ -1289,7 +1289,7 @@ func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, check
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 
-	builder := infoschema.NewBuilder(tc.re, nil, tc.data, variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(tc.re, nil, tc.data, vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithOldInfoSchema(tc.is)
 	require.NoError(tc.t, err)
 	// applyDiff
@@ -1314,7 +1314,7 @@ func TestApplyDiff(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		if i == 0 {
 			// enable infoschema v2.
-			variable.SchemaCacheSize.Store(1000000)
+			vardef.SchemaCacheSize.Store(1000000)
 		}
 
 		tc := &infoschemaTestContext{

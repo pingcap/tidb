@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -277,7 +277,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
 		return true
 	}
-	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
+	enableInstancePlanCache := vardef.EnableInstancePlanCache.Load()
 	return enableInstancePlanCache
 }
 

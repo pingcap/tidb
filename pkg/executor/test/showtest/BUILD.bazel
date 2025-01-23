@@ -22,6 +22,7 @@ go_test(
         "//pkg/parser/types",
         "//pkg/privilege/privileges",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/types",

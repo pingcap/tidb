@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -47,7 +47,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c int not null, d text, key key_b(b), key key_c(c));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOff
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
@@ -268,7 +268,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c text, key key_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOff
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
@@ -436,7 +436,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c text, unique key uni_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOff
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
@@ -642,7 +642,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key nonclustered, b int not null, c text, unique key uni_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOff
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic

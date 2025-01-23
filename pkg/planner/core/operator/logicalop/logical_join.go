@@ -496,11 +496,15 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), false, nil
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
@@ -518,7 +522,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		for id, c := range leftProfile.ColNDVs {
 			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
 		}
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.SetStats(&property.StatsInfo{
@@ -530,7 +534,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	count := p.EqualCondOutCnt
 	if p.JoinType == LeftOuterJoin {
@@ -550,7 +554,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ColNDVs:  colNDVs,
 	})
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements the base.LogicalPlan.<12th> interface.

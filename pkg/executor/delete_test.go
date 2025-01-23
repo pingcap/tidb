@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +87,7 @@ func TestDeleteLockKey(t *testing.T) {
 			tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			tk2.MustExec("use test")
-			tk1.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+			tk1.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 			tk1.MustExec(testCase.ddl)
 			tk1.MustExec(testCase.pre)
 			tk1.MustExec("begin pessimistic")

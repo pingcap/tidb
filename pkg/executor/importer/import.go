@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -326,7 +326,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	if charset == nil {
 		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
 		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-			context.Background(), variable.CharsetDatabase)
+			context.Background(), vardef.CharsetDatabase)
 		if err2 != nil {
 			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
 		} else {
@@ -548,7 +548,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = variable.CloudStorageURI.Load()
+	p.CloudStorageURI = vardef.CloudStorageURI.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -1433,7 +1433,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 
 	serverDiskImport := storage.IsLocal(u)
-	if serverDiskImport || !variable.EnableDistTask.Load() {
+	if serverDiskImport || !vardef.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
 	return handle.GetCPUCountOfNode(ctx)

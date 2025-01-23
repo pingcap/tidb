@@ -270,7 +270,7 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
-	TiKVExecDetails   util.ExecDetails
+	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
 	KeyspaceName      string
 	KeyspaceID        uint32
@@ -981,7 +981,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// network traffic
-	ssStats.StmtNetworkTrafficSummary.Add(&sei.TiKVExecDetails)
+	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)

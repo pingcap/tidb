@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ActionType is the type for DDL action.
@@ -366,7 +367,7 @@ type Job struct {
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
+	TraceInfo *tracing.TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
 	BDRRole string `json:"bdr_role"`
@@ -1183,14 +1184,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
-}
-
-// TraceInfo is the information for trace.
-type TraceInfo struct {
-	// ConnectionID is the id of the connection
-	ConnectionID uint64 `json:"connection_id"`
-	// SessionAlias is the alias of session
-	SessionAlias string `json:"session_alias"`
 }
 
 // JobW is a wrapper of model.Job, it contains the job and the binary representation

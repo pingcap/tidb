@@ -90,6 +90,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
@@ -391,10 +392,10 @@ func (s *session) SetCollation(coID int) error {
 	// If new collations are enabled, switch to the default
 	// collation if this one is not supported.
 	co = collate.SubstituteMissingCollationToDefault(co)
-	for _, v := range variable.SetNamesVariables {
+	for _, v := range vardef.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVarWithoutValidation(v, cs))
 	}
-	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
+	return s.sessionVars.SetSystemVarWithoutValidation(vardef.CollationConnection, co)
 }
 
 func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
@@ -404,7 +405,7 @@ func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	}
 	if s.sessionPlanCache == nil { // lazy construction
 		s.sessionPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().SessionPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
+			vardef.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.sessionPlanCache
 }
@@ -507,7 +508,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		return nil
 	}
 	// check if the cluster is read-only
-	if !s.sessionVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+	if !s.sessionVars.InRestrictedSQL && (vardef.RestrictedReadOnly.Load() || vardef.VarTiDBSuperReadOnly.Load()) {
 		// It is not internal SQL, and the cluster has one of RestrictedReadOnly or SuperReadOnly
 		// We need to privilege check again: a privilege check occurred during planning, but we need
 		// to prevent the case that a long running auto-commit statement is now trying to commit.
@@ -1177,19 +1178,19 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
-		err = se.sessionVars.SetSystemVar(variable.AutoCommit, "1")
+		err = se.sessionVars.SetSystemVar(vardef.AutoCommit, "1")
 		if err != nil {
 			return nil, err
 		}
-		err = se.sessionVars.SetSystemVar(variable.MaxExecutionTime, "0")
+		err = se.sessionVars.SetSystemVar(vardef.MaxExecutionTime, "0")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
+		err = se.sessionVars.SetSystemVar(vardef.TiDBConstraintCheckInPlacePessimistic, vardef.On)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1207,19 +1208,19 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
-		err = se.sessionVars.SetSystemVar(variable.AutoCommit, "1")
+		err = se.sessionVars.SetSystemVar(vardef.AutoCommit, "1")
 		if err != nil {
 			return nil, err
 		}
-		err = se.sessionVars.SetSystemVar(variable.MaxExecutionTime, "0")
+		err = se.sessionVars.SetSystemVar(vardef.MaxExecutionTime, "0")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
+		err = se.sessionVars.SetSystemVar(vardef.TiDBConstraintCheckInPlacePessimistic, vardef.On)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1313,7 +1314,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
 	// If validation fails, we should return the default value:
 	// See: https://github.com/pingcap/tidb/pull/31566
-	sysVar, err = sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	sysVar, err = sv.ValidateFromType(s.GetSessionVars(), sysVar, vardef.ScopeGlobal)
 	if err != nil {
 		return sv.Value, nil
 	}
@@ -1327,7 +1328,7 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
+	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeGlobal); err != nil {
 		return err
 	}
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
@@ -1826,7 +1827,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	var err error
 	orgSnapshotInfoSchema, orgSnapshotTS := s.sessionVars.SnapshotInfoschema, s.sessionVars.SnapshotTS
 	if execOption.SnapshotTS != 0 {
-		if err = s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		if err = s.sessionVars.SetSystemVar(vardef.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
 		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
@@ -1852,7 +1853,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
-		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+		if err := s.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = orgSnapshotInfoSchema
@@ -1883,7 +1884,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	se.sessionVars.SkipMissingPartitionStats = s.sessionVars.SkipMissingPartitionStats
 
 	if execOption.SnapshotTS != 0 {
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
 		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
@@ -1910,7 +1911,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		se.sessionVars.SnapshotInfoschema = nil
@@ -2796,7 +2797,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		return err
 	}
 
-	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
+	if vardef.EnableResourceControl.Load() && info.ResourceGroupName != "" {
 		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
@@ -3050,7 +3051,7 @@ func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string
 	var success bool
 	var skipNameResolve bool
 	var user = &auth.UserIdentity{}
-	varVal, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
+	varVal, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.SkipNameResolve)
 	if err == nil && variable.TiDBOptOn(varVal) {
 		skipNameResolve = true
 	}
@@ -3118,10 +3119,10 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		s.GetSessionVars().MinPagingSize = variable.DefMinPagingSize
-		s.GetSessionVars().EnablePaging = variable.DefTiDBEnablePaging
+		s.GetSessionVars().MinPagingSize = vardef.DefMinPagingSize
+		s.GetSessionVars().EnablePaging = vardef.DefTiDBEnablePaging
 		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
-		err = s.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, "utf8mb4")
+		err = s.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
 }
@@ -3216,12 +3217,12 @@ var (
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
-		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
+		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), vardef.DefWaitSplitRegionTimeout*time.Second)
 		var regionIDs []uint64
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, vardef.DefTiDBScatterRegion))
 		}
-		if variable.DefTiDBScatterRegion != variable.ScatterOff {
+		if vardef.DefTiDBScatterRegion != vardef.ScatterOff {
 			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
 		}
 		cancel()
@@ -3325,7 +3326,7 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 	return nil
 }
 
@@ -3343,7 +3344,7 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 		if isNull {
-			size = variable.DefTiDBSchemaCacheSize
+			size = vardef.DefTiDBSchemaCacheSize
 			return t.SetSchemaCacheSize(size)
 		}
 		return nil
@@ -3351,7 +3352,7 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	variable.SchemaCacheSize.Store(size)
+	vardef.SchemaCacheSize.Store(size)
 	return nil
 }
 
@@ -3369,9 +3370,9 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 		return nil
 	})
 	if isNull || !enable {
-		variable.EnableMDL.Store(false)
+		vardef.EnableMDL.Store(false)
 	} else {
-		variable.EnableMDL.Store(true)
+		vardef.EnableMDL.Store(true)
 	}
 	return isNull, err
 }
@@ -3398,7 +3399,7 @@ func InitMDLVariable(store kv.Storage) error {
 		}
 		return nil
 	})
-	variable.EnableMDL.Store(enable)
+	vardef.EnableMDL.Store(enable)
 	return err
 }
 
@@ -3727,7 +3728,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	// TODO we should have a createBootstrapSession to init those special variables.
-	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	s.sessionVars.EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
 	if startMode == ddl.Bootstrap {
@@ -3936,7 +3937,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
-		err := vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
 		if err != nil {
 			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
 		}
@@ -3963,8 +3964,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
-		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
-			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+		if varVal, ok := vars.GetSystemVar(vardef.InteractiveTimeout); ok {
+			if err := vars.SetSystemVar(vardef.WaitTimeout, varVal); err != nil {
 				return err
 			}
 		}
@@ -4126,7 +4127,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
-	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
+	if vardef.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		var query string
 		if isPrepared {
 			query = execStmt.OriginText()
@@ -4525,7 +4526,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		)
 		return false
 	}
-	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
+	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && vardef.EnableBatchDML.Load() {
 		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
 		return false
 	}

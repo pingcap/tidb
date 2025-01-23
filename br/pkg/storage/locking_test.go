@@ -137,3 +137,15 @@ func TestConcurrentLock(t *testing.T) {
 
 	requireFileExists(t, filepath.Join(path, "test.lock"))
 }
+
+func TestUnlockOnCleanUp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	strg, pth := createMockStorage(t)
+	lock, err := storage.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
+	require.NoError(t, err)
+	requireFileExists(t, filepath.Join(pth, "test.lock"))
+
+	cancel()
+	lock.UnlockOnCleanUp(ctx)
+	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+}
