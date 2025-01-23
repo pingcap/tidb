@@ -1247,10 +1247,6 @@ func (do *Domain) Close() {
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
-	if do.info != nil {
-		do.info.RemoveServerInfo()
-		do.info.RemoveMinStartTS()
-	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
 		logutil.BgLogger().Info("stopping ttlJobManager")
@@ -1275,20 +1271,30 @@ func (do *Domain) Close() {
 
 	do.runawayManager.Stop()
 
-	if do.unprefixedEtcdCli != nil {
-		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
-	}
-
 	do.slowQuery.Close()
+
 	do.cancelFns.mu.Lock()
 	for _, f := range do.cancelFns.fns {
 		f()
 	}
 	do.cancelFns.mu.Unlock()
+
+	// Clean etcd session and close the clients.
+	// We should wait all the etcd keys keeper to exit
+	// in case the keeper rewrite the key after the cleaning.
 	do.wg.Wait()
+	if do.info != nil {
+		do.info.RemoveServerInfo()
+		do.info.RemoveMinStartTS()
+		do.info.RemoveTopologyInfo()
+	}
+	if do.unprefixedEtcdCli != nil {
+		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
+	}
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindHandle())
 	if do.onClose != nil {
@@ -1482,24 +1488,8 @@ func (do *Domain) Init(
 		return err
 	}
 
-	startReloadTime := time.Now()
 	// step 3: domain reload the infoSchema.
-	err = do.Reload()
-	if err != nil {
-		return err
-	}
-
-	sub := time.Since(startReloadTime)
-	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
-	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
-	if sub > (do.schemaLease / 2) {
-		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
-		err = do.Reload()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return do.Reload()
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see

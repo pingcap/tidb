@@ -995,10 +995,10 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
 	clonedScan.TableAsName = ts.TableAsName
 	clonedScan.rangeInfo = ts.rangeInfo
-	clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
-	for i, rf := range ts.runtimeFilterList {
+	clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(ts.runtimeFilterList))
+	for _, rf := range ts.runtimeFilterList {
 		clonedRF := rf.Clone()
-		clonedScan.runtimeFilterList[i] = clonedRF
+		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
 	}
 	return clonedScan, nil
 }
