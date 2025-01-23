@@ -1592,7 +1592,7 @@ func (p *LogicalJoin) updateEQCond() {
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
-		for i := 0; i < len(p.OtherConditions); i++ {
+		for i := range len(p.OtherConditions) {
 			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
 			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.
