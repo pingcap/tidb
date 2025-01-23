@@ -1579,6 +1579,9 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
+	// TODO: need keep the order of ssts for compatible of rewrite rules
+	// compacted ssts will set ts range for filter out irrelevant data
+	// ingested ssts cannot use this ts range
 	addedSSTsIter := client.LogFileManager.GetIngestedSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
