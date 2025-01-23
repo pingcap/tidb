@@ -39,6 +39,7 @@ go_library(
         "@com_github_pingcap_badger//:badger",
         "@com_github_pingcap_badger//y",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/errorpb",
