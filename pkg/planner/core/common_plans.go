@@ -1035,6 +1035,8 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{e.UnityOffline_()})
 	case types.ExplainFormatUnityOffline:
 		e.Rows = append(e.Rows, []string{e.UnityOffline()})
+	case types.ExplainFormatUnityOnline:
+		e.Rows = append(e.Rows, []string{e.UnityOnline()})
 	case types.ExplainFormatUnityPredication:
 		e.Rows = append(e.Rows, []string{e.UnityPredication()})
 	default:

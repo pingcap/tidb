@@ -164,13 +164,13 @@ func (e *Explain) UnityOffline_() string {
 	basicStats, _ := rootStats.MergeStats()
 	up.TimeInMS = float64(basicStats.GetTime()) / 1e6
 	up.MemInByte = memTracker.MaxConsumed()
-	up.SubPlans = e.unitySubPlan()
+	up.SubPlans = e.unityOfflineSubPlan()
 	data, err := json.Marshal(up)
 	must(err)
 	return string(data)
 }
 
-func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
+func (e *Explain) unityOfflineSubPlan() (subPlans []*UnityOfflinePlanNode) {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
 	var iterSubPlanFunc func(op *FlatOperator)
 	iterSubPlanFunc = func(op *FlatOperator) {
@@ -195,8 +195,8 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityOfflinePlanNode) {
 
 type UnityOfflinePlanNode struct {
 	*ExplainInfoForEncode
-	PreSequence *UnityOfflinePreSequence `json:"preSequence"`
-	Hints       string                   `json:"hints"`
+	PreSequence *UnityPreSequence `json:"preSequence"`
+	Hints       string            `json:"hints"`
 	PlanStr     string                   `json:"planStr"`
 }
 
@@ -207,13 +207,13 @@ type UnityOfflinePlan struct {
 	SubPlans   []*UnityOfflinePlanNode `json:"subPlans"`
 }
 
-type UnityOfflinePreSequence struct {
+type UnityPreSequence struct {
 	Tables           []string `json:"tables"`
 	PredicateColumns []string `json:"predicateColumns"`
 	JoinColumns      []string `json:"joinColumns"`
 }
 
-func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
+func planPreSequences(p base.Plan) *UnityPreSequence {
 	var tables, predCols, joinCols []string
 	m := make(map[string]struct{})
 
@@ -302,7 +302,7 @@ func planPreSequences(p base.Plan) *UnityOfflinePreSequence {
 	sort.Strings(tables)
 	sort.Strings(predCols)
 	sort.Strings(joinCols)
-	return &UnityOfflinePreSequence{
+	return &UnityPreSequence{
 		Tables:           tables,
 		PredicateColumns: predCols,
 		JoinColumns:      joinCols,
