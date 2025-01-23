@@ -373,7 +373,7 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 
 // Fetch compactions that may contain file less than the TS.
 func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage, rc.shiftStartTS, rc.restoreTS), func(c *backuppb.LogFileSubcompaction) SSTs {
+	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
 		return &CompactedSSTs{c}
 	})
 }

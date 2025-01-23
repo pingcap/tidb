@@ -57,6 +57,10 @@ type RewriteRules struct {
 	TableIDRemapHint []TableIDRemap
 }
 
+func (r *RewriteRules) HasSetTs() bool {
+	return r.StartTs != 0 && r.RestoredTs != 0
+}
+
 func (r *RewriteRules) SetTsRange(shiftStartTs, startTs, restoredTs uint64) {
 	r.ShiftStartTs = shiftStartTs
 	r.StartTs = startTs
@@ -105,7 +109,7 @@ func (r *RewriteRules) Append(other RewriteRules) {
 
 func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
 	// for some sst files like db restore copy ssts, we don't need to set the time range filter
-	if r.StartTs == 0 || r.RestoredTs == 0 {
+	if !r.HasSetTs() {
 		return nil
 	}
 
