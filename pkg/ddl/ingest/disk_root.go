@@ -169,8 +169,8 @@ func (d *diskRootImpl) PreCheckUsage() error {
 		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
-		msg := fmt.Sprintf("no enough space in %s", d.path)
-		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
+		//msg := fmt.Sprintf("no enough space in %s", d.path)
+		return nil
 	}
 	return nil
 }

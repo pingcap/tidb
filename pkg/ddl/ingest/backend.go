@@ -319,14 +319,14 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.
-var ForceSyncFlagForTest = false
+var ForceSyncFlagForTest atomic.Bool
 
 func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 	failpoint.Inject("forceSyncFlagForTest", func() {
 		// used in a manual test
-		ForceSyncFlagForTest = true
+		ForceSyncFlagForTest.Store(true)
 	})
-	if ForceSyncFlagForTest {
+	if ForceSyncFlagForTest.Load() {
 		return true, true
 	}
 	LitDiskRoot.UpdateUsage()

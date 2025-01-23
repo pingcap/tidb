@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -87,12 +88,14 @@ func newReadIndexExecutor(
 
 func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false)
-	if err != nil {
-		return errors.Trace(err)
+	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
 	}
-	r.backendCfg = cfg
-	r.backend = bd
 	return nil
 }
 
@@ -162,7 +165,9 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
-	r.backend.Close()
+	if r.backend != nil {
+		r.backend.Close()
+	}
 	return nil
 }
 

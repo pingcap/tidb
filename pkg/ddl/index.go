@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -2449,18 +2450,24 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				cfg, bd, err := ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
-				if err != nil {
-					return errors.Trace(err)
+				var (
+					cfg *local.BackendConfig
+					bd  *local.Backend
+					err error
+				)
+				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+					cfg, bd, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					defer bd.Close()
 				}
 				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
 					ForDuplicateCheck().
 					Build(cfg, bd)
 				if err != nil {
-					bd.Close()
 					return err
 				}
-				defer bd.Close()
 				//nolint:revive,all_revive
 				defer bc.Close()
 			}

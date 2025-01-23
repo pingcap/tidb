@@ -55,7 +55,7 @@ func getRealAddIndexJob(t *testing.T, tk *testkit.TestKit) *model.Job {
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.Type == model.ActionAddIndex {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
 			realJob = job.Clone()
 		}
 	})

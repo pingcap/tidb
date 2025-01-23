@@ -355,9 +355,9 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 }
 
 func TestAddUKErrorMessage(t *testing.T) {
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	t.Cleanup(func() {
-		ingest.ForceSyncFlagForTest = false
+		ingest.ForceSyncFlagForTest.Store(false)
 	})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
