@@ -100,7 +100,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/util",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

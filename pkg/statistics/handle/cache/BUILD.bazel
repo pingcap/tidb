@@ -15,7 +15,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/lfu",

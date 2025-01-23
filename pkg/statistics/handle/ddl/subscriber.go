@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -362,7 +363,7 @@ func getCurrentPruneMode(
 ) (variable.PartitionPruneMode, error) {
 	pruneMode, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
-		GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+		GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	return variable.PartitionPruneMode(pruneMode), errors.Trace(err)
 }
 
@@ -371,7 +372,7 @@ func getEnableHistoricalStats(
 ) (bool, error) {
 	val, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
-		GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+		GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	return variable.TiDBOptOn(val), errors.Trace(err)
 }
 

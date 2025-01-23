@@ -22,7 +22,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/error",

@@ -15,7 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +44,7 @@ func TestChecksumContextDone(t *testing.T) {
 	tk.MustExec("insert into t1 values (10, 10);")
 	tableInfo1 := getTableInfo(t, mock, "test", "t1")
 	exe, err := checksum.NewExecutorBuilder(tableInfo1, math.MaxUint64).
-		SetConcurrency(variable.DefChecksumTableConcurrency).
+		SetConcurrency(vardef.DefChecksumTableConcurrency).
 		Build()
 	require.NoError(t, err)
 
@@ -73,12 +73,12 @@ func TestChecksum(t *testing.T) {
 	tk.MustExec("insert into t1 values (10);")
 	tableInfo1 := getTableInfo(t, mock, "test", "t1")
 	exe1, err := checksum.NewExecutorBuilder(tableInfo1, math.MaxUint64).
-		SetConcurrency(variable.DefChecksumTableConcurrency).
+		SetConcurrency(vardef.DefChecksumTableConcurrency).
 		Build()
 	require.NoError(t, err)
 	require.NoError(t, exe1.Each(func(r *kv.Request) error {
 		require.True(t, r.NotFillCache)
-		require.Equal(t, variable.DefChecksumTableConcurrency, r.Concurrency)
+		require.Equal(t, vardef.DefChecksumTableConcurrency, r.Concurrency)
 		return nil
 	}))
 	require.Equal(t, 1, exe1.Len())

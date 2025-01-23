@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -64,10 +64,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 
-	bak := variable.GetDDLReorgWorkerCounter()
+	bak := vardef.GetDDLReorgWorkerCounter()
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 111")
-	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(111), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -86,7 +86,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
 	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))
-	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, bak, vardef.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
@@ -423,12 +423,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			updateExecID := fmt.Sprintf(`
-				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in 
+				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
 					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 			<-afterCancel
 			updateExecID = fmt.Sprintf(`
-				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in 
+				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
 					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 		})

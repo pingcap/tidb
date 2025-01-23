@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -59,7 +59,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
 	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
@@ -272,16 +272,16 @@ func TestParseSlowLogFileSerial(t *testing.T) {
 select * from t;
 # Time: 2019-04-24-19:41:21.716221 +0800
 `)
-	originValue := variable.MaxOfMaxAllowedPacket
-	variable.MaxOfMaxAllowedPacket = 65536
-	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
+	originValue := vardef.MaxOfMaxAllowedPacket
+	vardef.MaxOfMaxAllowedPacket = 65536
+	sql := strings.Repeat("x", int(vardef.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader := bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, reader)
 	require.Error(t, err)
 	require.EqualError(t, err, "single line length exceeds limit: 65536")
 
-	variable.MaxOfMaxAllowedPacket = originValue
+	vardef.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)

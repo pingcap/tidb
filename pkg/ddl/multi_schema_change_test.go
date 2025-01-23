@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
@@ -779,19 +779,19 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	orig := variable.EnableRowLevelChecksum.Load()
-	defer variable.EnableRowLevelChecksum.Store(orig)
+	orig := vardef.EnableRowLevelChecksum.Load()
+	defer vardef.EnableRowLevelChecksum.Store(orig)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c int)")
 
-	variable.EnableRowLevelChecksum.Store(true)
+	vardef.EnableRowLevelChecksum.Store(true)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 
-	variable.EnableRowLevelChecksum.Store(false)
+	vardef.EnableRowLevelChecksum.Store(false)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)

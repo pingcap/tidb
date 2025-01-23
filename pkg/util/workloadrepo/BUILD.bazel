@@ -23,6 +23,7 @@ go_library(
         "//pkg/owner",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/util",

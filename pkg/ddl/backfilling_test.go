@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -269,8 +270,8 @@ func TestReorgExprContext(t *testing.T) {
 }
 
 func TestReorgTableMutateContext(t *testing.T) {
-	originalRowFmt := variable.GetDDLReorgRowFormat()
-	defer variable.SetDDLReorgRowFormat(originalRowFmt)
+	originalRowFmt := vardef.GetDDLReorgRowFormat()
+	defer vardef.SetDDLReorgRowFormat(originalRowFmt)
 
 	exprCtx := exprstatic.NewExprContext()
 
@@ -285,14 +286,14 @@ func TestReorgTableMutateContext(t *testing.T) {
 		require.Equal(t, variable.AssertionLevelOff, ctx.TxnAssertionLevel())
 		require.Equal(t, sctxTblCtx.TxnAssertionLevel(), ctx.TxnAssertionLevel())
 
-		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().IsRowLevelChecksumEnabled)
-		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().RowEncoder.Enable)
+		require.Equal(t, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().IsRowLevelChecksumEnabled)
+		require.Equal(t, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().RowEncoder.Enable)
 		require.Equal(t, sctxTblCtx.GetRowEncodingConfig(), ctx.GetRowEncodingConfig())
 
 		require.NotNil(t, ctx.GetMutateBuffers())
 		require.Equal(t, sctxTblCtx.GetMutateBuffers(), ctx.GetMutateBuffers())
 
-		require.Equal(t, variable.DefTiDBShardAllocateStep, ctx.GetRowIDShardGenerator().GetShardStep())
+		require.Equal(t, vardef.DefTiDBShardAllocateStep, ctx.GetRowIDShardGenerator().GetShardStep())
 		sctx.GetSessionVars().TxnCtx.StartTS = 123 // make sure GetRowIDShardGenerator() pass assert
 		require.Equal(t, sctxTblCtx.GetRowIDShardGenerator().GetShardStep(), ctx.GetRowIDShardGenerator().GetShardStep())
 		require.GreaterOrEqual(t, ctx.GetRowIDShardGenerator().GetCurrentShard(1), int64(0))
@@ -319,7 +320,7 @@ func TestReorgTableMutateContext(t *testing.T) {
 	}
 
 	// test when the row format is v1
-	variable.SetDDLReorgRowFormat(variable.DefTiDBRowFormatV1)
+	vardef.SetDDLReorgRowFormat(vardef.DefTiDBRowFormatV1)
 	sctx := newMockReorgSessCtx(&mockStorage{client: &mock.Client{}})
 	require.NoError(t, initSessCtx(sctx, &model.DDLReorgMeta{}))
 	ctx := newReorgTableMutateContext(exprCtx)

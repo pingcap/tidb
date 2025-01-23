@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -511,7 +512,7 @@ func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 }
 
 // GetScope implements the DDL interface.
-func (d *Checker) GetScope(status string) variable.ScopeFlag {
+func (d *Checker) GetScope(status string) vardef.ScopeFlag {
 	return d.realDDL.GetScope(status)
 }
 

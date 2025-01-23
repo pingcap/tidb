@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -294,7 +295,7 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
 	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")

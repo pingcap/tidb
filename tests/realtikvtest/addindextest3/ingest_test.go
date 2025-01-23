@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -213,7 +213,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
-	if variable.EnableDistTask.Load() {
+	if vardef.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
