@@ -19,7 +19,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	atomic2 "sync/atomic"
+	goatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -1953,62 +1953,62 @@ const (
 // SetDDLReorgWorkerCounter sets DDLReorgWorkerCounter count.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLReorgWorkerCounter(cnt int32) {
-	atomic2.StoreInt32(&DDLReorgWorkerCounter, cnt)
+	goatomic.StoreInt32(&DDLReorgWorkerCounter, cnt)
 }
 
 // GetDDLReorgWorkerCounter gets DDLReorgWorkerCounter.
 func GetDDLReorgWorkerCounter() int32 {
-	return atomic2.LoadInt32(&DDLReorgWorkerCounter)
+	return goatomic.LoadInt32(&DDLReorgWorkerCounter)
 }
 
 // SetDDLFlashbackConcurrency sets DDLFlashbackConcurrency count.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLFlashbackConcurrency(cnt int32) {
-	atomic2.StoreInt32(&DDLFlashbackConcurrency, cnt)
+	goatomic.StoreInt32(&DDLFlashbackConcurrency, cnt)
 }
 
 // GetDDLFlashbackConcurrency gets DDLFlashbackConcurrency count.
 func GetDDLFlashbackConcurrency() int32 {
-	return atomic2.LoadInt32(&DDLFlashbackConcurrency)
+	return goatomic.LoadInt32(&DDLFlashbackConcurrency)
 }
 
 // SetDDLReorgBatchSize sets DDLReorgBatchSize size.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
-	atomic2.StoreInt32(&DDLReorgBatchSize, cnt)
+	goatomic.StoreInt32(&DDLReorgBatchSize, cnt)
 }
 
 // GetDDLReorgBatchSize gets DDLReorgBatchSize.
 func GetDDLReorgBatchSize() int32 {
-	return atomic2.LoadInt32(&DDLReorgBatchSize)
+	return goatomic.LoadInt32(&DDLReorgBatchSize)
 }
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic2.StoreInt64(&DDLErrorCountLimit, cnt)
+	goatomic.StoreInt64(&DDLErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic2.LoadInt64(&DDLErrorCountLimit)
+	return goatomic.LoadInt64(&DDLErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets DDLReorgRowFormat version.
 func SetDDLReorgRowFormat(format int64) {
-	atomic2.StoreInt64(&DDLReorgRowFormat, format)
+	goatomic.StoreInt64(&DDLReorgRowFormat, format)
 }
 
 // GetDDLReorgRowFormat gets DDLReorgRowFormat version.
 func GetDDLReorgRowFormat() int64 {
-	return atomic2.LoadInt64(&DDLReorgRowFormat)
+	return goatomic.LoadInt64(&DDLReorgRowFormat)
 }
 
 // SetMaxDeltaSchemaCount sets MaxDeltaSchemaCount size.
 func SetMaxDeltaSchemaCount(cnt int64) {
-	atomic2.StoreInt64(&MaxDeltaSchemaCount, cnt)
+	goatomic.StoreInt64(&MaxDeltaSchemaCount, cnt)
 }
 
 // GetMaxDeltaSchemaCount gets MaxDeltaSchemaCount size.
 func GetMaxDeltaSchemaCount() int64 {
-	return atomic2.LoadInt64(&MaxDeltaSchemaCount)
+	return goatomic.LoadInt64(&MaxDeltaSchemaCount)
 }
