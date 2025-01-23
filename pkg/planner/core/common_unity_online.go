@@ -348,7 +348,7 @@ func (e *Explain) unityGetPossibleHints(o *UnityOutput) {
 	}
 }
 
-func (e *Explain) UnityOnline() string {
+func (e *Explain) UnityPredication() string {
 	o := &UnityOutput{
 		Tables: make(map[string]*UnityTableInfo),
 		joins:  make(map[string]string),
