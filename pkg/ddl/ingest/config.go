@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -93,7 +93,7 @@ func CopReadBatchSize(hintSize int) int {
 	if hintSize > 0 {
 		return hintSize
 	}
-	return 10 * int(variable.GetDDLReorgBatchSize())
+	return 10 * int(vardef.GetDDLReorgBatchSize())
 }
 
 // CopReadChunkPoolSize is the size of chunk pool, which
@@ -103,7 +103,7 @@ func CopReadChunkPoolSize(hintConc int) int {
 	if hintConc > 0 {
 		return 10 * hintConc
 	}
-	return 10 * int(variable.GetDDLReorgWorkerCounter())
+	return 10 * int(vardef.GetDDLReorgWorkerCounter())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.

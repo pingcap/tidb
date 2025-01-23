@@ -20,7 +20,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/resolve",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/util",

@@ -68,6 +68,7 @@ import (
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -411,8 +412,8 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar(variable.TiDBTxnScope, func() string {
-		if !variable.EnableLocalTxn.Load() {
+	variable.SetSysVar(vardef.TiDBTxnScope, func() string {
+		if !vardef.EnableLocalTxn.Load() {
 			return kv.GlobalTxnScope
 		}
 		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -127,7 +128,7 @@ func TestTrafficForm(t *testing.T) {
 			test.form.Add("start-time", actualForm.Get("start-time"))
 		}
 		require.Equal(t, test.form, actualForm, "case %d", i)
-		require.EqualValues(t, 0, suite.execBuilder.ctx.GetSessionVars().StmtCtx.WarningCount(), "case %d", i)
+		require.EqualValues(t, 0, suite.stmtCtx().WarningCount(), "case %d", i)
 	}
 }
 
@@ -258,7 +259,7 @@ func TestReplayPath(t *testing.T) {
 			require.ErrorContains(t, err, test.err)
 		} else {
 			require.NoError(t, err)
-			warnings := suite.execBuilder.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			warnings := suite.stmtCtx().GetWarnings()
 			if test.warn != "" {
 				require.Len(t, warnings, 1)
 				require.ErrorContains(t, warnings[0].Err, test.warn)
@@ -360,6 +361,80 @@ func TestTrafficShow(t *testing.T) {
 	}
 }
 
+func TestTrafficPrivilege(t *testing.T) {
+	suite := newTrafficTestSuite(t, 10)
+	ctx := context.TODO()
+	httpHandler := &mockHTTPHandler{t: t, httpOK: true}
+	server, port := runServer(t, httpHandler)
+	defer server.Close()
+	ctx = fillCtxWithTiProxyAddr(ctx, []int{port})
+
+	cancelTests := []struct {
+		privs []bool
+		form  url.Values
+	}{
+		{
+			privs: []bool{true, false},
+			form:  url.Values{"type": []string{"capture"}},
+		},
+		{
+			privs: []bool{false, true},
+			form:  url.Values{"type": []string{"replay"}},
+		},
+		{
+			privs: []bool{true, true},
+			form:  url.Values{},
+		},
+	}
+	for _, test := range cancelTests {
+		httpHandler.reset()
+		tmpCtx := context.WithValue(ctx, trafficPrivKey, test.privs)
+		exec := suite.build(tmpCtx, "cancel traffic jobs")
+		require.NoError(t, exec.Next(tmpCtx, nil))
+		require.Equal(t, test.form, httpHandler.getForm(), "privs %v", test.privs)
+	}
+
+	showTests := []struct {
+		privs []bool
+		types []string
+	}{
+		{
+			privs: []bool{true, false},
+			types: []string{"capture"},
+		},
+		{
+			privs: []bool{false, true},
+			types: []string{"replay"},
+		},
+		{
+			privs: []bool{true, true},
+			types: []string{"capture", "replay"},
+		},
+	}
+	marshaledJob := `[{
+		"start_time": "2020-01-01T02:01:01Z",
+		"type": "capture"
+	},{
+		"start_time": "2020-01-01T02:01:01Z",
+		"type": "replay"
+	}]`
+	httpHandler.setResponse(marshaledJob)
+	fields := trafficJobFields()
+	for _, test := range showTests {
+		tmpCtx := context.WithValue(ctx, trafficPrivKey, test.privs)
+		exec := suite.build(tmpCtx, "show traffic jobs")
+		require.NoError(t, exec.Open(tmpCtx))
+		chk := chunk.New(fields, 2, 2)
+		jobs := make([]string, 0, 2)
+		require.NoError(t, exec.Next(ctx, chk))
+		for j := 0; j < chk.NumRows(); j++ {
+			jobs = append(jobs, chk.Column(3).GetString(j))
+		}
+		sort.Strings(jobs)
+		require.Equal(t, test.types, jobs)
+	}
+}
+
 type trafficTestSuite struct {
 	t           *testing.T
 	parser      *parser.Parser
@@ -390,6 +465,10 @@ func (suite *trafficTestSuite) build(ctx context.Context, sql string) exec.Execu
 	executor := suite.execBuilder.build(p)
 	require.NotEmpty(suite.t, executor)
 	return executor
+}
+
+func (suite *trafficTestSuite) stmtCtx() *stmtctx.StatementContext {
+	return suite.execBuilder.ctx.GetSessionVars().StmtCtx
 }
 
 type mockHTTPHandler struct {

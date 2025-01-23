@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -50,10 +50,10 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(5)
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(5)
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		vardef.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
