@@ -47,6 +47,7 @@ go_test(
     shard_count = 17,
     deps = [
         "//pkg/config",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/util",
