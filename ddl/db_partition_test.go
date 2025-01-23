@@ -4903,3 +4903,12 @@ func TestIssue54829(t *testing.T) {
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
+
+func TestIssue59047(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id bigint primary key, name varchar(20))`)
+	tk.MustExec(`alter table t add column d date not null`)
+	tk.MustExec(`update t set name = 'x'`)
+}
