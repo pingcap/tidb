@@ -18,9 +18,6 @@ import (
 const impactFactor = 16
 
 type CompactedFileSplitStrategy struct {
-	restoredTS   uint64
-	startTS      uint64
-	shiftStartTS uint64
 	*split.BaseSplitStrategy
 	checkpointSets           map[string]struct{}
 	checkpointFileProgressFn func(uint64, uint64)
@@ -30,17 +27,11 @@ var _ split.SplitStrategy[SSTs] = &CompactedFileSplitStrategy{}
 
 func NewCompactedFileSplitStrategy(
 	rules map[int64]*utils.RewriteRules,
-	shiftStartTS uint64,
-	startTS uint64,
-	restoredTS uint64,
 	checkpointsSet map[string]struct{},
 	updateStatsFn func(uint64, uint64),
 ) *CompactedFileSplitStrategy {
 	return &CompactedFileSplitStrategy{
 		BaseSplitStrategy:        split.NewBaseSplitStrategy(rules),
-		restoredTS:               restoredTS,
-		startTS:                  startTS,
-		shiftStartTS:             shiftStartTS,
 		checkpointSets:           checkpointsSet,
 		checkpointFileProgressFn: updateStatsFn,
 	}
