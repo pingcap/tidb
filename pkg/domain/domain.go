@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -310,7 +311,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	enableV2 := variable.SchemaCacheSize.Load() > 0
+	enableV2 := vardef.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
 	oldInfoSchema := do.infoCache.GetLatest()
 	if oldInfoSchema != nil {
@@ -503,7 +504,7 @@ const fetchSchemaConcurrency = 1
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+	if vardef.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
 		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupCnt = 8
 	}
@@ -532,7 +533,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if vardef.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
@@ -746,7 +747,7 @@ func (do *Domain) Store() kv.Storage {
 }
 
 // GetScope gets the status variables scope.
-func (*Domain) GetScope(string) variable.ScopeFlag {
+func (*Domain) GetScope(string) vardef.ScopeFlag {
 	// Now domain status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
 }
@@ -1056,7 +1057,7 @@ func (do *Domain) mdlCheckLoop() {
 			return
 		}
 
-		if !variable.EnableMDL.Load() {
+		if !vardef.EnableMDL.Load() {
 			continue
 		}
 
@@ -1247,10 +1248,6 @@ func (do *Domain) Close() {
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
-	if do.info != nil {
-		do.info.RemoveServerInfo()
-		do.info.RemoveMinStartTS()
-	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
 		logutil.BgLogger().Info("stopping ttlJobManager")
@@ -1275,20 +1272,30 @@ func (do *Domain) Close() {
 
 	do.runawayManager.Stop()
 
-	if do.unprefixedEtcdCli != nil {
-		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
-	}
-
 	do.slowQuery.Close()
+
 	do.cancelFns.mu.Lock()
 	for _, f := range do.cancelFns.fns {
 		f()
 	}
 	do.cancelFns.mu.Unlock()
+
+	// Clean etcd session and close the clients.
+	// We should wait all the etcd keys keeper to exit
+	// in case the keeper rewrite the key after the cleaning.
 	do.wg.Wait()
+	if do.info != nil {
+		do.info.RemoveServerInfo()
+		do.info.RemoveMinStartTS()
+		do.info.RemoveTopologyInfo()
+	}
+	if do.unprefixedEtcdCli != nil {
+		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
+	}
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindHandle())
 	if do.onClose != nil {
@@ -1351,7 +1358,7 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
@@ -1622,7 +1629,7 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 // - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
 func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
 	do.sysVarCache.RLock()
-	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
+	replicaRead := do.sysVarCache.global[vardef.TiDBReplicaRead]
 	do.sysVarCache.RUnlock()
 
 	if !strings.EqualFold(replicaRead, "closest-adaptive") {
@@ -2735,7 +2742,7 @@ func (do *Domain) autoAnalyzeWorker() {
 			// the probability of this happening is very high that the ticker condition and exist condition will be met
 			// at the same time.
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
-			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
+			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
 		case <-do.exit:
@@ -3267,8 +3274,8 @@ func (do *Domain) StopAutoAnalyze() {
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
 func (do *Domain) InitInstancePlanCache() {
-	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-	softLimit := float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load())
+	hardLimit := vardef.InstancePlanCacheMaxMemSize.Load()
+	softLimit := float64(hardLimit) * (1 - vardef.InstancePlanCacheReservedPercentage.Load())
 	do.instancePlanCache = NewInstancePlanCache(int64(softLimit), hardLimit)
 	// use a separate goroutine to avoid the eviction blocking other operations.
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
@@ -3293,8 +3300,8 @@ func (do *Domain) planCacheMetricsAndVars() {
 		select {
 		case <-ticker.C:
 			// update limits
-			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-			softLimit := int64(float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load()))
+			hardLimit := vardef.InstancePlanCacheMaxMemSize.Load()
+			softLimit := int64(float64(hardLimit) * (1 - vardef.InstancePlanCacheReservedPercentage.Load()))
 			curSoft, curHard := do.instancePlanCache.GetLimits()
 			if curSoft != softLimit || curHard != hardLimit {
 				do.instancePlanCache.SetLimits(softLimit, hardLimit)
@@ -3325,7 +3332,7 @@ func (do *Domain) planCacheEvictTrigger() {
 		case <-ticker.C:
 			// trigger the eviction
 			begin := time.Now()
-			enabled := variable.EnableInstancePlanCache.Load()
+			enabled := vardef.EnableInstancePlanCache.Load()
 			detailInfo, numEvicted := do.instancePlanCache.Evict(!enabled) // evict all if the plan cache is disabled
 			metrics2.GetPlanCacheInstanceEvict().Set(float64(numEvicted))
 			if numEvicted > 0 {
@@ -3357,7 +3364,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
-	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
+	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
 	defer func() {
 		readTableCostTicker.Stop()
 		logutil.BgLogger().Info("readTableCostWorker exited.")
@@ -3365,7 +3372,7 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Ha
 	for {
 		select {
 		case <-readTableCostTicker.C:
-			if variable.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
+			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
 				wbLearningHandle.HandleReadTableCost()
 			}
 		case <-do.exit:

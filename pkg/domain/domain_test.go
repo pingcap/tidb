@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -261,7 +262,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}()
 	dom.sysVarCache.Lock()
 	dom.sysVarCache.global = map[string]string{
-		variable.TiDBReplicaRead: "closest-adaptive",
+		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
 

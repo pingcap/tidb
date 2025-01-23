@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -1426,9 +1426,9 @@ func TestFinishError(t *testing.T) {
 	// Test the `rescheduleJobs` can tolerate the `job.finish` error
 	// cancel job branch
 	initializeTest()
-	variable.EnableTTLJob.Store(false)
+	vardef.EnableTTLJob.Store(false)
 	t.Cleanup(func() {
-		variable.EnableTTLJob.Store(true)
+		vardef.EnableTTLJob.Store(true)
 	})
 	for i := 0; i < 4; i++ {
 		m.RescheduleJobs(se, now)
@@ -1436,7 +1436,7 @@ func TestFinishError(t *testing.T) {
 	}
 	m.RescheduleJobs(se, now)
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
-	variable.EnableTTLJob.Store(true)
+	vardef.EnableTTLJob.Store(true)
 	// remove table branch
 	initializeTest()
 	tk.MustExec("drop table t")
@@ -1782,11 +1782,11 @@ func TestJobManagerWithFault(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		maxScanWorkerCount := variable.DefTiDBTTLScanWorkerCount * 2
-		minScanWorkerCount := variable.DefTiDBTTLScanWorkerCount / 2
+		maxScanWorkerCount := vardef.DefTiDBTTLScanWorkerCount * 2
+		minScanWorkerCount := vardef.DefTiDBTTLScanWorkerCount / 2
 
-		maxDelWorkerCount := variable.DefTiDBTTLDeleteWorkerCount * 2
-		minDelWorkerCount := variable.DefTiDBTTLDeleteWorkerCount / 2
+		maxDelWorkerCount := vardef.DefTiDBTTLDeleteWorkerCount * 2
+		minDelWorkerCount := vardef.DefTiDBTTLDeleteWorkerCount / 2
 		faultTicker := time.NewTicker(time.Second)
 
 		tk := testkit.NewTestKit(t, store)
@@ -1794,8 +1794,8 @@ func TestJobManagerWithFault(t *testing.T) {
 			select {
 			case <-stopTestCh:
 				// Recover to the default count
-				tk.MustExec("set @@global.tidb_ttl_scan_worker_count = ?", variable.DefTiDBTTLScanWorkerCount)
-				tk.MustExec("set @@global.tidb_ttl_delete_worker_count = ?", variable.DefTiDBTTLDeleteWorkerCount)
+				tk.MustExec("set @@global.tidb_ttl_scan_worker_count = ?", vardef.DefTiDBTTLScanWorkerCount)
+				tk.MustExec("set @@global.tidb_ttl_delete_worker_count = ?", vardef.DefTiDBTTLDeleteWorkerCount)
 
 				return
 			case <-faultTicker.C:

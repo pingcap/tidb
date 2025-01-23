@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
@@ -309,10 +310,10 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 ) {
 	historicalStatsEnabled, err := s.statsHandler.CheckHistoricalStatsEnable()
 	if err != nil {
-		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
+		return nil, nil, errors.Errorf("check %v failed: %v", vardef.TiDBEnableHistoricalStats, err)
 	}
 	if !historicalStatsEnabled {
-		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
+		return nil, nil, errors.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats)
 	}
 
 	defer func() {

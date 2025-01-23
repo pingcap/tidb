@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -88,7 +88,7 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 	if err != nil {
 		return nil, err
 	}
-	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	workerCnt := info.ReorgMeta.GetConcurrency()
 	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -163,20 +163,20 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		WarnHandler:                          warnHandler,
 		Client:                               kvClient,
 		EnableChunkRPC:                       true,
-		EnabledRateLimitAction:               variable.DefTiDBEnableRateLimitAction,
+		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
 		CPUUsage:                             &cpuUsages,
 		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
-		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(variable.DefTiFlashReplicaRead),
-		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
-		TiFlashMaxBytesBeforeExternalJoin:    variable.DefTiFlashMaxBytesBeforeExternalJoin,
-		TiFlashMaxBytesBeforeExternalGroupBy: variable.DefTiFlashMaxBytesBeforeExternalGroupBy,
-		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
-		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
-		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(vardef.DefTiFlashReplicaRead),
+		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
+		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
 		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
 	}
@@ -202,8 +202,8 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 
 	// Set the row encode format version.
-	rowFormat := variable.GetDDLReorgRowFormat()
-	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
+	rowFormat := vardef.GetDDLReorgRowFormat()
+	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != vardef.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
 	sqlMode := reorgMeta.SQLMode
 	sessCtx.GetSessionVars().SQLMode = sqlMode
@@ -248,7 +248,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 }
 
 func (b *txnBackfillExecutor) expectedWorkerSize() (size int) {
-	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrency()
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 

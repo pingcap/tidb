@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -1325,7 +1326,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("0"))
 
-	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
+	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(vardef.DefHostname))
 	sem.Disable()
 	if hostname, err := os.Hostname(); err == nil {
 		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
@@ -1911,7 +1912,7 @@ func TestCheckPasswordExpired(t *testing.T) {
 	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
 
 	record.PasswordExpired = false
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultPasswordLifetime, "2")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.DefaultPasswordLifetime, "2")
 	require.NoError(t, err)
 	// use default_password_lifetime
 	record.PasswordLifeTime = -1
@@ -1982,7 +1983,7 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
-	variable.IsSandBoxModeEnabled.Store(true)
+	vardef.IsSandBoxModeEnabled.Store(true)
 
 	// PASSWORD EXPIRE
 	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
@@ -2054,13 +2055,13 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.False(t, tk.Session().InSandBoxMode())
 
 	// Test password expiration with sandbox.
-	variable.IsSandBoxModeEnabled.Store(true)
+	vardef.IsSandBoxModeEnabled.Store(true)
 	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
 	// Enable resource group.
-	variable.EnableResourceControl.Store(true)
+	vardef.EnableResourceControl.Store(true)
 	err = tk.Session().Auth(user, tokenBytes, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)

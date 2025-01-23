@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -4095,7 +4096,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
 	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
 	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
-	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
 		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
@@ -4160,7 +4161,7 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
 	realtimeRowCount := statsTbl.RealtimeCount
-	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
 		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 	}
 	if realtimeRowCount == 0 {

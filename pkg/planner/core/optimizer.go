@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -277,7 +278,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	var cas *cascades.Optimizer
-	if cas, err = cascades.NewCascades(logic); err == nil {
+	if cas, err = cascades.NewOptimizer(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
 	}
@@ -302,6 +303,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		}
 		if tmpCost < cost {
 			physical = tmpPhysical
+			cost = tmpCost
 		}
 		return true
 	})
@@ -836,7 +838,7 @@ func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx base.
 
 func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 	(*streamCountInfo).itemStatus = initialized
-	(*streamCountInfo).itemValue = variable.DefStreamCountWhenMaxThreadsNotSet
+	(*streamCountInfo).itemValue = vardef.DefStreamCountWhenMaxThreadsNotSet
 }
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
@@ -1112,7 +1114,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
+	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 

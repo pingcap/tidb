@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -774,7 +774,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
 	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
@@ -791,7 +791,7 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
 	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
@@ -1177,7 +1177,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkOwnerCheckAllVersionsWaitTime"))
 	}()
-	save := variable.GetDDLErrorCountLimit()
+	save := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))

@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,9 +80,9 @@ func TestShowCommentsFromJob(t *testing.T) {
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
-	job.ReorgMeta.Concurrency.Store(variable.DefTiDBDDLReorgWorkerCount)
-	job.ReorgMeta.BatchSize.Store(variable.DefTiDBDDLReorgBatchSize)
-	job.ReorgMeta.MaxWriteSpeed.Store(variable.DefTiDBDDLReorgMaxWriteSpeed)
+	job.ReorgMeta.Concurrency.Store(vardef.DefTiDBDDLReorgWorkerCount)
+	job.ReorgMeta.BatchSize.Store(vardef.DefTiDBDDLReorgBatchSize)
+	job.ReorgMeta.MaxWriteSpeed.Store(vardef.DefTiDBDDLReorgMaxWriteSpeed)
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF, cloud", res)
 
@@ -92,9 +92,9 @@ func TestShowCommentsFromJob(t *testing.T) {
 		UseCloudStorage: true,
 		TargetScope:     "background",
 	}
-	job.ReorgMeta.Concurrency.Store(variable.DefTiDBDDLReorgWorkerCount)
-	job.ReorgMeta.BatchSize.Store(variable.DefTiDBDDLReorgBatchSize)
-	job.ReorgMeta.MaxWriteSpeed.Store(variable.DefTiDBDDLReorgMaxWriteSpeed)
+	job.ReorgMeta.Concurrency.Store(vardef.DefTiDBDDLReorgWorkerCount)
+	job.ReorgMeta.BatchSize.Store(vardef.DefTiDBDDLReorgBatchSize)
+	job.ReorgMeta.MaxWriteSpeed.Store(vardef.DefTiDBDDLReorgMaxWriteSpeed)
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF, cloud, service_scope=background", res)
 }
