@@ -1993,6 +1993,7 @@ func doDMLWorks(s Session) {
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
+<<<<<<< HEAD:session/bootstrap.go
 		// Only global variables should be inserted.
 		if v.HasGlobalScope() {
 			vVal := v.Value
@@ -2042,6 +2043,16 @@ func doDMLWorks(s Session) {
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
+=======
+		if !v.HasGlobalScope() {
+			continue
+		}
+		vVal := variable.GlobalSystemVariableInitialValue(v.Name, v.Value)
+
+		// sanitize k and vVal
+		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))
+		values = append(values, value)
+>>>>>>> 205b5bbd210 (variable: fix information_schema.VARIABLES_INFO DEFAULT_VALUE not right problem (#49524)):pkg/session/bootstrap.go
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
