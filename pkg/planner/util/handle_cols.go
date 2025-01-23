@@ -152,12 +152,12 @@ func (cb *CommonHandleCols) GetColumns() []*expression.Column {
 	return cb.columns
 }
 
-// IterColumns implements the kv.HandleCols interface. it implements the Seq2 interface.
+// IterColumns implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) IterColumns() iter.Seq[*expression.Column] {
 	return slices.Values(cb.columns)
 }
 
-// IterColumns implements the kv.HandleCols interface. it implements the Seq2 interface.
+// IterColumns implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
 	return slices.All(cb.columns)
 }
