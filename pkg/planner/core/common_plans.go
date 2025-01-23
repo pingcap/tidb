@@ -910,6 +910,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"unity offline"}
 	case format == types.ExplainFormatUnityOffline:
 		fieldNames = []string{"unity offline"}
+	case format == types.ExplainFormatUnityOnline:
+		fieldNames = []string{"unity online"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
