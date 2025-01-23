@@ -35,12 +35,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// decodeAndParse uses the `parseBinaryParams` and `parse.ExecArgs` to parse the params passed through binary protocol
+// decodeAndParse uses the `parseBinaryParams` and `expression.ExecBinaryParam` to parse the params passed through binary protocol
 // It helps to test the integration of these two functions
 func decodeAndParse(typectx types.Context, args []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *util.InputDecoder) (err error) {
 	binParams := make([]param.BinaryParam, len(args))
-	err = parseBinaryParams(binParams, boundParams, nullBitmap, paramTypes, paramValues, enc)
+	_, err = parseBinaryParams(binParams, boundParams, nullBitmap, paramTypes, paramValues, enc)
 	if err != nil {
 		return err
 	}
@@ -319,6 +319,20 @@ func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, minute 
 	return result
 }
 
+func buildDatetimeParamWithClientQueryAttr(year uint16, month uint8, day uint8, hour uint8, min uint8, sec uint8, msec uint32) []byte {
+	endian := binary.LittleEndian
+
+	result := []byte{mysql.TypeDatetime, 0x0, 0xfb, 11}
+	result = endian.AppendUint16(result, year)
+	result = append(result, month)
+	result = append(result, day)
+	result = append(result, hour)
+	result = append(result, min)
+	result = append(result, sec)
+	result = endian.AppendUint32(result, msec)
+	return result
+}
+
 func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, warnCount int) []byte {
 	return getExpectOutput(t, c, func(conn *clientConn) {
 		var err error
@@ -375,6 +389,39 @@ func TestDateTimeTypes(t *testing.T) {
 		0x0, 0x1,
 	)
 	req = append(req, buildDatetimeParam(2023, 11, 9, 14, 23, 45, 100)...)
+	out := c.GetOutput()
+	require.NoError(t, c.Dispatch(ctx, req))
+
+	require.Equal(t, expected, out.Bytes())
+}
+
+func TestQueryAttrExecute(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41 | mysql.ClientDeprecateEOF | mysql.ClientQueryAttributes
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	stmt, _, _, err := c.Context().Prepare("select ? as t")
+	require.NoError(t, err)
+
+	expectedTimeDatum, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, "2023-11-09 14:23:45.000100")
+	require.NoError(t, err)
+	expected := expectedDatetimeExecuteResult(t, c, expectedTimeDatum, 1)
+
+	// execute the statement with datetime parameter
+	req := append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0, 0x1,
+		0x0, 0x1,
+	)
+	req = append(req, buildDatetimeParamWithClientQueryAttr(2023, 11, 9, 14, 23, 45, 100)...)
 	out := c.GetOutput()
 	require.NoError(t, c.Dispatch(ctx, req))
 

@@ -23,7 +23,7 @@ import (
 var ErrUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
 // BinaryParam stores the information decoded from the binary protocol
-// It can be further parsed into `expression.Expression` through the `ExecArgs` function in this package
+// It can be further parsed into `expression.Expression` through the expression.ExecBinaryParam function in expression package
 type BinaryParam struct {
 	Tp         byte
 	IsUnsigned bool

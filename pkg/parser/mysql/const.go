@@ -171,7 +171,7 @@ const (
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
 	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
 	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
-	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
+	ClientQueryAttributes                               // CLIENT_QUERY_ATTRIBUTES
 	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
 	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
 	// 1 << 30 == CLIENT_SSL_VERIFY_SERVER_CERT
@@ -665,6 +665,8 @@ const (
 	CursorTypeReadOnly = 1 << iota
 	CursorTypeForUpdate
 	CursorTypeScrollable
+	// ParameterCountAvailable On when the client will send the parameter count even for 0 parameters.
+	ParameterCountAvailable
 )
 
 // ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol
