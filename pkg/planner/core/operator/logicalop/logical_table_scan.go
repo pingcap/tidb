@@ -97,8 +97,8 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
-		for i := 0; i < ts.HandleCols.NumCols(); i++ {
-			cols[i] = ts.HandleCols.GetCol(i)
+		for i, c := range ts.HandleCols.IterColumns2() {
+			cols[i] = c
 		}
 		return [][]*expression.Column{cols}
 	}
