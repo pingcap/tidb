@@ -2449,12 +2449,18 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
+				cfg, bd, err := ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
 					ForDuplicateCheck().
-					Build()
+					Build(cfg, bd)
 				if err != nil {
+					bd.Close()
 					return err
 				}
+				defer bd.Close()
 				//nolint:revive,all_revive
 				defer bc.Close()
 			}

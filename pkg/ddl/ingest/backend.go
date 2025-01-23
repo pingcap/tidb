@@ -359,7 +359,6 @@ func (bc *litBackendCtx) Close() {
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("jobID", bc.jobID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()))
-	bc.backend.Close()
 	LitDiskRoot.Remove(bc.jobID)
 	BackendCounterForTest.Dec()
 }
