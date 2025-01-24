@@ -7,7 +7,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/privilege"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -77,19 +77,19 @@ func (s *Server) checkUserConnectionCount(cc *clientConn, host string) error {
 		return err
 	}
 
-	if connections == 0 && variable.MaxUserConnectionsCount.Load() == 0 {
+	if connections == 0 && vardef.MaxUserConnectionsCount.Load() == 0 {
 		return nil
 	}
 
 	targetUser := authUser.Username + authUser.Hostname
 	conns := int64(cc.getUserConnectionsCounter(targetUser))
 
-	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(variable.MaxUserConnectionsCount.Load())) {
+	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsCount.Load())) {
 		var count uint32
 		if connections > 0 {
 			count = uint32(connections)
 		} else {
-			count = variable.MaxUserConnectionsCount.Load()
+			count = vardef.MaxUserConnectionsCount.Load()
 		}
 		logutil.BgLogger().Error("The current user has too many connections",
 			zap.Uint32("max user connections", count), zap.Error(servererr.ErrConCount))

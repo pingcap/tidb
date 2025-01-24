@@ -13,6 +13,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/history",
         "//pkg/statistics/handle/lockstats",

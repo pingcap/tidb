@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -122,7 +123,7 @@ func TestTableReaderChunk(t *testing.T) {
 	tk.Session().GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -386,7 +387,7 @@ func TestValidationRecursion(t *testing.T) {
 	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
 	// function because it might cause infinite recursion.
 	// See: https://github.com/pingcap/tidb/issues/30255
-	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+	sv := variable.SysVar{Scope: vardef.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
 	}}
 	variable.RegisterSysVar(&sv)
@@ -396,7 +397,7 @@ func TestValidationRecursion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	val, err := sv.Validate(tk.Session().GetSessionVars(), "test2", variable.ScopeGlobal)
+	val, err := sv.Validate(tk.Session().GetSessionVars(), "test2", vardef.ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "test", val)
 }

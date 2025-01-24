@@ -18,6 +18,7 @@ go_library(
         "//pkg/privilege",
         "//pkg/session",
         "//pkg/session/types",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/util",

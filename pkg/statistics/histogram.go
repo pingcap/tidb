@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -295,15 +296,14 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+func (hg *Histogram) BinarySearchRemoveVal(val *types.Datum, count int64) {
 	lowIdx, highIdx := 0, hg.Len()-1
-	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
 	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(highIdx*2+1), 0, val); cmpResult < 0 {
 			return
 		}
-		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(lowIdx), 0, val); cmpResult > 0 {
 			return
 		}
 	}
@@ -311,12 +311,12 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	var found bool
 	for lowIdx <= highIdx {
 		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
+		cmpResult := chunk.Compare(hg.Bounds.GetRow(midIdx*2), 0, val)
 		if cmpResult > 0 {
 			highIdx = midIdx - 1
 			continue
 		}
-		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		cmpResult = chunk.Compare(hg.Bounds.GetRow(midIdx*2+1), 0, val)
 		if cmpResult < 0 {
 			lowIdx = midIdx + 1
 			continue
@@ -329,7 +329,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if cmpResult == 0 {
 			midbucket.Repeat = 0
 		}
-		midbucket.Count -= int64(valCntPairs.Count)
+		midbucket.Count -= count
 		if midbucket.Count < 0 {
 			midbucket.Count = 0
 		}
@@ -338,7 +338,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	}
 	if found {
 		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
-			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+			hg.Buckets[midIdx].Count -= count
 			if hg.Buckets[midIdx].Count < 0 {
 				hg.Buckets[midIdx].Count = 0
 			}
@@ -988,7 +988,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)

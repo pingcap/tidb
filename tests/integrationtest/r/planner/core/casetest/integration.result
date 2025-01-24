@@ -42,10 +42,9 @@ explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where fr
 id	estRows	task	access object	operator info
 Projection	9990.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b
 └─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
-  ├─Selection(Build)	7992.00	root		from_unixtime(cast(planner__core__casetest__integration.t.b, decimal(20,0) BINARY))
-  │ └─TableReader	9990.00	root		data:Selection
-  │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a))
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  ├─TableReader(Build)	7992.00	root		data:Selection
+  │ └─Selection	7992.00	cop[tikv]		from_unixtime(cast(planner__core__casetest__integration.t.b, decimal(20,0) BINARY)), not(isnull(planner__core__casetest__integration.t.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	9990.00	root		data:Selection
     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a))
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

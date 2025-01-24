@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -1849,7 +1850,7 @@ type PhysicalExchangeSender struct {
 	HashCols             []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
-	CompressionMode kv.ExchangeCompressionMode
+	CompressionMode vardef.ExchangeCompressionMode
 }
 
 // Clone implements op.PhysicalPlan interface.
