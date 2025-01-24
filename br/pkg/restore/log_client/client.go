@@ -273,7 +273,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
-func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
 	if r, ok := sst.(RewrittenSSTs); ok {
 		rewritten := r.RewrittenTo()
 		if rewritten != sst.TableID() {
@@ -289,6 +289,10 @@ func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.
 			log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", sst.TableID()), zap.Int64("rewritten_to", rewritten))
 			return rewriteRules, nil
 		}
+	}
+	// Need to set ts range for compacted sst to filter out irrelevant data.
+	if sst.Type() == CompactedSSTsType && !rules.HasSetTs() {
+		rules.SetTsRange(rc.shiftStartTS, rc.startTS, rc.restoreTS)
 	}
 	return rules, nil
 }
@@ -321,7 +325,7 @@ func (rc *LogClient) RestoreSSTFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
-		newRules, err := rewriteRulesFor(i, rewriteRules)
+		newRules, err := rc.rewriteRulesFor(i, rewriteRules)
 		if err != nil {
 			return err
 		}

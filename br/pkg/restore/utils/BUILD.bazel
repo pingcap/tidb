@@ -35,7 +35,7 @@ go_test(
         "rewrite_rule_test.go",
     ],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         ":utils",
         "//br/pkg/conn",
