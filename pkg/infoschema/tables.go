@@ -1401,14 +1401,14 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
-	{name: stmtsummary.SumUnpackedBytesSentKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes sent to KV"},
-	{name: stmtsummary.SumUnpackedBytesReceivedKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes received from KV"},
-	{name: stmtsummary.SumUnpackedBytesSentKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes sent to KV cross zone"},
-	{name: stmtsummary.SumUnpackedBytesReceivedKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes received from KV cross zone"},
-	{name: stmtsummary.SumUnpackedBytesSentMPPTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes sent to MPP"},
-	{name: stmtsummary.SumUnpackedBytesReceivedMPPTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes received from MPP"},
-	{name: stmtsummary.SumUnpackedBytesSentMPPCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes sent to MPP cross zone"},
-	{name: stmtsummary.SumUnpackedBytesReceiveMPPCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average bytes received from MPP cross zone"},
+	{name: stmtsummary.SumUnpackedBytesSentTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv"},
+	{name: stmtsummary.SumUnpackedBytesSentTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv cross zone"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv cross zone"},
+	{name: stmtsummary.SumUnpackedBytesSentTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash"},
+	{name: stmtsummary.SumUnpackedBytesSentTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash cross zone"},
+	{name: stmtsummary.SumUnpackedBytesReceiveTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash cross zone"},
 }
 
 var tableTiDBStatementsStatsCols = []columnInfo{
@@ -1480,6 +1480,14 @@ var tableTiDBStatementsStatsCols = []columnInfo{
 	{name: stmtsummary.RequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Total write request-unit cost of these statements"},
 	{name: stmtsummary.QueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total time waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
+	{name: stmtsummary.UnpackedBytesSentTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv"},
+	{name: stmtsummary.UnpackedBytesReceivedTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv"},
+	{name: stmtsummary.UnpackedBytesSentTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv cross zone"},
+	{name: stmtsummary.UnpackedBytesReceivedTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv cross zone"},
+	{name: stmtsummary.UnpackedBytesSentTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash"},
+	{name: stmtsummary.UnpackedBytesReceivedTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash"},
+	{name: stmtsummary.UnpackedBytesSentTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash cross zone"},
+	{name: stmtsummary.UnpackedBytesReceiveTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash cross zone"},
 }
 
 var tableStorageStatsCols = []columnInfo{
