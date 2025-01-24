@@ -80,3 +80,10 @@ var OperandApplyRulesMap = map[SetType][]rule.Rule{
 var OperandApplyRulesList = []rule.Rule{
 	decorrelate_apply.NewXFDeCorrelateSimpleApply(),
 }
+
+// DefaultRuleSet is default set of a series of rules.
+var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
+	pattern.OperandApply: {
+		decorrelate_apply.NewXFDeCorrelateApply(),
+	},
+}
