@@ -1350,6 +1350,8 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SELECT * FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SELECT * FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
+	tk.MustGetErrCode(`select * from performance_schema.pd_profile_allocs`, errno.ErrTableaccessDenied)
+	tk.MustGetErrCode(`select count(*) from performance_schema.pd_profile_allocs`, errno.ErrTableaccessDenied)
 
 	_, err := tk.Exec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
