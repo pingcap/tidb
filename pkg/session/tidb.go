@@ -222,6 +222,10 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		failpoint.Return(errors.New("occur an error after finishStmt"))
 	})
 	sessVars := se.sessionVars
+	if sessVars.StmtCtx.MemBufferSnapshot != nil {
+		sessVars.StmtCtx.MemBufferSnapshot.Close()
+		sessVars.StmtCtx.MemBufferSnapshot = nil
+	}
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {

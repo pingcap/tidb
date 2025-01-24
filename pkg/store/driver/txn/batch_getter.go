@@ -132,3 +132,85 @@ func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 
 	return storageValues, err
 }
+
+// tikvBatchBufferGetter is the BatchBufferGetter struct for tikv
+// In order to directly call NewBufferBatchGetter in client-go
+// We need to implement the interface (transaction.BatchBufferGetter) in client-go for tikvBatchBufferGetter
+type tikvBatchBufferSnapshotGetter struct {
+	tidbMiddleCache   Getter
+	memBufferSnapshot kv.MemBufferSnapshot
+}
+
+func (b tikvBatchBufferSnapshotGetter) Get(ctx context.Context, k []byte) ([]byte, error) {
+	// Get from buffer
+	val, err := b.memBufferSnapshot.Get(ctx, k)
+	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
+		if kv.IsErrNotFound(err) {
+			err = tikverr.ErrNotExist
+		}
+		return val, err
+	}
+	// Get from middle cache
+	val, err = b.tidbMiddleCache.Get(ctx, k)
+	if err == nil {
+		return val, err
+	}
+	// TiDB err NotExist to TiKV err NotExist
+	// The BatchGet method in client-go will call this method
+	// Therefore, the error needs to convert to TiKV's type, otherwise the error will not be handled properly in client-go
+	err = tikverr.ErrNotExist
+	return val, err
+}
+
+func (b tikvBatchBufferSnapshotGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	bufferValues := make(map[string][]byte, len(keys))
+	if b.memBufferSnapshot != nil {
+		for _, key := range keys {
+			val, err := b.memBufferSnapshot.Get(ctx, key)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			bufferValues[string(key)] = val
+		}
+	}
+
+	if b.tidbMiddleCache == nil {
+		return bufferValues, nil
+	}
+	for _, key := range keys {
+		if _, ok := bufferValues[string(key)]; !ok {
+			val, err := b.tidbMiddleCache.Get(ctx, key)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			bufferValues[string(key)] = val
+		}
+	}
+	return bufferValues, nil
+}
+
+// NewBufferSnapshotBatchGetter creates a new BufferBatchGetter.
+func NewBufferSnapshotBatchGetter(bufferSnapshot kv.MemBufferSnapshot, middleCache Getter, snapshot BatchGetter) *BufferSnapshotBatchGetter {
+	tikvBuffer := tikvBatchBufferSnapshotGetter{tidbMiddleCache: middleCache, memBufferSnapshot: bufferSnapshot}
+	tikvSnapshot := tikvBatchGetter{snapshot}
+	return &BufferSnapshotBatchGetter{tikvBufferBatchGetter: *transaction.NewBufferSnapshotBatchGetter(tikvBuffer, tikvSnapshot)}
+}
+
+// BufferSnapshotBatchGetter is the type for BatchGet with MemBuffer.
+type BufferSnapshotBatchGetter struct {
+	tikvBufferBatchGetter transaction.BufferSnapshotBatchGetter
+}
+
+// BatchGet implements the BatchGetter interface.
+func (b *BufferSnapshotBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	tikvKeys := toTiKVKeys(keys)
+	storageValues, err := b.tikvBufferBatchGetter.BatchGet(ctx, tikvKeys)
+
+	return storageValues, err
+}
