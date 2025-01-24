@@ -102,6 +102,7 @@ type litBackendCtx struct {
 	memRoot MemRoot
 	jobID   int64
 	tbl     table.Table
+	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
 	backend *local.Backend
 	ctx     context.Context
 	cfg     *local.BackendConfig
