@@ -129,12 +129,16 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(util.DeriveLimitStats(childStats[0], float64(p.Count)))
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

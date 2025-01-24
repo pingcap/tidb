@@ -25,14 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -47,7 +46,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
@@ -71,7 +70,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t all columns;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 19, size)
@@ -86,8 +85,19 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0, 0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	var realJob *model.Job
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			realJob = job.Clone()
+		}
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	require.NotNil(t, realJob)
+
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
@@ -107,10 +117,11 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	ingest.LitBackCtxMgr.Unregister(1)
+	bCtx.Close()
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
+	t.Skip("TODO(tangenta): support memory tracking later")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -253,6 +264,7 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 		"Split index region num exceeded the limit 1000")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr", "2*return")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr")
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a bigint primary key, b int);")

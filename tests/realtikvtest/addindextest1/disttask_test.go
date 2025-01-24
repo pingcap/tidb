@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -64,10 +64,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 
-	bak := variable.GetDDLReorgWorkerCounter()
+	bak := vardef.GetDDLReorgWorkerCounter()
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 111")
-	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(111), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -86,7 +86,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
 	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))
-	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, bak, vardef.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
@@ -99,7 +99,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
-		func(e taskexecutor.TaskExecutor, errP *error) {
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if counter.Add(1) == 1 {
 				*errP = context.Canceled
 			}
@@ -390,4 +390,55 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1);")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
 	tk.MustExec("alter table t add index idx(b);")
+}
+
+func TestAddIndexScheduleAway(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	var jobID atomic.Int64
+	// Acquire the job ID.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID.Store(job.ID)
+		}
+	})
+	// Do not balance subtasks automatically.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockNoEnoughSlots", "return")
+	afterCancel := make(chan struct{})
+	// Capture the cancel operation from checkBalanceLoop.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelSubtaskExec", func() {
+		close(afterCancel)
+	})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+		once.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			updateExecID := fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+			<-afterCancel
+			updateExecID = fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+		})
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
+			require.Error(t, ctx.Err())
+			require.Equal(t, context.Canceled, context.Cause(ctx))
+		},
+	)
+	tk.MustExec("alter table t add index idx(b);")
+	require.NotEqual(t, int64(0), jobID.Load())
 }

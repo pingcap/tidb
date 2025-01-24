@@ -53,7 +53,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/store/mockstore",

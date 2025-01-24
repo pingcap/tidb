@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -76,7 +76,7 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr) (table.Table, bool, error) {
+func (e *DDLExec) getLocalTemporaryTable(schema ast.CIStr, table ast.CIStr) (table.Table, bool, error) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false, nil
@@ -361,11 +361,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.Ctx().GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
+		err = sessionVars.SetSystemVar(vardef.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.SetSystemVar(variable.CollationDatabase, mysql.DefaultCollationName)
+		err = sessionVars.SetSystemVar(vardef.CollationDatabase, mysql.DefaultCollationName)
 		if err != nil {
 			return err
 		}
@@ -602,7 +602,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = pmodel.NewCIStr(s.NewName)
+		tblInfo.Name = ast.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -637,7 +637,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = pmodel.NewCIStr(s.NewName)
+		dbName = ast.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -658,7 +658,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -782,21 +782,21 @@ func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) e
 }
 
 func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AddResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AlterResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.DropResourceGroup(e.Ctx(), s)

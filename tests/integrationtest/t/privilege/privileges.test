@@ -833,6 +833,21 @@ connection default;
 
 set global tidb_enable_resource_control = default;
 
+# TestTraffic
+CREATE USER traffic_test;
+connect (traffic_test,localhost,traffic_test,,);
+connection traffic_test;
+--error 1227
+traffic capture to '/tmp' duration='1s';
+--error 1227
+traffic replay from '/tmp' user='traffic_test';
+--error 1227
+cancel traffic jobs;
+--error 1227
+show traffic jobs;
+disconnect traffic_test;
+connection default;
+
 # TestAdmin
 create table privilege__privileges.admin(a int, KEY idx_a (`a`));
 create user without_super;

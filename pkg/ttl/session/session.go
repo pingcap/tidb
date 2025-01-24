@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -111,6 +111,20 @@ func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]ch
 
 // RunInTxn executes the specified function in a txn
 func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode) (err error) {
+	success := false
+	defer func() {
+		// Always try to `ROLLBACK` the transaction even if only the `BEGIN` fails. If the `BEGIN` is killed
+		// after it runs the first `Next`, the transaction is already active and needs to be `ROLLBACK`ed.
+		if !success {
+			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
+			// Using another timeout context to avoid that this behavior will be changed in the future.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			terror.Log(rollbackErr)
+			cancel()
+		}
+	}()
+
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 
@@ -128,14 +142,6 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 		return err
 	}
 	tracer.EnterPhase(metrics.PhaseOther)
-
-	success := false
-	defer func() {
-		if !success {
-			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
-			terror.Log(rollbackErr)
-		}
-	}()
 
 	if err = fn(); err != nil {
 		return err
@@ -155,12 +161,12 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 	sessVar := s.GetSessionVars()
 	if sessVar.TimeZone != nil {
-		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, variable.TimeZone)
+		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, vardef.TimeZone)
 		if err != nil {
 			return err
 		}
 
-		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, variable.TimeZone)
+		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, vardef.TimeZone)
 		if err != nil {
 			return err
 		}

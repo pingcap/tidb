@@ -9,7 +9,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/lock/context",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/table",
         "//pkg/util",

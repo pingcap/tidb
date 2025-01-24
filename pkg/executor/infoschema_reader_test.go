@@ -184,20 +184,23 @@ func TestDataForTableStatsField(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("3 18 54 6"))
+		testkit.Rows("3 16 48 0"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("4 18 72 8"))
+		testkit.Rows("4 16 64 0"))
 	tk.MustExec("delete from t where c >= 3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2 18 36 4"))
+		testkit.Rows("2 16 32 0"))
 	tk.MustExec("delete from t where c=3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("2 16 32 0"))
+	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
 
@@ -209,6 +212,9 @@ func TestDataForTableStatsField(t *testing.T) {
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("3 16 48 0"))
+	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
 }
@@ -229,23 +235,24 @@ func TestPartitionsTable(t *testing.T) {
 		tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
 		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"p0 6]\n" +
-				"[p1 11]\n" +
-				"[p2 16"))
+			testkit.Rows("p0 6", "p1 11", "p2 16"))
 
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"0 0 0 0]\n" +
-				"[0 0 0 0]\n" +
-				"[0 0 0 0"))
+			testkit.Rows(
+				"0 0 0 0",
+				"0 0 0 0",
+				"0 0 0 0",
+			),
+		)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"1 18 18 2]\n" +
-				"[1 18 18 2]\n" +
-				"[1 18 18 2"))
+			testkit.Rows(
+				"1 16 16 0",
+				"1 16 16 0",
+				"1 16 16 0",
+			),
+		)
 	})
 
 	// Test for table has no partitions.
@@ -257,7 +264,7 @@ func TestPartitionsTable(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
-		testkit.Rows("<nil> 3 18 54 6"))
+		testkit.Rows("<nil> 3 16 48 0"))
 
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 	tk.MustExec(`CREATE TABLE test_partitions1 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)

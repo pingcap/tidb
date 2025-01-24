@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -655,25 +655,20 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	var (
-		mu         sync.Mutex
-		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
-		colSizeMap = make(map[int64]int64)
+		mu       sync.Mutex
+		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
-			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
-				for k, v := range progress.GetColSize() {
-					colSizeMap[k] += v
-				}
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
 		})
 	}
 	if err = eg.Wait(); err != nil {
@@ -717,8 +712,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	return &JobImportResult{
-		Affected:   uint64(dataKVCount),
-		ColSizeMap: colSizeMap,
+		Affected: uint64(dataKVCount),
 	}, nil
 }
 
@@ -942,13 +936,13 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 
 func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
 	backoffWeight := local.DefaultBackoffWeight
-	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+	if val, ok := plan.ImportantSysVars[vardef.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight
 		}
 	}
 	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
-	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+	return se.GetSessionVars().SetSystemVar(vardef.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
 // GetImportRootDir returns the root directory for import.
@@ -977,7 +971,7 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }

@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -45,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -127,14 +126,14 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 func buildAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.Executor) exec.Executor {
 	ctx := testCase.Ctx
 	if testCase.ExecType == "stream" {
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBStreamAggConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
 	} else {
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -161,7 +160,7 @@ func buildAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.E
 }
 
 func benchmarkAggExecWithCase(b *testing.B, casTest *testutil.AggTestCase) {
-	if err := casTest.Ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
+	if err := casTest.Ctx.GetSessionVars().SetSystemVar(vardef.TiDBStreamAggConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -360,10 +359,10 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *testutil.WindowTestCase) {
 	ctx := casTest.Ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
 		b.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.Pipelined)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.Pipelined)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -610,8 +609,8 @@ func (tc hashJoinTestCase) String() string {
 
 func defaultHashJoinTestCase(cols []*types.FieldType, joinType logicalop.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SetIndexLookupJoinConcurrency(4)
@@ -1195,14 +1194,14 @@ func (tc IndexJoinTestCase) Columns() []*expression.Column {
 
 func defaultIndexJoinTestCase() *IndexJoinTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	tc := &IndexJoinTestCase{
 		OuterRows:       100000,
-		InnerRows:       variable.DefMaxChunkSize * 100,
+		InnerRows:       vardef.DefMaxChunkSize * 100,
 		Concurrency:     4,
 		Ctx:             ctx,
 		OuterJoinKeyIdx: []int{0, 1},
@@ -1628,8 +1627,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *testutil.MockDat
 
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *testutil.MockDataSource) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
@@ -1853,6 +1852,140 @@ func BenchmarkLimitExec(b *testing.B) {
 	}
 }
 
+type topNTestCase struct {
+	rows                  int
+	offset                int
+	count                 int
+	orderByIdx            []int
+	usingInlineProjection bool
+	columnIdxsUsedByChild []bool
+	ctx                   sessionctx.Context
+}
+
+func (tc topNTestCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc topNTestCase) String() string {
+	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, orderByIdx:%v, inline_projection:%v)",
+		tc.rows, tc.offset, tc.count, tc.orderByIdx, tc.usingInlineProjection)
+}
+
+func defaultTopNTestCase() *topNTestCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	return &topNTestCase{
+		rows:                  100000,
+		offset:                0,
+		count:                 10,
+		orderByIdx:            []int{0},
+		usingInlineProjection: false,
+		columnIdxsUsedByChild: []bool{false, true, false},
+		ctx:                   ctx,
+	}
+}
+
+func benchmarkTopNExec(b *testing.B, cas *topNTestCase) {
+	opt := testutil.MockDataSourceParameters{
+		DataSchema: expression.NewSchema(cas.columns()...),
+		Rows:       cas.rows,
+		Ctx:        cas.ctx,
+	}
+	dataSource := testutil.BuildMockDataSource(opt)
+	executorSort := sortexec.SortExec{
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 4, dataSource),
+		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
+		ExecSchema:   dataSource.Schema(),
+	}
+	for _, idx := range cas.orderByIdx {
+		executorSort.ByItems = append(executorSort.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
+	}
+
+	executor := &sortexec.TopNExec{
+		SortExec: executorSort,
+		Limit: &core.PhysicalLimit{
+			Count:  uint64(cas.count),
+			Offset: uint64(cas.offset),
+		},
+	}
+
+	executor.ExecSchema = dataSource.Schema().Clone()
+
+	var exe exec.Executor
+	if cas.usingInlineProjection {
+		if len(cas.columnIdxsUsedByChild) > 0 {
+			executor.ColumnIdxsUsedByChild = make([]int, 0, len(cas.columnIdxsUsedByChild))
+			for i, used := range cas.columnIdxsUsedByChild {
+				if used {
+					executor.ColumnIdxsUsedByChild = append(executor.ColumnIdxsUsedByChild, i)
+				}
+			}
+		}
+		exe = executor
+	} else {
+		columns := cas.columns()
+		usedCols := make([]*expression.Column, 0, len(columns))
+		exprs := make([]expression.Expression, 0, len(columns))
+		for i, used := range cas.columnIdxsUsedByChild {
+			if used {
+				usedCols = append(usedCols, columns[i])
+				exprs = append(exprs, columns[i])
+			}
+		}
+		proj := &ProjectionExec{
+			BaseExecutorV2: exec.NewBaseExecutorV2(cas.ctx.GetSessionVars(), expression.NewSchema(usedCols...), 0, executor),
+			numWorkers:     1,
+			evaluatorSuit:  expression.NewEvaluatorSuite(exprs, false),
+		}
+		exe = proj
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := exec.NewFirstChunk(exe)
+		dataSource.PrepareChunks()
+
+		b.StartTimer()
+		if err := exe.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exe.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exe.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkTopNExec(b *testing.B) {
+	b.ReportAllocs()
+	usingInlineProjection := []bool{false, true}
+
+	for _, inlineProjection := range usingInlineProjection {
+		cas := defaultTopNTestCase()
+		cas.usingInlineProjection = inlineProjection
+		b.Run(fmt.Sprintf("TopNExec InlineProjection:%v", inlineProjection), func(b *testing.B) {
+			benchmarkTopNExec(b, cas)
+		})
+	}
+}
+
 func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 	// step 1. initial a huge line log file
 	hugeLine := make([]byte, 1024*1024*10)
@@ -1939,7 +2072,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 func BenchmarkCompleteInsertErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name:      pmodel.NewCIStr("a"),
+		Name:      ast.NewCIStr("a"),
 		FieldType: *types.NewFieldType(mysql.TypeBlob),
 	}
 	err := types.ErrWarnDataOutOfRange
@@ -1951,7 +2084,7 @@ func BenchmarkCompleteInsertErr(b *testing.B) {
 func BenchmarkCompleteLoadErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name: pmodel.NewCIStr("a"),
+		Name: ast.NewCIStr("a"),
 	}
 	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {

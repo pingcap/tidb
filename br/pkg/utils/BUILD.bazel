@@ -31,7 +31,7 @@ go_library(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",

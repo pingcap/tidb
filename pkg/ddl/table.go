@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -896,8 +896,8 @@ func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableI
 func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
-	oldSchemaName, oldTableName, newTableName pmodel.CIStr, newSchemaID int64) error {
-	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
+	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -1277,7 +1277,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	if is.TableExists(schema.Name, pmodel.NewCIStr(tableName)) {
+	if is.TableExists(schema.Name, ast.NewCIStr(tableName)) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
 	}
 	return nil

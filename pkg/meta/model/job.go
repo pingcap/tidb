@@ -22,10 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ActionType is the type for DDL action.
@@ -366,7 +367,7 @@ type Job struct {
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
+	TraceInfo *tracing.TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
 	BDRRole string `json:"bdr_role"`
@@ -896,23 +897,23 @@ type MultiSchemaInfo struct {
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
-	AddColumns    []model.CIStr `json:"-"`
-	DropColumns   []model.CIStr `json:"-"`
-	ModifyColumns []model.CIStr `json:"-"`
-	AddIndexes    []model.CIStr `json:"-"`
-	DropIndexes   []model.CIStr `json:"-"`
-	AlterIndexes  []model.CIStr `json:"-"`
+	AddColumns    []ast.CIStr `json:"-"`
+	DropColumns   []ast.CIStr `json:"-"`
+	ModifyColumns []ast.CIStr `json:"-"`
+	AddIndexes    []ast.CIStr `json:"-"`
+	DropIndexes   []ast.CIStr `json:"-"`
+	AlterIndexes  []ast.CIStr `json:"-"`
 
 	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
-	RelativeColumns []model.CIStr `json:"-"`
-	PositionColumns []model.CIStr `json:"-"`
+	RelativeColumns []ast.CIStr `json:"-"`
+	PositionColumns []ast.CIStr `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
 type AddForeignKeyInfo struct {
-	Name model.CIStr
-	Cols []model.CIStr
+	Name ast.CIStr
+	Cols []ast.CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -1183,14 +1184,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
-}
-
-// TraceInfo is the information for trace.
-type TraceInfo struct {
-	// ConnectionID is the id of the connection
-	ConnectionID uint64 `json:"connection_id"`
-	// SessionAlias is the alias of session
-	SessionAlias string `json:"session_alias"`
 }
 
 // JobW is a wrapper of model.Job, it contains the job and the binary representation

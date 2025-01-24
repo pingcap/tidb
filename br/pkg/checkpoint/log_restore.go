@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -191,7 +191,7 @@ func ExistsLogRestoreCheckpointMetadata(
 	dom *domain.Domain,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointMetaTableName))
 }
 
 // A progress type for snapshot + log restore.
@@ -251,7 +251,7 @@ func ExistsCheckpointProgress(
 	dom *domain.Domain,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointProgressTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointProgressTableName))
 }
 
 // CheckpointTaskInfo is unique information within the same cluster id. It represents the last
@@ -298,12 +298,12 @@ func TryToGetCheckpointTaskInfo(
 }
 
 type CheckpointIngestIndexRepairSQL struct {
-	IndexID    int64        `json:"index-id"`
-	SchemaName pmodel.CIStr `json:"schema-name"`
-	TableName  pmodel.CIStr `json:"table-name"`
-	IndexName  string       `json:"index-name"`
-	AddSQL     string       `json:"add-sql"`
-	AddArgs    []any        `json:"add-args"`
+	IndexID    int64     `json:"index-id"`
+	SchemaName ast.CIStr `json:"schema-name"`
+	TableName  ast.CIStr `json:"table-name"`
+	IndexName  string    `json:"index-name"`
+	AddSQL     string    `json:"add-sql"`
+	AddArgs    []any     `json:"add-args"`
 }
 
 type CheckpointIngestIndexRepairSQLs struct {
@@ -321,7 +321,7 @@ func LoadCheckpointIngestIndexRepairSQLs(
 
 func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointIngestTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointIngestTableName))
 }
 
 func SaveCheckpointIngestIndexRepairSQLs(

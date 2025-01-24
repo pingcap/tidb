@@ -38,11 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -323,7 +322,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -409,7 +408,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
-	originalVal := variable.GetDDLErrorCountLimit()
+	originalVal := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", originalVal))
 
@@ -649,10 +648,10 @@ func TestSnapshotVersion(t *testing.T) {
 	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
 
 	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(pmodel.NewCIStr("test2"))
+	dbInfo, ok := currSnapIs.SchemaByName(ast.NewCIStr("test2"))
 	require.True(t, ok)
 
-	tbl, err := currSnapIs.TableByName(context.Background(), pmodel.NewCIStr("test2"), pmodel.NewCIStr("t"))
+	tbl, err := currSnapIs.TableByName(context.Background(), ast.NewCIStr("test2"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	m := dom.GetSnapshotMeta(snapTS)
@@ -1170,16 +1169,16 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
 	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 8)
+	require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 256)
+	require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 16)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 512)
+	require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
+	require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
 	deleteJobMetaByID(tk, job.ID)
 }
 
