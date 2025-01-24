@@ -55,13 +55,13 @@ func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.Logic
 	if len(corCols) == 0 {
 		apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
 		// If the inner plan is non-correlated, this apply will be simplified to join.
-		clonedJoin := apply.LogicalJoin
-		// Reset4Cascades is to reset the plan for cascades.
+		clonedJoin := apply.LogicalJoin.LogicalJoinShallowRef()
+		// ReAlloc4Cascades is to re-alloc the plan factors for cascades.
 		// reset the tp and self, stats to nil, recreate the task map, re-alloc the plan id and so on.
 		// set the new GE's stats to nil, since the inherited stats is not precious, which will be filled in physicalOpt.
-		clonedJoin.Reset4Cascades(plancodec.TypeJoin, &clonedJoin)
+		clonedJoin.ReAlloc4Cascades(plancodec.TypeJoin, clonedJoin)
 		intest.Assert(clonedJoin.Children() != nil)
-		return []corebase.LogicalPlan{&clonedJoin}, nil
+		return []corebase.LogicalPlan{clonedJoin}, nil
 	}
 	return nil, nil
 }
