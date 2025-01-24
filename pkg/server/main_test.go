@@ -72,6 +72,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/util/timeutil.Sleep"),
 	}
 
 	callback := func(i int) int {
