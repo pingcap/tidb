@@ -281,12 +281,35 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+func (hg *Histogram) BinarySearchRemoveVal(val *types.Datum, count int64) {
 	lowIdx, highIdx := 0, hg.Len()-1
+<<<<<<< HEAD:statistics/histogram.go
 	for lowIdx <= highIdx {
 		midIdx := (lowIdx + highIdx) / 2
 		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
+=======
+	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
+	if hg.Len() > 4 {
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(highIdx*2+1), 0, val); cmpResult < 0 {
+			return
+		}
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(lowIdx), 0, val); cmpResult > 0 {
+			return
+		}
+	}
+	var midIdx = 0
+	var found bool
+	for lowIdx <= highIdx {
+		midIdx = (lowIdx + highIdx) / 2
+		cmpResult := chunk.Compare(hg.Bounds.GetRow(midIdx*2), 0, val)
+		if cmpResult > 0 {
+			highIdx = midIdx - 1
+			continue
+		}
+		cmpResult = chunk.Compare(hg.Bounds.GetRow(midIdx*2+1), 0, val)
+		if cmpResult < 0 {
+>>>>>>> 41c3b01dbc1 (statistics: BinarySearchRemoveVal should use decoded val instead of encoded (#59131)):pkg/statistics/histogram.go
 			lowIdx = midIdx + 1
 			continue
 		}
@@ -301,12 +324,29 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if cmpResult == 0 {
 			hg.Buckets[midIdx].Repeat = 0
 		}
+<<<<<<< HEAD:statistics/histogram.go
 		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
 		if hg.Buckets[midIdx].Count < 0 {
 			hg.Buckets[midIdx].Count = 0
+=======
+		midbucket.Count -= count
+		if midbucket.Count < 0 {
+			midbucket.Count = 0
+>>>>>>> 41c3b01dbc1 (statistics: BinarySearchRemoveVal should use decoded val instead of encoded (#59131)):pkg/statistics/histogram.go
 		}
 		break
 	}
+<<<<<<< HEAD:statistics/histogram.go
+=======
+	if found {
+		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
+			hg.Buckets[midIdx].Count -= count
+			if hg.Buckets[midIdx].Count < 0 {
+				hg.Buckets[midIdx].Count = 0
+			}
+		}
+	}
+>>>>>>> 41c3b01dbc1 (statistics: BinarySearchRemoveVal should use decoded val instead of encoded (#59131)):pkg/statistics/histogram.go
 }
 
 // RemoveVals remove the given values from the histogram.

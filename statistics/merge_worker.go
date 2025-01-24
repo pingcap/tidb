@@ -148,7 +148,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 					count, _ := allHists[j].equalRowCount(datum, isIndex)
 					if count != 0 {
 						// Remove the value corresponding to encodedVal from the histogram.
+<<<<<<< HEAD:statistics/merge_worker.go
 						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+=======
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(&datum, int64(count))
+>>>>>>> 41c3b01dbc1 (statistics: BinarySearchRemoveVal should use decoded val instead of encoded (#59131)):pkg/statistics/handle/globalstats/merge_worker.go
 					}
 					worker.shardMutex[j].Unlock()
 					if count != 0 {
