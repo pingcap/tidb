@@ -107,7 +107,8 @@ func (a *ApplyRuleTask) Execute() error {
 		if !a.rule.PreCheck(holder) {
 			continue
 		}
-		newExprs, err := a.rule.XForm(holder)
+		// todo: remove the src GE, cause some src GE is intermediary.
+		newExprs, _, err := a.rule.XForm(holder)
 		if err != nil {
 			return err
 		}
