@@ -54,10 +54,7 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 	if err != nil {
 		return 0, errors.Annotate(err, "failed to block gc until")
 	}
-	if minimalSafePoint > at {
-		return 0, errors.Errorf("minimal safe point %d is greater than the target %d", minimalSafePoint, at)
-	}
-	return at, nil
+	return minimalSafePoint, nil
 }
 
 func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
@@ -172,8 +169,9 @@ type LogBackupService interface {
 type StreamMeta interface {
 	// Begin begins listen the task event change.
 	Begin(ctx context.Context, ch chan<- TaskEvent) error
-	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
-	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
+	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store
+	// and returns the lastest global checkpoint
+	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) (uint64, error)
 	// GetGlobalCheckpointForTask gets the global checkpoint from the meta store.
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.

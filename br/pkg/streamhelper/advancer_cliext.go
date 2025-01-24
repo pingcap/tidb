@@ -273,25 +273,25 @@ func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName st
 	return binary.BigEndian.Uint64(value), nil
 }
 
-func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
+func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) (uint64, error) {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
 	oldValue, err := t.GetGlobalCheckpointForTask(ctx, taskName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if checkpoint < oldValue {
 		log.Warn("skipping upload global checkpoint", zap.String("category", "log backup advancer"),
 			zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
-		return nil
+		return oldValue, nil
 	}
 
 	_, err = t.KV.Put(ctx, key, value)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return checkpoint, nil
 }
 
 func (t AdvancerExt) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {

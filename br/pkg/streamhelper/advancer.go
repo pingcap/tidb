@@ -559,13 +559,9 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
-func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, error) {
+func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context, globalTs uint64) (bool, error) {
 	if c.cfg.CheckPointLagLimit <= 0 {
 		return false, nil
-	}
-	globalTs, err := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
-	if err != nil {
-		return false, err
 	}
 	if globalTs < c.task.StartTs {
 		// unreachable.
@@ -590,10 +586,12 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
 	c.setCheckpoint(c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
-	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
+	newGlobalCheckpointTs, err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS)
+	if err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	isLagged, err := c.isCheckpointLagged(ctx)
+	// tidb advancer may fail to collect new checkpoint ts, so use global checkpoint ts from PD instead.
+	isLagged, err := c.isCheckpointLagged(ctx, newGlobalCheckpointTs)
 	if err != nil {
 		// ignore the error, just log it
 		log.Warn("failed to check timestamp", logutil.ShortError(err))
@@ -605,19 +603,26 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		}
 		return errors.Annotate(errors.Errorf("check point lagged too large"), "check point lagged too large")
 	}
-	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
+	// tidb advancer may fail to collect new checkpoint ts, so use global checkpoint ts from PD instead.
+	safeGlobalCheckpointTs := newGlobalCheckpointTs - 1
+	p, err := c.env.BlockGCUntil(ctx, safeGlobalCheckpointTs)
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
-			c.lastCheckpoint.safeTS(), p)
+			safeGlobalCheckpointTs, p)
 	}
-	if p <= c.lastCheckpoint.safeTS() {
+	if p <= safeGlobalCheckpointTs {
 		log.Info("updated log backup GC safe point.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
+			zap.Uint64("checkpoint", p), zap.Uint64("target", safeGlobalCheckpointTs))
 	}
-	if p > c.lastCheckpoint.safeTS() {
+	if p > safeGlobalCheckpointTs {
 		log.Warn("update log backup GC safe point failed: stale.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
+			zap.Uint64("checkpoint", p), zap.Uint64("target", safeGlobalCheckpointTs))
+		err := c.env.PauseTask(ctx, c.task.Name)
+		if err != nil {
+			return errors.Annotate(err, "failed to pause task")
+		}
+		return errors.Errorf("log backup GC safe point(%d) is stale, current minimal safe point is %d", safeGlobalCheckpointTs, p)
 	}
 	return nil
 }
