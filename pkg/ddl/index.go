@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1302,7 +1303,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -1451,7 +1452,7 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 }
 
 func isRetryableJobError(err error, jobErrCnt int64) bool {
-	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
 	return isRetryableError(err)
@@ -2528,7 +2529,7 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		workerCntLimit := job.ReorgMeta.GetConcurrency()
 		cpuCount, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err

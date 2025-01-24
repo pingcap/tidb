@@ -16,10 +16,10 @@ package execdetails
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -702,8 +702,8 @@ func (p *Percentile[valueType]) GetPercentile(f float64) float64 {
 	if p.dt == nil {
 		if !p.isSorted {
 			p.isSorted = true
-			sort.Slice(p.values, func(i, j int) bool {
-				return p.values[i].GetFloat64() < p.values[j].GetFloat64()
+			slices.SortFunc(p.values, func(i, j valueType) int {
+				return cmp.Compare(i.GetFloat64(), j.GetFloat64())
 			})
 		}
 		return p.values[int(float64(len(p.values))*f)].GetFloat64()

@@ -20,7 +20,7 @@ go_library(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/memory",

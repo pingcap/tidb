@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -69,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -92,7 +94,7 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
+var errCheckConstraintIsOff = errors.NewNoStackError(vardef.TiDBEnableCheckConstraint + " is off")
 
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
@@ -199,11 +201,11 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 	// If no charset and/or collation is specified use collation_server and character_set_server
 	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
+		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
+		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetServer)
 		if err != nil {
 			return err
 		}
@@ -1373,7 +1375,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		preSplit     func()
 		scatterScope string
 	)
-	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
+	val, ok := ctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
 	if !ok {
 		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
 	} else {
@@ -1384,7 +1386,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterScope) }
 	}
-	if scatterScope != variable.ScatterOff {
+	if scatterScope != vardef.ScatterOff {
 		preSplit()
 	} else {
 		go preSplit()
@@ -1492,10 +1494,10 @@ func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (er
 
 	tblCharset := ""
 	tblCollate := ""
-	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection); ok {
+	if v, ok := ctx.GetSessionVars().GetSystemVar(vardef.CharacterSetConnection); ok {
 		tblCharset = v
 	}
-	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CollationConnection); ok {
+	if v, ok := ctx.GetSessionVars().GetSystemVar(vardef.CollationConnection); ok {
 		tblCollate = v
 	}
 
@@ -1710,7 +1712,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
-	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load()) {
+	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || vardef.EnableRowLevelChecksum.Load()) {
 		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
 	// set name for anonymous foreign key.
@@ -1804,7 +1806,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				if !variable.EnableCheckConstraint.Load() {
+				if !vardef.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
@@ -1836,8 +1838,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
-					if opt.UintValue > variable.MaxShardRowIDBits {
-						opt.UintValue = variable.MaxShardRowIDBits
+					if opt.UintValue > vardef.MaxShardRowIDBits {
+						opt.UintValue = vardef.MaxShardRowIDBits
 					}
 					err = e.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
@@ -1907,13 +1909,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableIndexInvisible:
 			err = e.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			if !variable.EnableCheckConstraint.Load() {
+			if !vardef.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = e.AlterCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
-			if !variable.EnableCheckConstraint.Load() {
+			if !vardef.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
@@ -4930,18 +4932,18 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 	setReorgParam := func() {
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 			m.SetConcurrency(variable.TidbOptInt(sv, 0))
 		}
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
-		m.SetMaxWriteSpeed(int(variable.DDLReorgMaxWriteSpeed.Load()))
+		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
 	}
 	setDistTaskParam := func() error {
-		m.IsDistReorg = variable.EnableDistTask.Load()
-		m.IsFastReorg = variable.EnableFastReorg.Load()
-		m.TargetScope = variable.ServiceScope.Load()
+		m.IsDistReorg = vardef.EnableDistTask.Load()
+		m.IsFastReorg = vardef.EnableFastReorg.Load()
+		m.TargetScope = vardef.ServiceScope.Load()
 		if hasSysDB(job) {
 			if m.IsDistReorg {
 				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
@@ -4998,8 +5000,8 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
-		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
-		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
+		zap.Int("concurrency", m.GetConcurrency()),
+		zap.Int("batchSize", m.GetBatchSize()),
 	)
 	return nil
 }
@@ -5099,7 +5101,7 @@ func buildFKInfo(fkName ast.CIStr, keys []*ast.IndexPartSpecification, refer *as
 		RefTable:  refer.Table.Name,
 		Cols:      make([]ast.CIStr, len(keys)),
 	}
-	if variable.EnableForeignKey.Load() {
+	if vardef.EnableForeignKey.Load() {
 		fkInfo.Version = model.FKVersion1
 	}
 
@@ -6629,7 +6631,7 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
 	job := jobW.Job
-	job.TraceInfo = &model.TraceInfo{
+	job.TraceInfo = &tracing.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
 	}
