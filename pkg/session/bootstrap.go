@@ -228,10 +228,10 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_analyze_version		BIGINT(64) UNSIGNED DEFAULT NULL,
-		last_affected_ddl_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
+		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
 		INDEX idx_analyze_version(last_analyze_version),
-		INDEX idx_last_affected_ddl_version(last_affected_ddl_version),
+		INDEX idx_last_stats_histograms_version(last_stats_histograms_version),
 		UNIQUE INDEX tbl(table_id)
 	);`
 
@@ -1249,7 +1249,7 @@ const (
 	version241 = 241
 
 	// version 241
-	// Add last_affected_ddl_version to mysql.stats_meta.
+	// Add last_stats_histograms_version to mysql.stats_meta.
 	version242 = 242
 )
 
@@ -3380,7 +3380,7 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_analyze_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_affected_ddl_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

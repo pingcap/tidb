@@ -127,7 +127,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot, last_analyze_version, last_affected_ddl_version from mysql.stats_meta where version > %? "
+		query := "SELECT version, table_id, modify_count, count, snapshot, last_analyze_version, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if len(tableAndPartitionIDs) > 0 {

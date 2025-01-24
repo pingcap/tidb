@@ -413,7 +413,7 @@ func InsertColStats2KV(
 	// First of all, we update the version.
 	_, err = util.ExecWithCtx(
 		ctx, sctx,
-		"update mysql.stats_meta set version = %?, last_affected_ddl_version = %? where table_id = %?",
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
 		startTS, startTS, physicalID,
 	)
 	if err != nil {
@@ -504,7 +504,7 @@ func InsertTableStats2KV(
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
-		"insert into mysql.stats_meta (version, table_id, last_affected_ddl_version) values(%?, %?, %?)",
+		"insert into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
 		startTS, physicalID, startTS,
 	); err != nil {
 		return 0, errors.Trace(err)
