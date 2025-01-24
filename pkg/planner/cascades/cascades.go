@@ -19,10 +19,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/cascades/task"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var MaximumRuleLength uint
 
 // Optimizer is a basic cascades search framework portal, driven by Context.
 type Optimizer struct {
@@ -88,6 +91,8 @@ func NewContext(pctx corebase.PlanContext) *Context {
 		mm: memo.NewMemo(pctx.GetSessionVars().StmtCtx.OperatorNum),
 		// task pool management.
 		scheduler: task.NewSimpleTaskScheduler(),
+		// new rule mask.
+		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)),
 	}
 }
 
