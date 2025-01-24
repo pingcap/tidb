@@ -974,7 +974,7 @@ func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
 }
 
 func TestMergeGlobalStatsForCMSketch(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
