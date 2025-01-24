@@ -179,7 +179,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeNone, Name: "thread_concurrency", Value: "10"},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "query_prealloc_size", Value: "8192"},
 	{Scope: vardef.ScopeNone, Name: "relay_log_space_limit", Value: "0"},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.MaxUserConnections, Value: "0", Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 4294967295},
 	{Scope: vardef.ScopeNone, Name: "performance_schema_max_thread_classes", Value: "50"},
 	{Scope: vardef.ScopeGlobal, Name: "innodb_api_trx_level", Value: "0"},
 	{Scope: vardef.ScopeNone, Name: "performance_schema_max_file_classes", Value: "50"},
@@ -190,7 +189,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbStatusOutputLocks, Value: vardef.Off, Type: vardef.TypeBool, AutoConvertNegativeBool: true},
 	{Scope: vardef.ScopeNone, Name: "performance_schema_accounts_size", Value: "100"},
 	{
-
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    "max_error_count",
 		Value:                   "64",
