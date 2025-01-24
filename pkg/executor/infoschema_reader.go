@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -333,11 +334,11 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 			isNoop,            // IS_NOOP
 		)
 		// min and max value is only supported for numeric types
-		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
+		if !(sv.Type == vardef.TypeUnsigned || sv.Type == vardef.TypeInt || sv.Type == vardef.TypeFloat) {
 			row[4].SetNull()
 			row[5].SetNull()
 		}
-		if sv.Type == variable.TypeEnum {
+		if sv.Type == vardef.TypeEnum {
 			possibleValues := strings.Join(sv.PossibleValues, ",")
 			row[6].SetString(possibleValues, mysql.DefaultCollationName)
 		}

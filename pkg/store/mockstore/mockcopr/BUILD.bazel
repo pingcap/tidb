@@ -25,7 +25,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/tablecodec",
         "//pkg/types",

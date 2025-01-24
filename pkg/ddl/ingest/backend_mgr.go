@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -107,7 +106,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
-	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	concurrency := job.ReorgMeta.GetConcurrency()
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {

@@ -341,7 +341,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		})
-		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 		// keep running next subtask
 		nextSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
 			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}

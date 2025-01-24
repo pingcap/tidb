@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1305,7 +1306,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -1454,7 +1455,7 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 }
 
 func isRetryableJobError(err error, jobErrCnt int64) bool {
-	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
 	return isRetryableError(err)
@@ -2522,7 +2523,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		}
 		taskID = task.ID
 		lastConcurrency = task.Concurrency
-		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 		g.Go(func() error {
 			defer close(done)
@@ -2546,7 +2547,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		workerCntLimit := job.ReorgMeta.GetConcurrency()
 		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
 			return err
@@ -2575,7 +2576,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		taskID = task.ID
 		lastConcurrency = concurrency
-		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 
 		g.Go(func() error {
@@ -2673,7 +2674,7 @@ func modifyTaskParamLoop(
 		}
 
 		modifies := make([]proto.Modification, 0, 3)
-		workerCntLimit := latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		workerCntLimit := latestJob.ReorgMeta.GetConcurrency()
 		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
 			logger.Error("adjust concurrency failed", zap.Error(err))
@@ -2685,7 +2686,7 @@ func modifyTaskParamLoop(
 				To:   int64(concurrency),
 			})
 		}
-		batchSize := latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		batchSize := latestJob.ReorgMeta.GetBatchSize()
 		if batchSize != lastBatchSize {
 			modifies = append(modifies, proto.Modification{
 				Type: proto.ModifyBatchSize,

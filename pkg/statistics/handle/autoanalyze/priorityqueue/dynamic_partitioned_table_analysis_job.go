@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -271,7 +271,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
 	for _, partition := range j.PartitionNames {
 		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
@@ -299,7 +299,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	// For version 2, analyze one index will analyze all other indexes and columns.
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion

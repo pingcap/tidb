@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -364,7 +364,7 @@ func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-		if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
+		if val.(bool) && vardef.EnableTmpStorageOnOOM.Load() {
 			defer resAction.WaitForTest()
 			defer iterInAction.WaitForTest()
 			if iterOutAction != nil {
@@ -585,7 +585,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
 	diskTracker.AttachTo(parentDiskTracker)
 
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) {

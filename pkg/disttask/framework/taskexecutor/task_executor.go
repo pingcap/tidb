@@ -435,14 +435,14 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
+	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
-		subtaskCtx, subtaskCtxCancel := context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
+			e.checkBalanceSubtask(checkCtx, subtaskCancel)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
@@ -456,17 +456,17 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		defer func() {
 			checkCancel()
 			wg.Wait()
-			subtaskCtxCancel()
 		}()
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
-	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
+	defer subtaskCancel()
+	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
-		if err := e.markSubTaskCanceledOrFailed(e.stepCtx, subtask, subtaskErr); err != nil {
+		if err := e.markSubTaskCanceledOrFailed(subtaskCtx, subtask, subtaskErr); err != nil {
 			logger.Error("failed to handle subtask error", zap.Error(err))
 		}
 		return subtaskErr
