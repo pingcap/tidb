@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
@@ -44,6 +46,46 @@ type RewriteRules struct {
 	Data        []*import_sstpb.RewriteRule
 	OldKeyspace []byte
 	NewKeyspace []byte
+	// used to record checkpoint data
+	NewTableID int64
+	// used to record backup files to pitr.
+	// note: should NewTableID merged with this?
+	TableIDRemapHint []TableIDRemap
+}
+
+func (r *RewriteRules) RewriteSourceTableID(from, to int64) (rewritten bool) {
+	toPrefix := tablecodec.EncodeTablePrefix(to)
+	fromPrefix := tablecodec.EncodeTablePrefix(from)
+	for _, rule := range r.Data {
+		if bytes.HasPrefix(rule.OldKeyPrefix, fromPrefix) {
+			rule.OldKeyPrefix = append(toPrefix, rule.OldKeyPrefix[len(toPrefix):]...)
+			rewritten = true
+		}
+	}
+	return
+}
+
+func (r *RewriteRules) Clone() *RewriteRules {
+	data := make([]*import_sstpb.RewriteRule, len(r.Data))
+	for i, rule := range r.Data {
+		data[i] = util.ProtoV1Clone(rule)
+	}
+	remap := make([]TableIDRemap, len(r.TableIDRemapHint))
+	copy(remap, r.TableIDRemapHint)
+
+	return &RewriteRules{
+		Data:             data,
+		TableIDRemapHint: remap,
+		OldKeyspace:      r.OldKeyspace,
+		NewKeyspace:      r.NewKeyspace,
+		NewTableID:       r.NewTableID,
+	}
+}
+
+// TableIDRemap presents a remapping of table id during rewriting.
+type TableIDRemap struct {
+	Origin    int64
+	Rewritten int64
 }
 
 // Append append its argument to this rewrite rules.
@@ -72,9 +114,11 @@ func GetRewriteRules(
 ) *RewriteRules {
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
 				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -98,7 +142,8 @@ func GetRewriteRules(
 	}
 
 	return &RewriteRules{
-		Data: dataRules,
+		Data:             dataRules,
+		TableIDRemapHint: remaps,
 	}
 }
 
@@ -109,8 +154,10 @@ func GetRewriteRulesMap(
 
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		dataRules := make([]*import_sstpb.RewriteRule, 0)
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
@@ -134,7 +181,8 @@ func GetRewriteRulesMap(
 		}
 
 		rules[oldTableID] = &RewriteRules{
-			Data: dataRules,
+			Data:             dataRules,
+			TableIDRemapHint: remaps,
 		}
 	}
 
@@ -149,7 +197,7 @@ func GetRewriteRuleOfTable(
 	getDetailRule bool,
 ) *RewriteRules {
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
-
+	remaps := []TableIDRemap{{Origin: oldTableID, Rewritten: newTableID}}
 	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
 			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -171,7 +219,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, TableIDRemapHint: remaps}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.
@@ -282,6 +330,30 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 	return rule
 }
 
+func (r *RewriteRules) String() string {
+	if r == nil {
+		return "[]"
+	}
+
+	var out strings.Builder
+	out.WriteRune('[')
+	if len(r.OldKeyspace) != 0 {
+		out.WriteString(redact.Key(r.OldKeyspace))
+		out.WriteString(" =[ks]=> ")
+		out.WriteString(redact.Key(r.NewKeyspace))
+	}
+	for i, d := range r.Data {
+		if i > 0 {
+			out.WriteString(",")
+		}
+		out.WriteString(redact.Key(d.OldKeyPrefix))
+		out.WriteString(" => ")
+		out.WriteString(redact.Key(d.NewKeyPrefix))
+	}
+	out.WriteRune(']')
+	return out.String()
+}
+
 // GetRewriteRawKeys rewrites rules to the raw key.
 func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
@@ -290,7 +362,7 @@ func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, 
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s; self = %s", redact.Key(file.GetStartKey()), rewriteRules)
 			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
@@ -317,12 +389,14 @@ func GetRewriteEncodedKeys(file AppliedFile, rewriteRules *RewriteRules) (startK
 	if startID == endID {
 		startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s; rewrite rules: %s",
+				redact.Key(file.GetStartKey()), rewriteRules)
 			return
 		}
 		endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s; rewrite rules: %s",
+				redact.Key(file.GetEndKey()), rewriteRules)
 			return
 		}
 	} else {
@@ -364,7 +438,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	}
 	rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("start key", rg.StartKey))
 	} else {
 		log.Debug(
 			"rewrite start key",
@@ -373,7 +447,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	oldKey := rg.EndKey
 	rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("end key", rg.EndKey))
 	} else {
 		log.Debug(
 			"rewrite end key",

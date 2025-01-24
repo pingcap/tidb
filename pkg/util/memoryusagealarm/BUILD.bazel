@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/disk",
         "//pkg/util/logutil",
@@ -26,7 +26,7 @@ go_test(
     race = "on",
     deps = [
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//assert",

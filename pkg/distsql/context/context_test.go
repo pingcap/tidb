@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"go.uber.org/atomic"
 )
 
 func TestContextDetach(t *testing.T) {
@@ -84,11 +85,14 @@ func TestContextDetach(t *testing.T) {
 		ResourceGroupName:             "c",
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
+		MaxExecutionTime:              1,
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
 		SessionAlias:                "c",
+		TryCopLiteWorker:            atomic.Uint32{},
 	}
+	obj.TryCopLiteWorker.Store(1)
 
 	obj.AppendWarning(errors.New("test warning"))
 	deeptest.AssertRecursivelyNotEqual(t, obj, &DistSQLContext{},

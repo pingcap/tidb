@@ -63,9 +63,9 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	m *stream.TableMappingManager,
 ) error {
-	return rc.saveIDMap(ctx, sr)
+	return rc.saveIDMap(ctx, m)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
@@ -91,7 +91,7 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, erro
 func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, dom *domain.Domain, se glue.Session) *LogClient {
 	return &LogClient{
 		dom:               dom,
-		se:                se,
+		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,
@@ -126,4 +126,20 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
+}
+
+func (w *WithMigrations) AddIngestedSSTs(extPath string) {
+	w.fullBackups = append(w.fullBackups, extPath)
+}
+
+func (w *WithMigrations) SetRestoredTS(ts uint64) {
+	w.restoredTS = ts
+}
+
+func (w *WithMigrations) SetStartTS(ts uint64) {
+	w.startTS = ts
+}
+
+func (w *WithMigrations) CompactionDirs() []string {
+	return w.compactionDirs
 }

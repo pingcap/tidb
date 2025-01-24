@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -61,7 +62,7 @@ func NewRefresher(
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) *Refresher {
-	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	maxConcurrency := int(vardef.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
@@ -77,7 +78,7 @@ func NewRefresher(
 
 // UpdateConcurrency updates the maximum concurrency for auto-analyze jobs
 func (r *Refresher) UpdateConcurrency() {
-	newConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	newConcurrency := int(vardef.AutoAnalyzeConcurrency.Load())
 	r.worker.UpdateConcurrency(newConcurrency)
 }
 
@@ -94,7 +95,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	if !r.isWithinTimeWindow() {
 		return false
 	}
-	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(); err != nil {
@@ -188,12 +189,17 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	return false
 }
 
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return r.jobs.Snapshot()
+}
+
 func (r *Refresher) setAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {
 	start, end, err := exec.ParseAutoAnalysisWindow(
-		parameters[variable.TiDBAutoAnalyzeStartTime],
-		parameters[variable.TiDBAutoAnalyzeEndTime],
+		parameters[vardef.TiDBAutoAnalyzeStartTime],
+		parameters[vardef.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
 		return errors.Wrap(err, "parse auto analyze period failed")
@@ -256,6 +262,7 @@ func (*Refresher) OnBecomeOwner() {
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
 func (r *Refresher) OnRetireOwner() {
-	// Stop the worker and close the queue.
+	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
+	// To avoid blocking etcd leader re-election, we only close the priority queue.
 	r.jobs.Close()
 }

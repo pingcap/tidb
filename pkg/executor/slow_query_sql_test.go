@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -304,6 +304,13 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < now();").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2022-04-29 17:50:00'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '2010-01-02 15:04:05'").Check(testkit.Rows("0"))
+
+	// test the time zone change cases, see issue: https://github.com/pingcap/tidb/issues/58452
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustExec("set @@time_zone='+10:00'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
 }
 
 func TestIssue37066(t *testing.T) {
@@ -406,7 +413,7 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, h set('11', '22', '33')," +
 		"primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 

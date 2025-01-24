@@ -486,9 +486,9 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 				continue
 			}
 			data := ConvertByCollation(column.GetBytes(physicalRowIndex), tp)
-			size := uint64(len(data))
+			size := uint32(len(data))
 			if serializeMode == KeepVarColumnLength {
-				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
 			}
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], data...)
 		}
@@ -596,8 +596,8 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			jsonHashBuffer = jsonHashBuffer[:0]
 			jsonHashBuffer = column.GetJSON(physicalRowindex).HashValue(jsonHashBuffer)
 			if serializeMode == KeepVarColumnLength {
-				size := uint64(len(jsonHashBuffer))
-				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
+				size := uint32(len(jsonHashBuffer))
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
 			}
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], jsonHashBuffer...)
 		}

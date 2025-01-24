@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -239,6 +238,20 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 			// auto_random id contains shard bit.
 			querySQL:     "select * from t order by b",
 			lastInsertID: 6,
+		},
+		// partition table
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t order by c",
+		},
+		// partition table + global index
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int, index idx(c) global) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t use index(idx) order by c",
 		},
 	}
 
@@ -864,7 +877,10 @@ func (s *mockGCSSuite) TestImportMode() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	s.Len(rows, 1)
@@ -872,7 +888,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.NoError(err)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	s.checkTaskMetaRedacted(int64(jobID))
 	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
@@ -888,7 +904,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.Greater(intoNormalTime, intoImportTime)
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess"))
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// test disable_tikv_import_mode, should not call ToImportMode and ToNormalMode
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -896,7 +912,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// test with multirocksdb
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)")
@@ -905,7 +921,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2"))
 
@@ -921,7 +937,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	err = s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	s.checkTaskMetaRedacted(importer.TestLastImportJobID.Load())
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }

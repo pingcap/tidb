@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -98,6 +99,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	if len(tasks) == 0 {
 		return nil
+	}
+	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
+		if tableID.IsPartitionTable() {
+			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
+		}
 	}
 
 	// Get the min number of goroutines for parallel execution.
@@ -186,7 +195,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema)
+	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
@@ -319,7 +328,7 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
-	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
 	// only to save table options if dynamic prune mode

@@ -39,5 +39,5 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mockstorage.NewMockStorage(kvstore)
+	return mockstorage.NewMockStorage(kvstore, opt.keyspaceMeta)
 }

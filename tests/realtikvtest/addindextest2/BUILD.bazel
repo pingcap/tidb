@@ -11,11 +11,10 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/disttask/framework/scheduler",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",
@@ -26,5 +25,6 @@ go_test(
         "@com_github_phayes_freeport//:freeport",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )

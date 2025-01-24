@@ -66,8 +66,8 @@ type joinTableMeta struct {
 	fakeKeyByte []byte
 }
 
-func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
-	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
+func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint32 {
+	return *(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
 func (meta *joinTableMeta) isReadNullMapThreadSafe(columnIndex int) bool {
@@ -85,7 +85,7 @@ func (meta *joinTableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	case FixedSerializedKey:
 		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength)
 	case VariableSerializedKey:
-		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart)))
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfElementSize), int(meta.getSerializedKeyLength(rowStart)))
 	default:
 		panic("unknown key match type")
 	}
@@ -94,7 +94,7 @@ func (meta *joinTableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 func (meta *joinTableMeta) advanceToRowData(matchedRowInfo *matchedRowInfo) {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
+		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
 	} else {
 		matchedRowInfo.buildRowOffset = meta.rowDataOffset
 	}
@@ -120,6 +120,12 @@ func (*joinTableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 
 func (*joinTableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
 	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & usedFlagMask) == usedFlagMask
+}
+
+func (*joinTableMeta) isCurrentRowUsedWithAtomic(rowStart unsafe.Pointer) bool {
+	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr))
+	value := atomic.LoadUint32(addr)
+	return (value & usedFlagMask) == usedFlagMask
 }
 
 type keyProp struct {
@@ -211,14 +217,12 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	keyIndexMap := make(map[int]struct{})
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
-	hasFixedSizeKeyColumn := false
 	varLengthKeyNumber := 0
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
 		if prop.keyLength != chunk.VarElemLen {
 			meta.joinKeysLength += prop.keyLength
-			hasFixedSizeKeyColumn = true
 		} else {
 			meta.isJoinKeysFixedLength = false
 			varLengthKeyNumber++
@@ -327,20 +331,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	if needUsedFlag {
 		meta.colOffsetInNullMap = 1
-		// the total row length should be larger than 4 byte since the smallest unit of atomic.LoadXXX is UInt32
-		if len(columnsNeedToBeSaved) > 0 {
-			// the smallest length of a column is 4 byte, so the total row length is enough
-			meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
-		} else {
-			// if no columns need to be converted to row format, then the key is not inlined
-			// 1. if any of the key columns is fixed length, then the row length is larger than 4 bytes(since the smallest length of a fixed length column is 4 bytes)
-			// 2. if all the key columns are variable length, there is no guarantee that the row length is larger than 4 byte, the nullmap should be 4 bytes alignment
-			if hasFixedSizeKeyColumn {
-				meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
-			} else {
-				meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
-			}
-		}
+		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
+		// so atomic read/write is required. We want to keep this atomic operator inside the access of nullmap,
+		// then the nullMapLength should be 4 bytes alignment since the smallest unit of atomic.LoadUint32 is UInt32
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
 	} else {
 		meta.colOffsetInNullMap = 0
 		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8
@@ -350,7 +344,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		if meta.isJoinKeysFixedLength {
 			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength
 		} else {
-			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField
+			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize
 		}
 	} else {
 		if meta.isJoinKeysFixedLength {

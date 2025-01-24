@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"go.uber.org/atomic"
 )
 
 // BackfillState is the state used by the backfill-merge process.
@@ -71,26 +73,54 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
-	// These two variables are set when corresponding session variables are set explicitly. When they are set,
-	// user cannot change it by setting the global one. Otherwise, they can be adjusted dynamically through global var.
-	Concurrency int `json:"concurrency"`
-	BatchSize   int `json:"batch_size"`
+	// These two variables are used to control the concurrency and batch size of the reorganization process.
+	// They can be adjusted dynamically through `admin alter ddl jobs` command.
+	// Note: Don't get or set these two variables directly, use the functions instead.
+	Concurrency   atomic.Int64 `json:"concurrency"`
+	BatchSize     atomic.Int64 `json:"batch_size"`
+	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
-// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta or returns the default value.
-func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
-	if dm == nil || dm.Concurrency == 0 {
-		return defaultVal
+// GetConcurrency gets the concurrency from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetConcurrency() int {
+	concurrency := dm.Concurrency.Load()
+	if concurrency == 0 {
+		// when the job coming from old cluster, concurrency might not set
+		return int(vardef.GetDDLReorgWorkerCounter())
 	}
-	return dm.Concurrency
+	return int(concurrency)
 }
 
-// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta or returns the default value.
-func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
-	if dm == nil || dm.BatchSize == 0 {
-		return defaultVal
+// SetConcurrency sets the concurrency in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
+	dm.Concurrency.Store(int64(concurrency))
+}
+
+// GetBatchSize gets the batch size from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetBatchSize() int {
+	batchSize := dm.BatchSize.Load()
+	if batchSize == 0 {
+		// when the job coming from old cluster, batch-size might not set
+		return int(vardef.GetDDLReorgBatchSize())
 	}
-	return dm.BatchSize
+	return int(batchSize)
+}
+
+// SetBatchSize sets the batch size in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
+	dm.BatchSize.Store(int64(batchSize))
+}
+
+// GetMaxWriteSpeed gets the max write speed from DDLReorgMeta.
+// 0 means no limit.
+func (dm *DDLReorgMeta) GetMaxWriteSpeed() int {
+	// 0 means no limit, so it's ok even when the job coming from old cluster
+	return int(dm.MaxWriteSpeed.Load())
+}
+
+// SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
+	dm.MaxWriteSpeed.Store(int64(maxWriteSpeed))
 }
 
 const (

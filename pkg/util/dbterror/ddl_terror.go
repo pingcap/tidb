@@ -229,6 +229,8 @@ var (
 	ErrErrorOnRename = ClassDDL.NewStd(mysql.ErrErrorOnRename)
 	// ErrViewSelectClause returns error for create view with select into clause
 	ErrViewSelectClause = ClassDDL.NewStd(mysql.ErrViewSelectClause)
+	// ErrViewSelectVariable returns error for create view with select into clause
+	ErrViewSelectVariable = ClassDDL.NewStd(mysql.ErrViewSelectVariable)
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)

@@ -1,0 +1,19 @@
+select * from performance_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';
+VARIABLE_NAME	VARIABLE_VALUE
+tidb_retry_limit	10
+DESCRIBE performance_schema.GLOBAL_VARIABLES;
+Field	Type	Null	Key	Default	Extra
+VARIABLE_NAME	varchar(64)	NO		NULL	
+VARIABLE_VALUE	varchar(1024)	YES		NULL	
+DESCRIBE performance_schema.SESSION_VARIABLES;
+Field	Type	Null	Key	Default	Extra
+VARIABLE_NAME	varchar(64)	NO		NULL	
+VARIABLE_VALUE	varchar(1024)	NO		NULL	
+DESCRIBE performance_schema.GLOBAL_STATUS;
+Field	Type	Null	Key	Default	Extra
+VARIABLE_NAME	varchar(64)	NO		NULL	
+VARIABLE_VALUE	varchar(1024)	YES		NULL	
+DESCRIBE performance_schema.SESSION_STATUS;
+Field	Type	Null	Key	Default	Extra
+VARIABLE_NAME	varchar(64)	NO		NULL	
+VARIABLE_VALUE	varchar(1024)	YES		NULL	

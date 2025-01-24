@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -240,6 +239,7 @@ func TestIssue18681(t *testing.T) {
 	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
 	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
@@ -334,11 +334,10 @@ func TestReplaceLog(t *testing.T) {
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
 
 	// Make some dangling index.
-	ctx := mock.NewContext()
-	ctx.Store = store
+	ctx := testkit.NewSession(t, store)
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("testLog")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("testLog")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -368,9 +367,8 @@ func TestRebaseIfNeeded(t *testing.T) {
 	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
 	tk.MustExec(`insert into t (b) values (1);`)
 
-	ctx := mock.NewContext()
-	ctx.Store = store
-	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	ctx := testkit.NewSession(t, store)
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)

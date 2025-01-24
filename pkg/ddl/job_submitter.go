@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -104,7 +104,7 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 		err   error
 		newWs []*JobWrapper
 	)
-	fastCreate := variable.EnableFastCreateTable.Load()
+	fastCreate := vardef.EnableFastCreateTable.Load()
 	if fastCreate {
 		newWs, err = mergeCreateTableJobs(jobWs)
 		if err != nil {
@@ -324,7 +324,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		setJobStateToQueueing(job)
 
 		if s.serverStateSyncer.IsUpgradingState() && !hasSysDB(job) {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				jobW.cacheErr = err
 				continue

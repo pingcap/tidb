@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -74,7 +75,7 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
-	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
 	return blockMode
 }
 
@@ -135,6 +136,13 @@ func (ctx *ExprContext) GetGroupConcatMaxLen() uint64 {
 // If the context is not in a session, it should return 0.
 func (ctx *ExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
+}
+
+// IsReadonlyUserVar checks whether the user variable is readonly.
+func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
+	m := ctx.sctx.GetPlanCtx().GetReadonlyUserVarMap()
+	_, ok := m[name]
+	return ok
 }
 
 // IntoStatic turns the ExprContext into a ExprContext.
@@ -255,7 +263,7 @@ func (ctx *EvalContext) GetTiDBRedactLog() string {
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *EvalContext) GetDefaultWeekFormatMode() string {
-	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(vardef.DefaultWeekFormat)
 	if !ok || mode == "" {
 		return "0"
 	}
@@ -387,7 +395,7 @@ func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
 
 func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
 	return func(db, name string) (expropt.SequenceOperator, error) {
-		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(name))
+		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), ast.NewCIStr(db), ast.NewCIStr(name))
 		if err != nil {
 			return nil, err
 		}
