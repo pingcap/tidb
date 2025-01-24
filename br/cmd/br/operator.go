@@ -96,9 +96,10 @@ func newListMigrationsCommand() *cobra.Command {
 
 func newMigrateToCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "migrate-to",
-		Short: "migrate to a specific version",
-		Args:  cobra.NoArgs,
+		Use: "unsafe-migrate-to",
+		Short: "migrate to a specific version, use truncate will auto migrate to correct version, " +
+			"you should never use this command unless you know what you are doing",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := operator.MigrateToConfig{}
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
@@ -109,6 +110,7 @@ func newMigrateToCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForMigrateToConfig(cmd.Flags())
+	cmd.Hidden = true
 	return cmd
 }
 
