@@ -2968,27 +2968,14 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableResourceControlStrictMode.Load()), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		if config.GetGlobalKeyspaceName() != "" {
-			return "OFF", nil
-		}
-		return getTiDBTableValue(s, TiDBPessimisticTransactionFairLocking, BoolToOnOff(DefTiDBPessimisticTransactionFairLocking))
+		return "OFF", nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if config.GetGlobalKeyspaceName() != "" {
-			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
-			return nil
-		}
-		return setTiDBTableValue(s, TiDBPessimisticTransactionFairLocking, val, "Enable pessimistic transaction fair locking")
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
+		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		if config.GetGlobalKeyspaceName() != "" {
-			return "OFF", nil
-		}
-		return BoolToOnOff(s.PessimisticTransactionFairLocking), nil
+		return "OFF", nil
 	}, SetSession: func(s *SessionVars, val string) error {
-		if config.GetGlobalKeyspaceName() != "" {
-			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
-			return nil
-		}
-		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_pessimistic_txn_fair_locking can not be enabled when cse is enabled"))
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
