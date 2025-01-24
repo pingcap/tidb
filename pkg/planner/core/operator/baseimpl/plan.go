@@ -48,8 +48,8 @@ func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
 	}
 }
 
-// Reset4Cascades is to reset the plan for cascades.
-func (p *Plan) Reset4Cascades(tp string) {
+// ReAlloc4Cascades is to reset the plan for cascades.
+func (p *Plan) ReAlloc4Cascades(tp string) {
 	p.tp = tp
 	p.id = int(p.ctx.GetSessionVars().PlanID.Add(1))
 	p.stats = nil

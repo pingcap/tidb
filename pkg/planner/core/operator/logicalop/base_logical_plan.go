@@ -442,13 +442,13 @@ func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, 
 	}
 }
 
-// Reset4Cascades reset some elements in the logical plan.
+// ReAlloc4Cascades reset some elements in the logical plan.
 // those elements shouldn't be shared among different logical plans cuz it will induce unexpected behavior.
 // Usage scenario: in the xForm action, the original logical plan in the memo shouldn't be modified.
 // while if there is an alternative derived from current logical operator, we should have deep clone one.
-func (p *BaseLogicalPlan) Reset4Cascades(tp string, self base.LogicalPlan) {
+func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
 	// reset the plan inside.
-	p.Plan.Reset4Cascades(tp)
+	p.Plan.ReAlloc4Cascades(tp)
 	// task map is physical plan memorizing, it shouldn't be shared across different logical operator.
 	p.taskMap = make(map[string]base.Task)
 	p.taskMapBak = make([]string, 0, 10)
