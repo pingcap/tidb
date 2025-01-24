@@ -2440,28 +2440,28 @@ func (w *worker) addTableIndex(
 }
 
 func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
-	var bc ingest.BackendCtx
+	uniqueIndexIDs := make([]int64, 0, len(reorgInfo.elements))
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
 			return errors.New("unexpected error, can't find index info")
 		}
 		if indexInfo.Unique {
-			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
-			if bc == nil {
-				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
-					ForDuplicateCheck().
-					Build()
-				if err != nil {
-					return err
-				}
-				//nolint:revive,all_revive
-				defer bc.Close()
-			}
-			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
-			if err != nil {
-				return err
-			}
+			uniqueIndexIDs = append(uniqueIndexIDs, indexInfo.ID)
+		}
+	}
+	if len(uniqueIndexIDs) == 0 {
+		return nil
+	}
+	dc, cleanup, err := ingest.NewRemoteDupControllerForDDLIngest(ctx, reorgInfo.Job, store)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	for _, uid := range uniqueIndexIDs {
+		err = ingest.CollectAndHandleDuplicateErrors(ctx, dc, t, uid, reorgInfo.RealStartTS)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

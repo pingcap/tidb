@@ -22,19 +22,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -72,11 +68,6 @@ type BackendCtx interface {
 	// GetLocalBackend exposes local.Backend. It's only used in global sort based
 	// ingest.
 	GetLocalBackend() *local.Backend
-	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
-	// the supplement of Ingest.
-	//
-	// CollectRemoteDuplicateRows is only used in global sort based ingest.
-	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 
 	GetDiskUsage() uint64
 	Close()
@@ -118,55 +109,6 @@ type litBackendCtx struct {
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
 	unregisterMu sync.Mutex
-}
-
-func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
-	err error,
-	indexID int64,
-	tbl table.Table,
-	hasDupe bool,
-) error {
-	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
-		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
-			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return errors.Trace(err)
-	} else if hasDupe {
-		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
-			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-
-		if common.ErrFoundIndexConflictRecords.Equal(err) {
-			tErr, ok := errors.Cause(err).(*terror.Error)
-			if !ok {
-				return errors.Trace(tikv.ErrKeyExists)
-			}
-			if len(tErr.Args()) != 4 {
-				return errors.Trace(tikv.ErrKeyExists)
-			}
-			//nolint: forcetypeassert
-			indexName := tErr.Args()[1].(string)
-			//nolint: forcetypeassert
-			keyCols := tErr.Args()[2].([]string)
-			return errors.Trace(tikv.GenKeyExistsErr(keyCols, indexName))
-		}
-		return errors.Trace(tikv.ErrKeyExists)
-	}
-	return nil
-}
-
-// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
-func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	return bc.collectRemoteDuplicateRows(indexID, tbl)
-}
-
-func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
-	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode:     mysql.ModeStrictAllTables,
-		SysVars:     bc.sysVars,
-		IndexID:     indexID,
-		MinCommitTS: bc.initTS,
-	}, lightning.ErrorOnDup)
-	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
 func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error {
