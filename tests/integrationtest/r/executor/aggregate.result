@@ -1397,7 +1397,7 @@ Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and c
 select case b when 1 then c when 2 then d else d end from t group by b,c;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c > (select b from t) from t group by b;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.c' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+c > (select b from t)
 select c is null from t group by b;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.c' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c is true from t group by b;
