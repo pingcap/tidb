@@ -64,6 +64,10 @@ func (ge *OptGroupExpressionTask) Desc(w util.StrBufferWriter) {
 }
 
 // getValidRules filter the allowed rule from session variable, and system config.
-func (*OptGroupExpressionTask) getValidRules() map[pattern.Operand][]rule.Rule {
-	return ruleset.DefaultRuleSet
+func (ge *OptGroupExpressionTask) getValidRules() map[pattern.Operand][]rule.Rule {
+	operandRules := ruleset.DefaultRuleSets[pattern.GetOperand(ge.groupExpression.GetWrappedLogicalPlan())]
+	if operandRules != nil {
+		return operandRules.Filter(ge.groupExpression).Filter(ge.ctx.GetRuleMask())
+	}
+	return nil
 }
