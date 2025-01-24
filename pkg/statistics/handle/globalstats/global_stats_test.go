@@ -937,7 +937,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 }
 
 func TestIssues24349(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -949,7 +948,6 @@ func TestIssues24349(t *testing.T) {
 }
 
 func TestIssues24349WithConcurrency(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -963,7 +961,6 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -972,7 +969,6 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 }
 
 func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
