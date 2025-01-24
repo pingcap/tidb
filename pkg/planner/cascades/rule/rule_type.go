@@ -41,6 +41,8 @@ const (
 	XFPullCorrPredFromAgg1
 	// XFPullCorrPredFromAgg2 try to pull correlated expression from agg<selection> from inner child of an apply.
 	XFPullCorrPredFromAgg2
+	// XFMaximumRuleLength is the maximum rule length.
+	XFMaximumRuleLength
 )
 
 // String implements the fmt.Stringer interface.

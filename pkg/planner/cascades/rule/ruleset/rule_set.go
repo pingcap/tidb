@@ -32,6 +32,11 @@ const (
 	XFSetDeCorrelateApply
 )
 
+// DefaultRuleSets indicates the all rule set.
+var DefaultRuleSets = map[pattern.Operand]*OperandRules{
+	pattern.OperandApply: OperandApplyRules,
+}
+
 // OperandRules wrapper all the rules rooted from one specified operator.
 type OperandRules struct {
 	setMap  map[SetType][]rule.Rule
@@ -53,6 +58,8 @@ func (l ListRules) Filter(mask *bitset.BitSet) ListRules {
 
 // Filter return the specified operand rule list filter with operator's attribute.
 func (ors *OperandRules) Filter(ge *memo.GroupExpression) ListRules {
+	// special case for de-correlate apply.
+	// for intermediate apply, we should only apply de-correlate rule for short path.
 	if ge.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Flag&logicalop.ApplyGenFromXFDeCorrelateRuleFlag > 0 {
 		return ors.setMap[XFSetDeCorrelateApply]
 	}
@@ -72,11 +79,4 @@ var OperandApplyRulesMap = map[SetType][]rule.Rule{
 // OperandApplyRulesList OperandApplyRules is the rules rooted from an apply operand, organized as list.
 var OperandApplyRulesList = []rule.Rule{
 	decorrelate_apply.NewXFDeCorrelateSimpleApply(),
-}
-
-// DefaultRuleSet is default set of a series of rules.
-var DefaultRuleSet = map[pattern.Operand][]rule.Rule{
-	pattern.OperandApply: {
-		decorrelate_apply.NewXFDeCorrelateApply(),
-	},
 }
