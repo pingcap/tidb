@@ -120,6 +120,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	SMALLINT UNSIGNED DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -1242,11 +1243,14 @@ const (
 
 	// Add index on user field for some mysql tables.
 	version241 = 241
+
+	// version242 add Max_user_connections into mysql.user.
+	version242 = 242
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version242
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1423,6 +1427,7 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
 	}
 )
 
@@ -3363,6 +3368,13 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` SMALLINT UNSIGNED DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

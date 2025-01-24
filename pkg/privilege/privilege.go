@@ -116,6 +116,9 @@ type Manager interface {
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 	GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error)
+
+	//GetUserResources gets the max user connections for the account identified by the user and host
+	GetUserResources(user, host string) (int64, error)
 }
 
 const key keyType = 0

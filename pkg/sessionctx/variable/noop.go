@@ -178,7 +178,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "thread_concurrency", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_prealloc_size", Value: "8192"},
 	{Scope: ScopeNone, Name: "relay_log_space_limit", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxUserConnections, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "innodb_api_trx_level", Value: "0"},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_classes", Value: "50"},

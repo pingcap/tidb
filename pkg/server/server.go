@@ -126,6 +126,10 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
+	userResLock            sync.RWMutex // userResLock used to protect userResource
+	userResource           map[string]*userResourceLimits
+	ConnNumByResourceGroup map[string]int
+
 	capability uint32
 	dom        *domain.Domain
 
@@ -247,6 +251,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -719,6 +724,8 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
+	conn.incrementUserConnectionsCounter()
+
 	if !s.registerConn(conn) {
 		return
 	}
@@ -801,9 +808,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
