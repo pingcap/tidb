@@ -318,9 +318,9 @@ func Test2OwnerForAShortTime(t *testing.T) {
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
-		1,
+		4,
 		func() (pools.Resource, error) {
-			return tk.Session(), nil
+			return testkit.NewTestKit(t, store).Session(), nil
 		},
 		nil,
 		nil,
@@ -360,7 +360,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		if !bytes.Contains(content, []byte("Error processing change")) {
 			return false
 		}
-		return bytes.Contains(content, []byte("Write conflict"))
+		return bytes.Contains(content, []byte("maybe the row has been updated by other owner"))
 	}, time.Second, 25*time.Millisecond)
 	// the handler should not commit
 	tk2.MustQuery("SELECT * FROM test.result").Check(testkit.Rows())

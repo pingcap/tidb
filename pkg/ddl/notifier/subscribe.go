@@ -298,17 +298,14 @@ func (n *DDLNotifier) processEventForHandler(
 			zap.Duration("duration", time.Since(now)))
 	}
 
-	if err = n.store.UpdateProcessed(
+	return errors.Trace(n.store.UpdateProcessed(
 		ctx,
 		session,
 		change.ddlJobID,
 		change.subJobID,
+		change.processedByFlag,
 		newFlag,
-	); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	))
 }
 
 // Stop stops the background loop.
