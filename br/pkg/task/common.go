@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -294,7 +294,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
+	flags.Uint(flagChecksumConcurrency, vardef.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
 	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
@@ -947,7 +947,7 @@ func (cfg *Config) adjust() {
 		cfg.GRPCKeepaliveTimeout = defaultGRPCKeepaliveTimeout
 	}
 	if cfg.ChecksumConcurrency == 0 {
-		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+		cfg.ChecksumConcurrency = vardef.DefChecksumTableConcurrency
 	}
 	if cfg.MetadataDownloadBatchSize == 0 {
 		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize

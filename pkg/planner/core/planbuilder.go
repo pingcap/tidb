@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -1260,7 +1261,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 		if !isolationReadEnginesHasTiKV {
 			if hint.IndexNames != nil {
-				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals)
 				if i < indexHintsLen {
 					return nil, err
@@ -1364,7 +1365,7 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 		}
 	}
 	var err error
-	engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+	engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
@@ -1374,7 +1375,7 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 			}
 		}
 		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
-			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
+			vardef.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
 		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
@@ -1382,7 +1383,7 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 		} else {
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", vardef.TiDBIsolationReadEngines, engineVals))
 		}
 	}
 	return paths, err
@@ -2150,7 +2151,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 
 	switch columnChoice {
 	case ast.DefaultChoice:
-		columnOptions := variable.AnalyzeColumnOptions.Load()
+		columnOptions := vardef.AnalyzeColumnOptions.Load()
 		switch columnOptions {
 		case ast.AllColumns.String():
 			return tbl.TableInfo.Columns, nil, nil
@@ -2346,7 +2347,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
 		// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
-		val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+		val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 		if err1 != nil {
 			logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
 			result = origin
@@ -2733,7 +2734,7 @@ func pickColumnList(astColChoice ast.ColumnChoice, astColList []*model.ColumnInf
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
-	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
+	usePersistedOptions := vardef.PersistAnalyzeOptions.Load()
 
 	// Construct tasks for each table.
 	for _, tbl := range as.TableNames {
@@ -3686,7 +3687,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			p.StaleTxnStartTS = startTS
 		}
 	case *ast.SetResourceGroupStmt:
-		if variable.EnableResourceControlStrictMode.Load() {
+		if vardef.EnableResourceControlStrictMode.Load() {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"}, false, err)
 		}
@@ -3818,7 +3819,7 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 }
 
 func genAuthErrForGrantStmt(sctx base.PlanContext, dbName string) error {
-	if !strings.EqualFold(dbName, variable.PerformanceSchema) {
+	if !strings.EqualFold(dbName, vardef.PerformanceSchema) {
 		return nil
 	}
 	user := sctx.GetSessionVars().User
@@ -5977,9 +5978,9 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		if err != nil {
 			return err
 		}
-		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
+		if thread < 1 || thread > vardef.MaxConfigurableConcurrency {
 			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
-				thread, opt.Name, variable.MaxConfigurableConcurrency)
+				thread, opt.Name, vardef.MaxConfigurableConcurrency)
 		}
 	case AlterDDLJobBatchSize:
 		batchSize, err := GetThreadOrBatchSizeFromExpression(opt)
@@ -5987,9 +5988,9 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 			return err
 		}
 		bs := int32(batchSize)
-		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
+		if bs < vardef.MinDDLReorgBatchSize || bs > vardef.MaxDDLReorgBatchSize {
 			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
-				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
+				bs, opt.Name, vardef.MinDDLReorgBatchSize, vardef.MaxDDLReorgBatchSize)
 		}
 	case AlterDDLJobMaxWriteSpeed:
 		speed, err := GetMaxWriteSpeedFromExpression(opt)

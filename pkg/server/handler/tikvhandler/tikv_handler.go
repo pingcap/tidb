@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -428,9 +429,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
-				variable.ProcessGeneralLog.Store(false)
+				vardef.ProcessGeneralLog.Store(false)
 			case "1":
-				variable.ProcessGeneralLog.Store(true)
+				vardef.ProcessGeneralLog.Store(true)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -446,9 +447,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncCommit, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncCommit, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -468,9 +469,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnable1PC, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnable1PC, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -487,7 +488,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if threshold > 0 {
-				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
+				atomic.StoreUint32(&vardef.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
@@ -535,9 +536,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch mutationChecker {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableMutationChecker, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableMutationChecker, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return

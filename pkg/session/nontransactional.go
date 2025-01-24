@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -186,7 +186,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session)
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	if variable.EnableBatchDML.Load() && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
+	if vardef.EnableBatchDML.Load() && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
 		return errors.Errorf("can't run non-transactional DML with batch-dml")
 	}
 

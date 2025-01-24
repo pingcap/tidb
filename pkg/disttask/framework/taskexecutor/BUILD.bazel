@@ -21,7 +21,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/lightning/log",
         "//pkg/metrics",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cgroup",

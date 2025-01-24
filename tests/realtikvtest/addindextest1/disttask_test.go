@@ -16,7 +16,10 @@ package addindextest
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -43,6 +46,24 @@ func init() {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Path = "127.0.0.1:2379"
 	})
+}
+
+func checkTmpDDLDir(t *testing.T) {
+	tmpDir := config.GetGlobalConfig().TempDir
+	fmt.Println(tmpDir)
+	require.NoError(t, fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(path, "/tmp_ddl-") {
+			return nil
+		}
+		// we only checks whether there is a stale file, empty dir is allowed.
+		if !d.IsDir() {
+			return goerrors.New("stale file found")
+		}
+		return nil
+	}))
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
@@ -64,10 +85,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 
-	bak := variable.GetDDLReorgWorkerCounter()
+	bak := vardef.GetDDLReorgWorkerCounter()
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 111")
-	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(111), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -86,7 +107,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
 	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))
-	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, bak, vardef.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
@@ -118,6 +139,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest"))
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+	checkTmpDDLDir(t)
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
@@ -355,9 +377,9 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 }
 
 func TestAddUKErrorMessage(t *testing.T) {
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	t.Cleanup(func() {
-		ingest.ForceSyncFlagForTest = false
+		ingest.ForceSyncFlagForTest.Store(false)
 	})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -423,12 +445,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			updateExecID := fmt.Sprintf(`
-				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in 
+				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
 					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 			<-afterCancel
 			updateExecID = fmt.Sprintf(`
-				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in 
+				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
 					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 		})

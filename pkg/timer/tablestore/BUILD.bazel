@@ -13,7 +13,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/timer/api",
         "//pkg/util",
         "//pkg/util/chunk",

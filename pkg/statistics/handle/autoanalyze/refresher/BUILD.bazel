@@ -12,6 +12,7 @@ go_library(
         "//pkg/ddl/notifier",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
