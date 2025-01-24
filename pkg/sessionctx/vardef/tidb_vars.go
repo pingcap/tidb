@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package variable
+package vardef
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
+	goatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tiflash"
-	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
 
@@ -318,12 +317,6 @@ const (
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
-	// TiDBOptEnableSemiJoinRewrite is the variable equivalent of SEMI_JOIN_REWRITE hint.
-	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
-
-	// TiDBOptEnableNoDecorrelateInSelect is the variable equivalent of NO_DECORRELATE hint.
-	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
-
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -353,27 +346,6 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
-
-	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
-	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
-	TiDBOptIndexScanCostFactor        = "tidb_opt_index_scan_cost_factor"
-	TiDBOptIndexReaderCostFactor      = "tidb_opt_index_reader_cost_factor"
-	TiDBOptTableReaderCostFactor      = "tidb_opt_table_reader_cost_factor"
-	TiDBOptTableFullScanCostFactor    = "tidb_opt_table_full_scan_cost_factor"
-	TiDBOptTableRangeScanCostFactor   = "tidb_opt_table_range_scan_cost_factor"
-	TiDBOptTableRowIDScanCostFactor   = "tidb_opt_table_rowid_scan_cost_factor"
-	TiDBOptTableTiFlashScanCostFactor = "tidb_opt_table_tiflash_scan_cost_factor"
-	TiDBOptIndexLookupCostFactor      = "tidb_opt_index_lookup_cost_factor"
-	TiDBOptIndexMergeCostFactor       = "tidb_opt_index_merge_cost_factor"
-	TiDBOptSortCostFactor             = "tidb_opt_sort_cost_factor"
-	TiDBOptTopNCostFactor             = "tidb_opt_topn_cost_factor"
-	TiDBOptLimitCostFactor            = "tidb_opt_limit_cost_factor"
-	TiDBOptStreamAggCostFactor        = "tidb_opt_stream_agg_cost_factor"
-	TiDBOptHashAggCostFactor          = "tidb_opt_hash_agg_cost_factor"
-	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
-	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
-	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
-
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
@@ -700,7 +672,8 @@ const (
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
-	// TiDBEnableTelemetry indicates that whether usage data print to log is enabled.
+	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	// Deprecated: it is 'off' always since Telemetry has been removed from TiDB.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
@@ -861,9 +834,6 @@ const (
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 
-	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
-	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
-
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1019,7 +989,6 @@ const (
 )
 
 // TiDB vars that have only global scope
-
 const (
 	// TiDBGCEnable turns garbage collection on or OFF
 	TiDBGCEnable = "tidb_gc_enable"
@@ -1247,14 +1216,12 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
-	// The log backup task will be paused if the checkpoint lag is larger than it.
-	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
 )
 
-// TiDB intentional limits
-// Can be raised in the future.
-
+// TiDB intentional limits, can be raised in the future.
 const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
@@ -1293,8 +1260,6 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
-	DefOptEnableNoDecorrelateInSelect       = false
-	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
@@ -1308,23 +1273,6 @@ const (
 	DefOptMemoryFactor                      = 0.001
 	DefOptDiskFactor                        = 1.5
 	DefOptConcurrencyFactor                 = 3.0
-	DefOptIndexScanCostFactor               = 1.0
-	DefOptIndexReaderCostFactor             = 1.0
-	DefOptTableReaderCostFactor             = 1.0
-	DefOptTableFullScanCostFactor           = 1.0
-	DefOptTableRangeScanCostFactor          = 1.0
-	DefOptTableRowIDScanCostFactor          = 1.0
-	DefOptTableTiFlashScanCostFactor        = 1.0
-	DefOptIndexLookupCostFactor             = 1.0
-	DefOptIndexMergeCostFactor              = 1.0
-	DefOptSortCostFactor                    = 1.0
-	DefOptTopNCostFactor                    = 1.0
-	DefOptLimitCostFactor                   = 1.0
-	DefOptStreamAggCostFactor               = 1.0
-	DefOptHashAggCostFactor                 = 1.0
-	DefOptMergeJoinCostFactor               = 1.0
-	DefOptHashJoinCostFactor                = 1.0
-	DefOptIndexJoinCostFactor               = 1.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
@@ -1370,7 +1318,7 @@ const (
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "0s"
+	DefTiDBMPPStoreFailTTL                  = "60s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1422,7 +1370,7 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
-	DefTiDBEnableTelemetry                  = true
+	DefTiDBEnableTelemetry                  = false
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1439,7 +1387,7 @@ const (
 	DefTiDBEnableLocalTxn                             = false
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
-	DefPDEnableFollowerHandleRegion                   = false
+	DefPDEnableFollowerHandleRegion                   = true
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true
@@ -1486,7 +1434,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "ALL"
+	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1495,6 +1443,8 @@ const (
 	DefTiDBSessionPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
+	DefTiDBEnableWorkloadBasedLearning                = false
+	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
@@ -1507,7 +1457,6 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
-	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false
@@ -1521,6 +1470,7 @@ const (
 	DefTiDBNonPreparedPlanCacheSize                   = 100
 	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
 	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
+	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1569,13 +1519,13 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                         = 4
 	DefTiDBTTLDeleteWorkerCount                       = 4
-	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefaultExchangeCompressionMode                    = ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
 	DefTiDBEnableINLJoinMultiPattern                  = true
-	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiFlashComputeDispatchPolicy                   = DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                 = true
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
@@ -1596,7 +1546,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
-	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiFlashReplicaRead                             = AllReplicaStr
 	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
@@ -1604,7 +1554,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
-	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionLegacy
+	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
@@ -1620,8 +1570,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBLoadBindingTimeout                         = 200
-	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
 )
 
 // Process global variables.
@@ -1643,13 +1592,13 @@ var (
 	EnablePProfSQLCPU             = atomic.NewBool(false)
 	EnableBatchDML                = atomic.NewBool(false)
 	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
 	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)
@@ -1680,11 +1629,13 @@ var (
 	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
-	DDLForce2Queue                      = atomic.NewBool(false)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	// TODO: set value by session variable
+	EnableWorkloadBasedLearning   = atomic.NewBool(DefTiDBEnableWorkloadBasedLearning)
+	WorkloadBasedLearningInterval = atomic.NewDuration(DefTiDBWorkloadBasedLearningInterval)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
@@ -1744,53 +1695,6 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
-
-	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
-)
-
-var (
-	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
-	SetMemQuotaAnalyze func(quota int64) = nil
-	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
-	GetMemQuotaAnalyze func() int64 = nil
-	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity atomic.Pointer[func(int64)]
-	// SetPDClientDynamicOption is the func registered by domain
-	SetPDClientDynamicOption atomic.Pointer[func(string, string) error]
-	// SwitchMDL is the func registered by DDL to switch MDL.
-	SwitchMDL func(bool2 bool) error = nil
-	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
-	EnableDDL func() error = nil
-	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
-	DisableDDL func() error = nil
-	// SwitchFastCreateTable is the func registered by DDL to switch fast create table.
-	SwitchFastCreateTable func(val bool) error
-	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
-	SetExternalTimestamp func(ctx context.Context, ts uint64) error
-	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
-	GetExternalTimestamp func(ctx context.Context) (uint64, error)
-	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
-	SetGlobalResourceControl atomic.Pointer[func(bool)]
-	// ValidateCloudStorageURI validates the cloud storage URI.
-	ValidateCloudStorageURI func(ctx context.Context, uri string) error
-	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
-	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
-	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
-	ChangeSchemaCacheSize func(ctx context.Context, size uint64) error
-	// EnableStatsOwner is the func registered by stats to enable running stats in this instance.
-	EnableStatsOwner func() error = nil
-	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
-	DisableStatsOwner func() error = nil
-	// ChangePDMetadataCircuitBreakerErrorRateThresholdPct changes the error rate threshold of the PD metadata circuit breaker.
-	ChangePDMetadataCircuitBreakerErrorRateThresholdPct func(uint32) = nil
-)
-
-// Hooks functions for Cluster Resource Control.
-var (
-	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
-	EnableGlobalResourceControlFunc = func() {}
-	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
-	DisableGlobalResourceControlFunc = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {
@@ -1817,4 +1721,298 @@ func mustParseTime(layout string, str string) time.Time {
 	}
 
 	return time
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+const (
+	// AllReplicaStr is the string value of AllReplicas.
+	AllReplicaStr = "all_replicas"
+	// ClosestAdaptiveStr is the string value of ClosestAdaptive.
+	ClosestAdaptiveStr = "closest_adaptive"
+	// ClosestReplicasStr is the string value of ClosestReplicas.
+	ClosestReplicasStr = "closest_replicas"
+)
+
+const (
+	// DispatchPolicyRRStr is string value for DispatchPolicyRR.
+	DispatchPolicyRRStr = "round_robin"
+	// DispatchPolicyConsistentHashStr is string value for DispatchPolicyConsistentHash.
+	DispatchPolicyConsistentHashStr = "consistent_hash"
+	// DispatchPolicyInvalidStr is string value for DispatchPolicyInvalid.
+	DispatchPolicyInvalidStr = "invalid"
+)
+
+// ConcurrencyUnset means the value the of the concurrency related variable is unset.
+const ConcurrencyUnset = -1
+
+// ExchangeCompressionMode means the compress method used in exchange operator
+type ExchangeCompressionMode int
+
+const (
+	// ExchangeCompressionModeNONE indicates no compression
+	ExchangeCompressionModeNONE ExchangeCompressionMode = iota
+	// ExchangeCompressionModeFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
+	ExchangeCompressionModeFast
+	// ExchangeCompressionModeHC indicates high compression (HC) ratio mode
+	ExchangeCompressionModeHC
+	// ExchangeCompressionModeUnspecified indicates unspecified compress method, let TiDB choose one
+	ExchangeCompressionModeUnspecified
+
+	// RecommendedExchangeCompressionMode indicates recommended compression mode
+	RecommendedExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeFast
+
+	exchangeCompressionModeUnspecifiedName string = "UNSPECIFIED"
+)
+
+// Name returns the name of ExchangeCompressionMode
+func (t ExchangeCompressionMode) Name() string {
+	if t == ExchangeCompressionModeUnspecified {
+		return exchangeCompressionModeUnspecifiedName
+	}
+	return t.ToTipbCompressionMode().String()
+}
+
+// ToExchangeCompressionMode returns the ExchangeCompressionMode from name
+func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
+	name = strings.ToUpper(name)
+	if name == exchangeCompressionModeUnspecifiedName {
+		return ExchangeCompressionModeUnspecified, true
+	}
+	value, ok := tipb.CompressionMode_value[name]
+	if ok {
+		return ExchangeCompressionMode(value), true
+	}
+	return ExchangeCompressionModeNONE, false
+}
+
+// ToTipbCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
+func (t ExchangeCompressionMode) ToTipbCompressionMode() tipb.CompressionMode {
+	switch t {
+	case ExchangeCompressionModeNONE:
+		return tipb.CompressionMode_NONE
+	case ExchangeCompressionModeFast:
+		return tipb.CompressionMode_FAST
+	case ExchangeCompressionModeHC:
+		return tipb.CompressionMode_HIGH_COMPRESSION
+	}
+	return tipb.CompressionMode_NONE
+}
+
+// ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
+type ScopeFlag uint8
+
+// TypeFlag is the SysVar type, which doesn't exactly match MySQL types.
+type TypeFlag byte
+
+const (
+	// ScopeNone means the system variable can not be changed dynamically.
+	ScopeNone ScopeFlag = 0
+	// ScopeGlobal means the system variable can be changed globally.
+	ScopeGlobal ScopeFlag = 1 << 0
+	// ScopeSession means the system variable can only be changed in current session.
+	ScopeSession ScopeFlag = 1 << 1
+	// ScopeInstance means it is similar to global but doesn't propagate to other TiDB servers.
+	ScopeInstance ScopeFlag = 1 << 2
+
+	// TypeStr is the default
+	TypeStr TypeFlag = iota
+	// TypeBool for boolean
+	TypeBool
+	// TypeInt for integer
+	TypeInt
+	// TypeEnum for Enum
+	TypeEnum
+	// TypeFloat for Double
+	TypeFloat
+	// TypeUnsigned for Unsigned integer
+	TypeUnsigned
+	// TypeTime for time of day (a TiDB extension)
+	TypeTime
+	// TypeDuration for a golang duration (a TiDB extension)
+	TypeDuration
+
+	// On is the canonical string for ON
+	On = "ON"
+	// Off is the canonical string for OFF
+	Off = "OFF"
+	// Warn means return warnings
+	Warn = "WARN"
+	// IntOnly means enable for int type
+	IntOnly = "INT_ONLY"
+	// Marker is a special log redact behavior
+	Marker = "MARKER"
+
+	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// even if the performance might be slowed down.
+	AssertionStrictStr = "STRICT"
+	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	// performance should be performed.
+	AssertionFastStr = "FAST"
+	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	AssertionOffStr = "OFF"
+	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
+	OOMActionCancel = "CANCEL"
+	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
+	OOMActionLog = "LOG"
+
+	// TSOClientRPCModeDefault is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client sends batched
+	// TSO requests serially.
+	TSOClientRPCModeDefault = "DEFAULT"
+	// TSOClientRPCModeParallel is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 2 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by half, at the expense of about twice the amount of TSO RPC calls.
+	TSOClientRPCModeParallel = "PARALLEL"
+	// TSOClientRPCModeParallelFast is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
+	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+)
+
+// Global config name list.
+const (
+	GlobalConfigEnableTopSQL = "enable_resource_metering"
+	GlobalConfigSourceID     = "source_id"
+)
+
+func (s ScopeFlag) String() string {
+	var scopes []string
+	if s == ScopeNone {
+		return "NONE"
+	}
+	if s&ScopeSession != 0 {
+		scopes = append(scopes, "SESSION")
+	}
+	if s&ScopeGlobal != 0 {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if s&ScopeInstance != 0 {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
+
+// ClusteredIndexDefMode controls the default clustered property for primary key.
+type ClusteredIndexDefMode int
+
+const (
+	// ClusteredIndexDefModeIntOnly indicates only single int primary key will default be clustered.
+	ClusteredIndexDefModeIntOnly ClusteredIndexDefMode = 0
+	// ClusteredIndexDefModeOn indicates primary key will default be clustered.
+	ClusteredIndexDefModeOn ClusteredIndexDefMode = 1
+	// ClusteredIndexDefModeOff indicates primary key will default be non-clustered.
+	ClusteredIndexDefModeOff ClusteredIndexDefMode = 2
+)
+
+// TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
+func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
+	switch opt {
+	case On:
+		return ClusteredIndexDefModeOn
+	case Off:
+		return ClusteredIndexDefModeOff
+	default:
+		return ClusteredIndexDefModeIntOnly
+	}
+}
+
+const (
+	// ScatterOff means default, will not scatter region
+	ScatterOff string = ""
+	// ScatterTable means scatter region at table level
+	ScatterTable string = "table"
+	// ScatterGlobal means scatter region at global level
+	ScatterGlobal string = "global"
+)
+
+const (
+	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
+	PlacementModeStrict string = "STRICT"
+	// PlacementModeIgnore indicates ignore all placement operations in ddl
+	PlacementModeIgnore string = "IGNORE"
+)
+
+const (
+	// LocalDayTimeFormat is the local format of analyze start time and end time.
+	LocalDayTimeFormat = "15:04"
+	// FullDayTimeFormat is the full format of analyze start time and end time.
+	FullDayTimeFormat = "15:04 -0700"
+)
+
+// SetDDLReorgWorkerCounter sets DDLReorgWorkerCounter count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLReorgWorkerCounter(cnt int32) {
+	goatomic.StoreInt32(&DDLReorgWorkerCounter, cnt)
+}
+
+// GetDDLReorgWorkerCounter gets DDLReorgWorkerCounter.
+func GetDDLReorgWorkerCounter() int32 {
+	return goatomic.LoadInt32(&DDLReorgWorkerCounter)
+}
+
+// SetDDLFlashbackConcurrency sets DDLFlashbackConcurrency count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLFlashbackConcurrency(cnt int32) {
+	goatomic.StoreInt32(&DDLFlashbackConcurrency, cnt)
+}
+
+// GetDDLFlashbackConcurrency gets DDLFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
+	return goatomic.LoadInt32(&DDLFlashbackConcurrency)
+}
+
+// SetDDLReorgBatchSize sets DDLReorgBatchSize size.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLReorgBatchSize(cnt int32) {
+	goatomic.StoreInt32(&DDLReorgBatchSize, cnt)
+}
+
+// GetDDLReorgBatchSize gets DDLReorgBatchSize.
+func GetDDLReorgBatchSize() int32 {
+	return goatomic.LoadInt32(&DDLReorgBatchSize)
+}
+
+// SetDDLErrorCountLimit sets ddlErrorCountlimit size.
+func SetDDLErrorCountLimit(cnt int64) {
+	goatomic.StoreInt64(&DDLErrorCountLimit, cnt)
+}
+
+// GetDDLErrorCountLimit gets ddlErrorCountlimit size.
+func GetDDLErrorCountLimit() int64 {
+	return goatomic.LoadInt64(&DDLErrorCountLimit)
+}
+
+// SetDDLReorgRowFormat sets DDLReorgRowFormat version.
+func SetDDLReorgRowFormat(format int64) {
+	goatomic.StoreInt64(&DDLReorgRowFormat, format)
+}
+
+// GetDDLReorgRowFormat gets DDLReorgRowFormat version.
+func GetDDLReorgRowFormat() int64 {
+	return goatomic.LoadInt64(&DDLReorgRowFormat)
+}
+
+// SetMaxDeltaSchemaCount sets MaxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	goatomic.StoreInt64(&MaxDeltaSchemaCount, cnt)
+}
+
+// GetMaxDeltaSchemaCount gets MaxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return goatomic.LoadInt64(&MaxDeltaSchemaCount)
 }
