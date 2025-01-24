@@ -999,7 +999,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
 			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
 			if err != nil {
