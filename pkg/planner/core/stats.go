@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -49,7 +48,7 @@ import (
 )
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	return p.RecursiveDeriveStats(nil)
 }
 
@@ -58,7 +57,7 @@ func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
-func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, err error) {
+func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, _ bool, err error) {
 	ts := lp.(*logicalop.LogicalTableScan)
 	initStats(ts.Source)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
@@ -84,12 +83,12 @@ func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, e
 		ts.Ranges = ranger.FullIntRange(isUnsigned)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return ts.StatsInfo(), nil
+	return ts.StatsInfo(), true, nil
 }
 
-func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error) {
+func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, bool, error) {
 	is := lp.(*logicalop.LogicalIndexScan)
 	initStats(is.Source)
 	exprCtx := is.SCtx().GetExprCtx()
@@ -109,20 +108,20 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
 	}
-	return is.StatsInfo(), nil
+	return is.StatsInfo(), true, nil
 }
 
-func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, error) {
+func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
 	if ds.StatsInfo() != nil {
-		return ds.StatsInfo(), nil
+		return ds.StatsInfo(), false, nil
 	}
 	initStats(ds)
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
 		selectivity := ds.StatsInfo().RowCount / ds.TableStats.RowCount
 		ds.SetStats(ds.TableStats.Scale(selectivity))
-		return ds.StatsInfo(), nil
+		return ds.StatsInfo(), false, nil
 	}
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
@@ -142,7 +141,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, error) {
 		}
 		err := fillIndexPath(ds, path, ds.PushedDownConds)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
@@ -150,11 +149,11 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, error) {
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.PossibleAccessPaths))
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if err := generateIndexMergePath(ds); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -166,7 +165,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, error) {
 		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
 	}
 
-	return ds.StatsInfo(), nil
+	return ds.StatsInfo(), true, nil
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
@@ -531,16 +530,6 @@ func initStats(ds *logicalop.DataSource) {
 	for _, col := range ds.TableInfo.Columns {
 		if col.State != model.StatePublic {
 			continue
-		}
-		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
-		_, isLoadNeeded, _ := ds.StatisticTable.ColumnIsLoadNeeded(col.ID, false)
-		if isLoadNeeded {
-			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
-				TableID:          ds.TableInfo.ID,
-				ID:               col.ID,
-				IsIndex:          false,
-				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			}, false)
 		}
 	}
 }

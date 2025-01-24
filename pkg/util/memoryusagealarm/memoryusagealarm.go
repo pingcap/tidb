@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -89,8 +89,8 @@ func (record *memoryUsageAlarm) updateVariable() {
 	if time.Since(record.lastUpdateVariableTime) < 60*time.Second {
 		return
 	}
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
+	record.memoryUsageAlarmRatio = vardef.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmKeepRecordNum = vardef.MemoryUsageAlarmKeepRecordNum.Load()
 	record.serverMemoryLimit = memory.ServerMemoryLimit.Load()
 	if record.serverMemoryLimit != 0 {
 		record.isServerMemoryLimitSet = true
@@ -268,7 +268,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
-	oomAction := variable.OOMAction.Load()
+	oomAction := vardef.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]

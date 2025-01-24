@@ -135,13 +135,14 @@ var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.Phy
 // ****************************************** stats related **********************************************
 
 // DeriveStats4DataSource will be called by LogicalDataSource in logicalOp pkg.
-var DeriveStats4DataSource func(lp base.LogicalPlan) (*property.StatsInfo, error)
+var DeriveStats4DataSource func(lp base.LogicalPlan) (*property.StatsInfo, bool, error)
 
 // DeriveStats4LogicalIndexScan will be called by LogicalIndexScan in logicalOp pkg.
-var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error)
+var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo,
+	bool, error)
 
 // DeriveStats4LogicalTableScan will be called by LogicalTableScan in logicalOp pkg.
-var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInfo, err error)
+var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInfo, _ bool, err error)
 
 // AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
