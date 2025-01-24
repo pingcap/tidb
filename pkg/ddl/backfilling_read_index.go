@@ -88,7 +88,8 @@ func newReadIndexExecutor(
 
 func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
-	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false)
 		if err != nil {
 			return errors.Trace(err)

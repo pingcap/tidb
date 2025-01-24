@@ -2460,6 +2460,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 					if err != nil {
 						return errors.Trace(err)
 					}
+					//nolint:revive,all_revive
 					defer bd.Close()
 				}
 				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
