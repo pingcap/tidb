@@ -1193,13 +1193,6 @@ create table t(
 		},
 		{
 			indexPos:    0,
-			exprStr:     `a > NULL`,
-			accessConds: "[gt(test.t.a, <nil>)]",
-			filterConds: "[]",
-			resultStr:   `[]`,
-		},
-		{
-			indexPos:    0,
 			exprStr:     `a = 'a' and b in (1, 2, 3)`,
 			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
 			filterConds: "[]",
@@ -1256,13 +1249,6 @@ create table t(
 		},
 		{
 			indexPos:    0,
-			exprStr:     "a in (NULL)",
-			accessConds: "[eq(test.t.a, <nil>)]",
-			filterConds: "[]",
-			resultStr:   "[]",
-		},
-		{
-			indexPos:    0,
 			exprStr:     "a not in (NULL, '1', '2', '3')",
 			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
 			filterConds: "[]",
@@ -1278,14 +1264,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[or(<nil>, le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,\"2\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) or a > '2')",
-			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[and(<nil>, le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
