@@ -20,14 +20,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 )
 
-// _LogicalJoinShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _LogicalJoinShallowRef() *LogicalJoin {
+// LogicalJoinShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) LogicalJoinShallowRef() *LogicalJoin {
 	shallow := *op
 	return &shallow
 }
 
-// _EqualConditionsShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _EqualConditionsShallowRef() []*expression.ScalarFunction {
+// EqualConditionsShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) EqualConditionsShallowRef() []*expression.ScalarFunction {
 	EqualConditionsCP := make([]*expression.ScalarFunction, 0, len(op.EqualConditions))
 	for _, one := range op.EqualConditions {
 		EqualConditionsCP = append(EqualConditionsCP, one)
@@ -36,8 +36,8 @@ func (op *LogicalJoin) _EqualConditionsShallowRef() []*expression.ScalarFunction
 	return op.EqualConditions
 }
 
-// _NAEQConditionsShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _NAEQConditionsShallowRef() []*expression.ScalarFunction {
+// NAEQConditionsShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) NAEQConditionsShallowRef() []*expression.ScalarFunction {
 	NAEQConditionsCP := make([]*expression.ScalarFunction, 0, len(op.NAEQConditions))
 	for _, one := range op.NAEQConditions {
 		NAEQConditionsCP = append(NAEQConditionsCP, one)
@@ -46,8 +46,8 @@ func (op *LogicalJoin) _NAEQConditionsShallowRef() []*expression.ScalarFunction 
 	return op.NAEQConditions
 }
 
-// _LeftConditionsShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _LeftConditionsShallowRef() expression.CNFExprs {
+// LeftConditionsShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) LeftConditionsShallowRef() expression.CNFExprs {
 	LeftConditionsCP := make(expression.CNFExprs, 0, len(op.LeftConditions))
 	for _, one := range op.LeftConditions {
 		LeftConditionsCP = append(LeftConditionsCP, one)
@@ -56,8 +56,8 @@ func (op *LogicalJoin) _LeftConditionsShallowRef() expression.CNFExprs {
 	return op.LeftConditions
 }
 
-// _RightConditionsShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _RightConditionsShallowRef() expression.CNFExprs {
+// RightConditionsShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) RightConditionsShallowRef() expression.CNFExprs {
 	RightConditionsCP := make(expression.CNFExprs, 0, len(op.RightConditions))
 	for _, one := range op.RightConditions {
 		RightConditionsCP = append(RightConditionsCP, one)
@@ -66,8 +66,8 @@ func (op *LogicalJoin) _RightConditionsShallowRef() expression.CNFExprs {
 	return op.RightConditions
 }
 
-// _OtherConditionsShallowRef implements the copy-on-write usage.
-func (op *LogicalJoin) _OtherConditionsShallowRef() expression.CNFExprs {
+// OtherConditionsShallowRef implements the copy-on-write usage.
+func (op *LogicalJoin) OtherConditionsShallowRef() expression.CNFExprs {
 	OtherConditionsCP := make(expression.CNFExprs, 0, len(op.OtherConditions))
 	for _, one := range op.OtherConditions {
 		OtherConditionsCP = append(OtherConditionsCP, one)

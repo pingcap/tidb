@@ -164,6 +164,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 
 	// unsupported ddl operations
 	{
@@ -224,8 +226,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
-			rs, _ := tk.Exec("select b from t")
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
+			rs, _ := tk2.Exec("select b from t")
+			assert.Equal(t, tk2.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
 	})
 	tk.MustExec("alter table t add column c int default 3, rename column b to d;")
@@ -544,6 +546,8 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
 
 	// unsupported ddl operations
 	{
@@ -583,7 +587,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 		// "modify column a tinyint" in write-reorg.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
-			rs, err := tk.Exec("select * from t use index(i1);")
+			rs, err := tk2.Exec("select * from t use index(i1);")
 			assert.NoError(t, err)
 			assert.NoError(t, rs.Close())
 		}
