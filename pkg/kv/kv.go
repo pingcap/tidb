@@ -197,6 +197,9 @@ type MemBuffer interface {
 
 	// BatchGet gets values from the memory buffer.
 	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+
+	// Snapshot returns a snapshot of the MemBuffer.
+	GetSnapshot() MemBufferSnapshot
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -851,3 +854,5 @@ func decodeTableID(key Key) int64 {
 	}
 	return 0
 }
+
+type MemBufferSnapshot = tikv.MemBufferSnapshot

@@ -149,6 +149,10 @@ func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]b
 	return data, derr.ToTiDBErr(err)
 }
 
+func (m *memBuffer) GetSnapshot() kv.MemBufferSnapshot {
+	return m.MemBuffer.GetSnapshot()
+}
+
 type tikvGetter struct {
 	tikv.Getter
 }
