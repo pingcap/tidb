@@ -3066,8 +3066,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 		cols = append([]*model.ColumnInfo{colInfo}, cols...)
 	} else if task.HandleCols != nil && !task.HandleCols.IsInt() {
 		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo)+task.HandleCols.NumCols())
-		for i := 0; i < task.HandleCols.NumCols(); i++ {
-			cols = append(cols, task.TblInfo.Columns[task.HandleCols.GetCol(i).Index])
+		for col := range task.HandleCols.IterColumns() {
+			cols = append(cols, task.TblInfo.Columns[col.Index])
 		}
 		cols = append(cols, task.ColsInfo...)
 		task.ColsInfo = cols
