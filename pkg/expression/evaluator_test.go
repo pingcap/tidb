@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -108,6 +107,7 @@ func TestSleep(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
@@ -128,6 +128,7 @@ func TestSleep(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
@@ -617,7 +618,7 @@ func TestOptionalProp(t *testing.T) {
 	arg1f, err := arg1fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	arg1 := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.CurrentUser),
+		FuncName: ast.NewCIStr(ast.CurrentUser),
 		Function: arg1f,
 		RetType:  arg1f.getRetTp(),
 	}
@@ -625,7 +626,7 @@ func TestOptionalProp(t *testing.T) {
 	arg2f, err := arg2fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	arg2 := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.TiDBIsDDLOwner),
+		FuncName: ast.NewCIStr(ast.TiDBIsDDLOwner),
 		Function: arg2f,
 		RetType:  arg2f.getRetTp(),
 	}
@@ -633,7 +634,7 @@ func TestOptionalProp(t *testing.T) {
 	f, err := fc.getFunction(ctx, []Expression{arg1, arg2})
 	require.NoError(t, err)
 	fe := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Plus),
+		FuncName: ast.NewCIStr(ast.Plus),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
@@ -642,7 +643,7 @@ func TestOptionalProp(t *testing.T) {
 	f2, err := fc2.getFunction(ctx, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
 	require.NoError(t, err)
 	fe2 := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.GetLock),
+		FuncName: ast.NewCIStr(ast.GetLock),
 		Function: f2,
 		RetType:  f2.getRetTp(),
 	}

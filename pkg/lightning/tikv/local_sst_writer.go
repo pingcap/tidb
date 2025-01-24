@@ -17,11 +17,11 @@ package tikv
 import (
 	"encoding/binary"
 
-	rocks "github.com/lance6716/pebble"
-	rocksbloom "github.com/lance6716/pebble/bloom"
-	"github.com/lance6716/pebble/objstorage/objstorageprovider"
-	rockssst "github.com/lance6716/pebble/sstable"
-	"github.com/lance6716/pebble/vfs"
+	rocks "github.com/cockroachdb/pebble"
+	rocksbloom "github.com/cockroachdb/pebble/bloom"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
+	rockssst "github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"

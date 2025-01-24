@@ -42,7 +42,8 @@ go_test(
     deps = [
         ":exec",
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/kv",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/statistics/handle/usage/indexusage",

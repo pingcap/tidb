@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -43,11 +42,12 @@ func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
 }
 
 // RecursiveDeriveStats implements LogicalPlan interface.
-func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, bool, error) {
 	if mj.StatsInfo() == nil {
 		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
+		return mj.statsMap[mj.involvedNodeSet], true, nil
 	}
-	return mj.statsMap[mj.involvedNodeSet], nil
+	return mj.statsMap[mj.involvedNodeSet], false, nil
 }
 
 func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
@@ -138,7 +138,7 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 
 func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
 	ds := logicalop.DataSource{}.Init(ctx, 0)
-	tan := model.NewCIStr(name)
+	tan := ast.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.SetSchema(expression.NewSchema())
 	ds.Schema().Append(&expression.Column{

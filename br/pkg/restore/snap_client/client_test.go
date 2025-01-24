@@ -36,7 +36,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -54,7 +54,7 @@ func TestCreateTables(t *testing.T) {
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	client.SetBatchDdlSize(1)
@@ -66,10 +66,10 @@ func TestCreateTables(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -156,7 +156,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -173,7 +173,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.SetCharset("binary")
@@ -181,10 +181,10 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 		DB: dbSchema,
 		Info: &model.TableInfo{
 			ID:   int64(1),
-			Name: pmodel.NewCIStr("t"),
+			Name: ast.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{{
 				ID:        1,
-				Name:      pmodel.NewCIStr("id"),
+				Name:      ast.NewCIStr("id"),
 				FieldType: *intField,
 				State:     model.StatePublic,
 			}},
@@ -314,7 +314,7 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores = NewRecordStores()
 	start := time.Now()
-	err := snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
+	err := snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 10)
 	cost := time.Since(start)
 	require.NoError(t, err)
 
@@ -337,7 +337,7 @@ func TestSetSpeedLimit(t *testing.T) {
 		split.NewFakePDClient(mockStores, false, nil), nil, nil, split.DefaultTestKeepaliveCfg)
 
 	// Concurrency needs to be less than the number of stores
-	err = snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
+	err = snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 2)
 	require.Error(t, err)
 	t.Log(err)
 

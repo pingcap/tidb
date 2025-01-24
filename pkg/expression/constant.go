@@ -175,20 +175,21 @@ func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 
 // StringWithCtx implements Expression interface.
 func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
+	v := c.Value
 	if c.ParamMarker != nil {
 		dt, err := c.ParamMarker.GetUserVar(ctx)
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			return "?"
 		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		v = dt
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
-		return c.Value.TruncatedStringify()
+		return v.TruncatedStringify()
 	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%s›", c.Value.TruncatedStringify())
+		return fmt.Sprintf("‹%s›", v.TruncatedStringify())
 	}
 	return "?"
 }
@@ -319,8 +320,7 @@ func (c *Constant) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 			return c.Value, err
 		}
 		if dt.IsNull() {
-			c.Value.SetNull()
-			return c.Value, nil
+			return dt, nil
 		}
 		if c.DeferredExpr != nil {
 			if dt.Kind() != types.KindMysqlDecimal {
@@ -560,19 +560,17 @@ func (c *Constant) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (c *Constant) Equals(other any) bool {
-	if other == nil {
+	c2, ok := other.(*Constant)
+	if !ok {
 		return false
 	}
-	var c2 *Constant
-	switch x := other.(type) {
-	case *Constant:
-		c2 = x
-	case Constant:
-		c2 = &x
-	default:
+	if c == nil {
+		return c2 == nil
+	}
+	if c2 == nil {
 		return false
 	}
-	ok := c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
+	ok = c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
 	ok = ok && c.collationInfo.Equals(c2.collationInfo)
 	ok = ok && (c.DeferredExpr == nil && c2.DeferredExpr == nil || c.DeferredExpr != nil && c2.DeferredExpr != nil && c.DeferredExpr.Equals(c2.DeferredExpr))
 	ok = ok && (c.ParamMarker == nil && c2.ParamMarker == nil || c.ParamMarker != nil && c2.ParamMarker != nil && c.ParamMarker.order == c2.ParamMarker.order)

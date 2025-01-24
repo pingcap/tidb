@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
@@ -594,6 +595,26 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
 	}()
+
+	waitUntilReadTSSafe := func(tk *testkit.TestKit, readTime string) {
+		unixTime, err := strconv.ParseFloat(tk.MustQuery("select unix_timestamp(" + readTime + ")").Rows()[0][0].(string), 64)
+		require.NoError(t, err)
+		expectedPhysical := int64(unixTime*1000) + 1
+		expectedTS := oracle.ComposeTS(expectedPhysical, 0)
+		for {
+			tk.MustExec("begin")
+			currentTS, err := strconv.ParseUint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			tk.MustExec("rollback")
+
+			if currentTS >= expectedTS {
+				return
+			}
+
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
 	// Test for point_get request
 	rows := tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
@@ -614,6 +635,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 
 	// Test for stale read.
 	tk.MustExec("set @a=now(6);")
+	waitUntilReadTSSafe(tk, "@a")
 	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)
@@ -642,6 +664,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 
 	// Test for stale read.
 	tk.MustExec("set @a=now(6);")
+	waitUntilReadTSSafe(tk, "@a")
 	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
 	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)

@@ -26,11 +26,10 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.ColumnInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.ColumnInfo
 	Histogram
 
 	// StatsLoadedStatus indicates the status of column statistics
@@ -39,7 +38,6 @@ type Column struct {
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
-	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
@@ -52,11 +50,9 @@ func (c *Column) Copy() *Column {
 	}
 	nc := &Column{
 		PhysicalID: c.PhysicalID,
-		Flag:       c.Flag,
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}
-	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if c.CMSketch != nil {
 		nc.CMSketch = c.CMSketch.Copy()
 	}
@@ -259,4 +255,14 @@ func (c *Column) StatsAvailable() bool {
 	// However, when we add/modify a column, its stats are generated according to the default value without setting
 	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
 	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+}
+
+// EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
+func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column {
+	return &Column{
+		PhysicalID: tid,
+		Info:       colInfo,
+		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
+		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+	}
 }

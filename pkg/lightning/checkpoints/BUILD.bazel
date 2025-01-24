@@ -36,7 +36,7 @@ go_test(
     embed = [":checkpoints"],
     flaky = True,
     race = "on",
-    shard_count = 24,
+    shard_count = 25,
     deps = [
         "//br/pkg/version/build",
         "//pkg/lightning/checkpoints/checkpointspb",
@@ -44,7 +44,7 @@ go_test(
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/testkit/testsetup",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_errors//:errors",

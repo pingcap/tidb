@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -126,7 +126,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func setFirstErr(firstErr error, newErr error, msg string) error {
 	if newErr != nil {
-		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.Any("extra msg", msg))
+		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.String("extra msg", msg))
 		if firstErr == nil {
 			firstErr = newErr
 		}
@@ -364,7 +364,7 @@ func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-		if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
+		if val.(bool) && vardef.EnableTmpStorageOnOOM.Load() {
 			defer resAction.WaitForTest()
 			defer iterInAction.WaitForTest()
 			if iterOutAction != nil {
@@ -585,7 +585,7 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
 	diskTracker.AttachTo(parentDiskTracker)
 
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) {
@@ -768,8 +768,8 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 
 func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64, lvl zapcore.Level) {
 	logutil.Logger(ctx).Log(lvl, "cte iteration info",
-		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
-		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
-		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
-		zap.Any("resTbl rows", p.resTbl.NumRows()), zap.Any("iteration num", iterNum), zap.Error(err))
+		zap.Int64("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Int64("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
+		zap.Int64("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Int64("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
+		zap.Int64("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Int64("resTbl disk usage", p.resTbl.GetDiskBytes()),
+		zap.Int("resTbl rows", p.resTbl.NumRows()), zap.Uint64("iteration num", iterNum), zap.Error(err))
 }

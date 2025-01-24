@@ -34,16 +34,15 @@ func init() {
 // InitMetricsVars init statistics metrics vars.
 func InitMetricsVars() {
 	StatsHealthyGauges = []prometheus.Gauge{
-		metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[50,55)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[55,60)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[60,70)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[70,80)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
-		metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
-		// [0,100] should always be the last
-		metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
-		metrics.StatsHealthyGauge.WithLabelValues("unneeded analyze"),
+		metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),           // 0
+		metrics.StatsHealthyGauge.WithLabelValues("[50,55)"),          // 1
+		metrics.StatsHealthyGauge.WithLabelValues("[55,60)"),          // 2
+		metrics.StatsHealthyGauge.WithLabelValues("[60,70)"),          // 3
+		metrics.StatsHealthyGauge.WithLabelValues("[70,80)"),          // 4
+		metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),         // 5
+		metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),        // 6
+		metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),          // 7
+		metrics.StatsHealthyGauge.WithLabelValues("unneeded analyze"), // 8
 	}
 
 	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")

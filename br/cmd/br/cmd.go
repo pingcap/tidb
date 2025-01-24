@@ -85,8 +85,8 @@ func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("br.log.2006-01-02T15.04.05Z0700"))
 }
 
-// AddFlags adds flags to the given cmd.
-func AddFlags(cmd *cobra.Command) {
+// DefineCommonFlags defines the common flags for all BR cmd operation.
+func DefineCommonFlags(cmd *cobra.Command) {
 	cmd.Version = build.Info()
 	cmd.Flags().BoolP(flagVersion, flagVersionShort, false, "Display version information about BR")
 	cmd.SetVersionTemplate("{{printf \"%s\" .Version}}\n")
@@ -103,6 +103,8 @@ func AddFlags(cmd *cobra.Command) {
 		"Set whether to redact sensitive info in log")
 	cmd.PersistentFlags().String(FlagStatusAddr, "",
 		"Set the HTTP listening address for the status report service. Set to empty string to disable")
+
+	// defines BR task common flags, this is shared by cmd and sql(brie)
 	task.DefineCommonFlags(cmd.PersistentFlags())
 
 	cmd.PersistentFlags().StringP(FlagSlowLogFile, "", "",

@@ -403,6 +403,7 @@ func (op *LogicalExpand) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalLimit) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeLimit)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.PartitionBy == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -428,6 +429,9 @@ func (op *LogicalLimit) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
 	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
 		return false
 	}
@@ -448,6 +452,7 @@ func (op *LogicalLimit) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalMaxOneRow) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeMaxOneRow)
+	op.BaseLogicalPlan.Hash64(h)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalMaxOneRow pointer.
@@ -462,7 +467,9 @@ func (op *LogicalMaxOneRow) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
-	_ = op2
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
 	return true
 }
 
@@ -545,6 +552,509 @@ func (op *DataSource) Equals(other any) bool {
 		return false
 	}
 	if op.IsForUpdateRead != op2.IsForUpdateRead {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalMemTable) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeMemTableScan)
+	op.LogicalSchemaProducer.Hash64(h)
+	op.DBName.Hash64(h)
+	if op.TableInfo == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.TableInfo.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalMemTable pointer.
+func (op *LogicalMemTable) Equals(other any) bool {
+	op2, ok := other.(*LogicalMemTable)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if !op.DBName.Equals(&op2.DBName) {
+		return false
+	}
+	if !op.TableInfo.Equals(op2.TableInfo) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalUnionAll) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeUnion)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalUnionAll pointer.
+func (op *LogicalUnionAll) Equals(other any) bool {
+	op2, ok := other.(*LogicalUnionAll)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalPartitionUnionAll) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypePartitionUnion)
+	op.LogicalUnionAll.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalPartitionUnionAll pointer.
+func (op *LogicalPartitionUnionAll) Equals(other any) bool {
+	op2, ok := other.(*LogicalPartitionUnionAll)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalUnionAll.Equals(&op2.LogicalUnionAll) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalProjection) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeProj)
+	op.LogicalSchemaProducer.Hash64(h)
+	if op.Exprs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.Exprs))
+		for _, one := range op.Exprs {
+			one.Hash64(h)
+		}
+	}
+	h.HashBool(op.CalculateNoDelay)
+	h.HashBool(op.Proj4Expand)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalProjection pointer.
+func (op *LogicalProjection) Equals(other any) bool {
+	op2, ok := other.(*LogicalProjection)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if (op.Exprs == nil && op2.Exprs != nil) || (op.Exprs != nil && op2.Exprs == nil) || len(op.Exprs) != len(op2.Exprs) {
+		return false
+	}
+	for i, one := range op.Exprs {
+		if !one.Equals(op2.Exprs[i]) {
+			return false
+		}
+	}
+	if op.CalculateNoDelay != op2.CalculateNoDelay {
+		return false
+	}
+	if op.Proj4Expand != op2.Proj4Expand {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalSelection) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSel)
+	if op.Conditions == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.Conditions))
+		for _, one := range op.Conditions {
+			one.Hash64(h)
+		}
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSelection pointer.
+func (op *LogicalSelection) Equals(other any) bool {
+	op2, ok := other.(*LogicalSelection)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if (op.Conditions == nil && op2.Conditions != nil) || (op.Conditions != nil && op2.Conditions == nil) || len(op.Conditions) != len(op2.Conditions) {
+		return false
+	}
+	for i, one := range op.Conditions {
+		if !one.Equals(op2.Conditions[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalSequence) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSequence)
+	op.BaseLogicalPlan.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSequence pointer.
+func (op *LogicalSequence) Equals(other any) bool {
+	op2, ok := other.(*LogicalSequence)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalShow) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeShow)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalShow pointer.
+func (op *LogicalShow) Equals(other any) bool {
+	op2, ok := other.(*LogicalShow)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalShowDDLJobs) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeShowDDLJobs)
+	op.LogicalSchemaProducer.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalShowDDLJobs pointer.
+func (op *LogicalShowDDLJobs) Equals(other any) bool {
+	op2, ok := other.(*LogicalShowDDLJobs)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalSort) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSort)
+	if op.ByItems == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.ByItems))
+		for _, one := range op.ByItems {
+			one.Hash64(h)
+		}
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSort pointer.
+func (op *LogicalSort) Equals(other any) bool {
+	op2, ok := other.(*LogicalSort)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {
+		return false
+	}
+	for i, one := range op.ByItems {
+		if !one.Equals(op2.ByItems[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalTableDual) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeDual)
+	op.LogicalSchemaProducer.Hash64(h)
+	h.HashInt64(int64(op.RowCount))
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalTableDual pointer.
+func (op *LogicalTableDual) Equals(other any) bool {
+	op2, ok := other.(*LogicalTableDual)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if op.RowCount != op2.RowCount {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalTopN) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeTopN)
+	op.LogicalSchemaProducer.Hash64(h)
+	if op.ByItems == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.ByItems))
+		for _, one := range op.ByItems {
+			one.Hash64(h)
+		}
+	}
+	if op.PartitionBy == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PartitionBy))
+		for _, one := range op.PartitionBy {
+			one.Hash64(h)
+		}
+	}
+	h.HashUint64(uint64(op.Offset))
+	h.HashUint64(uint64(op.Count))
+	h.HashBool(op.PreferLimitToCop)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalTopN pointer.
+func (op *LogicalTopN) Equals(other any) bool {
+	op2, ok := other.(*LogicalTopN)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {
+		return false
+	}
+	for i, one := range op.ByItems {
+		if !one.Equals(op2.ByItems[i]) {
+			return false
+		}
+	}
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
+		return false
+	}
+	for i, one := range op.PartitionBy {
+		if !one.Equals(&op2.PartitionBy[i]) {
+			return false
+		}
+	}
+	if op.Offset != op2.Offset {
+		return false
+	}
+	if op.Count != op2.Count {
+		return false
+	}
+	if op.PreferLimitToCop != op2.PreferLimitToCop {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalUnionScan) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeUnionScan)
+	if op.Conditions == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.Conditions))
+		for _, one := range op.Conditions {
+			one.Hash64(h)
+		}
+	}
+	op.HandleCols.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalUnionScan pointer.
+func (op *LogicalUnionScan) Equals(other any) bool {
+	op2, ok := other.(*LogicalUnionScan)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if (op.Conditions == nil && op2.Conditions != nil) || (op.Conditions != nil && op2.Conditions == nil) || len(op.Conditions) != len(op2.Conditions) {
+		return false
+	}
+	for i, one := range op.Conditions {
+		if !one.Equals(op2.Conditions[i]) {
+			return false
+		}
+	}
+	if !op.HandleCols.Equals(op2.HandleCols) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalWindow) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeWindow)
+	op.LogicalSchemaProducer.Hash64(h)
+	if op.WindowFuncDescs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.WindowFuncDescs))
+		for _, one := range op.WindowFuncDescs {
+			one.Hash64(h)
+		}
+	}
+	if op.PartitionBy == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.PartitionBy))
+		for _, one := range op.PartitionBy {
+			one.Hash64(h)
+		}
+	}
+	if op.OrderBy == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.OrderBy))
+		for _, one := range op.OrderBy {
+			one.Hash64(h)
+		}
+	}
+	if op.Frame == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.Frame.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalWindow pointer.
+func (op *LogicalWindow) Equals(other any) bool {
+	op2, ok := other.(*LogicalWindow)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
+		return false
+	}
+	if (op.WindowFuncDescs == nil && op2.WindowFuncDescs != nil) || (op.WindowFuncDescs != nil && op2.WindowFuncDescs == nil) || len(op.WindowFuncDescs) != len(op2.WindowFuncDescs) {
+		return false
+	}
+	for i, one := range op.WindowFuncDescs {
+		if !one.Equals(op2.WindowFuncDescs[i]) {
+			return false
+		}
+	}
+	if (op.PartitionBy == nil && op2.PartitionBy != nil) || (op.PartitionBy != nil && op2.PartitionBy == nil) || len(op.PartitionBy) != len(op2.PartitionBy) {
+		return false
+	}
+	for i, one := range op.PartitionBy {
+		if !one.Equals(&op2.PartitionBy[i]) {
+			return false
+		}
+	}
+	if (op.OrderBy == nil && op2.OrderBy != nil) || (op.OrderBy != nil && op2.OrderBy == nil) || len(op.OrderBy) != len(op2.OrderBy) {
+		return false
+	}
+	for i, one := range op.OrderBy {
+		if !one.Equals(&op2.OrderBy[i]) {
+			return false
+		}
+	}
+	if !op.Frame.Equals(op2.Frame) {
 		return false
 	}
 	return true

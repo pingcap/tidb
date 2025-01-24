@@ -16,7 +16,11 @@ package joinversion
 
 import (
 	"strings"
+	"unsafe"
 )
+
+//go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
+func heapObjectsCanMove() bool
 
 const (
 	// HashJoinVersionLegacy means hash join v1
@@ -42,4 +46,17 @@ func init() {
 // IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized
 func IsOptimizedVersion(hashJoinVersion string) bool {
 	return strings.ToLower(hashJoinVersion) == HashJoinVersionOptimized
+}
+
+const (
+	sizeOfUintptr       = int(unsafe.Sizeof(uintptr(0)))
+	sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+)
+
+// IsHashJoinV2Supported return true if hash join v2 is supported in current env
+func IsHashJoinV2Supported() bool {
+	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
+	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
+	// change this
+	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
 }

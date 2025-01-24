@@ -352,61 +352,41 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
 
+	tblMeta := w.table.Meta()
+	tblName := TableName(w.e.dbName, tblMeta.Name.String())
+
 	var pkCols []string
 	var pkTypes []*types.FieldType
 	switch {
-	case w.e.table.Meta().IsCommonHandle:
-		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
+	case tblMeta.IsCommonHandle:
+		pkColsInfo := tblMeta.GetPrimaryKey().Columns
 		for _, colInfo := range pkColsInfo {
-			colStr := colInfo.Name.O
-			pkCols = append(pkCols, colStr)
-			pkTypes = append(pkTypes, &w.e.table.Meta().Columns[colInfo.Offset].FieldType)
+			pkCols = append(pkCols, ColumnName(colInfo.Name.O))
+			pkTypes = append(pkTypes, &tblMeta.Columns[colInfo.Offset].FieldType)
 		}
-	case w.e.table.Meta().PKIsHandle:
-		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
+	case tblMeta.PKIsHandle:
+		pkCols = append(pkCols, ColumnName(tblMeta.GetPkName().O))
 	default: // support decoding _tidb_rowid.
-		pkCols = append(pkCols, model.ExtraHandleName.O)
+		pkCols = append(pkCols, ColumnName(model.ExtraHandleName.O))
 	}
+	handleColumns := strings.Join(pkCols, ",")
+
+	indexColNames := make([]string, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		tblCol := tblMeta.Columns[col.Offset]
+		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
+			indexColNames[i] = tblCol.GeneratedExprString
+		} else {
+			indexColNames[i] = ColumnName(col.Name.O)
+		}
+	}
+	indexColumns := strings.Join(indexColNames, ",")
 
 	// CheckSum of (handle + index columns).
-	var md5HandleAndIndexCol strings.Builder
-	md5HandleAndIndexCol.WriteString("crc32(md5(concat_ws(0x2, ")
-	for _, col := range pkCols {
-		md5HandleAndIndexCol.WriteString(ColumnName(col))
-		md5HandleAndIndexCol.WriteString(", ")
-	}
-	for offset, col := range idxInfo.Columns {
-		tblCol := w.table.Meta().Columns[col.Offset]
-		if tblCol.IsGenerated() && !tblCol.GeneratedStored {
-			md5HandleAndIndexCol.WriteString(tblCol.GeneratedExprString)
-		} else {
-			md5HandleAndIndexCol.WriteString(ColumnName(col.Name.O))
-		}
-		if offset != len(idxInfo.Columns)-1 {
-			md5HandleAndIndexCol.WriteString(", ")
-		}
-	}
-	md5HandleAndIndexCol.WriteString(")))")
+	md5HandleAndIndexCol := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s, %s)))", handleColumns, indexColumns)
 
 	// Used to group by and order.
-	var md5Handle strings.Builder
-	md5Handle.WriteString("crc32(md5(concat_ws(0x2, ")
-	for i, col := range pkCols {
-		md5Handle.WriteString(ColumnName(col))
-		if i != len(pkCols)-1 {
-			md5Handle.WriteString(", ")
-		}
-	}
-	md5Handle.WriteString(")))")
-
-	handleColumnField := strings.Join(pkCols, ", ")
-	var indexColumnField strings.Builder
-	for offset, col := range idxInfo.Columns {
-		indexColumnField.WriteString(ColumnName(col.Name.O))
-		if offset != len(idxInfo.Columns)-1 {
-			indexColumnField.WriteString(", ")
-		}
-	}
+	md5Handle := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", handleColumns)
 
 	tableRowCntToCheck := int64(0)
 
@@ -437,17 +417,28 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
-		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, offset, mod, bucketSize)
 		if !checkOnce {
 			whereKey = "0"
 		}
 		checkOnce = true
 
-		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), whereKey, groupByKey)
-		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, whereKey, groupByKey)
+		tblQuery := fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
+			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+		idxQuery := fmt.Sprintf(
+			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
+			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
 
-		logutil.BgLogger().Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
+		logutil.BgLogger().Info(
+			"fast check table by group",
+			zap.String("table name", tblMeta.Name.String()),
+			zap.String("index name", idxInfo.Name.String()),
+			zap.Int("times", times),
+			zap.Int("current offset", offset), zap.Int("current mod", mod),
+			zap.String("table sql", tblQuery), zap.String("index sql", idxQuery),
+		)
 
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
@@ -502,7 +493,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		if !meetError {
 			if times != 1 {
-				logutil.BgLogger().Error("unexpected result, no error detected in this round, but an error is detected in the previous round", zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
+				logutil.BgLogger().Error(
+					"unexpected result, no error detected in this round, but an error is detected in the previous round",
+					zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
 			}
 			break
 		}
@@ -528,9 +521,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	if meetError {
-		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
-		indexSQL := fmt.Sprintf("select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, groupByKey, handleColumnField)
-		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), groupByKey, handleColumnField)
+		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
+		indexSQL := fmt.Sprintf(
+			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
+			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+		tableSQL := fmt.Sprintf(
+			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
+			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
 
 		idxRow, err := queryToRow(se, indexSQL)
 		if err != nil {
@@ -562,7 +559,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
 			valueDatum := make([]types.Datum, 0)
 			for i, t := range idxInfo.Columns {
-				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &w.table.Meta().Columns[t.Offset].FieldType))
+				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
 			}
 			return valueDatum, nil
 		}
@@ -590,7 +587,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					}
 					return k
 				},
-				Tbl:             w.table.Meta(),
+				Tbl:             tblMeta,
 				Idx:             idxInfo,
 				EnableRedactLog: w.sctx.GetSessionVars().EnableRedactLog,
 				Storage:         w.sctx.GetStore(),

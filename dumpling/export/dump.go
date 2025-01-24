@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -1150,15 +1151,21 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 		return nil
 	}
 
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
 	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
+
+	// TiDB has optimized the performance of reading INFORMATION_SCHEMA.TABLES
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
+		listType = listTableByInfoSchema
 	} else {
-		listType = getListTableTypeByConf(conf)
+		ifSeqExists, err := checkIfSeqExists(db)
+		if err != nil {
+			return err
+		}
+		if ifSeqExists {
+			listType = listTableByShowFullTables
+		} else {
+			listType = getListTableTypeByConf(conf)
+		}
 	}
 
 	if conf.SpecifiedTables {
@@ -1456,7 +1463,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		if err != nil {
 			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
+			pdClient, err := pd.NewClientWithContext(tctx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{})
 			if err != nil {
 				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 			}

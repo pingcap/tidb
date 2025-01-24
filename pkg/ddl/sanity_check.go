@@ -46,7 +46,7 @@ func (e *executor) checkDeleteRangeCnt(job *model.Job) {
 		panic(err)
 	}
 	if actualCnt != expectedCnt {
-		panic(fmt.Sprintf("expect delete range count %d, actual count %d", expectedCnt, actualCnt))
+		panic(fmt.Sprintf("expect delete range count %d, actual count %d for job type '%s'", expectedCnt, actualCnt, job.Type.String()))
 	}
 }
 
@@ -110,7 +110,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(args.OldPhysicalTblIDs), nil
+		return len(args.OldPhysicalTblIDs) + len(args.OldGlobalIndexes), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
