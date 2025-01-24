@@ -177,7 +177,7 @@ func testAlterTableMode(
 		TableID:   tblInfo.ID,
 	}
 	job := &model.Job{
-		Version:    model.GetJobVerInUse(),
+		Version:    model.JobVersion2,
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterTableMode,
