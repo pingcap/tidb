@@ -67,8 +67,8 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 
 	for tblID, cols := range p.TblID2Handle {
 		for _, col := range cols {
-			for i := 0; i < col.NumCols(); i++ {
-				parentUsedCols = append(parentUsedCols, col.GetCol(i))
+			for c := range col.IterColumns() {
+				parentUsedCols = append(parentUsedCols, c)
 			}
 		}
 		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {

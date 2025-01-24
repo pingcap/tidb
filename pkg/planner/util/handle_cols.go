@@ -15,6 +15,8 @@
 package util
 
 import (
+	"iter"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -62,6 +64,10 @@ type HandleCols interface {
 	MemoryUsage() int64
 	// Clone clones the HandleCols.
 	Clone() HandleCols
+	// IterColumns iterates the columns.
+	IterColumns() iter.Seq[*expression.Column]
+	// IterColumns2 iterates the columns.
+	IterColumns2() iter.Seq2[int, *expression.Column]
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -91,8 +97,17 @@ func (cb *CommonHandleCols) GetColumns() []*expression.Column {
 	return cb.columns
 }
 
-func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum,
-) (kv.Handle, error) {
+// IterColumns implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) IterColumns() iter.Seq[*expression.Column] {
+	return slices.Values(cb.columns)
+}
+
+// IterColumns2 implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
+	return slices.All(cb.columns)
+}
+
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum) (kv.Handle, error) {
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
 	err = sc.HandleError(err)
@@ -264,6 +279,16 @@ type IntHandleCols struct {
 // Clone implements the kv.HandleCols interface.
 func (ib *IntHandleCols) Clone() HandleCols {
 	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
+}
+
+// IterColumns implements the kv.HandleCols interface.
+func (ib *IntHandleCols) IterColumns() iter.Seq[*expression.Column] {
+	return slices.Values([]*expression.Column{ib.col})
+}
+
+// IterColumns2 implements the kv.HandleCols interface.
+func (ib *IntHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
+	return slices.All([]*expression.Column{ib.col})
 }
 
 // BuildHandle implements the kv.HandleCols interface.
