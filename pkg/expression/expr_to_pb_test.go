@@ -1822,6 +1822,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn, intColumn, NewStrConst("hour")},
 		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{decimalColumn},
+		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{decimalColumn, stringColumn},
+		},
 	}
 
 	ctx = mock.NewContext()

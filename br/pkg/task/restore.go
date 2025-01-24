@@ -51,7 +51,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -104,9 +103,6 @@ const (
 	defaultStatsConcurrency   = 12
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
-	maxRestoreBatchSizeLimit  = 10240
-	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
-	resetSpeedLimitRetryTimes = 3
 )
 
 const (
@@ -1101,10 +1097,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	rangeSize := EstimateRangeSize(files)
-	summary.CollectInt("restore ranges", rangeSize)
-	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
-
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
@@ -1114,69 +1106,44 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	// Split/Scatter + Download/Ingest
-	progressLen := int64(rangeSize + len(files))
-	if cfg.Checksum {
-		progressLen += int64(len(tables))
-	}
-	if cfg.WaitTiflashReady {
-		progressLen += int64(len(tables))
-	}
-	// Redirect to log if there is no log file to avoid unreadable output.
-	updateCh := g.StartProgress(ctx, cmdName, progressLen, !cfg.LogProgress)
-	defer updateCh.Close()
-	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	onProgress := func(n int64) {
-		if n == 0 {
-			updateCh.Inc()
-			return
-		}
-		updateCh.IncBy(n)
-	}
-	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
-		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
+	rtCtx := snapclient.RestoreTablesContext{
+		LogProgress:    cfg.LogProgress,
+		SplitSizeBytes: kvConfigs.MergeRegionSize.Value,
+		SplitKeyCount:  kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
 		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
-		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		onProgress,
-	); err != nil {
+		SplitOnTable: atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		Online:       cfg.Online,
+
+		CreatedTables:            createdTables,
+		AllFiles:                 files,
+		CheckpointSetWithTableID: checkpointSetWithTableID,
+
+		Glue: g,
+	}
+	if err := client.RestoreTables(ctx, rtCtx); err != nil {
 		return errors.Trace(err)
 	}
 
-	// We make bigger errCh so we won't block on multi-part failed.
-	errCh := make(chan error, 32)
-	postHandleCh := afterTableRestoredCh(ctx, createdTables)
+	plCtx := snapclient.PipelineContext{
+		// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+		// enough information in backup meta to validate checksum
+		Checksum:         cfg.Checksum && !client.IsIncremental(),
+		LoadStats:        cfg.LoadStats,
+		WaitTiflashReady: cfg.WaitTiflashReady,
 
-	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
-	// enough information in backup meta to validate checksum
-	if cfg.Checksum && !client.IsIncremental() {
-		postHandleCh = client.GoValidateChecksum(
-			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+		LogProgress:         cfg.LogProgress,
+		ChecksumConcurrency: cfg.ChecksumConcurrency,
+		StatsConcurrency:    cfg.StatsConcurrency,
+
+		KvClient:   mgr.GetStorage().GetClient(),
+		ExtStorage: s,
+		Glue:       g,
 	}
-
-	// pipeline update meta and load stats
-	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
-
-	// pipeline wait Tiflash synced
-	if cfg.WaitTiflashReady {
-		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
-	}
-
-	finish := dropToBlackhole(ctx, postHandleCh, errCh)
-
-	select {
-	case err = <-errCh:
-		err = multierr.Append(err, multierr.Combine(Exhaust(errCh)...))
-	case <-finish:
-	}
-
-	// If any error happened, return now.
-	if err != nil {
+	// Do some work in pipeline, such as checkum, load stats and wait tiflash ready.
+	if err := client.RestorePipeline(ctx, plCtx, createdTables); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1336,21 +1303,6 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	return nil
 }
 
-// Exhaust drains all remaining errors in the channel, into a slice of errors.
-func Exhaust(ec <-chan error) []error {
-	out := make([]error, 0, len(ec))
-	for {
-		select {
-		case err := <-ec:
-			out = append(out, err)
-		default:
-			// errCh will NEVER be closed(ya see, it has multi sender-part),
-			// so we just consume the current backlog of this channel, then return.
-			return out
-		}
-	}
-}
-
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
 	message := "table already exists: "
 	allUnique := true
@@ -1367,44 +1319,6 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
 	}
 	return nil
-}
-
-// EstimateRangeSize estimates the total range count by file.
-func EstimateRangeSize(files []*backuppb.File) int {
-	result := 0
-	for _, f := range files {
-		if strings.HasSuffix(f.GetName(), "_write.sst") {
-			result++
-		}
-	}
-	return result
-}
-
-// dropToBlackhole drop all incoming tables into black hole,
-// i.e. don't execute checksum, just increase the process anyhow.
-func dropToBlackhole(
-	ctx context.Context,
-	inCh <-chan *snapclient.CreatedTable,
-	errCh chan<- error,
-) <-chan struct{} {
-	outCh := make(chan struct{}, 1)
-	go func() {
-		defer func() {
-			close(outCh)
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			case _, ok := <-inCh:
-				if !ok {
-					return
-				}
-			}
-		}
-	}()
-	return outCh
 }
 
 // filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
@@ -1667,22 +1581,4 @@ func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
 	_, ok := actions[action]
 	return ok
-}
-
-func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan *snapclient.CreatedTable {
-	outCh := make(chan *snapclient.CreatedTable)
-
-	go func() {
-		defer close(outCh)
-
-		for _, createdTable := range createdTables {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				outCh <- createdTable
-			}
-		}
-	}()
-	return outCh
 }

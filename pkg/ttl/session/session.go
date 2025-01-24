@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -161,12 +161,12 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 	sessVar := s.GetSessionVars()
 	if sessVar.TimeZone != nil {
-		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, variable.TimeZone)
+		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, vardef.TimeZone)
 		if err != nil {
 			return err
 		}
 
-		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, variable.TimeZone)
+		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, vardef.TimeZone)
 		if err != nil {
 			return err
 		}

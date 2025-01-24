@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -119,8 +119,8 @@ func genMockProcessInfoList(memConsumeList []int64, startTimeList []time.Time, s
 }
 
 func TestUpdateVariables(t *testing.T) {
-	variable.MemoryUsageAlarmRatio.Store(0.3)
-	variable.MemoryUsageAlarmKeepRecordNum.Store(3)
+	vardef.MemoryUsageAlarmRatio.Store(0.3)
+	vardef.MemoryUsageAlarmKeepRecordNum.Store(3)
 	memory.ServerMemoryLimit.Store(1024)
 
 	record := memoryUsageAlarm{}
@@ -129,8 +129,8 @@ func TestUpdateVariables(t *testing.T) {
 	assert.Equal(t, 0.3, record.memoryUsageAlarmRatio)
 	assert.Equal(t, int64(3), record.memoryUsageAlarmKeepRecordNum)
 	assert.Equal(t, uint64(1024), record.serverMemoryLimit)
-	variable.MemoryUsageAlarmRatio.Store(0.6)
-	variable.MemoryUsageAlarmKeepRecordNum.Store(6)
+	vardef.MemoryUsageAlarmRatio.Store(0.6)
+	vardef.MemoryUsageAlarmKeepRecordNum.Store(6)
 	memory.ServerMemoryLimit.Store(2048)
 
 	record.updateVariable()

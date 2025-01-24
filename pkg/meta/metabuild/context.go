@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -64,7 +64,7 @@ func WithPrimaryKeyRequired(required bool) Option {
 }
 
 // WithClusteredIndexDefMode sets the clustered index mode.
-func WithClusteredIndexDefMode(mode variable.ClusteredIndexDefMode) Option {
+func WithClusteredIndexDefMode(mode vardef.ClusteredIndexDefMode) Option {
 	return funcOpt(func(ctx *Context) {
 		ctx.clusteredIndexDefMode = mode
 	})
@@ -103,7 +103,7 @@ type Context struct {
 	exprCtx                        exprctx.ExprContext
 	enableAutoIncrementInGenerated bool
 	primaryKeyRequired             bool
-	clusteredIndexDefMode          variable.ClusteredIndexDefMode
+	clusteredIndexDefMode          vardef.ClusteredIndexDefMode
 	shardRowIDBits                 uint64
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
@@ -113,11 +113,11 @@ type Context struct {
 // NewContext creates a new context for meta-building.
 func NewContext(opts ...Option) *Context {
 	ctx := &Context{
-		enableAutoIncrementInGenerated: variable.DefTiDBEnableAutoIncrementInGenerated,
+		enableAutoIncrementInGenerated: vardef.DefTiDBEnableAutoIncrementInGenerated,
 		primaryKeyRequired:             false,
-		clusteredIndexDefMode:          variable.DefTiDBEnableClusteredIndex,
-		shardRowIDBits:                 variable.DefShardRowIDBits,
-		preSplitRegions:                variable.DefPreSplitRegions,
+		clusteredIndexDefMode:          vardef.DefTiDBEnableClusteredIndex,
+		shardRowIDBits:                 vardef.DefShardRowIDBits,
+		preSplitRegions:                vardef.DefPreSplitRegions,
 		suppressTooLongIndexErr:        false,
 	}
 
@@ -179,7 +179,7 @@ func (ctx *Context) PrimaryKeyRequired() bool {
 }
 
 // GetClusteredIndexDefMode returns the clustered index mode.
-func (ctx *Context) GetClusteredIndexDefMode() variable.ClusteredIndexDefMode {
+func (ctx *Context) GetClusteredIndexDefMode() vardef.ClusteredIndexDefMode {
 	return ctx.clusteredIndexDefMode
 }
 

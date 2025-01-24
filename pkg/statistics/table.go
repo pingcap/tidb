@@ -91,13 +91,13 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -119,6 +119,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -337,13 +339,15 @@ func (coll *HistColl) IdxNum() int {
 }
 
 // DelCol deletes the column with the given id.
-func (coll *HistColl) DelCol(id int64) {
-	delete(coll.columns, id)
+func (t *Table) DelCol(id int64) {
+	delete(t.columns, id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
-func (coll *HistColl) DelIdx(id int64) {
-	delete(coll.indices, id)
+func (t *Table) DelIdx(id int64) {
+	delete(t.indices, id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
