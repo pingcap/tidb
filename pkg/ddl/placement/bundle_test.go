@@ -346,15 +346,11 @@ func TestString(t *testing.T) {
 	require.NoError(t, err)
 	rules2, err := newRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	require.NoError(t, err)
-	rules3, err := newRules(pd.Voter, 3, `["-engine=tiflash", "-engine=tiflash_compute"]`)
+	rules3, err := newRules(Voter, 3, `["-engine=tiflash", "-engine=tiflash_compute"]`)
 	require.NoError(t, err)
 	bundle.Rules = append(append(rules1, rules2...), rules3...)
 
-<<<<<<< HEAD
-	require.Equal(t, "{\"group_id\":\"TiDB_DDL_1\",\"group_index\":0,\"group_override\":false,\"rules\":[{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":3,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"sh\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":4,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"notIn\",\"values\":[\"sh\"]},{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"bj\"]}]}]}", bundle.String())
-=======
-	require.Equal(t, "{\"group_id\":\"TiDB_DDL_1\",\"group_index\":0,\"group_override\":false,\"rules\":[{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"is_witness\":false,\"count\":3,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"sh\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"is_witness\":false,\"count\":4,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"notIn\",\"values\":[\"sh\"]},{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"bj\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"is_witness\":false,\"count\":3,\"label_constraints\":[{\"key\":\"engine\",\"op\":\"notIn\",\"values\":[\"tiflash\"]},{\"key\":\"engine\",\"op\":\"notIn\",\"values\":[\"tiflash_compute\"]}]}]}", bundle.String())
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
+	require.Equal(t, "{\"group_id\":\"TiDB_DDL_1\",\"group_index\":0,\"group_override\":false,\"rules\":[{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":3,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"sh\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":4,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"notIn\",\"values\":[\"sh\"]},{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"bj\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":3,\"label_constraints\":[{\"key\":\"engine\",\"op\":\"notIn\",\"values\":[\"tiflash\"]},{\"key\":\"engine\",\"op\":\"notIn\",\"values\":[\"tiflash_compute\"]}]}]}", bundle.String())
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/placement/MockMarshalFailure", `return(true)`))
 	defer func() {
@@ -961,16 +957,7 @@ func TestTidy(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bundle.Rules, 1)
 	require.Equal(t, "0", bundle.Rules[0].ID)
-<<<<<<< HEAD
-	require.Len(t, bundle.Rules[0].Constraints, 3)
-	require.Equal(t, Constraint{
-		Op:     NotIn,
-		Key:    EngineLabelKey,
-		Values: []string{EngineLabelTiFlash},
-	}, bundle.Rules[0].Constraints[2])
-=======
-	require.Len(t, bundle.Rules[0].LabelConstraints, 2)
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
+	require.Len(t, bundle.Rules[0].Constraints, 2)
 
 	// merge
 	rules3, err := newRules(Follower, 4, "")
@@ -995,17 +982,7 @@ func TestTidy(t *testing.T) {
 		require.Equal(t, "0", bundle.Rules[0].ID)
 		require.Equal(t, "1", bundle.Rules[1].ID)
 		require.Equal(t, 9, bundle.Rules[1].Count)
-<<<<<<< HEAD
-		require.Equal(t, Constraints{
-			{
-				Op:     NotIn,
-				Key:    EngineLabelKey,
-				Values: []string{EngineLabelTiFlash},
-			},
-		}, bundle.Rules[1].Constraints)
-=======
-		require.Equal(t, 0, len(bundle.Rules[1].LabelConstraints))
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
+		require.Equal(t, 0, len(bundle.Rules[1].Constraints))
 		require.Equal(t, []string{"zone", "host"}, bundle.Rules[1].LocationLabels)
 	}
 	err = bundle.Tidy()
@@ -1022,16 +999,6 @@ func TestTidy(t *testing.T) {
 	err = bundle2.Tidy()
 	require.NoError(t, err)
 	require.Equal(t, bundle, bundle2)
-<<<<<<< HEAD
-
-	bundle.Rules[1].Constraints = append(bundle.Rules[1].Constraints, Constraint{
-		Op:     In,
-		Key:    EngineLabelKey,
-		Values: []string{EngineLabelTiFlash},
-	})
-	require.ErrorIs(t, bundle.Tidy(), ErrConflictingConstraints)
-=======
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
 }
 
 func TestTidy2(t *testing.T) {
@@ -1484,15 +1451,6 @@ func TestTidy2(t *testing.T) {
 
 			for i, rule := range tt.bundle.Rules {
 				expectedRule := tt.expected.Rules[i]
-<<<<<<< HEAD
-				// Tiflash is always excluded from the constraints.
-				expectedRule.Constraints.Add(Constraint{
-					Op:     NotIn,
-					Key:    EngineLabelKey,
-					Values: []string{EngineLabelTiFlash},
-				})
-=======
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
 				if !reflect.DeepEqual(rule, expectedRule) {
 					t.Errorf("unexpected rule at index %d:\nactual=%#v,\nexpected=%#v\n", i, rule, expectedRule)
 				}

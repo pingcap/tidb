@@ -66,9 +66,9 @@ func TestNewConstraint(t *testing.T) {
 		{
 			name:  "not tiflash_compute",
 			input: "-engine  =  tiflash_compute  ",
-			label: pd.LabelConstraint{
+			label: Constraint{
 				Key:    "engine",
-				Op:     pd.NotIn,
+				Op:     NotIn,
 				Values: []string{"tiflash_compute"},
 			},
 		},

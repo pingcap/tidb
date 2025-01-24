@@ -332,20 +332,6 @@ func (b *Bundle) Tidy() error {
 		if rule.Count <= 0 {
 			continue
 		}
-<<<<<<< HEAD
-		// refer to tidb#22065.
-		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
-		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		err := rule.Constraints.Add(Constraint{
-			Op:     NotIn,
-			Key:    EngineLabelKey,
-			Values: []string{EngineLabelTiFlash},
-		})
-		if err != nil {
-			return err
-		}
-=======
->>>>>>> 4240ce4acc9 (ddl: Remove explicit exclude for "engine" notIn "tiflash" (#58637))
 		rule.ID = strconv.Itoa(id)
 		tempRules = append(tempRules, rule)
 		id++
