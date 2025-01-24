@@ -767,8 +767,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
-	corrResult, _ := compareCorrRatio(lhs, rhs)
+	corrResult := 0
+	if lhsPseudo == rhsPseudo {
+		// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
+		corrResult, _ = compareCorrRatio(lhs, rhs)
+	}
 	sum := accessResult + scanResult + matchResult + globalResult + corrResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
