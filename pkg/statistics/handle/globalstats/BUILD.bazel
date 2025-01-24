@@ -45,7 +45,7 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/domain",
         "//pkg/parser/model",
