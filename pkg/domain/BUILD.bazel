@@ -110,6 +110,11 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/circuitbreaker",
+>>>>>>> a573e49452a (*: integrate circuitbreaker for get region calls to PD (#58737))
         "@com_github_tikv_pd_client//resource_group/controller",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",

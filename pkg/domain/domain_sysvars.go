@@ -22,7 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+<<<<<<< HEAD
+=======
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/circuitbreaker"
+>>>>>>> a573e49452a (*: integrate circuitbreaker for get region calls to PD (#58737))
 )
 
 // initDomainSysVars() is called when a domain is initialized.
@@ -44,6 +50,8 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 
 	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
+
+	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = changePDMetadataCircuitBreakerErrorRateThresholdPct
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -148,4 +156,10 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	}
 	do.infoCache.Data.SetCacheCapacity(size)
 	return nil
+}
+
+func changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
+	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
+		config.ErrorRateThresholdPct = errorRatePct
+	})
 }
