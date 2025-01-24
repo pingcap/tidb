@@ -119,3 +119,13 @@ run_sql "select c from $DB.FIVE;"
 ! run_sql 'select c from '"$DB"'.`the,special,table`;'
 
 run_sql "drop schema $DB;"
+
+echo "test filter out everything"
+run_br restore full -f "${DB}_nothing.*" -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
+! run_sql "select c from $DB.one;"
+! run_sql "select c from $DB.two;"
+! run_sql "select c from $DB.three;"
+! run_sql "select c from $DB.four;"
+! run_sql "select c from $DB.FIVE;"
+! run_sql "select c from $DB.TEN;"
+! run_sql 'select c from '"$DB"'.`the,special,table`;'
