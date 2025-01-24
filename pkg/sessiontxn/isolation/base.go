@@ -207,7 +207,7 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	if p.txn != nil && p.txn.IsReadOnly() {
+	if p.txn != nil && !p.txn.IsReadOnly() {
 		txnCtx.MemBufferSnapshot = p.txn.GetMemBuffer().GetSnapshot()
 	}
 	return nil
