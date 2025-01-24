@@ -2441,7 +2441,19 @@ func (w *worker) addTableIndex(
 }
 
 func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
-	var bc ingest.BackendCtx
+	var (
+		backendCtx ingest.BackendCtx
+		cfg        *local.BackendConfig
+		backend    *local.Backend
+	)
+	defer func() {
+		if backendCtx != nil {
+			backendCtx.Close()
+		}
+		if backend != nil {
+			backend.Close()
+		}
+	}()
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
@@ -2449,30 +2461,21 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		}
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
-			if bc == nil {
-				var (
-					cfg *local.BackendConfig
-					bd  *local.Backend
-					err error
-				)
+			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, bd, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					//nolint:revive,all_revive
-					defer bd.Close()
 				}
-				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
 					ForDuplicateCheck().
-					Build(cfg, bd)
+					Build(cfg, backend)
 				if err != nil {
 					return err
 				}
-				//nolint:revive,all_revive
-				defer bc.Close()
 			}
-			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			err = backendCtx.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			if err != nil {
 				return err
 			}
