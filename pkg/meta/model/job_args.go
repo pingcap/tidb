@@ -1083,6 +1083,25 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
 }
 
+type AlterTableModeArgs struct {
+	TableMode TableModeState
+	SchemaID  int64
+	TableID   int64
+}
+
+func (a *AlterTableModeArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableModeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+func GetAlterTableModeArgs(job *Job) (*AlterTableModeArgs, error) {
+	return getOrDecodeArgs[*AlterTableModeArgs](&AlterTableModeArgs{}, job)
+}
+
 // RepairTableArgs is the argument for repair table
 type RepairTableArgs struct {
 	TableInfo *TableInfo `json:"table_info"`
