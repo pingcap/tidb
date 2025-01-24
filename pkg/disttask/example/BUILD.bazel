@@ -35,6 +35,6 @@ go_test(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_client_go_v2//util:go_default_library",
     ],
 )

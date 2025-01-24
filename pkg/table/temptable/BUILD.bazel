@@ -23,7 +23,7 @@ go_library(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikv:go_default_library",
     ],
 )
 

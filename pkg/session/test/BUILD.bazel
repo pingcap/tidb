@@ -37,9 +37,9 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@com_github_tikv_client_go_v2//tikv:go_default_library",
+        "@com_github_tikv_client_go_v2//tikvrpc:go_default_library",
+        "@com_github_tikv_client_go_v2//tikvrpc/interceptor:go_default_library",
         "@org_uber_go_goleak//:goleak",
     ],
 )

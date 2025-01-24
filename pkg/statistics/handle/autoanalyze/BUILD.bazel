@@ -63,7 +63,7 @@ go_test(
         "//pkg/util/sqlexec/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//oracle:go_default_library",
         "@org_uber_go_mock//gomock",
     ],
 )

@@ -27,7 +27,7 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "@com_github_pingcap_log//:log",
-        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_client_go_v2//util:go_default_library",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//buffer",

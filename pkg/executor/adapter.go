@@ -665,6 +665,10 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
+		txn, _ := a.Ctx.Txn(false)
+		if txn != nil && !txn.IsReadOnly() {
+			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		}
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
 	if err != nil {
@@ -762,6 +766,11 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
 		a.Ctx.StmtCommit(ctx)
+		txn, _ := a.Ctx.Txn(false)
+		if txn != nil && !txn.IsReadOnly() {
+			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		}
+
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
 		if err != nil {
 			return err
