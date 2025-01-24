@@ -781,21 +781,20 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// This rule is empirical but not always correct.
-	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge since its row count estimation is not accurate enough
 		lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
 		if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
 			lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
 			rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 		}
-		if globalResult >= 0 && sum >= 0 && lhsCorrRatio < rhsCorrRatio {
+		if globalResult >= 0 && sum >= 0 && !lhsFullScan && lhsCorrRatio < rhsCorrRatio {
 			return 1, false
 		}
-		if globalResult <= 0 && sum <= 0 && rhsCorrRatio < lhsCorrRatio {
+		if globalResult <= 0 && sum <= 0 && !rhsFullScan && rhsCorrRatio < lhsCorrRatio {
 			return -1, false
 		}
-
+		// This rule is empirical but not always correct.
+		// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 		if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 			prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 			threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
