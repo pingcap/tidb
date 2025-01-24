@@ -708,6 +708,21 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
+func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
+	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+	if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
+		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+	}
+	if lhsCorrRatio > 0 {
+		return 1, lhsCorrRatio
+	}
+	if rhsCorrRatio > 0 {
+		return -1, rhsCorrRatio
+	}
+	return 0, 0
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -752,7 +767,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult
+	// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
+	corrResult, _ := compareCorrRatio(lhs, rhs)
+	sum := accessResult + scanResult + matchResult + globalResult + corrResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
@@ -781,30 +798,18 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge since its row count estimation is not accurate enough
-		lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
-		if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
-			lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
-			rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
-		}
-		if globalResult >= 0 && sum >= 0 && !lhsFullScan && lhsCorrRatio < rhsCorrRatio {
-			return 1, false
-		}
-		if globalResult <= 0 && sum <= 0 && !rhsFullScan && rhsCorrRatio < lhsCorrRatio {
-			return -1, false
-		}
-		// This rule is empirical but not always correct.
-		// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-		if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
-			prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
-			threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
-			if threshold > 0 { // set it to 0 to disable this rule
-				if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-					return -1, false
-				}
-				if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-					return 1, false
-				}
+	// This rule is empirical but not always correct.
+	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
+		lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
+		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
+		if threshold > 0 { // set it to 0 to disable this rule
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
+				return -1, false
+			}
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
+				return 1, false
 			}
 		}
 	}
