@@ -26,11 +26,11 @@ func TestDual(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT,d INT);")
 	tk.MustQuery("explain select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-		"TableDual_8 0.00 root  rows:0"))
+		"TableDual_7 0.00 root  rows:0"))
 	tk.MustQuery("select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 	tk.MustQuery("explain select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-		"Projection_8 0.00 root  3->Column#3",
-		"└─TableDual_9 0.00 root  rows:0"))
+		"Projection_7 0.00 root  3->Column#3",
+		"└─TableDual_8 0.00 root  rows:0"))
 	tk.MustQuery("select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 	tk.MustQuery("explain select * from t where d != null;").Check(testkit.Rows(
 		"TableDual_6 0.00 root  rows:0"))
@@ -44,4 +44,15 @@ func TestDual(t *testing.T) {
 		"TableDual_6 0.00 root  rows:0"))
 	tk.MustQuery("explain select * from t where d = null;").Check(testkit.Rows(
 		"TableDual_6 0.00 root  rows:0"))
+}
+
+func TestDual2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY';")
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+	tk.MustExec("create table t(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d));")
+	tk.MustExec("create table x(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d));")
+	tk.MustQuery("select c > (select b from t) from t group by b")
 }
