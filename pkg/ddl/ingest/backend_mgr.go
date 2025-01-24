@@ -143,6 +143,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 	return filepath.Join(sortPath, encodeBackendTag(jobID, checkDup)), nil
 }
 
+// CreateLocalBackend creates a local backend for adding index.
 func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
