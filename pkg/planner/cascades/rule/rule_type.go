@@ -22,10 +22,25 @@ const (
 	DefaultNone Type = iota
 	// XFJoinToApply refers to join to a apply rule.
 	XFJoinToApply
-	// XFDeCorrelateApply try to decorate apply to a join.
-	XFDeCorrelateApply
-	// XFPullCorrExprsFromProj try to pull correlated expression from proj from outer child of a apply.
-	XFPullCorrExprsFromProj
+
+	// XFDeCorrelateSimpleApply try to decorate apply to a join when no corr predicates from inner side.
+	XFDeCorrelateSimpleApply
+	// XFPullCorrPredFromProj try to pull correlated expression from proj from inner child of an apply.
+	XFPullCorrPredFromProj
+	// XFPullCorrPredFromSel try to pull correlated expression from sel from inner child of an apply.
+	XFPullCorrPredFromSel
+	// XFPullCorrPredFromDS try to pull correlated expression from sel from inner child of an apply.
+	XFPullCorrPredFromDS
+	// XFPullCorrPredFromSort try to pull correlated expression from sort from inner child of an apply.
+	XFPullCorrPredFromSort
+	// XFPullCorrPredFromLimit try to pull correlated expression from limit from inner child of an apply.
+	XFPullCorrPredFromLimit
+	// XFPullCorrPredFromMax1Row try to pull correlated expression from max1Row from inner child of an apply.
+	XFPullCorrPredFromMax1Row
+	// XFPullCorrPredFromAgg1 try to pull correlated expression from agg from inner child of an apply.
+	XFPullCorrPredFromAgg1
+	// XFPullCorrPredFromAgg2 try to pull correlated expression from agg<selection> from inner child of an apply.
+	XFPullCorrPredFromAgg2
 )
 
 // String implements the fmt.Stringer interface.
