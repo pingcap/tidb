@@ -159,6 +159,10 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
 		compactionDirs: compactionDirs,
+		fullBackups:    fullBackups,
+		restoredTS:     builder.restoredTS,
+		startTS:        builder.startTS,
+		shiftStartTS:   builder.shiftStartTS,
 	}
 	return withMigrations
 }
@@ -210,6 +214,10 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 type WithMigrations struct {
 	skipmap        metaSkipMap
 	compactionDirs []string
+	fullBackups    []string
+	shiftStartTS   uint64
+	startTS        uint64
+	restoredTS     uint64
 }
 
 func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -235,6 +243,6 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 	compactionDirIter := iter.FromSlice(wm.compactionDirs)
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.
-		return Subcompactions(ctx, name, s)
+		return Subcompactions(ctx, name, s, wm.shiftStartTS, wm.restoredTS)
 	})
 }

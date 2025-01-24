@@ -84,6 +84,7 @@ const rawKVBatchCount = 64
 // session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
 // at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
+
 // LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
 // including concurrency management, checkpoint handling, and file importing for efficient log processing.
 type LogRestoreManager struct {
@@ -181,6 +182,8 @@ func NewSstRestoreManager(
 
 type LogClient struct {
 	*LogFileManager
+	importer *snapclient.SnapFileImporter
+
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
 
@@ -253,7 +256,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
-func (rc *LogClient) RestoreCompactedSstFiles(
+func (rc *LogClient) RestoreSSTFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 	rules map[int64]*restoreutils.RewriteRules,
@@ -275,6 +278,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
 			continue
 		}
+
 		set := restore.BackupFileSet{
 			TableID:      i.Meta.TableId,
 			SSTFiles:     i.SstOutputs,
@@ -465,14 +469,15 @@ func (rc *LogClient) InitClients(
 		rc.cipher, metaClient, importCli, backend,
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
-	snapFileImporter, err := snapclient.NewSnapFileImporter(
+	var err error
+	rc.importer, err = snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	rc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
-		snapFileImporter,
+		rc.importer,
 		concurrencyPerStore,
 		uint(len(stores)),
 		createSessionFn,

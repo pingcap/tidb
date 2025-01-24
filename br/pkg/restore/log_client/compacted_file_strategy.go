@@ -37,8 +37,32 @@ func NewCompactedFileSplitStrategy(
 	}
 }
 
-func (cs *CompactedFileSplitStrategy) Accumulate(subCompaction *backuppb.LogFileSubcompaction) {
-	splitHelper, exist := cs.TableSplitter[subCompaction.Meta.TableId]
+type sstIdentity struct {
+	EffectiveID     int64
+	RewriteBoundary *utils.RewriteRules
+}
+
+func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
+	r, ok := ssts.(RewrittenSSTs)
+	if !ok || r.RewrittenTo() == ssts.TableID() {
+		return sstIdentity{
+			EffectiveID:     ssts.TableID(),
+			RewriteBoundary: nil,
+		}
+	}
+
+	rule := utils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), map[int64]int64{}, false)
+
+	return sstIdentity{
+		EffectiveID:     r.RewrittenTo(),
+		RewriteBoundary: rule,
+	}
+}
+
+func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
+	identity := cs.inspect(ssts)
+
+	splitHelper, exist := cs.TableSplitter[identity.EffectiveID]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
 		cs.TableSplitter[subCompaction.Meta.TableId] = splitHelper

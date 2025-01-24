@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"strings"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -47,11 +48,90 @@ type RewriteRules struct {
 	NewKeyspace []byte
 	// used to record checkpoint data
 	NewTableID int64
+
+	ShiftStartTs uint64
+	StartTs      uint64
+	RestoredTs   uint64
+	// used to record backup files to pitr.
+	// note: should NewTableID merged with this?
+	TableIDRemapHint []TableIDRemap
+}
+
+func (r *RewriteRules) HasSetTs() bool {
+	return r.StartTs != 0 && r.RestoredTs != 0
+}
+
+func (r *RewriteRules) SetTsRange(shiftStartTs, startTs, restoredTs uint64) {
+	r.ShiftStartTs = shiftStartTs
+	r.StartTs = startTs
+	r.RestoredTs = restoredTs
+}
+
+func (r *RewriteRules) RewriteSourceTableID(from, to int64) (rewritten bool) {
+	toPrefix := tablecodec.EncodeTablePrefix(to)
+	fromPrefix := tablecodec.EncodeTablePrefix(from)
+	for _, rule := range r.Data {
+		if bytes.HasPrefix(rule.OldKeyPrefix, fromPrefix) {
+			rule.OldKeyPrefix = append(toPrefix, rule.OldKeyPrefix[len(toPrefix):]...)
+			rewritten = true
+		}
+	}
+	return
+}
+
+func (r *RewriteRules) Clone() *RewriteRules {
+	data := make([]*import_sstpb.RewriteRule, len(r.Data))
+	for i, rule := range r.Data {
+		data[i] = proto.Clone(rule).(*import_sstpb.RewriteRule)
+	}
+	remap := make([]TableIDRemap, len(r.TableIDRemapHint))
+	copy(remap, r.TableIDRemapHint)
+
+	return &RewriteRules{
+		Data:             data,
+		TableIDRemapHint: remap,
+		OldKeyspace:      r.OldKeyspace,
+		NewKeyspace:      r.NewKeyspace,
+		NewTableID:       r.NewTableID,
+	}
+}
+
+// TableIDRemap presents a remapping of table id during rewriting.
+type TableIDRemap struct {
+	Origin    int64
+	Rewritten int64
 }
 
 // Append append its argument to this rewrite rules.
 func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
+}
+
+func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
+	// for some sst files like db restore copy ssts, we don't need to set the time range filter
+	if !r.HasSetTs() {
+		return nil
+	}
+
+	var ignoreBeforeTs uint64
+	switch {
+	case strings.Contains(cfName, DefaultCFName):
+		// for default cf, we need to check if shift start ts is greater than start ts
+		if r.ShiftStartTs > r.StartTs {
+			return errors.Errorf("shift start ts %d is greater than start ts %d", r.ShiftStartTs, r.StartTs)
+		}
+		ignoreBeforeTs = r.ShiftStartTs
+	case strings.Contains(cfName, WriteCFName):
+		ignoreBeforeTs = r.StartTs
+	default:
+		return errors.Errorf("unsupported column family type: %s", cfName)
+	}
+
+	for _, rule := range r.Data {
+		rule.IgnoreBeforeTimestamp = ignoreBeforeTs
+		rule.IgnoreAfterTimestamp = r.RestoredTs
+	}
+	return nil
 }
 
 // EmptyRewriteRule make a map of new, empty rewrite rules.
@@ -147,7 +227,6 @@ func GetRewriteRulesMap(
 // GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
 func GetRewriteRuleOfTable(
 	oldTableID, newTableID int64,
-	newTimeStamp uint64,
 	indexIDs map[int64]int64,
 	getDetailRule bool,
 ) *RewriteRules {
@@ -157,20 +236,17 @@ func GetRewriteRuleOfTable(
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
 			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
 			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
-			NewTimestamp: newTimeStamp,
 		})
 		for oldIndexID, newIndexID := range indexIDs {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
 				OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
 				NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
-				NewTimestamp: newTimeStamp,
 			})
 		}
 	} else {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
 			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
 			NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
-			NewTimestamp: newTimeStamp,
 		})
 	}
 
