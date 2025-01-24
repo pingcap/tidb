@@ -335,7 +335,6 @@ func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
 	return 0, errors.New("Failed to get max user connections")
 }
 
-
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {
