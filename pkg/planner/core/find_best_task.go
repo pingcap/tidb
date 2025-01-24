@@ -783,16 +783,29 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
-		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
-		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
-		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
-		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1, false
-			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1, false
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge since its row count estimation is not accurate enough
+		lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+		if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
+			lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+			rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+		}
+		if globalResult >= 0 && sum >= 0 && lhsCorrRatio < rhsCorrRatio {
+			return 1, false
+		}
+		if globalResult <= 0 && sum <= 0 && rhsCorrRatio < lhsCorrRatio {
+			return -1, false
+		}
+
+		if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+			prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
+			threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
+			if threshold > 0 { // set it to 0 to disable this rule
+				if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+					return -1, false
+				}
+				if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+					return 1, false
+				}
 			}
 		}
 	}
