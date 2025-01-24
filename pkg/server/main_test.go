@@ -74,7 +74,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/util/timeutil.Sleep"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ddl/notifier.(*DDLNotifier).start"),
-			),
 	}
 
 	callback := func(i int) int {
