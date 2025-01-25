@@ -517,7 +517,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			if err != nil {
 				return err
 			}
-
+			if len(allhg) == 0 && len(poppedTopN) == 0 {
+				return errors.New("empty hg cannot merge")
+			}
 			// Merge histogram.
 			globalHg := &(a.globalStats.Hg[item.idx])
 			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
