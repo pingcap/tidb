@@ -789,10 +789,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1, false
+				return -1, rhsPseudo
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1, false
+				return 1, lhsPseudo
 			}
 		}
 	}
@@ -811,10 +811,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		return 0, false
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1, false
+		return 1, lhsPseudo
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1, false
+		return -1, rhsPseudo
 	}
 	return 0, false
 }
