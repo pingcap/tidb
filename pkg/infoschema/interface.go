@@ -30,7 +30,14 @@ type InfoSchema interface {
 	context.MetaOnlyInfoSchema
 	TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
-	SchemaNameByTableID(tableID int64) (ast.CIStr, bool)
+	// TableItemByID returns a lightweight table meta specified by the given ID,
+	// without loading the whole info from storage.
+	TableItemByID(id int64) (TableItem, bool)
+	// TableIDByPartitionID is a pure memory operation, returns the table ID by the partition ID.
+	TableIDByPartitionID(partitionID int64) (tableID int64, ok bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// TableItemByPartitionID returns a lightweight table meta specified by the partition ID,
+	// without loading the whole info from storage.
+	TableItemByPartitionID(partitionID int64) (TableItem, bool)
 	base() *infoSchema
 }
