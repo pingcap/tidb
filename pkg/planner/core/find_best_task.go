@@ -714,10 +714,10 @@ func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
 		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 	}
-	if lhsCorrRatio > 0 {
+	if lhsCorrRatio < rhsCorrRatio {
 		return 1, lhsCorrRatio
 	}
-	if rhsCorrRatio > 0 {
+	if rhsCorrRatio < lhsCorrRatio {
 		return -1, rhsCorrRatio
 	}
 	return 0, 0
