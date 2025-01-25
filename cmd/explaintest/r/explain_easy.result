@@ -744,8 +744,13 @@ insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
 analyze table t with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD:cmd/explaintest/r/explain_easy.result
 TableReader	0.00	root		data:Selection
 └─Selection	0.00	cop[tikv]		ge(test.t.a, 3), le(test.t.a, 8)
+=======
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		ge(explain_easy.t.a, 3), le(explain_easy.t.a, 8)
+>>>>>>> f2c278ddc6b (Planner: Do not allow cardinality to go below 1 (#55242)):tests/integrationtest/r/explain_easy.result
   └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int, b int, index idx_ab(a, b));
