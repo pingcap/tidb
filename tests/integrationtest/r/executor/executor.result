@@ -2765,47 +2765,35 @@ create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0

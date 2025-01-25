@@ -122,14 +122,10 @@ Selection	12.80	root		gt(Column#4, 100)
         └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 drop table if exists dt;
 drop table if exists it;
 CREATE TABLE `dt` (
