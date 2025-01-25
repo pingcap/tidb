@@ -2113,15 +2113,10 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 }
 
 func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
-	if v.RowCount != 0 && v.RowCount != 1 {
-		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
-		return nil
-	}
 	base := exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID())
-	base.SetInitCap(v.RowCount)
 	e := &TableDualExec{
-		BaseExecutorV2: base,
-		numDualRows:    v.RowCount,
+		BaseExecutorV2:   base,
+		containsDualRows: v.ContainsDualRows,
 	}
 	return e
 }
@@ -5348,7 +5343,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// No matching partitions
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), plan.Schema(), plan.ID()),
-			numDualRows:    0,
 		}
 	}
 
