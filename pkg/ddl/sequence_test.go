@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/session"
@@ -34,30 +34,30 @@ func TestCreateSequence(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
-	tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
+	tk.MustGetErrCode("create sequence `seq  `", errno.ErrWrongTableName)
 
 	// increment should not be set as 0.
-	tk.MustGetErrCode("create sequence seq increment 0", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq increment 0", errno.ErrSequenceInvalidData)
 
 	// maxvalue should be larger than minvalue.
-	tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", errno.ErrSequenceInvalidData)
 
 	// maxvalue should be larger than minvalue.
-	tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 1", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 1", errno.ErrSequenceInvalidData)
 
 	// maxvalue shouldn't be equal to MaxInt64.
-	tk.MustGetErrCode("create sequence seq maxvalue 9223372036854775807 minvalue 1", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq maxvalue 9223372036854775807 minvalue 1", errno.ErrSequenceInvalidData)
 
 	// TODO : minvalue shouldn't be equal to MinInt64.
 
 	// maxvalue should be larger than start.
-	tk.MustGetErrCode("create sequence seq maxvalue 1 start with 2", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq maxvalue 1 start with 2", errno.ErrSequenceInvalidData)
 
 	// cacheVal should be less than (math.MaxInt64-maxIncrement)/maxIncrement.
-	tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", mysql.ErrSequenceInvalidData)
+	tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", errno.ErrSequenceInvalidData)
 
 	// test unsupported table option in sequence.
-	tk.MustGetErrCode("create sequence seq CHARSET=utf8", mysql.ErrSequenceUnsupportedTableOption)
+	tk.MustGetErrCode("create sequence seq CHARSET=utf8", errno.ErrSequenceUnsupportedTableOption)
 
 	tk.MustExec("create sequence seq comment=\"test\"")
 

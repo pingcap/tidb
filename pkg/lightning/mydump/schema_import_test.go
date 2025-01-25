@@ -25,7 +25,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -109,7 +109,7 @@ func TestSchemaImporter(t *testing.T) {
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test02`.`t`").
-			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
+			WillReturnError(&dmysql.MySQLError{Number: errno.ErrNoSuchTable})
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
 			{Name: "test02", Tables: []*MDTableMeta{{DB: "test02", Name: "t"}}},
@@ -135,7 +135,7 @@ func TestSchemaImporter(t *testing.T) {
 		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
-			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
+			WillReturnError(&dmysql.MySQLError{Number: errno.ErrNoSuchTable})
 		fileName := "t2-invalid-schema.sql"
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("CREATE table t2 whatever;"), 0o644))
 		dbMetas := []*MDDatabaseMeta{

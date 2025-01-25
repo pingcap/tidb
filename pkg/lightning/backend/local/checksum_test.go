@@ -26,7 +26,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	. "github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -470,7 +470,7 @@ func (r *mockResultSubset) RespTime() time.Duration {
 	return time.Millisecond
 }
 
-var mockChecksumKVClientErr = &mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}
+var mockChecksumKVClientErr = &mysql.MySQLError{Number: errno.ErrPDServerTimeout}
 
 type mockChecksumKVClient struct {
 	kv.Client

@@ -9,7 +9,6 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/errno",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/parser/mysql"],
 )
 
 go_test(

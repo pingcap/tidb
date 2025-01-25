@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"go.uber.org/zap"
@@ -26,9 +27,9 @@ import (
 
 var (
 	// ErrUnknownCollation is unknown collation.
-	ErrUnknownCollation = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	ErrUnknownCollation = terror.ClassDDL.NewStd(errno.ErrUnknownCollation)
 	// ErrCollationCharsetMismatch is collation charset mismatch.
-	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
+	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(errno.ErrCollationCharsetMismatch)
 )
 
 var (

@@ -15,97 +15,97 @@
 package infoschema
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 var (
 	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = dbterror.ClassSchema.NewStd(mysql.ErrDBCreateExists)
+	ErrDatabaseExists = dbterror.ClassSchema.NewStd(errno.ErrDBCreateExists)
 	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = dbterror.ClassSchema.NewStd(mysql.ErrDBDropExists)
+	ErrDatabaseDropExists = dbterror.ClassSchema.NewStd(errno.ErrDBDropExists)
 	// ErrAccessDenied return when the user doesn't have the permission to access the table.
-	ErrAccessDenied = dbterror.ClassSchema.NewStd(mysql.ErrAccessDenied)
+	ErrAccessDenied = dbterror.ClassSchema.NewStd(errno.ErrAccessDenied)
 	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	ErrDatabaseNotExists = dbterror.ClassSchema.NewStd(errno.ErrBadDB)
 	// ErrPlacementPolicyExists returns for placement_policy policy already exists.
-	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
+	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(errno.ErrPlacementPolicyExists)
 	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
-	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
+	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrResourceGroupExists return for resource group already exists.
-	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
+	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists return for resource group not exists.
-	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(errno.ErrResourceGroupNotExists)
 	// ErrResourceGroupInvalidBackgroundTaskName return for unknown resource group background task name.
-	ErrResourceGroupInvalidBackgroundTaskName = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupInvalidBackgroundTaskName)
+	ErrResourceGroupInvalidBackgroundTaskName = dbterror.ClassExecutor.NewStd(errno.ErrResourceGroupInvalidBackgroundTaskName)
 	// ErrResourceGroupInvalidForRole return for invalid resource group for role.
-	ErrResourceGroupInvalidForRole = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupInvalidForRole)
+	ErrResourceGroupInvalidForRole = dbterror.ClassSchema.NewStd(errno.ErrResourceGroupInvalidForRole)
 	// ErrReservedSyntax for internal syntax.
-	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
+	ErrReservedSyntax = dbterror.ClassSchema.NewStd(errno.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
-	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassSchema.NewStd(errno.ErrTableExists)
 	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadTable)
+	ErrTableDropExists = dbterror.ClassSchema.NewStd(errno.ErrBadTable)
 	// ErrSequenceDropExists returns for dropping a non-exist sequence.
-	ErrSequenceDropExists = dbterror.ClassSchema.NewStd(mysql.ErrUnknownSequence)
+	ErrSequenceDropExists = dbterror.ClassSchema.NewStd(errno.ErrUnknownSequence)
 	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = dbterror.ClassSchema.NewStd(mysql.ErrBadField)
+	ErrColumnNotExists = dbterror.ClassSchema.NewStd(errno.ErrBadField)
 	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = dbterror.ClassSchema.NewStd(mysql.ErrDupFieldName)
+	ErrColumnExists = dbterror.ClassSchema.NewStd(errno.ErrDupFieldName)
 	// ErrKeyNameDuplicate returns for index duplicate when rename index.
-	ErrKeyNameDuplicate = dbterror.ClassSchema.NewStd(mysql.ErrDupKeyName)
+	ErrKeyNameDuplicate = dbterror.ClassSchema.NewStd(errno.ErrDupKeyName)
 	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = dbterror.ClassSchema.NewStd(mysql.ErrNonuniqTable)
+	ErrNonuniqTable = dbterror.ClassSchema.NewStd(errno.ErrNonuniqTable)
 	// ErrMultiplePriKey returns for multiple primary keys.
-	ErrMultiplePriKey = dbterror.ClassSchema.NewStd(mysql.ErrMultiplePriKey)
+	ErrMultiplePriKey = dbterror.ClassSchema.NewStd(errno.ErrMultiplePriKey)
 	// ErrTooManyKeyParts returns for too many key parts.
-	ErrTooManyKeyParts = dbterror.ClassSchema.NewStd(mysql.ErrTooManyKeyParts)
+	ErrTooManyKeyParts = dbterror.ClassSchema.NewStd(errno.ErrTooManyKeyParts)
 	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrCantDropFieldOrKey)
+	ErrForeignKeyNotExists = dbterror.ClassSchema.NewStd(errno.ErrCantDropFieldOrKey)
 	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = dbterror.ClassSchema.NewStd(mysql.ErrTableNotLockedForWrite)
+	ErrTableNotLockedForWrite = dbterror.ClassSchema.NewStd(errno.ErrTableNotLockedForWrite)
 	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableNotLocked)
+	ErrTableNotLocked = dbterror.ClassSchema.NewStd(errno.ErrTableNotLocked)
 	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = dbterror.ClassSchema.NewStd(mysql.ErrNoSuchTable)
+	ErrTableNotExists = dbterror.ClassSchema.NewStd(errno.ErrNoSuchTable)
 	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrKeyDoesNotExist)
+	ErrKeyNotExists = dbterror.ClassSchema.NewStd(errno.ErrKeyDoesNotExist)
 	// ErrCannotAddForeign returns for foreign key exists.
-	ErrCannotAddForeign = dbterror.ClassSchema.NewStd(mysql.ErrCannotAddForeign)
+	ErrCannotAddForeign = dbterror.ClassSchema.NewStd(errno.ErrCannotAddForeign)
 	// ErrForeignKeyOnPartitioned returns for foreign key on partition table.
-	ErrForeignKeyOnPartitioned = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyOnPartitioned)
+	ErrForeignKeyOnPartitioned = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyOnPartitioned)
 	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrWrongFkDef)
+	ErrForeignKeyNotMatch = dbterror.ClassSchema.NewStd(errno.ErrWrongFkDef)
 	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = dbterror.ClassSchema.NewStd(mysql.ErrDupIndex)
+	ErrIndexExists = dbterror.ClassSchema.NewStd(errno.ErrDupIndex)
 	// ErrUserDropExists returns for dropping a non-existent user.
-	ErrUserDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadUser)
+	ErrUserDropExists = dbterror.ClassSchema.NewStd(errno.ErrBadUser)
 	// ErrUserAlreadyExists return for creating a existent user.
-	ErrUserAlreadyExists = dbterror.ClassSchema.NewStd(mysql.ErrUserAlreadyExists)
+	ErrUserAlreadyExists = dbterror.ClassSchema.NewStd(errno.ErrUserAlreadyExists)
 	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
+	ErrTableLocked = dbterror.ClassSchema.NewStd(errno.ErrTableLocked)
 	// ErrWrongObject returns when the table/view/sequence is not the expected object.
-	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
+	ErrWrongObject = dbterror.ClassSchema.NewStd(errno.ErrWrongObject)
 	// ErrAdminCheckTable returns when the check table in temporary mode.
-	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
+	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(errno.ErrAdminCheckTable)
 	// ErrEmptyDatabase returns when the database is unexpectedly empty.
-	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(errno.ErrBadDB)
 	// ErrForbidSchemaChange returns when the schema change is illegal
-	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(mysql.ErrForbidSchemaChange)
+	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(errno.ErrForbidSchemaChange)
 	// ErrTableWithoutPrimaryKey returns when there is no primary key on a table and sql_require_primary_key is set
-	ErrTableWithoutPrimaryKey = dbterror.ClassSchema.NewStd(mysql.ErrTableWithoutPrimaryKey)
+	ErrTableWithoutPrimaryKey = dbterror.ClassSchema.NewStd(errno.ErrTableWithoutPrimaryKey)
 	// ErrForeignKeyCannotUseVirtualColumn returns when foreign key refer virtual generated column.
-	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotUseVirtualColumn)
+	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyCannotUseVirtualColumn)
 	// ErrForeignKeyCannotOpenParent returns when foreign key refer table not exists.
-	ErrForeignKeyCannotOpenParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotOpenParent)
+	ErrForeignKeyCannotOpenParent = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyCannotOpenParent)
 	// ErrForeignKeyNoColumnInParent returns when foreign key refer columns don't exist in parent table.
-	ErrForeignKeyNoColumnInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoColumnInParent)
+	ErrForeignKeyNoColumnInParent = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyNoColumnInParent)
 	// ErrForeignKeyNoIndexInParent returns when foreign key refer columns don't have related index in parent table.
-	ErrForeignKeyNoIndexInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoIndexInParent)
+	ErrForeignKeyNoIndexInParent = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyNoIndexInParent)
 	// ErrForeignKeyColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.
-	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
+	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(errno.ErrForeignKeyColumnNotNull)
 	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
-	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
+	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(errno.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
-	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
+	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(errno.ErrCheckConstraintDupName)
 )

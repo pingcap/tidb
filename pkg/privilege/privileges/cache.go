@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -584,7 +585,7 @@ func (p *MySQLPrivilege) merge(diff *immutable, userList []string) *MySQLPrivile
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
 	if e2, ok := e1.(*terror.Error); ok {
-		if terror.ErrCode(e2.Code()) == terror.ErrCode(mysql.ErrNoSuchTable) {
+		if terror.ErrCode(e2.Code()) == terror.ErrCode(errno.ErrNoSuchTable) {
 			return true
 		}
 	}

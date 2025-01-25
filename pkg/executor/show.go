@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1987,7 +1988,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			if warn != nil {
 				err = warn.Error()
 			}
-			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
+			e.appendRow([]any{w.Level, int64(errno.ErrUnknown), err})
 		}
 	}
 	return nil

@@ -27,7 +27,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -123,9 +123,9 @@ func isSingleRetryableError(err error) bool {
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrLockWaitTimeout, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
-			tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout,
-			tmysql.ErrRegionUnavailable, tmysql.ErrInfoSchemaExpired, tmysql.ErrInfoSchemaChanged, tmysql.ErrTxnRetryable:
+		case errno.ErrUnknown, errno.ErrLockDeadlock, errno.ErrLockWaitTimeout, errno.ErrWriteConflict, errno.ErrWriteConflictInTiDB,
+			errno.ErrPDServerTimeout, errno.ErrTiKVServerTimeout, errno.ErrTiKVServerBusy, errno.ErrResolveLockTimeout,
+			errno.ErrRegionUnavailable, errno.ErrInfoSchemaExpired, errno.ErrInfoSchemaChanged, errno.ErrTxnRetryable:
 			return true
 		default:
 			return false

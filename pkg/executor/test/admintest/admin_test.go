@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -332,8 +332,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
-	tk.MustGetErrCode("admin check index t idx", mysql.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check table t", errno.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check index t idx", errno.ErrDataInconsistent)
 
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
 	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 3"))
@@ -349,8 +349,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
-	tk.MustGetErrCode("admin check index t idx1", mysql.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check table t", errno.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check index t idx1", errno.ErrDataInconsistent)
 
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx1)").Check(testkit.Rows("2"))
 	tk.MustQuery("admin recover index t idx1").Check(testkit.Rows("1 3"))

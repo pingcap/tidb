@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -335,7 +336,7 @@ func TestDispatch(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
+			err: mysql.NewErrf(errno.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{
@@ -454,7 +455,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		{
 			com: mysql.ComSleep,
 			in:  nil,
-			err: mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
+			err: mysql.NewErrf(errno.ErrUnknown, "command %d not supported now", nil, mysql.ComSleep),
 			out: nil,
 		},
 		{

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -104,7 +104,7 @@ func WithRetryReturnLastErr(
 func FallBack2CreateTable(err error) bool {
 	switch nerr := errors.Cause(err).(type) {
 	case *terror.Error:
-		return nerr.Code() == tmysql.ErrInvalidDDLJob
+		return nerr.Code() == errno.ErrInvalidDDLJob
 	}
 	return false
 }
