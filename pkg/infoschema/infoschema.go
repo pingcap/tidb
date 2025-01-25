@@ -675,6 +675,16 @@ func (is *infoSchemaMisc) GetTableReferredForeignKeys(schema, table string) []*m
 	return is.referredForeignKeyMap[name]
 }
 
+func (is *infoSchemaMisc) GetDatabaseReferredForeignKeys(schema string) map[string][]*model.ReferredFKInfo {
+	res := make(map[string][]*model.ReferredFKInfo, 0)
+	for name, referredFKList := range is.referredForeignKeyMap {
+		if name.schema == schema {
+			res[name.table] = referredFKList
+		}
+	}
+	return res
+}
+
 // SessionTables store local temporary tables
 type SessionTables struct {
 	// Session tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
