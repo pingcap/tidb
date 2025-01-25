@@ -37,7 +37,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		MemTableSize:                config.DefaultEngineMemCacheSize,
 		MaxOpenFiles:                1000,
 		DisableAutomaticCompactions: true,
-		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
+		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv", "subdir"),
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{},
 		WorkerConcurrency:           8,
