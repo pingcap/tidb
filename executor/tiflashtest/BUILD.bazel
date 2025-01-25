@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/tiflashtest/BUILD.bazel
     shard_count = 28,
+=======
+    shard_count = 45,
+>>>>>>> 8df006280e9 (planner: make converge index merge path feel the prefer tiflash hint (#56227)):pkg/executor/test/tiflashtest/BUILD.bazel
     deps = [
         "//config",
         "//domain",
