@@ -20,10 +20,10 @@ import (
 	"runtime/trace"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -213,7 +213,7 @@ func (e *ReplaceExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		numDuplicates := stmtCtx.AffectedRows() - numRecords
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }

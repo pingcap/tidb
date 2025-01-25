@@ -565,7 +565,7 @@ func (e *InsertExec) setMessage() {
 				numDuplicates = stmtCtx.UpdatedRows()
 			}
 		}
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }

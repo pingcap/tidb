@@ -15,19 +15,19 @@
 package autoid
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // Error instances.
 var (
-	errInvalidTableID            = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidTableID)
-	errInvalidIncrementAndOffset = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidIncrementAndOffset)
-	errNotImplemented            = dbterror.ClassAutoid.NewStd(mysql.ErrNotImplemented)
-	ErrAutoincReadFailed         = dbterror.ClassAutoid.NewStd(mysql.ErrAutoincReadFailed)
-	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
-	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
-	ErrAutoRandReadFailed        = dbterror.ClassAutoid.NewStd(mysql.ErrAutoRandReadFailed)
+	errInvalidTableID            = dbterror.ClassAutoid.NewStd(errno.ErrInvalidTableID)
+	errInvalidIncrementAndOffset = dbterror.ClassAutoid.NewStd(errno.ErrInvalidIncrementAndOffset)
+	errNotImplemented            = dbterror.ClassAutoid.NewStd(errno.ErrNotImplemented)
+	ErrAutoincReadFailed         = dbterror.ClassAutoid.NewStd(errno.ErrAutoincReadFailed)
+	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(errno.ErrWrongAutoKey)
+	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(errno.ErrUnknownAllocatorType)
+	ErrAutoRandReadFailed        = dbterror.ClassAutoid.NewStd(errno.ErrAutoRandReadFailed)
 )
 
 const (

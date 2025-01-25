@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -209,7 +209,7 @@ func TestError(t *testing.T) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.NotEqual(t, mysql.ErrUnknown, code)
+		require.NotEqual(t, errno.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
 }

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -54,10 +54,10 @@ func TestResourceGroupBasic(t *testing.T) {
 	})
 
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
-	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("create user usr1 resource group rg1", errno.ErrResourceGroupSupportDisabled)
 	tk.MustExec("create user usr1")
-	tk.MustGetErrCode("alter user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
-	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("alter user usr1 resource group rg1", errno.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", errno.ErrResourceGroupSupportDisabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
@@ -91,14 +91,14 @@ func TestResourceGroupBasic(t *testing.T) {
 	res.Check(testkit.Rows("Note 8248 Resource group 'x' already exists"))
 
 	tk.MustExec("set global tidb_enable_resource_control = off")
-	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", mysql.ErrResourceGroupSupportDisabled)
-	tk.MustGetErrCode("alter resource group x RU_PER_SEC=unlimited ", mysql.ErrResourceGroupSupportDisabled)
-	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", errno.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("alter resource group x RU_PER_SEC=unlimited ", errno.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("drop resource group x ", errno.ErrResourceGroupSupportDisabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
-	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
-	tk.MustGetErrCode("create resource group x RU_PER_SEC=UNLIMITED ", mysql.ErrResourceGroupExists)
+	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", errno.ErrResourceGroupExists)
+	tk.MustGetErrCode("create resource group x RU_PER_SEC=UNLIMITED ", errno.ErrResourceGroupExists)
 
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION DRYRUN WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -151,7 +151,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustGetErrCode("alter resource group y PRIORITY=hight", mysql.ErrParse)
+	tk.MustGetErrCode("alter resource group y PRIORITY=hight", errno.ErrParse)
 	tk.MustExec("alter resource group y PRIORITY=high")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		re.Equal(true, groupInfo.ID != 0)
@@ -202,21 +202,21 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 
-	tk.MustGetErrCode("create resource group x ru_per_sec=1000 ru_per_sec=200", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x ru_per_sec=1000 ru_per_sec=200", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 ru_per_sec=200, ru_per_sec=300", "Dupliated options specified")
-	tk.MustGetErrCode("create resource group x burstable, burstable", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x burstable, burstable", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, burstable", "Dupliated options specified")
-	tk.MustGetErrCode("create resource group x  ru_per_sec=1000, burstable, burstable", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x  ru_per_sec=1000, burstable, burstable", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x  ru_per_sec=1000, burstable, burstable", "Dupliated options specified")
-	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 burstable QUERY_LIMIT=(EXEC_ELAPSED='15s' action kill action cooldown)", "Dupliated runaway options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s') burstable priority=Low, QUERY_LIMIT=(EXEC_ELAPSED='15s')", "Dupliated options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s') QUERY_LIMIT=(EXEC_ELAPSED='15s')", "Dupliated options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(action kill)", "please set at least one field(exec_elapsed_time_ms, processed_keys, ru)")
-	tk.MustGetErrCode("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s' action kil)", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s' action kil)", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s')", "unknown resource group runaway action")
-	tk.MustGetErrCode("create resource group x ru_per_sec=1000 EXEC_ELAPSED='15s' action kill", mysql.ErrParse)
+	tk.MustGetErrCode("create resource group x ru_per_sec=1000 EXEC_ELAPSED='15s' action kill", errno.ErrParse)
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15d' action kill)", "unknown unit \"d\"")
 	groups, err := infosync.ListResourceGroups(context.TODO())
 	re.Equal(1, len(groups))
@@ -261,10 +261,10 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("6"))
-	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
+	tk.MustGetErrCode("create user usr_fail resource group nil_group", errno.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")
-	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
+	tk.MustGetErrCode("alter user user2 resource group nil_group", errno.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("alter user user2 resource group nil_group", "Unknown resource group 'nil_group'")
 
 	tk.MustExec("create resource group do_not_delete_rg ru_per_sec=100")
@@ -284,7 +284,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_types = 'lightning')", "unsupported operation")
 	tk.MustContainErrMsg("alter resource group x background=(task_types='')", "unsupported operation")
-	tk.MustGetErrCode("alter resource group default background=(task_types='a,b,c')", mysql.ErrResourceGroupInvalidBackgroundTaskName)
+	tk.MustGetErrCode("alter resource group default background=(task_types='a,b,c')", errno.ErrResourceGroupInvalidBackgroundTaskName)
 
 	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl')")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='br,ddl'"))
@@ -348,7 +348,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t", errno.ErrResourceGroupQueryRunawayQuarantine)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t identify",
 			"rg2 select /*+ resource_group(rg2) */ * from t watch"), maxWaitDuration, tryInterval)
@@ -365,7 +365,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 		nil, maxWaitDuration, tryInterval)
 	err = tk.QueryToErr("select /*+ resource_group(rg3) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", errno.ErrResourceGroupQueryRunawayQuarantine)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil,
 		testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t"), maxWaitDuration, tryInterval)
 
@@ -373,7 +373,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
-	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", errno.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
 	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
@@ -384,7 +384,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 60)))
 	err = tk.QueryToErr("select /*+ resource_group(rg4) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	tk.MustGetErrCode("select /*+ resource_group(rg4) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg4) */ * from t", errno.ErrResourceGroupQueryRunawayQuarantine)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil,
 		testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t", "rg4 select /*+ resource_group(rg4) */ * from t"), maxWaitDuration, tryInterval)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
@@ -393,7 +393,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", "return(true)"))
 	err = tk.QueryToErr("select /*+ resource_group(rg5) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	tk.MustGetErrCode("select /*+ resource_group(rg5) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg5) */ * from t", errno.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
 }
 

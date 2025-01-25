@@ -134,9 +134,9 @@ const (
 
 var (
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
+	ErrDBExists = dbterror.ClassMeta.NewStd(errno.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
+	ErrDBNotExists = dbterror.ClassMeta.NewStd(errno.ErrBadDB)
 	// ErrPolicyExists is the error for policy exists.
 	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
 	// ErrPolicyNotExists is the error for policy not exists.
@@ -146,9 +146,9 @@ var (
 	// ErrResourceGroupNotExists is the error for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupNotExists)
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassMeta.NewStd(errno.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = dbterror.ClassMeta.NewStd(mysql.ErrNoSuchTable)
+	ErrTableNotExists = dbterror.ClassMeta.NewStd(errno.ErrNoSuchTable)
 	// ErrDDLReorgElementNotExist is the error for reorg element not exists.
 	ErrDDLReorgElementNotExist = dbterror.ClassMeta.NewStd(errno.ErrDDLReorgElementNotExist)
 	// ErrInvalidString is the error for invalid string to parse

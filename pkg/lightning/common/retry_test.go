@@ -26,7 +26,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -77,18 +77,18 @@ func TestIsRetryableError(t *testing.T) {
 
 	// MySQL Errors
 	require.False(t, IsRetryableError(&mysql.MySQLError{}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrUnknown}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrLockDeadlock}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrPDServerTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrTiKVServerTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrTiKVServerBusy}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrResolveLockTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrRegionUnavailable}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrWriteConflictInTiDB}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrWriteConflict}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrInfoSchemaExpired}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrInfoSchemaChanged}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: errno.ErrTxnRetryable}))
 
 	// gRPC Errors
 	require.False(t, IsRetryableError(status.Error(codes.Canceled, "")))

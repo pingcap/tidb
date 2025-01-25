@@ -158,6 +158,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/errno",
         "//pkg/expression",
         "//pkg/extension",
         "//pkg/keyspace",

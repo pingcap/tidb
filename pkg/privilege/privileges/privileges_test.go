@@ -1624,7 +1624,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
-	tk.MustGetErrCode("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.tmp to u1", mysql.ErrIllegalGrantForTable)
+	tk.MustGetErrCode("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.tmp to u1", errno.ErrIllegalGrantForTable)
 	// Must set a session user to avoid null pointer dereference
 	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
@@ -1681,21 +1681,21 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 		{
 			sql:     "insert into tmp select * from t",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "update tmp set id=1 where id=1",
 		},
 		{
 			sql:     "update tmp t1, t t2 set t1.id=t2.id where t1.id=t2.id",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "delete from tmp where id=1",
 		},
 		{
 			sql:     "delete t1 from tmp t1 join t t2 where t1.id=t2.id",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "select * from tmp where id=1",
@@ -1708,30 +1708,30 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 		{
 			sql:     "select * from tmp join t where tmp.id=t.id",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "(select * from tmp) union (select * from t)",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "create temporary table tmp1 like t",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "create table tmp(id int primary key)",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "create table t(id int primary key)",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "analyze table tmp",
 		},
 		{
 			sql:     "analyze table tmp, t",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "show create table tmp",
@@ -1739,11 +1739,11 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		// TODO: issue #29281 to be fixed.
 		//{
 		//	sql: "show create table t",
-		//	errcode: mysql.ErrTableaccessDenied,
+		//	errcode: errno.ErrTableaccessDenied,
 		//},
 		{
 			sql:     "drop sequence tmp",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "alter table tmp add column c1 char(10)",
@@ -1754,15 +1754,15 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 		{
 			sql:     "drop temporary table t",
-			errcode: mysql.ErrBadTable,
+			errcode: errno.ErrBadTable,
 		},
 		{
 			sql:     "drop table t",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql:     "drop table t, tmp",
-			errcode: mysql.ErrTableaccessDenied,
+			errcode: errno.ErrTableaccessDenied,
 		},
 		{
 			sql: "drop temporary table tmp",

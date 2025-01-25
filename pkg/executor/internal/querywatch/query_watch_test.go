@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -129,13 +129,13 @@ func TestQueryWatch(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
 	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
-	tk.MustGetErrCode("select * from t3", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select * from t3", errno.ErrResourceGroupQueryRunawayQuarantine)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t1").Check(testkit.Rows("1"))
 	tk.MustExec("SET RESOURCE GROUP rg1")
 	// hit and schema will affect sql digest
-	tk.MustGetErrCode("select * from test.t2", mysql.ErrResourceGroupQueryRunawayQuarantine)
-	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t3", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select * from test.t2", errno.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t3", errno.ErrResourceGroupQueryRunawayQuarantine)
 
 	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from information_schema.runaway_watches order by id", nil,
@@ -166,7 +166,7 @@ func TestQueryWatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, rs)
 	time.Sleep(1 * time.Second)
-	tk.MustGetErrCode("select * from test.t1", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select * from test.t1", errno.ErrResourceGroupQueryRunawayQuarantine)
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {
