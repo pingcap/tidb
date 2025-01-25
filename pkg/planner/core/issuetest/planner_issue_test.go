@@ -16,13 +16,18 @@ package issuetest
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -176,4 +181,54 @@ func TestIssue58476(t *testing.T) {
 			`      ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t3, index:id(id) range:[-inf,100), keep order:false, stats:pseudo`,
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
+
+func loadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := os.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &util.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func TestIssue50080(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("CREATE TABLE `test` (`ecif_party_no` varchar(20) DEFAULT NULL,`busi_cust_no` varchar(20) DEFAULT NULL,`busi_series_cd` varchar(2) DEFAULT NULL,`org_belong` varchar(15) DEFAULT NULL,`party_no` varchar(20) DEFAULT NULL,`rela_status_cd` varchar(2) DEFAULT NULL,`rela_status_desc` varchar(20) DEFAULT NULL,`created_by` varchar(100) DEFAULT 'ecifdata',`created_date` datetime DEFAULT CURRENT_TIMESTAMP,`updated_by` varchar(100) DEFAULT 'ecifdata',`updated_date` datetime DEFAULT CURRENT_TIMESTAMP,`id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),KEY `IX_CUST_RELA_DATE` (`updated_date`),KEY `IX_TPCNR_BCN` (`busi_cust_no`),KEY `IX_TPCNR_EPN` (`ecif_party_no`),KEY `IX_TPCNR_PAN` (`party_no`),PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */);")
+	require.NoError(t, loadTableStats("test.json", dom))
+	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2023-12-31 23:59:59';").Check(testkit.Rows(
+		"IndexLookUp_7 229.43 root  ",
+		"├─IndexRangeScan_5(Build) 229.43 cop[tikv] table:test, index:IX_CUST_RELA_DATE(updated_date) range:(2023-12-31 23:59:00,2023-12-31 23:59:59), keep order:false",
+		"└─TableRowIDScan_6(Probe) 229.43 cop[tikv] table:test keep order:false"))
+	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2024-01-01 00:00:01';").Check(testkit.Rows(
+		"IndexLookUp_7 237.21 root  ",
+		"├─IndexRangeScan_5(Build) 237.21 cop[tikv] table:test, index:IX_CUST_RELA_DATE(updated_date) range:(2023-12-31 23:59:00,2024-01-01 00:00:01), keep order:false",
+		"└─TableRowIDScan_6(Probe) 237.21 cop[tikv] table:test keep order:false"))
+	tk.MustExec("drop index IX_CUST_RELA_DATE ON  test")
+	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2024-01-01 00:00:01';").Check(testkit.Rows(
+		"TableReader_7 237.21 root  data:Selection_6",
+		"└─Selection_6 237.21 cop[tikv]  gt(test.test.updated_date, 2023-12-31 23:59:00.000000), lt(test.test.updated_date, 2024-01-01 00:00:01.000000)",
+		"  └─TableFullScan_5 859718933.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("CREATE TABLE test_datetime_index (id INT PRIMARY KEY AUTO_INCREMENT,event_time DATETIME NOT NULL,INDEX idx_event_time (event_time));")
+	tk.MustExec(" INSERT INTO test_datetime_index (event_time) VALUES ('2023-12-31 23:59:59' ), ('2023-12-31 23:59:29' ), ('2023-12-31 23:55:00' ), ('2023-12-31 14:45:00' ), ('2023-12-31 08:00:00' );")
+	tk.MustExec("analyze table test_datetime_index all columns;")
+	tk.MustQuery("explain select * from test_datetime_index where event_time > '2023-12-31 23:50:00' and event_time<'2024-01-01 00:00:00'").
+		Check(testkit.Rows(
+			"IndexReader_6 3.00 root  index:IndexRangeScan_5",
+			"└─IndexRangeScan_5 3.00 cop[tikv] table:test_datetime_index, index:idx_event_time(event_time) range:(2023-12-31 23:50:00,2024-01-01 00:00:00), keep order:false",
+		))
 }
