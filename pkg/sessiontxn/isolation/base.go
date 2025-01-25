@@ -314,11 +314,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	// verify start_ts is later than any previous commit_ts in the session
 	if !p.usePresetStartTS() && sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
-		logutil.BgLogger().Panic("check session lastCommitTS failed",
+		logutil.BgLogger().Error("check session lastCommitTS failed",
 			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
 			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
 			zap.String("sql", redact.String(sessVars.EnableRedactLog, sessVars.StmtCtx.OriginalSQL)),
 		)
+		return nil, kv.ErrAssertionFailed
 	}
 
 	txn.SetVars(sessVars.KVVars)

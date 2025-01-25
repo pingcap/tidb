@@ -930,11 +930,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if err == nil && s.txn.lastCommitTS > 0 {
 		// lastCommitTS could be the same, e.g. when the txn is considered readonly
 		if s.txn.lastCommitTS < s.sessionVars.LastCommitTS {
-			logutil.BgLogger().Panic("check lastCommitTS failed",
+			logutil.BgLogger().Error("check lastCommitTS failed",
 				zap.Uint64("sessionLastCommitTS", s.sessionVars.LastCommitTS),
 				zap.Uint64("txnLastCommitTS", s.txn.lastCommitTS),
 				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
 			)
+			return kv.ErrAssertionFailed
 		} else {
 			s.sessionVars.LastCommitTS = s.txn.lastCommitTS
 		}
