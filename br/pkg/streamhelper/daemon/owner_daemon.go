@@ -89,7 +89,7 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 					zap.String("daemon-id", od.daemon.Name()))
 				return
 			case <-tick.C:
-				log.Debug("daemon tick start",
+				log.Info("daemon tick start",
 					zap.Bool("is-owner", od.manager.IsOwner()),
 					zap.String("daemon-id", od.daemon.Name()))
 				if od.manager.IsOwner() {
