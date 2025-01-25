@@ -104,12 +104,7 @@ func TestBasicPubSub(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
@@ -134,7 +129,6 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestDeliverOrderAndCleanup(t *testing.T) {
@@ -182,12 +176,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	n.RegisterHandler(3, h1)
 	n.RegisterHandler(4, h2)
 	n.RegisterHandler(9, h3)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
@@ -213,7 +202,6 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestPubSub(t *testing.T) {
@@ -349,12 +337,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
@@ -380,5 +363,129 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	tk2.MustQuery("SELECT * FROM test.result").Check(testkit.Rows())
 
 	n.OnRetireOwner()
-	<-done
 }
+<<<<<<< HEAD
+=======
+
+func TestPaginatedList(t *testing.T) {
+	backup := notifier.ProcessEventsBatchSize
+	notifier.ProcessEventsBatchSize = 3
+	t.Cleanup(func() {
+		notifier.ProcessEventsBatchSize = backup
+	})
+
+	names := make([]string, 0, 32)
+	namesLock := sync.Mutex{}
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		namesLock.Lock()
+		defer namesLock.Unlock()
+		switch c.GetType() {
+		case model.ActionCreateTable:
+			names = append(names, c.GetCreateTableInfo().Name.O)
+		case model.ActionAddColumn:
+			_, colInfo := c.GetAddColumnInfo()
+			names = append(names, colInfo[0].Name.O)
+		default:
+			t.Fatalf("unexpected event type: %s", c.GetType().String())
+		}
+		return nil
+	}
+
+	blocking := atomic.NewBool(true)
+	count := atomic.NewInt32(0)
+	blockingHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		if blocking.Load() {
+			return notifier.ErrNotReadyRetryLater
+		}
+		count.Inc()
+		return nil
+	}
+
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated",
+		func(registry *notifier.DDLNotifier) {
+			registry.RegisterHandler(notifier.TestHandlerID, handler)
+			registry.RegisterHandler(10, blockingHandler)
+		},
+	)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("USE test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("create table t4 (a int)")
+	tk.MustExec("alter table t1 add column c5 int, add column c6 int, add column c7 int, add column c8 int")
+
+	require.Eventually(t, func() bool {
+		namesLock.Lock()
+		defer namesLock.Unlock()
+		return len(names) == 8
+	}, 5*time.Second, 500*time.Millisecond)
+
+	require.Equal(t, []string{"t1", "t2", "t3", "t4", "c5", "c6", "c7", "c8"}, names)
+
+	blocking.Store(false)
+	require.Eventually(t, func() bool {
+		return count.Load() == 8
+	}, 5*time.Second, 500*time.Millisecond)
+}
+
+func TestBeginTwice(t *testing.T) {
+	conf := new(log.Config)
+	logFilename := path.Join(t.TempDir(), "/testBeginTwice.log")
+	conf.File.Filename = logFilename
+	lg, p, e := log.InitLogger(conf)
+	require.NoError(t, e)
+	rs := log.ReplaceGlobals(lg, p)
+	defer rs()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
+	tk.MustExec(ddl.NotifierTableSQL)
+
+	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		5,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+	)
+
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+
+	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, testHandler)
+	n.OnBecomeOwner()
+
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	ctx := context.Background()
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+
+	// after handler processed the event, wait to ensure the record is deleted by DDL notifier
+	require.Eventually(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+
+	content, err := os.ReadFile(logFilename)
+	require.NoError(t, err)
+	require.NotContains(t, string(content), "context provider not set")
+}
+>>>>>>> b74eb0f906a (ddl notifier: fix shared session by List and DeleteAndCommit (#58833))
