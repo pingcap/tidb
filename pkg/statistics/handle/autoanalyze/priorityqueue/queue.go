@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -206,7 +207,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		// Query locked tables once to minimize overhead.
 		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 		lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -220,74 +220,84 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		}
 
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-
-		dbs := is.AllSchemaNames()
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		dbs := is.AllSchemas()
+		maxDBID := int64(0)
 		for _, db := range dbs {
+			if util.IsMemOrSysDB(db.Name.L) {
+				continue
+			}
+			if db.ID > maxDBID {
+				maxDBID = db.ID
+			}
+		}
+		tbls := make([]*model.TableInfo, 0, 1024)
+		if err := meta.IterAllTables(context.Background(), sctx.GetStore(), currentTs, 15, func(info *model.TableInfo) error {
 			// Ignore the memory and system database.
-			if util.IsMemOrSysDB(db.L) {
+			db, ok := is.SchemaByID(info.DBID)
+			if !ok || util.IsMemOrSysDB(db.Name.L) {
+				return nil
+			}
+			tbls = append(tbls, info)
+			return nil
+		}, maxDBID); err != nil {
+			return errors.Trace(err)
+		}
+
+		// We need to check every partition of every table to see if it needs to be analyzed.
+		for _, tblInfo := range tbls {
+			// If table locked, skip analyze all partitions of the table.
+			if _, ok := lockedTables[tblInfo.ID]; ok {
 				continue
 			}
 
-			tbls, err := is.SchemaTableInfos(context.Background(), db)
-			if err != nil {
-				return err
+			if tblInfo.IsView() {
+				continue
 			}
 
-			// We need to check every partition of every table to see if it needs to be analyzed.
-			for _, tblInfo := range tbls {
-				// If table locked, skip analyze all partitions of the table.
-				if _, ok := lockedTables[tblInfo.ID]; ok {
-					continue
+			pi := tblInfo.GetPartitionInfo()
+			if pi == nil {
+				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
+					tblInfo,
+					pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+				)
+				err := pq.pushWithoutLock(job)
+				if err != nil {
+					return err
 				}
+				continue
+			}
 
-				if tblInfo.IsView() {
-					continue
+			// Only analyze the partition that has not been locked.
+			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
+			for _, def := range pi.Definitions {
+				if _, ok := lockedTables[def.ID]; !ok {
+					partitionDefs = append(partitionDefs, def)
 				}
-
-				pi := tblInfo.GetPartitionInfo()
-				if pi == nil {
-					job := jobFactory.CreateNonPartitionedTableAnalysisJob(
+			}
+			partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
+			// If the prune mode is static, we need to analyze every partition as a separate table.
+			if pruneMode == variable.Static {
+				for pIDAndName, stats := range partitionStats {
+					job := jobFactory.CreateStaticPartitionAnalysisJob(
 						tblInfo,
-						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+						pIDAndName.ID,
+						stats,
 					)
 					err := pq.pushWithoutLock(job)
 					if err != nil {
 						return err
 					}
-					continue
 				}
-
-				// Only analyze the partition that has not been locked.
-				partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
-				for _, def := range pi.Definitions {
-					if _, ok := lockedTables[def.ID]; !ok {
-						partitionDefs = append(partitionDefs, def)
-					}
-				}
-				partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
-				// If the prune mode is static, we need to analyze every partition as a separate table.
-				if pruneMode == variable.Static {
-					for pIDAndName, stats := range partitionStats {
-						job := jobFactory.CreateStaticPartitionAnalysisJob(
-							tblInfo,
-							pIDAndName.ID,
-							stats,
-						)
-						err := pq.pushWithoutLock(job)
-						if err != nil {
-							return err
-						}
-					}
-				} else {
-					job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-						tblInfo,
-						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
-						partitionStats,
-					)
-					err := pq.pushWithoutLock(job)
-					if err != nil {
-						return err
-					}
+			} else {
+				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
+					tblInfo,
+					pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					partitionStats,
+				)
+				err := pq.pushWithoutLock(job)
+				if err != nil {
+					return err
 				}
 			}
 		}
