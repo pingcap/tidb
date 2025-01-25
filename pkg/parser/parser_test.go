@@ -7249,6 +7249,7 @@ func TestWithoutCharsetFlags(t *testing.T) {
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
+		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"}, // issue #59000
 		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
 	}
 
