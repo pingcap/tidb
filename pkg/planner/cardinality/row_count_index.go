@@ -529,7 +529,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		idxLowBound /= 0.9
 	}
 	// corrsel is the selectivity of the most filtering column
-	corrsel = min(idxLowBound, singleColumnEstResults[0])
+	corrsel = max(idxLowBound, singleColumnEstResults[0])
 	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
 	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
 	if l == 2 {
