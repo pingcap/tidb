@@ -1223,15 +1223,15 @@ insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 analyze table t all columns;
-explain format='brief' select * from t where a = 'tw' and b < 0;
+explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
-IndexReader	1.00	root		index:IndexRangeScan
-└─IndexRangeScan	1.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
 set @@tidb_opt_fix_control = '47400:on';
-explain format='brief' select * from t where a = 'tw' and b < 0;
+explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+IndexReader_6	0.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
 set @@tidb_opt_fix_control = '47400:off';
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));

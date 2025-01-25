@@ -768,6 +768,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	corrResult := 0
+	// corrResult focuses on comparing competing indexes with statistics - potentially those index estimates may have an
+	// implied correlation. Thus - exclude if validity of statistics between lhs & rhs or if these are full scans
 	if lhsPseudo == rhsPseudo && !lhsFullScan && !rhsFullScan {
 		// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
 		corrResult, _ = compareCorrRatio(lhs, rhs)

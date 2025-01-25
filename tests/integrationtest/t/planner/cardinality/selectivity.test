@@ -646,9 +646,9 @@ insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 analyze table t all columns;
-explain format='brief' select * from t where a = 'tw' and b < 0;
+explain select * from t where a = 'tw' and b < 0;
 set @@tidb_opt_fix_control = '47400:on';
-explain format='brief' select * from t where a = 'tw' and b < 0;
+explain select * from t where a = 'tw' and b < 0;
 set @@tidb_opt_fix_control = '47400:off';
 
 # TestSelectCombinedLowBound
