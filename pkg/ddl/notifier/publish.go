@@ -22,30 +22,30 @@ import (
 
 // PubSchemeChangeToStore publishes schema changes to the store to notify
 // subscribers on the Store. It stages changes in given `se` so they will be
-// visible when `se` further commits. When the schema change is not from
-// multi-schema change DDL, `multiSchemaChangeSeq` is -1. Otherwise,
-// `multiSchemaChangeSeq` is the sub-job index of the multi-schema change DDL.
+// visible when `se` further commits. When the DDL contains only one schema
+// change, `subJobID` is -1. Otherwise, `subJobID` is the sub-job index of the
+// DDL, like multi-schema change or batched create table.
 func PubSchemeChangeToStore(
 	ctx context.Context,
 	se *sess.Session,
 	ddlJobID int64,
-	multiSchemaChangeSeq int64,
+	subJobID int64,
 	event *SchemaChangeEvent,
 	store Store,
 ) error {
-	change := &schemaChange{
-		ddlJobID:             ddlJobID,
-		multiSchemaChangeSeq: multiSchemaChangeSeq,
-		event:                event,
+	change := &SchemaChange{
+		ddlJobID: ddlJobID,
+		subJobID: subJobID,
+		event:    event,
 	}
 	return store.Insert(ctx, se, change)
 }
 
-// schemaChange is the Golang representation of the persistent data. (ddlJobID,
-// multiSchemaChangeSeq) should be unique in the cluster.
-type schemaChange struct {
-	ddlJobID             int64
-	multiSchemaChangeSeq int64
-	event                *SchemaChangeEvent
-	processedByFlag      uint64
+// SchemaChange is the Golang representation of the persistent data. (ddlJobID,
+// subJobID) should be unique in the cluster.
+type SchemaChange struct {
+	ddlJobID        int64
+	subJobID        int64
+	event           *SchemaChangeEvent
+	processedByFlag uint64
 }
