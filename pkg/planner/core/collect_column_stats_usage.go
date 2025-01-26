@@ -143,6 +143,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
+		c.predicateCols[tblColID] = true
 	}
 	// record the asked column group specific for each datasource table, which will be checked and converted to index needed in collectSyncIndices.
 	for _, group := range askedColGroups {
