@@ -522,22 +522,22 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Ifnull, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// IfJson
 	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// JsonIsNull is not implement, for function json_col is null, it will be converted to cast(json as string) is null
 	function, err = NewFunction(mock.NewContext(), ast.IsNull, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// CaseWhenJson
 	function, err = NewFunction(mock.NewContext(), ast.Case, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, intColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// CoalesceJson
 	function, err = NewFunction(mock.NewContext(), ast.Coalesce, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
@@ -553,22 +553,22 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// LEJson
 	function, err = NewFunction(mock.NewContext(), ast.LE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// GTJson
 	function, err = NewFunction(mock.NewContext(), ast.GT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// GEJson
 	function, err = NewFunction(mock.NewContext(), ast.GE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// EQJson
 	function, err = NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
@@ -578,7 +578,7 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.NE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	
+
 	// InJson
 	function, err = NewFunction(mock.NewContext(), ast.In, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
