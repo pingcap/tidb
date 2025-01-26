@@ -292,10 +292,10 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	for _, item := range prop.SortItems {
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
-		for joinKeyPos := range len(leftJoinKeys) {
+		for joinKeyPos, leftJoinKey := range leftJoinKeys {
 			var key *expression.Column
-			if item.Col.Equal(evalCtx, leftJoinKeys[joinKeyPos]) {
-				key = leftJoinKeys[joinKeyPos]
+			if item.Col.Equal(evalCtx, leftJoinKey) {
+				key = leftJoinKey
 				hasLeftColInProp = true
 			}
 			if item.Col.Equal(evalCtx, rightJoinKeys[joinKeyPos]) {
@@ -305,8 +305,8 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			if key == nil {
 				continue
 			}
-			for i := range len(offsets) {
-				if offsets[i] == joinKeyPos {
+			for offset := range offsets {
+				if offset == joinKeyPos {
 					isExist = true
 					break
 				}
