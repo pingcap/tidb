@@ -411,7 +411,7 @@ func (s *PartitionProcessor) findUsedPartitions(ctx base.PlanContext,
 		return s.convertToIntSlice(or, pi, partitionNames), nil
 	}
 	slices.Sort(used)
-	slices.Compact(used)
+	used = slices.Compact(used)
 	return used, nil
 }
 
