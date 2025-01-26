@@ -222,6 +222,11 @@ func (e *Explain) unityFillUpStats(o *UnityOutput) {
 		tblInfo.RealtimeRows = tblStats.RealtimeCount
 		for colName, col := range tblInfo.Columns {
 			colStats := tblStats.HistColl.GetCol(tblInfo.col2id[colName])
+			if colStats == nil {
+				warning := fmt.Errorf("column %v not found in stats", colName)
+				e.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+				continue
+			}
 			col.NDV = int(colStats.NDV)
 			col.Nulls = int(colStats.NullCount)
 
