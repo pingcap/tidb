@@ -622,7 +622,8 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		if err != nil {
 			return errors.Annotate(err, "failed to pause task")
 		}
-		return errors.Errorf("log backup GC safe point(%d) is stale, current minimal safe point is %d", safeGlobalCheckpointTs, p)
+		return errors.Errorf("log backup GC safe point(%d) is stale, current minimal safe point is %d",
+			safeGlobalCheckpointTs, p)
 	}
 	return nil
 }

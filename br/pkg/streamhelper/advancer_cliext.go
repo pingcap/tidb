@@ -273,7 +273,11 @@ func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName st
 	return binary.BigEndian.Uint64(value), nil
 }
 
-func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) (uint64, error) {
+func (t AdvancerExt) UploadV3GlobalCheckpointForTask(
+	ctx context.Context,
+	taskName string,
+	checkpoint uint64,
+) (uint64, error) {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
 	oldValue, err := t.GetGlobalCheckpointForTask(ctx, taskName)
