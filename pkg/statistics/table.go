@@ -87,6 +87,7 @@ type Table struct {
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
+	// TODO: it can be removed now that we've have LastAnalyseVersion and LastStatsHistVersion.
 	TblInfoUpdateTS uint64
 
 	IsPkIsHandle bool

@@ -200,33 +200,35 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			continue
 		}
 		var tbl *statistics.Table
+		needAccessColAndIdxStats := true
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
 			tbl = oldTbl.Copy()
 			// count and modify count is updated in finalProcess
-			goto finalProcess
+			needAccessColAndIdxStats = false
 		}
-		tbl, err = s.statsHandle.TableStatsFromStorage(
-			tableInfo,
-			physicalID,
-			false,
-			0,
-		)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"error occurred when read table stats",
-				zap.String("table", tableInfo.Name.O),
-				zap.Error(err),
+		if needAccessColAndIdxStats {
+			tbl, err = s.statsHandle.TableStatsFromStorage(
+				tableInfo,
+				physicalID,
+				false,
+				0,
 			)
-			continue
+			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"error occurred when read table stats",
+					zap.String("table", tableInfo.Name.O),
+					zap.Error(err),
+				)
+				continue
+			}
+			if tbl == nil {
+				tblToUpdateOrDelete.addToDelete(physicalID)
+				continue
+			}
 		}
-		if tbl == nil {
-			tblToUpdateOrDelete.addToDelete(physicalID)
-			continue
-		}
-	finalProcess:
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
