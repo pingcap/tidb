@@ -89,7 +89,7 @@ func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
 		poped = append(poped, tmp)
 	}
 	b.StartTimer()
-	MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true)
+	MergePartitionHist2GlobalHist(sc, hists, poped, expBucketNumber, true, Version2)
 	b.StopTimer()
 }
 
