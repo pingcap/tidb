@@ -411,18 +411,8 @@ func (s *PartitionProcessor) findUsedPartitions(ctx base.PlanContext,
 		return s.convertToIntSlice(or, pi, partitionNames), nil
 	}
 	slices.Sort(used)
-<<<<<<< Updated upstream
-	ret := used[:0]
-	for i := 0; i < len(used); i++ {
-		if i == 0 || used[i] != used[i-1] {
-			ret = append(ret, used[i])
-		}
-	}
-	return ret, nil
-=======
 	slices.Compact(used)
 	return used, nil
->>>>>>> Stashed changes
 }
 
 func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []ast.CIStr) []int {
