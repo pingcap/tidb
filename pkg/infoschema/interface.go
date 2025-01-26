@@ -32,12 +32,15 @@ type InfoSchema interface {
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
 	// TableItemByID returns a lightweight table meta specified by the given ID,
 	// without loading the whole info from storage.
+	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByID(id int64) (TableItem, bool)
 	// TableIDByPartitionID is a pure memory operation, returns the table ID by the partition ID.
+	// It's all in memory operation. No need to worry about network or disk cost.
 	TableIDByPartitionID(partitionID int64) (tableID int64, ok bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// TableItemByPartitionID returns a lightweight table meta specified by the partition ID,
 	// without loading the whole info from storage.
+	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByPartitionID(partitionID int64) (TableItem, bool)
 	base() *infoSchema
 }
