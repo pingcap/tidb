@@ -33,6 +33,7 @@ go_library(
         "logical_union_all.go",
         "logical_union_scan.go",
         "logical_window.go",
+        "shallow_ref_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],
@@ -83,6 +84,9 @@ go_library(
 
 filegroup(
     name = "generator_files",
-    srcs = ["hash64_equals_generated.go"],
+    srcs = [
+        "hash64_equals_generated.go",
+        "shallow_ref_generated.go",
+    ],
     visibility = ["//visibility:public"],
 )

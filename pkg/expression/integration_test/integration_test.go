@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -1920,8 +1921,8 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", vardef.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)

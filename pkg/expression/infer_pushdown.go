@@ -209,8 +209,8 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
-		ast.FromDays,                  /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.FromDays, /* ast.ToDays */
+		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd*/, ast.FromUnixTime,
 		/* ast.LastDay */
 		ast.Sysdate,
 

@@ -26,6 +26,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/tablecodec",

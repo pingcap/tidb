@@ -38,7 +38,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -212,7 +212,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
-		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
+		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
 	if importFromServer {
 		ecp, err2 := e.controller.PopulateChunks(ctx)
 		if err2 != nil {
@@ -221,7 +221,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, ecp)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
-	if variable.EnableDistTask.Load() {
+	if vardef.EnableDistTask.Load() {
 		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
 	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)

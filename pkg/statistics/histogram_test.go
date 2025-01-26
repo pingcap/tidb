@@ -712,21 +712,3 @@ func generateData(t *testing.T) *Histogram {
 	}
 	return genHist4Test(t, data, 0)
 }
-
-func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
-	data1 := generateData(t)
-	data2 := generateData(t)
-
-	require.Equal(t, data1, data2)
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(150))
-	require.NoError(t, err)
-	tmp := TopNMeta{
-		Encoded: b,
-		Count:   2,
-	}
-	data1.RemoveVals([]TopNMeta{tmp})
-	data2.BinarySearchRemoveVal(tmp)
-	require.Equal(t, data1, data2)
-}

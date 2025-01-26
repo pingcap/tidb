@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -58,9 +58,9 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	variable.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	})
 	plan.initDefaultOptions(1)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
@@ -144,9 +144,9 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
-	variable.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	})
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))

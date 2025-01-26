@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -296,7 +297,7 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLine(reader, int(variable.MaxOfMaxAllowedPacket))
+	return util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
 }
 
 type offset struct {
