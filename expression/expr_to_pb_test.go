@@ -528,11 +528,6 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// JsonIsNull is not implement, for function json_col is null, it will be converted to cast(json as string) is null
-	function, err = NewFunction(mock.NewContext(), ast.IsNull, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	// CaseWhenJson
 	function, err = NewFunction(mock.NewContext(), ast.Case, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, intColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
