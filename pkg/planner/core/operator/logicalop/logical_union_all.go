@@ -19,11 +19,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -191,7 +193,59 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 
 // CanPushToCop inherits BaseLogicalPlan.LogicalPlan.<21st> implementation.
 
-// ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
+// ExtractFD implement base.LogicalPlan.<22nd> interface.
+func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	childFDs := make([]*fd.FDSet, 0, len(p.children))
+	for _, child := range p.children {
+		childFD := child.ExtractFD()
+		childFDs = append(childFDs, childFD)
+	}
+	// check the output columns' not-null property.
+	res := &fd.FDSet{}
+	notNullCols := intset.NewFastIntSet()
+	for _, col := range p.Schema().Columns {
+		flag := true
+		for _, childFD := range childFDs {
+			if childFD.NotNullCols.Has(int(col.UniqueID)) {
+				flag = false
+				break
+			}
+		}
+		if flag {
+			notNullCols.Insert(int(col.UniqueID))
+		}
+	}
+	res.MakeNotNull(notNullCols)
+	// check the equivalency between children.
+	for i := 0; i < p.Schema().Len(); i++ {
+		for j := 1 + 1; j < p.Schema().Len(); j++ {
+			// detect the equivalency between the i-th and j-th column.
+			flag := true
+			iID := int(p.schema.Columns[i].UniqueID)
+			jID := int(p.schema.Columns[j].UniqueID)
+			for _, childFD := range childFDs {
+				equivs := childFD.EquivalenceCols()
+				isEquiv := false
+				for _, equiv := range equivs {
+					if equiv.Has(iID) && equiv.Has(jID) {
+						isEquiv = true
+						break
+					}
+				}
+				// once we find the i-th and j-th column are not equivalent in one child, we can break the loop.
+				if !isEquiv {
+					flag = false
+					break
+				}
+			}
+			if flag {
+				res.AddEquivalence(intset.NewFastIntSet(iID), intset.NewFastIntSet(jID))
+			}
+		}
+	}
+	return res
+}
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
