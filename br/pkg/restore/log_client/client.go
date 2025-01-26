@@ -84,7 +84,8 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
-// session count for repairing ingest indexes
+// session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
+// at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
 
 // LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
@@ -1849,7 +1850,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			defer w.Done()
 
-			unsafeSession := unsafeSessions[id]
+			unsafeSession := unsafeSessions[id%uint64(len(unsafeSessions))]
 			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
 			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
 			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
