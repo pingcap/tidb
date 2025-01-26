@@ -72,14 +72,16 @@ type Table struct {
 	// 1. Initialized by snapshot when loading stats_meta.
 	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
-	// LastStatsUpdateVersion is the mvcc version of the last full update of histograms.
+	// LastStatsHistVersion is the mvcc version of the last update of histograms.
 	// It differs from LastAnalyzeVersion because it can be influenced by some DDL.
 	// e.g. When we execute ALTER TABLE ADD COLUMN, there'll be new record inserted into mysql.stats_histograms.
 	//      We need to load the corresponding one into memory too.
 	// It's used to skip redundant loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
 	// and the schema of the table does not change, we don't need to load the stats for this table again.
 	// Stats' sync load/async load should not change this field since they are not table-level update.
-	LastStatsUpdateVersion uint64
+	// It's hard to deal with the upgrade compatibility of this field, the field will not take effect unless
+	// auto analyze or DDL happened on the table.
+	LastStatsHistVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
@@ -613,11 +615,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:               newHistColl,
-		Version:                t.Version,
-		TblInfoUpdateTS:        t.TblInfoUpdateTS,
-		LastAnalyzeVersion:     t.LastAnalyzeVersion,
-		LastStatsUpdateVersion: t.LastStatsUpdateVersion,
+		HistColl:             newHistColl,
+		Version:              t.Version,
+		TblInfoUpdateTS:      t.TblInfoUpdateTS,
+		LastAnalyzeVersion:   t.LastAnalyzeVersion,
+		LastStatsHistVersion: t.LastStatsHistVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -649,13 +651,13 @@ func (t *Table) ShallowCopy() *Table {
 		StatsVer:      t.StatsVer,
 	}
 	nt := &Table{
-		HistColl:               newHistColl,
-		Version:                t.Version,
-		TblInfoUpdateTS:        t.TblInfoUpdateTS,
-		ExtendedStats:          t.ExtendedStats,
-		ColAndIdxExistenceMap:  t.ColAndIdxExistenceMap,
-		LastAnalyzeVersion:     t.LastAnalyzeVersion,
-		LastStatsUpdateVersion: t.LastStatsUpdateVersion,
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
 	return nt
 }

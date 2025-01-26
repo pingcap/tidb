@@ -172,11 +172,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			count = 0
 		}
 		if _, err = util.Exec(sctx,
-			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_analyze_version) values (%?, %?, %?, %?, %?)",
+			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_analyze_version, last_stats_histograms_version) values (%?, %?, %?, %?, %?, %?)",
 			version,
 			tableID,
 			count,
 			snapShot,
+			version,
 			version,
 		); err != nil {
 			return 0, err
@@ -340,10 +341,13 @@ func SaveStatsToStorage(
 
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		_, err = util.Exec(sctx,
+			"replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)",
+			version, tableID, count, modifyCount, version,
+		)
 		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and last_stats_histograms_version = %? where table_id = %?", version, tableID, version)
 	}
 	if err != nil {
 		return 0, err

@@ -87,11 +87,11 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			lastStatsFullUpdateVersion = max(lastStatsFullUpdateVersion, row.GetUint64(6))
 		}
 		tbl := &statistics.Table{
-			HistColl:               newHistColl,
-			Version:                row.GetUint64(0),
-			ColAndIdxExistenceMap:  statistics.NewColAndIndexExistenceMapWithoutSize(),
-			LastAnalyzeVersion:     lastAnalyzeVersion,
-			LastStatsUpdateVersion: lastStatsFullUpdateVersion,
+			HistColl:              newHistColl,
+			Version:               row.GetUint64(0),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+			LastAnalyzeVersion:    lastAnalyzeVersion,
+			LastStatsHistVersion:  lastStatsFullUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -162,7 +162,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		if statsVer != statistics.Version0 {
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 		}
-		table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, row.GetUint64(4))
+		table.LastStatsHistVersion = max(table.LastStatsHistVersion, row.GetUint64(4))
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -240,7 +240,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
-			table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, version)
+			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
 
 			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
@@ -277,7 +277,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
-			table.LastStatsUpdateVersion = max(table.LastStatsUpdateVersion, version)
+			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
 		}
 	}
 	if table != nil {
