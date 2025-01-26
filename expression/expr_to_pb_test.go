@@ -544,8 +544,8 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
-	require.Len(t, pushed, 0)
-	require.Len(t, remained, len(exprs))
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
 
 	// functions can not pushdown to tiflash
 	exprs = exprs[:0]
