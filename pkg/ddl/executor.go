@@ -4932,17 +4932,17 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		logutil.DDLLogger().Info("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
+		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
 		return 0
 	}
 	pdClient := tikvStore.GetRegionCache().PDClient()
 	if pdClient == nil {
-		logutil.DDLLogger().Info("pd unavailable when get default max node count")
+		logutil.DDLLogger().Warn("pd unavailable when get default max node count")
 		return 0
 	}
 	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
-		logutil.DDLLogger().Info("get all stores failed when get default max node count")
+		logutil.DDLLogger().Warn("get all stores failed when get default max node count", zap.Error(err))
 		return 0
 	}
 	return max(3, len(stores)/3)

@@ -84,8 +84,9 @@ type TaskBase struct {
 	// contain the tidb_service_scope=TargetScope label.
 	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
 	// if there is no such nodes, will try nodes of "" scope.
-	TargetScope string
-	CreateTime  time.Time
+	TargetScope  string
+	CreateTime   time.Time
+	MaxNodeCount int
 }
 
 // IsDone checks if the task is done.
@@ -129,10 +130,9 @@ type Task struct {
 	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
 	// 	- on task cleanup, we might do some redaction on the meta.
 	// 	- on task 'modifying', params inside the meta can be changed.
-	Meta         []byte
-	Error        error
-	ModifyParam  ModifyParam
-	MaxNodeCount int
+	Meta        []byte
+	Error       error
+	ModifyParam ModifyParam
 }
 
 var (
