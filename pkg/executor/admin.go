@@ -824,7 +824,6 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 
-	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.getIdxColTypes())
 	if err != nil {
 		return nil, err
