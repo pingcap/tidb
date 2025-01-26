@@ -4,17 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
 	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -56,7 +56,7 @@ func (e *Explain) UnityOffline() string {
 	sort.Slice(plans, func(i, j int) bool {
 		return plans[i].TimeInMS < plans[j].TimeInMS
 	})
-	k := variable.UnityOfflineK.Load()
+	k := vardef.UnityOfflineK.Load()
 	if k > 0 && len(plans) > int(k) {
 		plans = plans[:k]
 	}
@@ -197,7 +197,7 @@ type UnityOfflinePlanNode struct {
 	*ExplainInfoForEncode
 	PreSequence *UnityPreSequence `json:"preSequence"`
 	Hints       string            `json:"hints"`
-	PlanStr     string                   `json:"planStr"`
+	PlanStr     string            `json:"planStr"`
 }
 
 type UnityOfflinePlan struct {
