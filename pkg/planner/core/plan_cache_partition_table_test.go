@@ -266,7 +266,7 @@ func TestPreparedStmtIndexLookup(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, unique key (a))
 partition by hash (a) partitions 3`)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -314,7 +314,7 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 	ids := make([]any, 0, rows)
 	maxRange := 2000000
 	maxID := maxRange + 500000
-	for i := 0; i < rows; i++ {
+	for range rows {
 		var id any
 		for createNew := true; createNew; _, createNew = rowData[id] {
 			if useStringPK {

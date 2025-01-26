@@ -273,7 +273,7 @@ func equalPartitionRangeOR(x, y partitionRangeOR) bool {
 	if len(x) != len(y) {
 		return false
 	}
-	for i := 0; i < len(x); i++ {
+	for i := range len(x) {
 		if x[i] != y[i] {
 			return false
 		}
@@ -635,7 +635,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	}
 	lessThan := make([][]*expression.Expression, 0, parts)
 	partDefs := make([][]int64, 0, parts)
-	for i := 0; i < parts-1; i++ {
+	for i := range parts - 1 {
 		partDefs = append(partDefs, []int64{int64(i * 10000)})
 	}
 	partDefs = append(partDefs, []int64{-99})
@@ -662,7 +662,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	result := fullRange(len(lessThan))
 	e := expression.SplitCNFItems(expr)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result[0] = partitionRange{0, parts}
 		result = result[:1]
 		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)

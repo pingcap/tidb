@@ -85,7 +85,7 @@ func TestCostModelTraceVer2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
 	vals := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
@@ -159,7 +159,7 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	}
 }

@@ -128,7 +128,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		extractor.markers[i].SetOrder(i)
 	}
 

@@ -1958,7 +1958,7 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkColLen := len(pkIdx.Columns)
 		columns := make([]*expression.Column, pkColLen)
-		for i := 0; i < pkColLen; i++ {
+		for i := range pkColLen {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
 			var index int
 			if allColumns {
@@ -4341,7 +4341,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i := 0; i < actualColLen; i++ {
+	for i := range actualColLen {
 		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}

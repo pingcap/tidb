@@ -123,7 +123,7 @@ func TestParameterize(t *testing.T) {
 func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 	n := 50
 	sqls := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sqls = append(sqls, fmt.Sprintf(`insert into t values (%d, %d, %d)`, i*3+0, i*3+1, i*3+2))
 	}
 	stmts := make([]ast.StmtNode, 0, n)
@@ -137,7 +137,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(id int) {
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				_, vals, err := GetParamSQLFromAST(stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
@@ -161,7 +161,7 @@ c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_i
 	require.Nil(b, err)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		ParameterizeAST(stmt)
 	}
 }
@@ -174,7 +174,7 @@ func BenchmarkParameterizeInsert(b *testing.B) {
 	require.Nil(b, err)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		ParameterizeAST(stmt)
 	}
 }
@@ -185,7 +185,7 @@ func BenchmarkGetParamSQL(b *testing.B) {
 	require.Nil(b, err)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		GetParamSQLFromAST(stmt)
 	}
 }
