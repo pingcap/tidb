@@ -83,8 +83,8 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.HandleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
+	for col := range p.HandleCols.IterColumns() {
+		parentUsedCols = append(parentUsedCols, col)
 	}
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
