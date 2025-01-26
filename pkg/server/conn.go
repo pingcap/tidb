@@ -383,7 +383,7 @@ func (cc *clientConn) Close() error {
 	//
 	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
 	// times.
-	
+
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
