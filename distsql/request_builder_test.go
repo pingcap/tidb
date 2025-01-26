@@ -265,15 +265,16 @@ func TestRequestBuilder1(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
 		}),
-		Cacheable:        true,
-		KeepOrder:        false,
-		Desc:             false,
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		NotFillCache:     false,
-		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Cacheable:         true,
+		KeepOrder:         false,
+		Desc:              false,
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		NotFillCache:      false,
+		ReplicaRead:       kv.ReplicaReadLeader,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "default",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -348,15 +349,16 @@ func TestRequestBuilder2(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
 		}),
-		Cacheable:        true,
-		KeepOrder:        false,
-		Desc:             false,
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		NotFillCache:     false,
-		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Cacheable:         true,
+		KeepOrder:         false,
+		Desc:              false,
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		NotFillCache:      false,
+		ReplicaRead:       kv.ReplicaReadLeader,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "default",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -397,15 +399,16 @@ func TestRequestBuilder3(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
 			},
 		}, []int{1, 4, 2, 1}),
-		Cacheable:        true,
-		KeepOrder:        false,
-		Desc:             false,
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		NotFillCache:     false,
-		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Cacheable:         true,
+		KeepOrder:         false,
+		Desc:              false,
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		NotFillCache:      false,
+		ReplicaRead:       kv.ReplicaReadLeader,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "default",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -441,19 +444,20 @@ func TestRequestBuilder4(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:               103,
-		StartTs:          0x0,
-		Data:             []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
-		Cacheable:        true,
-		KeepOrder:        false,
-		Desc:             false,
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		NotFillCache:     false,
-		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Tp:                103,
+		StartTs:           0x0,
+		Data:              []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
+		KeyRanges:         kv.NewNonParitionedKeyRanges(keyRanges),
+		Cacheable:         true,
+		KeepOrder:         false,
+		Desc:              false,
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		NotFillCache:      false,
+		ReplicaRead:       kv.ReplicaReadLeader,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "default",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -554,17 +558,18 @@ func TestRequestBuilder7(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 			expect := &kv.Request{
-				Tp:               0,
-				StartTs:          0x0,
-				KeepOrder:        false,
-				KeyRanges:        kv.NewNonParitionedKeyRanges(nil),
-				Desc:             false,
-				Concurrency:      concurrency,
-				IsolationLevel:   0,
-				Priority:         0,
-				NotFillCache:     false,
-				ReplicaRead:      replicaRead.replicaReadType,
-				ReadReplicaScope: kv.GlobalReplicaScope,
+				Tp:                0,
+				StartTs:           0x0,
+				KeepOrder:         false,
+				KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+				Desc:              false,
+				Concurrency:       concurrency,
+				IsolationLevel:    0,
+				Priority:          0,
+				NotFillCache:      false,
+				ReplicaRead:       replicaRead.replicaReadType,
+				ReadReplicaScope:  kv.GlobalReplicaScope,
+				ResourceGroupName: "default",
 			}
 			expect.Paging.MinPagingSize = paging.MinPagingSize
 			expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -576,7 +581,7 @@ func TestRequestBuilder7(t *testing.T) {
 
 func TestRequestBuilder8(t *testing.T) {
 	sv := variable.NewSessionVars(nil)
-	sv.ResourceGroupName = "test"
+	sv.StmtCtx.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
