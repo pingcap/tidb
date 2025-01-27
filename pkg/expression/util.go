@@ -2162,3 +2162,16 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
+
+// IsConstFalse is used to check whether the expression is a constant false expression.
+func IsConstFalse(expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			if constExpr, ok := e.GetArgs()[1].(*Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
