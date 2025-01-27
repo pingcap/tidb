@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -85,6 +86,7 @@ type chunkSender struct {
 	e           *engine
 	httpClient  *http.Client
 	chunksCache *chunkCache
+	logger      log.Logger
 
 	// state is used to record the state of the chunks in remote worker.
 	state       atomic.Pointer[chunksState]
@@ -109,6 +111,7 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 		e:           engine,
 		httpClient:  engine.httpClient,
 		chunksCache: chunksCache,
+		logger:      engine.logger.With(zap.Uint64("sender", id)),
 
 		state:       atomic.Pointer[chunksState]{},
 		nextChunkID: atomic.Uint64{},
@@ -122,7 +125,7 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 	c.wg.Add(1)
 	go c.chunkSenderLoop(ctx)
 
-	engine.logger.Info("chunk sender started", zap.Uint64("sender", c.id))
+	c.logger.Info("chunk sender started")
 	return c
 }
 
@@ -189,7 +192,7 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 		close(c.loopDoneChan)
 		err := c.chunksCache.close()
 		if err != nil {
-			c.e.logger.Warn("failed to close chunk cache", zap.Error(err))
+			c.logger.Warn("failed to close chunk cache", zap.Error(err))
 		}
 		c.wg.Done()
 	}()
@@ -271,17 +274,15 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 
 func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
-		c.e.logger.Error("failed to put chunk, task is canceled",
-			zap.String("error", result.Error),
-			zap.Bool("finished", result.Finished))
+		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
 		return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 	}
 
 	if result.HandledChunkID != expectedChunkID {
-		c.e.logger.Info("remote worker may restart, retry to put chunk",
-			zap.Uint64("expected ChunkID", expectedChunkID),
-			zap.Uint64("handled ChunkID", result.HandledChunkID),
-			zap.Uint64("flushed ChunkID", result.FlushedChunkID))
+		c.logger.Info("remote worker may restart, retry to put chunk",
+			zap.Uint64("expected chunkID", expectedChunkID),
+			zap.Uint64("handled chunkID", result.HandledChunkID),
+			zap.Uint64("flushed chunkID", result.FlushedChunkID))
 
 		nextChunkID := result.HandledChunkID + 1
 		for nextChunkID <= expectedChunkID {
@@ -291,9 +292,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 			if err != nil {
 				return errors.Trace(err)
 			}
-			c.e.logger.Info("retry to put chunk",
-				zap.Uint64("sender", c.id),
-				zap.Uint64("chunkID", nextChunkID))
+			c.logger.Info("retry to put chunk", zap.Uint64("chunkID", nextChunkID))
 
 			data, err := sendRequest(ctx, c.httpClient, "PUT", url, buf)
 			if err != nil {
@@ -304,6 +303,11 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if result.Canceled {
+				c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
+				return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+			}
+
 			nextChunkID = result.HandledChunkID + 1
 		}
 	}
@@ -313,7 +317,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 	for lastFlushedChunkID <= result.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
 		if err != nil {
-			c.e.logger.Info("failed to clean chunk cache",
+			c.logger.Info("failed to clean chunk cache",
 				zap.Uint64("chunkID", lastFlushedChunkID),
 				zap.Error(err))
 		}
@@ -333,7 +337,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 
 		data, err := sendRequest(ctx, c.httpClient, "POST", url, nil)
 		if err != nil {
-			c.e.logger.Error("failed to flush", zap.Error(err))
+			c.logger.Error("failed to flush", zap.Error(err))
 			return errors.Trace(err)
 		}
 
@@ -344,14 +348,14 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		}
 
 		if result.Canceled || result.Error != "" {
-			c.e.logger.Error("failed to flush",
+			c.logger.Error("failed to flush",
 				zap.Bool("canceled", result.Canceled),
 				zap.String("error", result.Error))
 			return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 		}
 
 		if result.Finished {
-			c.e.logger.Info("load data task finished")
+			c.logger.Info("load data task finished")
 			return nil
 		}
 
@@ -364,7 +368,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			for lastFlushedChunkID <= flushedChunkID {
 				err := c.chunksCache.clean(lastFlushedChunkID)
 				if err != nil {
-					c.e.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
+					c.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
 				}
 				lastFlushedChunkID++
 			}
