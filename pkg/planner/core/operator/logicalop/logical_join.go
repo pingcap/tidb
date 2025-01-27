@@ -1348,7 +1348,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
+	child := p.Children()
+	rightSchema := child[1].Schema()
+	leftSchema := child[0].Schema()
+	return p.ExtractOnCondition(conditions, leftSchema, rightSchema, deriveLeft, deriveRight)
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
