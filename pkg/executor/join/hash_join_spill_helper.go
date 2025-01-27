@@ -76,6 +76,9 @@ type hashJoinSpillHelper struct {
 
 	canSpillFlag atomic.Bool
 
+	totalBuildSpillBytes int64
+	totalProbeSpillBytes int64
+
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
 	spillTriggedInBuildingStageForTest           bool
@@ -389,6 +392,28 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
+func (h *hashJoinSpillHelper) getBuildSpillBytesInOneWorker(workerID int) int64 {
+	if h.buildRowsInDisk == nil || h.buildRowsInDisk[workerID] == nil {
+		return 0
+	}
+	return h.getSpillBytesInOneWorkerImpl(h.buildRowsInDisk[workerID])
+}
+
+func (h *hashJoinSpillHelper) getProbeSpillBytesInOneWorker(workerID int) int64 {
+	if h.probeRowsInDisk == nil || h.probeRowsInDisk[workerID] == nil {
+		return 0
+	}
+	return h.getSpillBytesInOneWorkerImpl(h.probeRowsInDisk[workerID])
+}
+
+func (h *hashJoinSpillHelper) getSpillBytesInOneWorkerImpl(disks []*chunk.DataInDiskByChunks) int64 {
+	totalBytes := int64(0)
+	for _, disk := range disks {
+		totalBytes += disk.GetTotalBytesInDisk()
+	}
+	return totalBytes
+}
+
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
 	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
@@ -405,6 +430,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
+	spillBytes := make([]int64, workerNum)
 	for i := 0; i < workerNum; i++ {
 		workerID := i
 		wg.RunWithRecover(
@@ -424,7 +450,10 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 					if err != nil {
 						errChannel <- util.GetRecoverError(err)
 					}
+
 				}
+
+				spillBytes[workerID] = h.getBuildSpillBytesInOneWorker(workerID)
 			},
 			func(r any) {
 				if r != nil {
@@ -444,6 +473,10 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	err := triggerIntest(10)
 	if err != nil {
 		return err
+	}
+
+	for _, bytes := range spillBytes {
+		h.totalBuildSpillBytes += bytes
 	}
 
 	return nil
@@ -497,6 +530,11 @@ func (h *hashJoinSpillHelper) reset() {
 	}
 
 	h.spillTriggered = false
+}
+
+func (h *hashJoinSpillHelper) resetStats() {
+	h.totalBuildSpillBytes = 0
+	h.totalProbeSpillBytes = 0
 }
 
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {

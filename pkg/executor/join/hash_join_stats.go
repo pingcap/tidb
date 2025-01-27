@@ -107,6 +107,13 @@ func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
+type spillStats struct {
+	round                   int
+	totalSpillBytesPerRound []int64
+	partitionNumPerRound    []int
+	spillBuildBytesPerRound []int64
+}
+
 type hashJoinRuntimeStatsV2 struct {
 	concurrent     int
 	probeCollision int64
@@ -127,6 +134,8 @@ type hashJoinRuntimeStatsV2 struct {
 	maxBuildHashTableForCurrentRound int64
 	maxProbeForCurrentRound          int64
 	maxFetchAndProbeForCurrentRound  int64
+
+	spill spillStats
 }
 
 func setMaxValue(addr *int64, currentValue int64) {
@@ -200,6 +209,17 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.FormatInt(e.probeCollision, 10))
 		}
+		buf.WriteString("}")
+	}
+	if e.spill.round > 0 {
+		buf.WriteString(", spill:{round:")
+		buf.WriteString(strconv.Itoa(e.spill.round))
+		buf.WriteString(", partition num per round:")
+		buf.WriteString(fmt.Sprintf("%v", e.spill.partitionNumPerRound))
+		buf.WriteString(", total spill bytes per round:")
+		buf.WriteString(fmt.Sprintf("%v", e.spill.totalSpillBytesPerRound))
+		buf.WriteString(", build spill bytes per round:")
+		buf.WriteString(fmt.Sprintf("%v", e.spill.spillBuildBytesPerRound))
 		buf.WriteString("}")
 	}
 	return buf.String()

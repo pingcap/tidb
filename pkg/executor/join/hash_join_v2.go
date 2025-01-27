@@ -809,8 +809,12 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 	var start time.Time
+	var probeSpillBytes []int64
 	if e.HashJoinCtxV2.stats != nil {
 		start = time.Now()
+		if e.spillHelper.isSpillTriggered() {
+			probeSpillBytes = make([]int64, e.Concurrency)
+		}
 	}
 
 	if e.inRestore {
@@ -830,22 +834,30 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 			} else {
 				e.ProbeWorkers[workerID].runJoinWorker(start)
 			}
+
+			if e.spillHelper.isSpillTriggered() {
+				probeSpillBytes[workerID] = e.spillHelper.getProbeSpillBytesInOneWorker(int(workerID))
+			}
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
+
+	e.waiterWg.RunWithRecover(
+		func() {
+			e.waitJoinWorkers(start)
+			if e.HashJoinCtxV2.stats != nil && e.spillHelper.isSpillTriggered() {
+				for _, bytes := range probeSpillBytes {
+					e.spillHelper.totalProbeSpillBytes += bytes
+				}
+			}
+		}, nil)
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
-	start := time.Now()
 	e.startProbeFetcher(ctx)
 
 	// Join workers directly read data from disk when we are in restore status
 	// and read data from fetcher otherwise.
 	e.startProbeJoinWorkers(ctx)
-
-	e.waiterWg.RunWithRecover(
-		func() {
-			e.waitJoinWorkers(start)
-		}, nil)
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -1047,15 +1059,37 @@ func (e *HashJoinV2Exec) reset() {
 	}
 }
 
+func (e *HashJoinV2Exec) collectSpillStats() {
+	if e.stats == nil {
+		return
+	}
+
+	e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, e.spillHelper.totalBuildSpillBytes+e.spillHelper.totalProbeSpillBytes)
+	e.stats.spill.spillBuildBytesPerRound = append(e.stats.spill.spillBuildBytesPerRound, e.spillHelper.totalBuildSpillBytes)
+
+	partitionNum := 0
+	for _, isSpilled := range e.spillHelper.spilledPartitions {
+		if isSpilled {
+			partitionNum++
+		}
+	}
+	e.stats.spill.partitionNumPerRound = append(e.stats.spill.partitionNumPerRound, partitionNum)
+	e.spillHelper.resetStats()
+}
+
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
+	lastRound := 0
 	defer func() {
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 		}
 		close(e.joinResultCh)
+
+		if e.stats != nil {
+			e.stats.spill.round = lastRound
+		}
 	}()
 
-	lastRound := 0
 	for {
 		if e.finished.Load() {
 			return
@@ -1067,6 +1101,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
+		e.collectSpillStats()
 		e.reset()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
