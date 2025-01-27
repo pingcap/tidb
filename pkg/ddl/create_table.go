@@ -911,6 +911,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionEngineAttribute:
+			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
