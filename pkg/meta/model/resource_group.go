@@ -54,7 +54,7 @@ type ResourceGroupSettings struct {
 	Background       *ResourceGroupBackgroundSettings `json:"background"`
 }
 
-// GetBurstLimit returns the burst limit of the resource group.
+// GetBurstLimitAdjusted returns the burst limit of the resource group after adjustment.
 func (p *ResourceGroupSettings) GetBurstLimitAdjusted() int64 {
 	if p.RURate == unlimitedRURate {
 		return -1
