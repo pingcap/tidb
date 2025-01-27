@@ -855,4 +855,5 @@ func decodeTableID(key Key) int64 {
 	return 0
 }
 
+// MemBufferSnapshot is a snapshot of MemBuffer, used for in-txn read.
 type MemBufferSnapshot = tikv.MemBufferSnapshot
