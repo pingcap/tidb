@@ -71,7 +71,40 @@ type tableNameExtractor struct {
 	err      error
 }
 
+<<<<<<< HEAD:domain/plan_replayer_dump.go
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+=======
+func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, error) {
+	r := make(map[tableNamePair]struct{})
+	for tablePair := range tne.names {
+		if tablePair.IsView {
+			r[tablePair] = struct{}{}
+			continue
+		}
+		// remove cte in table names
+		_, ok := tne.cteNames[tablePair.TableName]
+		if !ok {
+			r[tablePair] = struct{}{}
+		}
+		// if the table has a foreign key, we need to add the referenced table to the list
+		tblInfo, err := tne.is.TableByName(tne.ctx, model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
+		if err != nil {
+			return nil, err
+		}
+		for _, fk := range tblInfo.Meta().ForeignKeys {
+			key := tableNamePair{
+				DBName:    fk.RefSchema.L,
+				TableName: fk.RefTable.L,
+				IsView:    false,
+			}
+			r[key] = struct{}{}
+		}
+	}
+	return r, nil
+}
+
+func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+>>>>>>> 1eb0c8c1235 (domain: fix play replay dump cannot save the table in the foreign key's reference (#56512)):pkg/domain/plan_replayer_dump.go
 	if _, ok := in.(*ast.TableName); ok {
 		return in, true
 	}
@@ -543,6 +576,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
+<<<<<<< HEAD:domain/plan_replayer_dump.go
 	r := make(map[tableNamePair]struct{})
 	for tablePair := range tableExtractor.names {
 		if tablePair.IsView {
@@ -556,6 +590,9 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 	return r, nil
+=======
+	return tableExtractor.getTablesAndViews()
+>>>>>>> 1eb0c8c1235 (domain: fix play replay dump cannot save the table in the foreign key's reference (#56512)):pkg/domain/plan_replayer_dump.go
 }
 
 func getStatsForTable(do *Domain, tblJSONStats map[int64]*handle.JSONTable, pair tableNamePair) (*handle.JSONTable, error) {
