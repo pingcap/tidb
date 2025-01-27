@@ -37,7 +37,7 @@ var (
 	tidbGlue        = gluetidb.New()
 	envLogToTermKey = "BR_LOG_TO_TERM"
 
-	filterOutSysAndMemTables = []string{
+	filterOutSysAndMemKeepAuthAndBind = []string{
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
