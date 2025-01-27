@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -39,7 +39,7 @@ import (
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}

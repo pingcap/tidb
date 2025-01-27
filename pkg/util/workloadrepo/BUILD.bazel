@@ -25,6 +25,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/util",

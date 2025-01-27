@@ -129,8 +129,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 
 	dbMap, exist := sr.DbMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 
 	rawMetaKey.UpdateField(meta.DBkey(dbMap.DbID))
@@ -148,8 +147,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 
 	dbMap, exist := sr.DbMap[dbInfo.ID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
 	}
 
 	dbInfo.ID = dbMap.DbID
@@ -208,14 +206,12 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		// table filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
 
 	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
@@ -241,14 +237,12 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	// construct or find the id map.
 	dbReplace, exist = sr.DbMap[dbID]
 	if !exist {
-		// db filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
 
 	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		// table filtered out
-		return nil, nil
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
 	}
 
 	// update table ID and partition ID.

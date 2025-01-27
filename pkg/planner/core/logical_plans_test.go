@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -507,7 +507,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -1127,7 +1127,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1827,8 +1827,8 @@ func TestWindowFunction(t *testing.T) {
 	defer s.plannerSuite.Close()
 
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "1",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "1",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -1849,8 +1849,8 @@ func TestWindowParallelFunction(t *testing.T) {
 	s.plannerSuite = createPlannerSuite()
 	defer s.plannerSuite.Close()
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "4",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "4",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -2067,7 +2067,7 @@ func TestSkylinePruning(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *logicalop.DataSource
 		var byItems []*util.ByItems

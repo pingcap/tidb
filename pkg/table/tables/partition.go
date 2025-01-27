@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1756,7 +1756,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
-		variable.EnableCheckConstraint.Load() {
+		vardef.EnableCheckConstraint.Load() {
 		err = checkConstraintForExchangePartition(ctx, r, pid, exchangePartitionInfo.ExchangePartitionTableID)
 		if err != nil {
 			return nil, errors.WithStack(err)
@@ -1894,7 +1894,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
-		variable.EnableCheckConstraint.Load() {
+		vardef.EnableCheckConstraint.Load() {
 		err = checkConstraintForExchangePartition(ctx, newData, to, exchangePartitionInfo.ExchangePartitionTableID)
 		if err != nil {
 			return errors.WithStack(err)

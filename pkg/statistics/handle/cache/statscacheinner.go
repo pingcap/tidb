@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
@@ -34,7 +34,7 @@ import (
 func NewStatsCache() (*StatsCache, error) {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
-		capacity := variable.StatsCacheMemQuota.Load()
+		capacity := vardef.StatsCacheMemQuota.Load()
 		stats, err := lfu.NewLFU(capacity)
 		if err != nil {
 			return nil, err

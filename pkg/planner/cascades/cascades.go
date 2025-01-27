@@ -29,8 +29,8 @@ type Optimizer struct {
 	ctx   cascadesctx.Context
 }
 
-// NewCascades return a new cascades obj for logical alternative searching.
-func NewCascades(lp corebase.LogicalPlan) (*Optimizer, error) {
+// NewOptimizer return a new cascades obj for logical alternative searching.
+func NewOptimizer(lp corebase.LogicalPlan) (*Optimizer, error) {
 	cas := &Optimizer{
 		logic: lp,
 		ctx:   NewContext(lp.SCtx()),
