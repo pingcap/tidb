@@ -16,6 +16,7 @@ package txn
 
 import (
 	"context"
+	tikverr "github.com/tikv/client-go/v2/error"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -150,7 +151,7 @@ func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]b
 }
 
 func (m *memBuffer) GetSnapshot() kv.MemBufferSnapshot {
-	return m.MemBuffer.GetSnapshot()
+	return &snapshot{m.MemBuffer.GetSnapshot()}
 }
 
 type tikvGetter struct {
@@ -197,6 +198,40 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	}
 
 	return v
+}
+
+//type MemBufferSnapshot interface {
+//	kv.MemBufferSnapshot
+//	Len() int
+//	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+//}
+
+type snapshot struct {
+	kv.MemBufferSnapshot
+}
+
+func (s *snapshot) Get(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := s.MemBufferSnapshot.Get(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+func (s *snapshot) Len() int {
+	return 0
+}
+
+func (s *snapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	ret := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		val, err := s.Get(ctx, key)
+		if tikverr.IsErrNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, derr.ToTiDBErr(err)
+		}
+		ret[string(key)] = val
+	}
+	return ret, nil
 }
 
 func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {

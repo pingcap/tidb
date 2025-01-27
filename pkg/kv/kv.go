@@ -198,7 +198,7 @@ type MemBuffer interface {
 	// BatchGet gets values from the memory buffer.
 	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 
-	// Snapshot returns a snapshot of the MemBuffer.
+	// GetSnapshot returns a snapshot of the MemBuffer, used in in-txn read.
 	GetSnapshot() MemBufferSnapshot
 }
 
