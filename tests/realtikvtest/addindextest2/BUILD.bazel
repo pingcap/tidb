@@ -14,7 +14,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",

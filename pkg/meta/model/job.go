@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ActionType is the type for DDL action.
@@ -111,6 +112,7 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionModifyEngineAttribute  ActionType = 74
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -183,6 +185,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionModifyEngineAttribute:         "modify engine attribute",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -366,7 +369,7 @@ type Job struct {
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
+	TraceInfo *tracing.TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
 	BDRRole string `json:"bdr_role"`
@@ -1165,13 +1168,24 @@ func (h *HistoryInfo) Clean() {
 
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
-	Name     string `json:"name"`
-	Offset   int    `json:"offset"` // seconds east of UTC
+	Name   string `json:"name"`
+	Offset int    `json:"offset"` // seconds east of UTC
+	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
+	mu       sync.RWMutex
 }
 
 // GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	tz.mu.RLock()
+	if tz.location != nil {
+		tz.mu.RUnlock()
+		return tz.location, nil
+	}
+	tz.mu.RUnlock()
+
+	tz.mu.Lock()
+	defer tz.mu.Unlock()
 	if tz.location != nil {
 		return tz.location, nil
 	}
@@ -1183,14 +1197,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
-}
-
-// TraceInfo is the information for trace.
-type TraceInfo struct {
-	// ConnectionID is the id of the connection
-	ConnectionID uint64 `json:"connection_id"`
-	// SessionAlias is the alias of session
-	SessionAlias string `json:"session_alias"`
 }
 
 // JobW is a wrapper of model.Job, it contains the job and the binary representation

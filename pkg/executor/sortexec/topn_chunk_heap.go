@@ -185,5 +185,5 @@ func TestKillSignalInTopN(t *testing.T, topnExec *TopNExec) {
 
 	topnExec.Ctx().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	err = topnExec.spillHelper.spillHeap(chkHeap)
-	require.Error(t, err, exeerrors.ErrQueryInterrupted.GenWithStackByArgs())
+	require.ErrorIs(t, err, exeerrors.ErrQueryInterrupted)
 }

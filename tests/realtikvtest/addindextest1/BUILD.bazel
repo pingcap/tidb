@@ -15,7 +15,7 @@ go_test(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/errno",
         "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",

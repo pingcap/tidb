@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -46,7 +46,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatterScope))
 		}
 	}
-	if scatterScope != variable.ScatterOff {
+	if scatterScope != vardef.ScatterOff {
 		WaitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
 	}
 }
@@ -61,7 +61,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	} else {
 		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatterScope))
 	}
-	if scatterScope != variable.ScatterOff {
+	if scatterScope != vardef.ScatterOff {
 		WaitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
 	}
 }
@@ -70,9 +70,9 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 // If it is `ScatterGlobal`, the scatter configured at global level uniformly use -1 as `tID`.
 func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
 	switch scope {
-	case variable.ScatterTable:
+	case vardef.ScatterTable:
 		return true, tableID
-	case variable.ScatterGlobal:
+	case vardef.ScatterGlobal:
 		return true, -1
 	default:
 		return false, tableID

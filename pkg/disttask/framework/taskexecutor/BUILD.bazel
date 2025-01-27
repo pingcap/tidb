@@ -21,7 +21,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/lightning/log",
         "//pkg/metrics",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cgroup",
@@ -50,7 +50,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
