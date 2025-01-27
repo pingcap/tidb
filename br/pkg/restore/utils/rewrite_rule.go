@@ -116,11 +116,13 @@ func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		// for default cf, we need to check if shift start ts is greater than start ts
-		if r.ShiftStartTs > r.StartTs {
-			return errors.Errorf("shift start ts %d is greater than start ts %d", r.ShiftStartTs, r.StartTs)
-		}
 		ignoreBeforeTs = r.ShiftStartTs
+		if ignoreBeforeTs > r.StartTs {
+			// for default cf, shift start ts could less than start ts
+			// this could happen when large kv txn happen after small kv txn.
+			// use the start ts to filter out irrelevant data for default cf is more safe
+			ignoreBeforeTs = r.StartTs
+		}
 	case strings.Contains(cfName, WriteCFName):
 		ignoreBeforeTs = r.StartTs
 	default:
