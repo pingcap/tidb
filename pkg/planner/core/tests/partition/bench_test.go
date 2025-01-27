@@ -170,7 +170,7 @@ func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan s
 	hits := 0
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rs, err = se.Execute(ctx, query)
 		if err != nil {
 			b.Fatal(err)
@@ -523,7 +523,7 @@ func getListPartitionDef(expr string, useColumns bool) string {
 	for partID, i := range ranges {
 		vals := 256
 		partVals := make([]string, 0, vals)
-		for j := 0; j < vals; j++ {
+		for j := range vals {
 			partVals = append(partVals, strconv.Itoa(i+j))
 		}
 		if expr != "" && i == 1 {
@@ -867,7 +867,7 @@ func runPreparedPointSelect(b *testing.B, se sessiontypes.Session, query string,
 	params := expression.Args2Expressions4Test(args...)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
@@ -1449,7 +1449,7 @@ func BenchmarkHashPartitionMultiPointSelect(b *testing.B) {
 	alloc := chunk.NewAllocator()
 	mustExecute(se, `create table t (id int primary key, dt datetime) partition by hash(id) partitions 64`)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rs, err := se.Execute(ctx, "select * from t where id = 2330")
 		if err != nil {
 			b.Fatal(err)

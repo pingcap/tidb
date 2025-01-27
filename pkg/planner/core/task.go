@@ -840,7 +840,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 	}
 	needProj := p.schema.Len() != root.GetPlan().Schema().Len()
 	if !needProj {
-		for i := 0; i < p.schema.Len(); i++ {
+		for i := range p.schema.Len() {
 			if !p.schema.Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
 				needProj = true
 				break

@@ -127,7 +127,7 @@ func (extractHelper) extractColBinaryOpScalarFunc(
 	var constIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, isConst := args[i].(*expression.Constant)
 		if isConst {
 			constIdx = i
@@ -158,7 +158,7 @@ func (helper *extractHelper) tryToFindInnerColAndIdx(args []expression.Expressio
 		return nil, -1
 	}
 	var scalar *expression.ScalarFunction
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isScalar bool
 		scalar, isScalar = args[i].(*expression.ScalarFunction)
 		if isScalar {
@@ -193,7 +193,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	var colIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var isCol bool
 		col, isCol = args[i].(*expression.Column)
 		if isCol {

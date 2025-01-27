@@ -149,7 +149,7 @@ func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expressi
 	colLen := make([]int, 0, len(partCols))
 	retCols := make([]*expression.Column, 0, len(partCols))
 	filled := make(map[int64]struct{})
-	for i := 0; i < len(partCols); i++ {
+	for i := range len(partCols) {
 		// Deal with same columns.
 		if _, done := filled[partCols[i].UniqueID]; !done {
 			partCols[i].Index = len(filled)
@@ -241,7 +241,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.GetFlen()
 						if maxUsedPartitions < numPartitions {
-							for i := 0; i < maxUsedPartitions; i++ {
+							for i := range maxUsedPartitions {
 								used = append(used, i)
 							}
 							continue
@@ -412,7 +412,7 @@ func (s *PartitionProcessor) findUsedPartitions(ctx base.PlanContext,
 	}
 	slices.Sort(used)
 	ret := used[:0]
-	for i := 0; i < len(used); i++ {
+	for i := range len(used) {
 		if i == 0 || used[i] != used[i-1] {
 			ret = append(ret, used[i])
 		}
@@ -431,7 +431,7 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 		}
 	}
 	ret := make([]int, 0, len(or))
-	for i := 0; i < len(or); i++ {
+	for i := range len(or) {
 		for pos := or[i].start; pos < or[i].end; pos++ {
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
 				continue
@@ -839,7 +839,7 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	}
 	if _, ok := used[FullRange]; ok {
 		ret := make([]int, 0, len(pi.Definitions))
-		for i := 0; i < len(pi.Definitions); i++ {
+		for i := range len(pi.Definitions) {
 			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
 				continue
 			}
@@ -1370,7 +1370,7 @@ func partitionRangeForCNFExpr(sctx base.PlanContext, exprs []expression.Expressi
 	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
 		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}
-	for i := 0; i < len(exprs); i++ {
+	for i := range len(exprs) {
 		result = partitionRangeForExpr(sctx, exprs[i], pruner, result)
 	}
 	return result

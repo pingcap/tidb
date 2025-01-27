@@ -321,7 +321,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		}
 		// combine identical aggregate functions
 		combined := false
-		for j := 0; j < i; j++ {
+		for j := range i {
 			oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
 			if oldFunc.Equal(b.ctx.GetExprCtx().GetEvalCtx(), newFunc) {
 				aggIndexMap[i] = aggIndexMap[j]
@@ -885,7 +885,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
-	for i := 0; i < commonLen; i++ {
+	for i := range commonLen {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
@@ -1568,7 +1568,7 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 		return
 	}
 	isBinary := resultTp.GetCharset() == charset.CharsetBin
-	for i := 0; i < len(cols); i++ {
+	for i := range len(cols) {
 		childTp := cols[i].GetType(b.ctx.GetExprCtx().GetEvalCtx())
 		childTpCharLen := 1
 		if isBinary {
@@ -1691,7 +1691,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	oldLen := setOprPlan.Schema().Len()
 
-	for i := 0; i < len(setOpr.SelectList.Selects); i++ {
+	for range len(setOpr.SelectList.Selects) {
 		b.handleHelper.popMap()
 	}
 	b.handleHelper.pushMap(nil)
@@ -1741,7 +1741,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	joinPlan.SetSchema(leftPlan.Schema())
 	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))
 	copy(joinPlan.OutputNames(), leftPlan.OutputNames())
-	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+	for j := range len(rightPlan.Schema().Columns) {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
 		eqCond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
@@ -1977,7 +1977,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// select distinct a+1 from t order by a+1;                       ✔
 	// select distinct a+1 from t order by a+2;                       ✗
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
-	for j := 0; j < length; j++ {
+	for j := range length {
 		// both check original expression & as name
 		if expr.Equal(evalCtx, originalExprs[j]) || expr.Equal(evalCtx, p.Schema().Columns[j]) {
 			return nil
@@ -1993,7 +1993,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	cols := expression.ExtractColumns(expr)
 CheckReferenced:
 	for _, col := range cols {
-		for j := 0; j < length; j++ {
+		for j := range length {
 			if col.Equal(evalCtx, originalExprs[j]) || col.Equal(evalCtx, p.Schema().Columns[j]) {
 				continue CheckReferenced
 			}
@@ -5407,7 +5407,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Fix the column offsets.
 	pruned := 0
-	for i := 0; i < tblLen; i++ {
+	for i := range tblLen {
 		if _, ok := fixedPos[i]; !ok {
 			nonPrunedSet.Clear(uint(i + originalStart))
 			pruned++
@@ -6434,7 +6434,7 @@ func restoreByItemText(item *ast.ByItem) string {
 
 func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
 	minLen := min(len(lItems), len(rItems))
-	for i := 0; i < minLen; i++ {
+	for i := range minLen {
 		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
 		if res != 0 {
 			return res < 0
