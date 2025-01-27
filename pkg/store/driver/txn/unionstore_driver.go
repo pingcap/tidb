@@ -16,7 +16,6 @@ package txn
 
 import (
 	"context"
-	tikverr "github.com/tikv/client-go/v2/error"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -200,12 +199,6 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	return v
 }
 
-//type MemBufferSnapshot interface {
-//	kv.MemBufferSnapshot
-//	Len() int
-//	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
-//}
-
 type snapshot struct {
 	kv.MemBufferSnapshot
 }
@@ -223,11 +216,11 @@ func (s *snapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]by
 	ret := make(map[string][]byte, len(keys))
 	for _, key := range keys {
 		val, err := s.Get(ctx, key)
-		if tikverr.IsErrNotFound(err) {
+		if kv.IsErrNotFound(err) {
 			continue
 		}
 		if err != nil {
-			return nil, derr.ToTiDBErr(err)
+			return nil, err
 		}
 		ret[string(key)] = val
 	}
