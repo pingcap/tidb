@@ -244,6 +244,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		}, maxDBID); err != nil {
 			return errors.Trace(err)
 		}
+		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", len(tbls)))
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tblInfo := range tbls {
