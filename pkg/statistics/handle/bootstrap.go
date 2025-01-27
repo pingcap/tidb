@@ -78,20 +78,21 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		// But in the future, we maybe will create some records for _row_id, see:
 		// https://github.com/pingcap/tidb/issues/51098
 		snapshot := row.GetUint64(4)
-		lastAnalyzeVersion, lastStatsFullUpdateVersion := snapshot, snapshot
+		lastAnalyzeVersion, lastStatsHistUpdateVersion := snapshot, snapshot
 		if !row.IsNull(5) {
 			lastAnalyzeVersion = max(lastAnalyzeVersion, row.GetUint64(5))
-			lastStatsFullUpdateVersion = max(lastStatsFullUpdateVersion, row.GetUint64(5))
+			// To deal with old cluster before v8.5.2 and some edge cases, we need this update.
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(5))
 		}
 		if !row.IsNull(6) {
-			lastStatsFullUpdateVersion = max(lastStatsFullUpdateVersion, row.GetUint64(6))
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(6))
 		}
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
 			LastAnalyzeVersion:    lastAnalyzeVersion,
-			LastStatsHistVersion:  lastStatsFullUpdateVersion,
+			LastStatsHistVersion:  lastStatsHistUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -162,6 +163,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		if statsVer != statistics.Version0 {
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 		}
+		// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
 		table.LastStatsHistVersion = max(table.LastStatsHistVersion, row.GetUint64(4))
 	}
 	if table != nil {
@@ -240,6 +242,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
+			// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
 			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
 
 			table.SetIdx(idxInfo.ID, index)
@@ -277,6 +280,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
+			// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
 			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
 		}
 	}

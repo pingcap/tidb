@@ -316,6 +316,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
 		table.LastStatsHistVersion = max(table.LastStatsHistVersion, histVer)
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -407,6 +408,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
 		table.LastStatsHistVersion = max(table.LastStatsHistVersion, histVer)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:

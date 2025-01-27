@@ -187,7 +187,8 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, last_analyze_version=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, last_analyze_version=%?, last_stats_histograms_version=%? where table_id=%?",
+			version,
 			version,
 			version,
 			tableID,
@@ -228,11 +229,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				zap.Int64("count", cnt))
 		}
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_analyze_version=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_analyze_version=%?, last_stats_histograms_version=%? where table_id=%?",
 			version,
 			modifyCnt,
 			cnt,
 			results.Snapshot,
+			version,
 			version,
 			tableID,
 		); err != nil {
@@ -347,7 +349,7 @@ func SaveStatsToStorage(
 		)
 		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and last_stats_histograms_version = %? where table_id = %?", version, tableID, version)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}
 	if err != nil {
 		return 0, err
