@@ -133,7 +133,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/net v0.34.0
-	golang.org/x/oauth2 v0.24.0
+	golang.org/x/oauth2 v0.25.0
 	golang.org/x/sync v0.10.0
 	golang.org/x/sys v0.29.0
 	golang.org/x/term v0.28.0
@@ -311,7 +311,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
 	google.golang.org/protobuf v1.36.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect

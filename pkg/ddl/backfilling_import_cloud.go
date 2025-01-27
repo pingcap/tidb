@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -40,6 +41,7 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 	backendCtx    ingest.BackendCtx
+	backend       *local.Backend
 }
 
 func newCloudImportExecutor(
@@ -60,10 +62,16 @@ func newCloudImportExecutor(
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build()
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
 		return err
 	}
+	m.backend = bd
 	m.backendCtx = bCtx
 	return nil
 }
@@ -159,5 +167,6 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	if m.backendCtx != nil {
 		m.backendCtx.Close()
 	}
+	m.backend.Close()
 	return nil
 }

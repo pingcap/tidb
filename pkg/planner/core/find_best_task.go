@@ -782,11 +782,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
 			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
-			return 1, false // left wins and has statistics
+			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
 			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
-			return -1, false // right wins and has statistics
+			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
@@ -794,11 +794,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
-				return 1, true // left wins and does NOT have statistics
+				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
 			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
 				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
-				return -1, true // right wins and does NOT have statistics
+				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
 	}
@@ -810,11 +810,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
-				return -1, false
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
-				return 1, false
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
 	}
@@ -827,18 +827,18 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	if !comparable1 {
-		return 0, false
+		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if !comparable2 {
-		return 0, false
+		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1, false
+		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1, false
+		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
-	return 0, false
+	return 0, false // No winner (0). Do not return the pseudo result
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {

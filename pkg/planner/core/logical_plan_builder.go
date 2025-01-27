@@ -5391,8 +5391,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Mark the columns in handle.
 	fixedPos := make(map[int]int, len(deletableCols))
-	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		col := colPosInfo.HandleCols.GetCol(i)
+	for col := range colPosInfo.HandleCols.IterColumns() {
 		fixedPos[col.Index-originalStart] = 0
 	}
 
@@ -5430,8 +5429,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Fix the column offset of handle columns.
 	newStart := originalStart - prePrunedCount
-	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		col := colPosInfo.HandleCols.GetCol(i)
+	for col := range colPosInfo.HandleCols.IterColumns() {
 		// If the row id the hidden extra row id, it can not be in deletableCols.
 		// It will be appended to the end of the row.
 		// So we use newStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
@@ -6108,8 +6106,8 @@ func (p *Delete) cleanTblID2HandleMap(
 		for i := len(cols) - 1; i >= 0; i-- {
 			hCols := cols[i]
 			var hasMatch bool
-			for j := 0; j < hCols.NumCols(); j++ {
-				if p.matchingDeletingTable(names, outputNames[hCols.GetCol(j).Index]) {
+			for col := range hCols.IterColumns() {
+				if p.matchingDeletingTable(names, outputNames[col.Index]) {
 					hasMatch = true
 					break
 				}

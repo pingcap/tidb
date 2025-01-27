@@ -54,6 +54,8 @@ var (
 	EnableStatsOwner func() error = nil
 	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
 	DisableStatsOwner func() error = nil
+	// ChangePDMetadataCircuitBreakerErrorRateThresholdPct changes the error rate threshold of the PD metadata circuit breaker.
+	ChangePDMetadataCircuitBreakerErrorRateThresholdPct func(uint32) = nil
 )
 
 // Hooks functions for Cluster Resource Control.
