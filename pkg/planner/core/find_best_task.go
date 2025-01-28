@@ -747,7 +747,7 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+func compareCandidates(sctx base.PlanContext, statisticTable *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
@@ -756,13 +756,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// If one index has statistics and the other does not, choose the index with statistics if it
 	// has the same or higher number of equal/IN predicates.
-	lhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && lhs.path.Index != nil {
-		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
+	lhsHasStatistics := false
+	if lhs.path.Index != nil {
+		lhsHasStatistics = statisticTable != nil && statisticTable.Indices[lhs.path.Index.ID] != nil
 	}
-	rhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && rhs.path.Index != nil {
-		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
+	rhsHasStatistics := false
+	if rhs.path.Index != nil {
+		rhsHasStatistics = statisticTable != nil && statisticTable.Indices[rhs.path.Index.ID] != nil
 	}
 	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
 		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
