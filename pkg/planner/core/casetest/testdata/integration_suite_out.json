@@ -356,8 +356,7 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-<<<<<<< HEAD
-          "HashJoin_19 3.00 65286.81 root  CARTESIAN left outer semi join",
+          "HashJoin_19 3.00 65297.11 root  CARTESIAN left outer semi join",
           "├─Selection_35(Build) 0.80 31149.25 root  eq(2, Column#18)",
           "│ └─StreamAgg_42 1.00 31099.35 root  funcs:count(1)->Column#18",
           "│   └─TableReader_54 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_53",
@@ -372,16 +371,6 @@
           "  │         └─TableFullScan_31 1.00 464046.40 mpp[tiflash] table:t2 keep order:false",
           "  └─IndexReader_25(Probe) 3.00 53.37 root  index:IndexFullScan_24",
           "    └─IndexFullScan_24 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
-=======
-          "HashJoin_17 3.00 32781.07 root  CARTESIAN left outer semi join",
-          "├─Selection_22(Build) 0.80 31149.25 root  eq(2, Column#18)",
-          "│ └─StreamAgg_29 1.00 31099.35 root  funcs:count(1)->Column#18",
-          "│   └─TableReader_41 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_40",
-          "│     └─ExchangeSender_40 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
-          "│       └─TableFullScan_39 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
-          "└─IndexReader_21(Probe) 3.00 53.37 root  index:IndexFullScan_20",
-          "  └─IndexFullScan_20 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
         ]
       },
       {

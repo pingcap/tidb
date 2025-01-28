@@ -121,7 +121,6 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	return p.planCostVer2, nil
 }
 
-<<<<<<< HEAD
 // getPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
@@ -147,105 +146,21 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-	rows := getCardinality(p, option.CostFlag)
+	rows := max(1.0, getCardinality(p, option.CostFlag))
 	var rowSize float64
 	if p.StoreType == kv.TiKV {
 		rowSize = getAvgRowSize(p.StatsInfo(), p.tblCols) // consider all columns if TiKV
-=======
-const (
-	// MinNumRows provides a minimum to avoid underestimation. As selectivity estimation approaches
-	// zero, all plan choices result in a low cost - making it difficult to differentiate plan choices.
-	// A low value of 1.0 here is used for most (non probe acceses) to reduce this risk.
-	MinNumRows = 1.0
-	// MinRowSize provides a minimum column length to ensure that any adjustment or calculation
-	// in costing does not go below this value. 2.0 is used as a reasonable lowest column length.
-	MinRowSize = 2.0
-	// TiFlashStartupRowPenalty applies a startup penalty for TiFlash scan to encourage TiKV usage for small scans
-	TiFlashStartupRowPenalty = 10000
-	// MaxPenaltyRowCount applies a penalty for high risk scans
-	MaxPenaltyRowCount = 1000
-)
-
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
-	}
-
-	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns) // consider all index columns
-	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
-
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
-	p.PlanCostInit = true
-	return p.PlanCostVer2, nil
-}
-
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
-	}
-
-	var columns []*expression.Column
-	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
-		columns = p.tblCols
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
 	} else { // TiFlash
 		rowSize = getAvgRowSize(p.StatsInfo(), p.schema.Columns)
 	}
-<<<<<<< HEAD
 	rowSize = math.Max(rowSize, 2.0)
-=======
-	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), columns)
-	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
-	if !p.isChildOfIndexLookUp {
-		rows = max(MinNumRows, rows)
-		rowSize = max(rowSize, MinRowSize)
-	}
-
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
 	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 	if p.StoreType == kv.TiFlash {
-<<<<<<< HEAD
 		p.planCostVer2 = sumCostVer2(p.planCostVer2, scanCostVer2(option, 10000, rowSize, scanFactor))
-=======
-		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else {
-		// Apply cost penalty for full scans that carry high risk of underestimation
-		sessionVars := p.SCtx().GetSessionVars()
-		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
-		tblColHists := p.tblColHists
-
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
-		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
-		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
-		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
-		var unsignedIntHandle bool
-		if p.Table.PKIsHandle {
-			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		hasFullRangeScan := !p.isChildOfIndexLookUp && ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-
-		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
-		if shouldApplyPenalty {
-			newRowCount := math.Min(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
-		}
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
 	}
 
 	p.planCostInit = true
@@ -286,7 +201,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -446,13 +361,8 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-<<<<<<< HEAD
-	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
-=======
-	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
-	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
+	rows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -499,18 +409,14 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-<<<<<<< HEAD
-	rows := getCardinality(p.children[0], option.CostFlag)
-=======
-	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
+	rows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
 	n := max(1, float64(p.Count+p.Offset))
 	if n > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
 		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
 		n = min(n, rows)
 	}
-	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
+	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -559,15 +465,9 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 		return p.planCostVer2, nil
 	}
 
-<<<<<<< HEAD
-	inputRows := getCardinality(p.children[0], option.CostFlag)
-	outputRows := getCardinality(p, option.CostFlag)
-	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
-=======
-	inputRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
-	outputRows := max(MinNumRows, getCardinality(p, option.CostFlag))
-	outputRowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
+	inputRows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	outputRows := max(1.0, getCardinality(p, option.CostFlag))
+	outputRowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
@@ -597,13 +497,8 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-<<<<<<< HEAD
-	leftRows := getCardinality(p.children[0], option.CostFlag)
-	rightRows := getCardinality(p.children[1], option.CostFlag)
-=======
-	leftRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
-	rightRows := max(MinNumRows, getCardinality(p.Children()[1], option.CostFlag))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
+	leftRows := max(1.0, getCardinality(p.Children()[0], option.CostFlag))
+	rightRows := max(1.0, getCardinality(p.Children()[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := sumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
@@ -641,9 +536,9 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		build, probe = probe, build
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
-	buildRows := max(MinNumRows, getCardinality(build, option.CostFlag))
+	buildRows := max(1.0, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
-	buildRowSize := max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
+	buildRowSize := max(2.0, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
 	tidbConcurrency := float64(p.Concurrency)
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)

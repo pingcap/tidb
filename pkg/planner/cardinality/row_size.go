@@ -110,13 +110,8 @@ func GetAvgRowSizeListInDisk(coll *statistics.HistColl, cols []*expression.Colum
 			size += AvgColSizeListInDisk(colHist, coll.RealtimeCount)
 		}
 	}
-<<<<<<< HEAD
-	// Add 8 byte for each column's size record. See `ListInDisk` for details.
-	return size + float64(8*len(cols))
-=======
 	// Add 8 byte for each column's size record. See `DataInDiskByRows` for details.
 	return max(0, size+float64(8*len(cols)))
->>>>>>> 8fde2d6fa2b (planner: set min for high risk plan steps (#56631))
 }
 
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
