@@ -709,14 +709,9 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
-<<<<<<< HEAD
-// The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
-=======
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
 func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
->>>>>>> aabd3ac7c45 (planner: Ensure index without stats survives for skyling pruning (#58729))
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
@@ -754,8 +749,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-<<<<<<< HEAD
-=======
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
@@ -788,7 +781,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
->>>>>>> aabd3ac7c45 (planner: Ensure index without stats survives for skyling pruning (#58729))
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
@@ -1232,16 +1224,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-<<<<<<< HEAD
-			result := compareCandidates(ds.SCtx(), prop, candidates[i], currentCandidate)
-=======
 			var result int
 			currentMissingStats := false
 			result, currentMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
 			if currentMissingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
->>>>>>> aabd3ac7c45 (planner: Ensure index without stats survives for skyling pruning (#58729))
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
