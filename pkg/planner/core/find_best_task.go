@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -747,7 +748,7 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, statisticTable *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+func compareCandidates(sctx context.PlanContext, statisticTable *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
@@ -1196,7 +1197,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate)
+			result := compareCandidates(ds.SCtx(), ds.statisticTable, prop, candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
