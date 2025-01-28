@@ -200,7 +200,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 		return p.planCostVer2, nil
 	}
 
-	rows := getCardinality(p.tablePlan, option.CostFlag)
+	rows := max(1.0, getCardinality(p.tablePlan, option.CostFlag))
 	rowSize := max(2.0, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
