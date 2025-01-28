@@ -99,6 +99,10 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.CurrentUser:          {},
 	ast.Curtime:              {},
 	ast.Database:             {},
+<<<<<<< HEAD
+=======
+	ast.Encrypt:              {},
+>>>>>>> 77866d1f46 (expression: Update generated column function restrictions (#58308))
 	ast.FoundRows:            {},
 	ast.GetLock:              {},
 	ast.GetVar:               {},
