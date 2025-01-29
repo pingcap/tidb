@@ -17,7 +17,11 @@ package cardinality
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx"
+=======
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+>>>>>>> f2c278ddc6b (Planner: Do not allow cardinality to go below 1 (#55242))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -308,7 +312,17 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		}
 		rowCount += cnt
 	}
-	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
+	allowZeroEst := fixcontrol.GetBoolWithDefault(
+		sctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	)
+	if allowZeroEst {
+		rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
+	} else {
+		// Don't allow the final result to go below 1 row
+		rowCount = mathutil.Clamp(rowCount, 1, float64(realtimeRowCount))
+	}
 	return rowCount, nil
 }
 
