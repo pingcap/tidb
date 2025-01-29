@@ -781,6 +781,30 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
+	lhsHasStatistics := statsTbl.Pseudo
+	if statsTbl != nil && lhs.path.Index != nil {
+		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
+	}
+	rhsHasStatistics := statsTbl.Pseudo
+	if statsTbl != nil && rhs.path.Index != nil {
+		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
+	}
+	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
+		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
+		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
+		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
+		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
+		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
+			return 1
+		}
+		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
+			return -1
+		}
+	}
+
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
