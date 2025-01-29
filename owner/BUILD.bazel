@@ -32,6 +32,10 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
+<<<<<<< HEAD:owner/BUILD.bazel
+=======
+    shard_count = 7,
+>>>>>>> 0720ea86949 (ddl: watch the ddl ownerkey with the createRevision (#55692)):pkg/owner/BUILD.bazel
     deps = [
         "//ddl",
         "//infoschema",
