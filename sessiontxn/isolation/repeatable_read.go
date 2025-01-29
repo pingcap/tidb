@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -244,6 +245,11 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
+		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
+			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
+		}
+
 		// Always update forUpdateTS by getting a new timestamp from PD.
 		// If we use the conflict commitTS as the new forUpdateTS and async commit
 		// is used, the commitTS of this transaction may exceed the max timestamp
