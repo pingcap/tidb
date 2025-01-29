@@ -164,9 +164,9 @@ func (b tikvBatchBufferSnapshotGetter) Get(ctx context.Context, k []byte) ([]byt
 
 func (b tikvBatchBufferSnapshotGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	bufferValues := make(map[string][]byte, len(keys))
-	if b.tidbMiddleCache != nil {
+	if b.tidbSnapshotBuffer != nil {
 		for _, key := range keys {
-			val, err := b.tidbMiddleCache.Get(ctx, key)
+			val, err := b.tidbSnapshotBuffer.Get(ctx, key)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					continue
