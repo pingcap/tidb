@@ -113,6 +113,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
+	ActionAlterTableMode         ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
