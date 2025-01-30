@@ -42,9 +42,11 @@ func TestToProto(t *testing.T) {
 	tr := NewTableReplace(tblName, newTblID)
 	tr.PartitionMap[oldPID1] = newPID1
 	tr.PartitionMap[oldPID2] = newPID2
+	tr.Filtered = true
 
 	dr := NewDBReplace(dbName, newDBID)
 	dr.TableMap[oldTblID] = tr
+	dr.Filtered = true
 
 	drs := make(map[UpstreamID]*DBReplace)
 	drs[oldDBID] = dr
@@ -59,12 +61,14 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, dbMap[0].Name, dbName)
 	require.Equal(t, dbMap[0].IdMap.UpstreamId, oldDBID)
 	require.Equal(t, dbMap[0].IdMap.DownstreamId, newDBID)
+	require.Equal(t, dbMap[0].Filtered, true)
 
 	tableMap := dbMap[0].Tables
 	require.Equal(t, len(tableMap), 1)
 	require.Equal(t, tableMap[0].Name, tblName)
 	require.Equal(t, tableMap[0].IdMap.UpstreamId, oldTblID)
 	require.Equal(t, tableMap[0].IdMap.DownstreamId, newTblID)
+	require.Equal(t, tableMap[0].Filtered, true)
 
 	partitionMap := tableMap[0].Partitions
 	require.Equal(t, len(partitionMap), 2)
@@ -337,6 +341,60 @@ func TestMergeBaseDBReplace(t *testing.T) {
 					TableMap: map[UpstreamID]*TableReplace{
 						30: {TableID: 3030, Name: "table3"},
 					},
+				},
+			},
+		},
+		{
+			name: "merge with filtered fields",
+			existing: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: -1,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID: -10,
+							Name:    "table1",
+							PartitionMap: map[UpstreamID]DownstreamID{
+								100: -100,
+							},
+							Filtered: true,
+						},
+					},
+					Filtered: true,
+				},
+			},
+			base: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID: 1010,
+							Name:    "table1",
+							PartitionMap: map[UpstreamID]DownstreamID{
+								100: 1100,
+							},
+							Filtered: true,
+						},
+					},
+					Filtered: true,
+				},
+			},
+			expected: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID: 1010,
+							Name:    "table1",
+							PartitionMap: map[UpstreamID]DownstreamID{
+								100: 1100,
+							},
+							Filtered: true,
+						},
+					},
+					Filtered: true,
 				},
 			},
 		},
@@ -1020,146 +1078,4 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
 	require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
-}
-
-func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
-	increaseID = 100
-	var (
-		dbID      int64  = 40
-		dbName           = "test_db"
-		tableID   int64  = 100
-		tableName        = "test_table"
-		pt1ID     int64  = 101
-		pt2ID     int64  = 102
-		pt1Name          = "pt1"
-		pt2Name          = "pt2"
-		ts        uint64 = 400036290571534337
-	)
-
-	// Create a TableMappingManager with empty maps
-	tc := NewTableMappingManager(nil, mockGenGlobalID)
-
-	// Test DB key
-	dbKey := meta.DBkey(dbID)
-	dbInfo := &model.DBInfo{
-		ID:   dbID,
-		Name: ast.NewCIStr(dbName),
-	}
-	dbValue, err := json.Marshal(dbInfo)
-	require.NoError(t, err)
-
-	// Encode DB key in a transaction
-	txnDBKey := encodeTxnMetaKey([]byte("DBs"), dbKey, ts)
-	entry := &kv.Entry{
-		Key:   txnDBKey,
-		Value: dbValue,
-	}
-
-	// Test parsing DB key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(entry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap, dbID)
-	require.Equal(t, dbName, tc.DbReplaceMap[dbID].Name)
-	require.Equal(t, increaseID, tc.DbReplaceMap[dbID].DbID)
-
-	// Test table key
-	pi := model.PartitionInfo{
-		Enable:      true,
-		Definitions: make([]model.PartitionDefinition, 0),
-	}
-	pi.Definitions = append(pi.Definitions,
-		model.PartitionDefinition{
-			ID:   pt1ID,
-			Name: ast.NewCIStr(pt1Name),
-		},
-		model.PartitionDefinition{
-			ID:   pt2ID,
-			Name: ast.NewCIStr(pt2Name),
-		},
-	)
-
-	tableInfo := &model.TableInfo{
-		ID:        tableID,
-		Name:      ast.NewCIStr(tableName),
-		Partition: &pi,
-	}
-	tableValue, err := json.Marshal(tableInfo)
-	require.NoError(t, err)
-
-	// Encode table key in a transaction
-	txnTableKey := encodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
-	tableEntry := &kv.Entry{
-		Key:   txnTableKey,
-		Value: tableValue,
-	}
-
-	// Test parsing table key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap[dbID].TableMap, tableID)
-	require.Equal(t, tableName, tc.DbReplaceMap[dbID].TableMap[tableID].Name)
-
-	// Verify partition IDs are mapped
-	require.Contains(t, tc.DbReplaceMap[dbID].TableMap[tableID].PartitionMap, pt1ID)
-	require.Contains(t, tc.DbReplaceMap[dbID].TableMap[tableID].PartitionMap, pt2ID)
-
-	// Test non-meta key
-	nonMetaEntry := &kv.Entry{
-		Key:   []byte("not_a_meta_key"),
-		Value: []byte("some_value"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, DefaultCF)
-	require.NoError(t, err)
-
-	// Test auto increment key with different IDs
-	autoIncrDBID := int64(50)
-	autoIncrTableID := int64(200)
-	autoIncrKey := encodeTxnMetaKey(meta.DBkey(autoIncrDBID), meta.AutoIncrementIDKey(autoIncrTableID), ts)
-	autoIncrEntry := &kv.Entry{
-		Key:   autoIncrKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap, autoIncrDBID)
-	require.Contains(t, tc.DbReplaceMap[autoIncrDBID].TableMap, autoIncrTableID)
-
-	// Test auto table ID key with different IDs
-	autoTableDBID := int64(60)
-	autoTableTableID := int64(300)
-	autoTableKey := encodeTxnMetaKey(meta.DBkey(autoTableDBID), meta.AutoTableIDKey(autoTableTableID), ts)
-	autoTableEntry := &kv.Entry{
-		Key:   autoTableKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap, autoTableDBID)
-	require.Contains(t, tc.DbReplaceMap[autoTableDBID].TableMap, autoTableTableID)
-
-	// Test sequence key with different IDs
-	seqDBID := int64(70)
-	seqTableID := int64(400)
-	seqKey := encodeTxnMetaKey(meta.DBkey(seqDBID), meta.SequenceKey(seqTableID), ts)
-	seqEntry := &kv.Entry{
-		Key:   seqKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap, seqDBID)
-	require.Contains(t, tc.DbReplaceMap[seqDBID].TableMap, seqTableID)
-
-	// Test auto random table ID key with different IDs
-	autoRandomDBID := int64(80)
-	autoRandomTableID := int64(500)
-	autoRandomKey := encodeTxnMetaKey(meta.DBkey(autoRandomDBID), meta.AutoRandomTableIDKey(autoRandomTableID), ts)
-	autoRandomEntry := &kv.Entry{
-		Key:   autoRandomKey,
-		Value: []byte("1"),
-	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, DefaultCF)
-	require.NoError(t, err)
-	require.Contains(t, tc.DbReplaceMap, autoRandomDBID)
-	require.Contains(t, tc.DbReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
 }

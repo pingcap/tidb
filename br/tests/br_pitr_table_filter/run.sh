@@ -20,7 +20,23 @@ CUR=$(cd `dirname $0`; pwd)
 TASK_NAME="pitr_table_filter"
 . run_services
 
-# helper methods
+# Helper function to verify no unexpected tables exist - add at the top level for all tests to use
+verify_no_unexpected_tables() {
+    local expected_count=$1
+    local schema=$2
+    
+    # Get count of all tables and views, using awk to extract just the number
+    actual_count=$(run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$schema' AND table_type IN ('BASE TABLE', 'VIEW')" | awk 'NR==2 {print $2}')
+    
+    if [ "$actual_count" -ne "$expected_count" ]; then
+        echo "Found wrong number of tables in schema $schema. Expected: $expected_count, got: $actual_count"
+        # Print the actual tables to help debugging
+        run_sql "SELECT table_name FROM information_schema.tables WHERE table_schema='$schema' AND table_type IN ('BASE TABLE', 'VIEW')"
+        return 1
+    fi
+    return 0
+}
+
 create_tables_with_values() {
     local prefix=$1    # table name prefix
     local count=$2     # number of tables to create
@@ -119,8 +135,15 @@ test_basic_filter() {
     verify_tables "LOG_BACKUP_UPPER" 3 true
     verify_tables "full_backup" 3 true
     verify_tables "other" 3 true
-    verify_tables "table_to_drop" 3 false
     verify_other_db_tables true
+    verify_no_unexpected_tables 12 "$DB" || {
+        echo "Found unexpected number of tables in case 1"
+        exit 1
+    }
+    verify_no_unexpected_tables 1 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other in case 1"
+        exit 1
+    }
 
     echo "case 2 with log restore table filter"
     run_sql "drop schema $DB;"
@@ -129,10 +152,14 @@ test_basic_filter() {
 
     verify_tables "log_backup_lower" 3 true
     verify_tables "LOG_BACKUP_UPPER" 3 true
-    verify_tables "full_backup" 3 false
-    verify_tables "other" 3 false
-    verify_tables "table_to_drop" 3 false
-    verify_other_db_tables false
+    verify_no_unexpected_tables 6 "$DB" || {
+        echo "Found unexpected number of tables in case 2"
+        exit 1
+    }
+    verify_no_unexpected_tables 0 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other in case 2"
+        exit 1
+    }
 
     echo "case 3 with multiple filters"
     run_sql "drop schema $DB;"
@@ -141,44 +168,58 @@ test_basic_filter() {
     verify_tables "log_backup_lower" 3 true
     verify_tables "LOG_BACKUP_UPPER" 3 true
     verify_tables "full_backup" 3 true
-    verify_tables "other" 3 false
-    verify_tables "table_to_drop" 3 false
-    verify_other_db_tables false
+    verify_no_unexpected_tables 9 "$DB" || {
+        echo "Found unexpected number of tables in case 3"
+        exit 1
+    }
+    verify_no_unexpected_tables 0 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other in case 3"
+        exit 1
+    }
 
     echo "case 4 with negative filters"
     run_sql "drop schema $DB;"
-    # have to use a match all filter before using negative filters
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "*.*" -f "!mysql.*" -f "!$DB.log*"
 
-    verify_tables "log_backup_lower" 3 false
-    verify_tables "LOG_BACKUP_UPPER" 3 false
     verify_tables "full_backup" 3 true
     verify_tables "other" 3 true
-    verify_tables "table_to_drop" 3 false
     verify_other_db_tables true
+    verify_no_unexpected_tables 6 "$DB" || {
+        echo "Found unexpected number of tables in case 4"
+        exit 1
+    }
+    verify_no_unexpected_tables 1 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other in case 4"
+        exit 1
+    }
 
     echo "case 5 restore dropped table"
     run_sql "drop schema $DB;"
     run_sql "drop schema ${DB}_other;"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*"
 
-    verify_tables "log_backup_lower" 3 false
-    verify_tables "LOG_BACKUP_UPPER" 3 false
-    verify_tables "full_backup" 3 false
-    verify_tables "other" 3 false
-    verify_tables "table_to_drop" 3 false
-    verify_other_db_tables false
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables in case 5"
+        exit 1
+    }
+    verify_no_unexpected_tables 0 "${DB}_other" || {
+        echo "Found tables in ${DB}_other but none should exist in case 5"
+        exit 1
+    }
 
     echo "case 6 restore only other database"
     run_sql "drop schema $DB;"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_other.*"
 
-    verify_tables "log_backup_lower" 3 false
-    verify_tables "LOG_BACKUP_UPPER" 3 false
-    verify_tables "full_backup" 3 false
-    verify_tables "other" 3 false
-    verify_tables "table_to_drop" 3 false
     verify_other_db_tables true
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found tables in $DB but none should exist"
+        exit 1
+    }
+    verify_no_unexpected_tables 1 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other"
+        exit 1
+    }
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
@@ -209,28 +250,45 @@ test_with_full_backup_filter() {
     # restart services to clean up the cluster
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    echo "case 1 sanity check, zero filter"
+    echo "case 7 sanity check, zero filter"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 
-    verify_tables "log_backup" 3 false
-    verify_tables "full_backup" 3 false
     verify_other_db_tables true
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables in case 7"
+        exit 1
+    }
+    verify_no_unexpected_tables 1 "${DB}_other" || {
+        echo "Found unexpected number of tables in other database in case 7"
+        exit 1
+    }
 
-    echo "case 2 with log backup table same filter"
+    echo "case 8 with log backup table same filter"
     run_sql "drop schema ${DB}_other;"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_other.*"
 
-    verify_tables "log_backup" 3 false
-    verify_tables "full_backup" 3 false
     verify_other_db_tables true
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables in case 8"
+        exit 1
+    }
+    verify_no_unexpected_tables 1 "${DB}_other" || {
+        echo "Found unexpected number of tables in other database in case 8"
+        exit 1
+    }
 
-    echo "case 3 with log backup filter include nothing"
+    echo "case 9 with log backup filter include nothing"
     run_sql "drop schema ${DB}_other;"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "${DB}_nothing.*"
 
-    verify_tables "log_backup" 3 false
-    verify_tables "full_backup" 3 false
-    verify_other_db_tables false
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables in case 9"
+        exit 1
+    }
+    verify_no_unexpected_tables 0 "${DB}_other" || {
+        echo "Found unexpected number of tables in other database in case 9"
+        exit 1
+    }
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
@@ -276,32 +334,25 @@ test_table_rename() {
 
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
 
-    verify_tables "log_backup" 3 false
     verify_tables "log_backup_renamed" 3 true
     verify_tables "log_backup_renamed_in" 3 true
-
-    verify_tables "full_backup" 3 false
-    # has been renamed, should not visible anymore
-    verify_tables "renamed_in" 3 false
-    # also renamed out of filter range, should not be visible for both
-    verify_tables "renamed_out" 3 false
-    verify_tables "log_renamed_out" 3 false
-
     # verify multi-renamed table
     run_sql "select count(*) = 1 from $DB.log_multi_rename where c = 42" || {
         echo "Table multi_rename doesn't have expected value after multiple renames"
         exit 1
     }
-
-    # Verify table doesn't exist in intermediate databases
-    if run_sql "select * from ${DB}_other1.multi_rename" 2>/dev/null; then
-        echo "Table exists in ${DB}_other1 but should not"
+    verify_no_unexpected_tables 7 "$DB" || {
+        echo "Found unexpected number of tables after rename test"
         exit 1
-    fi
-    if run_sql "select * from ${DB}_other2.multi_rename" 2>/dev/null; then
-        echo "Table exists in ${DB}_other2 but should not"
+    }
+    verify_no_unexpected_tables 0 "${DB}_other1" || {
+        echo "Found unexpected number of tables in other1 database in case 7"
         exit 1
-    fi
+    }
+    verify_no_unexpected_tables 0 "${DB}_other2" || {
+        echo "Found unexpected number of tables in other2 database in case 7"
+        exit 1
+    }
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
@@ -373,12 +424,10 @@ test_with_checkpoint() {
     verify_tables "log_backup" 3 true
     verify_tables "log_backup_renamed_in" 3 true
 
-    verify_tables "full_backup" 3 false
-    # has been renamed, should not visible anymore
-    verify_tables "renamed_in" 3 false
-    # also renamed out of filter range, should not be visible for both
-    verify_tables "renamed_out" 3 false
-    verify_tables "log_renamed_out" 3 false
+    verify_no_unexpected_tables 6 "$DB" || {
+        echo "Found unexpected number of tables after checkpoint test"
+        exit 1
+    }
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
@@ -469,6 +518,16 @@ test_exchange_partition() {
         exit 1
     fi
 
+    # Verify table counts in both databases
+    verify_no_unexpected_tables 2 "$DB" || {
+        echo "Found unexpected number of tables in exchange partition test"
+        exit 1
+    }
+    verify_no_unexpected_tables 0 "${DB}_other" || {
+        echo "Found unexpected number of tables in ${DB}_other"
+        exit 1
+    }
+
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
 
@@ -523,12 +582,235 @@ test_system_tables() {
     echo "system tables test passed"
 }
 
-# run all test cases
-test_basic_filter
-test_with_full_backup_filter
-test_table_rename
-test_with_checkpoint
-test_exchange_partition
-test_system_tables
+test_foreign_keys() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "start testing filters with foreign key relationships"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+
+    run_sql "CREATE TABLE $DB.departments (
+        dept_id INT PRIMARY KEY,
+        dept_name VARCHAR(50)
+    );"
+    run_sql "CREATE TABLE $DB.employees (
+        emp_id INT PRIMARY KEY,
+        emp_name VARCHAR(50),
+        dept_id INT,
+        salary INT,
+        FOREIGN KEY (dept_id) REFERENCES departments(dept_id)
+    );"
+    
+    run_sql "INSERT INTO $DB.departments VALUES (1, 'Engineering'), (2, 'Sales');"
+    run_sql "INSERT INTO $DB.employees VALUES (1, 'John', 1, 5000), (2, 'Jane', 2, 6000);"
+
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    echo "make changes and wait for log backup"
+    
+    run_sql "INSERT INTO $DB.departments VALUES (3, 'Marketing');"
+    run_sql "INSERT INTO $DB.employees VALUES (3, 'Bob', 3, 5500);"
+
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "Restore only employees table - should succeed but queries should fail"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.employees"
+
+    # verify the employees table exists
+    run_sql "SELECT COUNT(*) FROM $DB.employees" || {
+        echo "Failed to select from employees table"
+        exit 1
+    }
+
+    # verify queries involving foreign key fail
+    query_fail=0
+    run_sql "SELECT e.emp_name, d.dept_name FROM $DB.employees e JOIN $DB.departments d ON e.dept_id = d.dept_id" || query_fail=1
+    if [ $query_fail -ne 1 ]; then
+        echo "Expected JOIN query to fail due to missing departments table"
+        exit 1
+    fi
+
+    # verify insert succeeds even without the referenced table
+    run_sql "INSERT INTO $DB.employees VALUES (4, 'Alice', 1, 6000)" || {
+        echo "Failed to insert into employees table"
+        exit 1
+    }
+    # Verify the insert worked
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.employees WHERE emp_id = 4" || {
+        echo "Newly inserted row not found in employees table"
+        exit 1
+    }
+
+    run_sql "drop schema $DB;"
+
+    echo "Test case 2: Restore both tables - should succeed"
+    # restore both tables - should succeed
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.employees" -f "$DB.departments"
+
+    # verify foreign key relationship works
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.employees e JOIN $DB.departments d ON e.dept_id = d.dept_id" || {
+        echo "Foreign key relationship not working after restore"
+        exit 1
+    }
+
+    # cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+
+    echo "schema objects test passed"
+}
+
+test_index_filter() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "start testing indexes with filter"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+
+    # create tables with different index types
+    run_sql "CREATE TABLE $DB.btree_index_table (
+        id INT PRIMARY KEY,
+        name VARCHAR(50),
+        age INT,
+        INDEX idx_name_age(name, age) USING BTREE
+    );"
+
+    run_sql "CREATE TABLE $DB.hash_index_table (
+        id INT,
+        value INT,
+        PRIMARY KEY(id) USING HASH,
+        INDEX idx_value(value) USING HASH
+    );"
+
+    run_sql "CREATE TABLE $DB.multi_index_table (
+        id INT PRIMARY KEY,
+        data JSON,
+        INDEX idx_multi((CAST(data->'$.tags' AS CHAR(64) ARRAY)))
+    );"
+
+    run_sql "INSERT INTO $DB.btree_index_table VALUES (1, 'Alice', 25), (2, 'Bob', 30);"
+    run_sql "INSERT INTO $DB.hash_index_table VALUES (1, 100), (2, 200);"
+    run_sql "INSERT INTO $DB.multi_index_table VALUES 
+        (1, '{\"tags\": [\"tag1\", \"tag2\"]}'),
+        (2, '{\"tags\": [\"tag3\", \"tag4\"]}');"
+
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    run_sql "INSERT INTO $DB.btree_index_table VALUES (3, 'Charlie', 35);"
+    run_sql "INSERT INTO $DB.hash_index_table VALUES (3, 300);"
+    run_sql "INSERT INTO $DB.multi_index_table VALUES (3, '{\"tags\": [\"tag5\", \"tag6\"]}');"
+    
+    # add new indexes after backup
+    run_sql "ALTER TABLE $DB.btree_index_table ADD INDEX idx_age(age);"
+    run_sql "ALTER TABLE $DB.hash_index_table ADD UNIQUE INDEX uniq_value(value);"
+
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    # Test case 1: Restore btree index table
+    echo "Testing restoration of btree index table"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.btree*"
+
+    # verify data and indexes
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.btree_index_table" || {
+        echo "btree_index_table doesn't have expected row count"
+        exit 1
+    }
+
+    # verify index structure exists
+    run_sql "SHOW INDEX FROM $DB.btree_index_table WHERE Key_name = 'idx_name_age'" || {
+        echo "idx_name_age index not found in btree_index_table"
+        exit 1
+    }
+    run_sql "SHOW INDEX FROM $DB.btree_index_table WHERE Key_name = 'idx_age'" || {
+        echo "idx_age index not found in btree_index_table"
+        exit 1
+    }
+
+    # verify indexes are being used in queries
+    run_sql "EXPLAIN SELECT * FROM $DB.btree_index_table WHERE name = 'Alice' AND age = 25" || {
+        echo "Failed to use idx_name_age index on btree_index_table"
+        exit 1
+    }
+    run_sql "EXPLAIN SELECT * FROM $DB.btree_index_table WHERE age = 25" || {
+        echo "Failed to use idx_age index on btree_index_table"
+        exit 1
+    }
+
+    # other tables should not exist
+    if run_sql "SELECT * FROM $DB.hash_index_table" 2>/dev/null; then
+        echo "hash_index_table exists but should not with btree* filter"
+        exit 1
+    fi
+
+    run_sql "drop schema $DB;"
+
+    # Test case 2: Restore all tables with indexes
+    echo "Testing restoration of all tables with indexes"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
+
+    # verify all tables exist with correct data
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.btree_index_table" || {
+        echo "btree_index_table doesn't have expected row count"
+        exit 1
+    }
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.hash_index_table" || {
+        echo "hash_index_table doesn't have expected row count"
+        exit 1
+    }
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.multi_index_table" || {
+        echo "multi_index_table doesn't have expected row count"
+        exit 1
+    }
+
+    # verify index structures exist
+    echo "Verifying index structures..."
+    run_sql "SHOW INDEX FROM $DB.btree_index_table" || {
+        echo "Failed to show indexes from btree_index_table"
+        exit 1
+    }
+    run_sql "SHOW INDEX FROM $DB.hash_index_table" || {
+        echo "Failed to show indexes from hash_index_table"
+        exit 1
+    }
+    run_sql "SHOW INDEX FROM $DB.multi_index_table" || {
+        echo "Failed to show indexes from multi_index_table"
+        exit 1
+    }
+
+    # verify indexes are being used in queries
+    echo "Verifying index usage in queries..."
+    run_sql "EXPLAIN SELECT * FROM $DB.btree_index_table WHERE name = 'Alice' AND age = 25" || {
+        echo "Failed to use idx_name_age index on btree_index_table"
+        exit 1
+    }
+    run_sql "EXPLAIN SELECT * FROM $DB.hash_index_table WHERE value = 100" || {
+        echo "Failed to use idx_value index on hash_index_table"
+        exit 1
+    }
+    run_sql "EXPLAIN SELECT * FROM $DB.multi_index_table WHERE JSON_CONTAINS(data->'$.tags', '\"tag1\"')" || {
+        echo "Failed to use idx_multi index on multi_index_table"
+        exit 1
+    }
+
+    # cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+
+    echo "Index filter test passed"
+}
+
+ run all test cases
+ test_basic_filter
+ test_with_full_backup_filter
+ test_table_rename
+ test_with_checkpoint
+ test_exchange_partition
+ test_system_tables
+ test_foreign_keys
+test_index_filter
 
 echo "br pitr table filter all tests passed"
