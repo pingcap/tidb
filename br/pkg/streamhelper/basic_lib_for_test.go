@@ -689,7 +689,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 	return nil
 }
 
-func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string, checkpoint uint64) error {
+func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string, checkpoint uint64) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -699,10 +699,10 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 			zap.Uint64("to", checkpoint),
 			zap.Stack("stack"))
 		// t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
-		return errors.New("checkpoint rolling back")
+		return 0, errors.New("checkpoint rolling back")
 	}
 	t.checkpoint = checkpoint
-	return nil
+	return checkpoint, nil
 }
 
 func (t *testEnv) mockPDConnectionError() {
