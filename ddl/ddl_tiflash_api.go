@@ -365,6 +365,18 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
 		}
 	}
+<<<<<<< HEAD
+=======
+
+	failpoint.Inject("OneTiFlashStoreDown", func() {
+		for storeID, store := range pollTiFlashContext.TiFlashStores {
+			store.Store.StateName = "Down"
+			pollTiFlashContext.TiFlashStores[storeID] = store
+			break
+		}
+	})
+	pollTiFlashContext.PollCounter++
+>>>>>>> c8bffd42c2 (DDL: Skip collecting TiFlash status when TiFlash is down (#40872))
 
 	// Start to process every table.
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
