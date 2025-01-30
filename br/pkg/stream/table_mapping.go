@@ -458,7 +458,8 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 				UpstreamId:   dbID,
 				DownstreamId: dr.DbID,
 			},
-			Tables: make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
+			Tables:   make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
+			Filtered: dr.Filtered,
 		}
 
 		for tblID, tr := range dr.TableMap {
@@ -469,6 +470,7 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 					DownstreamId: tr.TableID,
 				},
 				Partitions: make([]*backuppb.IDMap, 0, len(tr.PartitionMap)),
+				Filtered:   tr.Filtered,
 			}
 
 			for upID, downID := range tr.PartitionMap {
@@ -490,10 +492,12 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 
 	for _, db := range dbMaps {
 		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
+		dr.Filtered = db.Filtered
 		dbReplaces[db.IdMap.UpstreamId] = dr
 
 		for _, tbl := range db.Tables {
 			tr := NewTableReplace(tbl.Name, tbl.IdMap.DownstreamId)
+			tr.Filtered = tbl.Filtered
 			dr.TableMap[tbl.IdMap.UpstreamId] = tr
 			for _, p := range tbl.Partitions {
 				tr.PartitionMap[p.UpstreamId] = p.DownstreamId
