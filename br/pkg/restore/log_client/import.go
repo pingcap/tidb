@@ -35,9 +35,9 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
@@ -253,7 +253,7 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 			RangeLength: file.RangeLength,
 			IsDelete:    file.Type == backuppb.FileType_Delete,
 			StartTs: func() uint64 {
-				if file.Cf == stream.DefaultCF {
+				if file.Cf == consts.DefaultCF {
 					return shiftStartTS
 				}
 				return startTS
