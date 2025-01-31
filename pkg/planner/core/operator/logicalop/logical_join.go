@@ -1876,6 +1876,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	if len(conds) != 1 {
 		return nil
 	}
+
 	con, ok := conds[0].(*expression.Constant)
 	if !ok {
 		return nil
