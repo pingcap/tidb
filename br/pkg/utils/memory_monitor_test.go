@@ -98,13 +98,16 @@ func TestStartMemoryMonitor(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("creates dump directory if not exists", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
 		dumpDir := filepath.Join(dir, "new-dir")
 		cfg := MemoryMonitorConfig{
 			DumpDir:     dumpDir,
 			MemoryLimit: testMemoryLimit,
 		}
 
-		err := StartMemoryMonitor(context.Background(), cfg)
+		err := StartMemoryMonitor(ctx, cfg)
 		require.NoError(t, err)
 
 		stat, err := os.Stat(dumpDir)
@@ -113,6 +116,9 @@ func TestStartMemoryMonitor(t *testing.T) {
 	})
 
 	t.Run("uses temp dir as fallback", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
 		readOnlyDir := filepath.Join(dir, "readonly")
 		err := os.MkdirAll(readOnlyDir, readOnlyDirPerm)
 		require.NoError(t, err)
@@ -122,7 +128,7 @@ func TestStartMemoryMonitor(t *testing.T) {
 			MemoryLimit: testMemoryLimit,
 		}
 
-		err = StartMemoryMonitor(context.Background(), cfg)
+		err = StartMemoryMonitor(ctx, cfg)
 		require.NoError(t, err)
 	})
 
@@ -133,6 +139,8 @@ func TestStartMemoryMonitor(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
 		err := StartMemoryMonitor(ctx, cfg)
 		require.NoError(t, err)
 
@@ -158,7 +166,7 @@ func TestStartMemoryMonitor(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		t.Cleanup(cancel)
 
 		err := StartMemoryMonitor(ctx, cfg)
 		require.NoError(t, err)
