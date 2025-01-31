@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -995,6 +996,60 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 		return errors.Trace(err)
 	})
 	return errors.Trace(err)
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error, hintMaxDBID int64) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	idBatch := math.MaxInt64
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+	if hintMaxDBID == 0 {
+		concurrency = 1
+	} else {
+		idBatch = max(int(hintMaxDBID)/concurrency+1, 1)
+	}
+
+	mu := sync.Mutex{}
+	for i := 0; i < concurrency; i++ {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := DBkey(int64(i * idBatch))
+			endKey := DBkey(int64((i + 1) * idBatch))
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
 }
 
 // GetMetasByDBID return all meta information of a database.
