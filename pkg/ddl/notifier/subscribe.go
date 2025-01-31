@@ -268,15 +268,20 @@ func (n *DDLNotifier) processEventForHandler(
 	if (change.processedByFlag & (1 << handlerID)) != 0 {
 		return nil
 	}
+	newFlag := change.processedByFlag | (1 << handlerID)
 
-	if err = session.Begin(ctx); err != nil {
+	if err = session.BeginPessimistic(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err == nil {
-			err = errors.Trace(session.Commit(ctx))
-		} else {
+		if err != nil {
 			session.Rollback()
+			return
+		}
+
+		err = errors.Trace(session.Commit(ctx))
+		if err == nil {
+			change.processedByFlag = newFlag
 		}
 	}()
 
@@ -293,19 +298,14 @@ func (n *DDLNotifier) processEventForHandler(
 			zap.Duration("duration", time.Since(now)))
 	}
 
-	newFlag := change.processedByFlag | (1 << handlerID)
-	if err = n.store.UpdateProcessed(
+	return errors.Trace(n.store.UpdateProcessed(
 		ctx,
 		session,
 		change.ddlJobID,
 		change.subJobID,
+		change.processedByFlag,
 		newFlag,
-	); err != nil {
-		return errors.Trace(err)
-	}
-	change.processedByFlag = newFlag
-
-	return nil
+	))
 }
 
 // Stop stops the background loop.
