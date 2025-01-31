@@ -257,7 +257,7 @@ func Init(cmd *cobra.Command) (err error) {
 				return
 			}
 
-			if e := setupMemoryMonitoring(cmd.Context(), memtotal, memused); e != nil {
+			if e := setupMemoryMonitoring(GetDefaultContext(), memtotal, memused); e != nil {
 				// only log the error, don't fail initialization
 				log.Error("Failed to setup memory monitoring", zap.Error(e))
 			}
