@@ -710,15 +710,42 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 
 func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
+	// lhs/rhsCorrRatio represents the "risk" of the CountAfterAccess value - lower value means less risk that
+	// we do NOT know about actual correlation between indexed columns
 	if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
 		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
 		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 	}
-	if lhsCorrRatio < rhsCorrRatio {
-		return 1, lhsCorrRatio
+	// rhs has lower index selectivity and lower risk
+	if rhs.path.CountAfterAccess < lhs.path.CountAfterAccess && rhsCorrRatio < lhsCorrRatio {
+		return -1, lhsCorrRatio
 	}
+	// lhs has lower risk
+	if lhsCorrRatio < rhsCorrRatio {
+		// And lhs has lower index selectivity
+		if lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
+			return 1, lhsCorrRatio
+		}
+		// Add 10% of the difference between correlated and actual and compare
+		rhsAdjustCount := rhs.path.CountAfterAccess + ((rhs.path.CorrCountAfterAccess - rhs.path.CountAfterAccess) * 0.1)
+		if (lhs.path.CountAfterAccess < 10 || lhs.path.CountAfterAccess < (rhs.path.CountAfterAccess*10)) &&
+			lhs.path.CorrCountAfterAccess < rhsAdjustCount {
+			return 1, lhsCorrRatio
+		}
+	}
+	// rhs has lower risk
 	if rhsCorrRatio < lhsCorrRatio {
-		return -1, rhsCorrRatio
+		// And rhs has lower index selectivity
+		if rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
+			return -1, rhsCorrRatio
+		}
+		// Add 10% of the difference between correlated and actual and compare
+		lhsAdjustCount := lhs.path.CountAfterAccess + ((lhs.path.CorrCountAfterAccess - lhs.path.CountAfterAccess) * 0.1)
+		if (rhs.path.CountAfterAccess < 10 || rhs.path.CountAfterAccess < (lhs.path.CountAfterAccess*10)) &&
+			rhs.path.CorrCountAfterAccess < lhsAdjustCount {
+			return -1, rhsCorrRatio
+		}
 	}
 	return 0, 0
 }
@@ -819,23 +846,24 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// Below compares the two candidate paths on four dimensions:
+	// Below compares the two candidate paths on multiple dimensions:
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
 	// (4): it's a global index path or not.
+	// (5): whether it's correlation ration indicates that it has high risk in it's index scan estimate
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	if !comparable1 {
+	if !comparable1 && sum == 0 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if !comparable2 {
+	if !comparable2 && sum == 0 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && corrResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && corrResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result

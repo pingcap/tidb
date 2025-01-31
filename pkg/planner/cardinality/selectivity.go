@@ -546,8 +546,8 @@ type StatsNode struct {
 	// Selectivity indicates the Selectivity of this column/index.
 	Selectivity float64
 	// CorrSelectivity indicates the Selectivity of this column/index with correlated column.
-	// That is - it is the selectivity assuming the most filtering column only, and all other
-	// columns are uncorrelated.
+	// That is - it is the selectivity assuming the most filtering index column only, and all other
+	// columns are correlated with this column.
 	CorrSelectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
 	numCols int

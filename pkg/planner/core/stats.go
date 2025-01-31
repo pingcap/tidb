@@ -405,6 +405,9 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	path.CountAfterAccess, path.CorrCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	if path.CorrCountAfterAccess == 0 {
+		path.CorrCountAfterAccess = path.CountAfterAccess
+	}
 	return err
 }
 
