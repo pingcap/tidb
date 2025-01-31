@@ -717,12 +717,8 @@ func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
 		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 	}
-	// rhs has lower index selectivity and lower risk
-	if rhs.path.CountAfterAccess < lhs.path.CountAfterAccess && rhsCorrRatio < lhsCorrRatio {
-		return -1, lhsCorrRatio
-	}
 	// lhs has lower risk
-	if lhsCorrRatio < rhsCorrRatio {
+	if lhsCorrRatio < rhsCorrRatio && len(lhs.path.TableFilters) <= len(rhs.path.TableFilters) {
 		// And lhs has lower index selectivity
 		if lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
 			return 1, lhsCorrRatio
@@ -735,7 +731,7 @@ func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 		}
 	}
 	// rhs has lower risk
-	if rhsCorrRatio < lhsCorrRatio {
+	if rhsCorrRatio < lhsCorrRatio && len(rhs.path.TableFilters) <= len(lhs.path.TableFilters) {
 		// And rhs has lower index selectivity
 		if rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
 			return -1, rhsCorrRatio
