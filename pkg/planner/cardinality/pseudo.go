@@ -241,5 +241,7 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 	if rowCount > tableRowCount {
 		rowCount = tableRowCount
 	}
+	// Don't allow the final result to go below 1 row
+	rowCount = max(rowCount, 1)
 	return rowCount, nil
 }
