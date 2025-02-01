@@ -134,13 +134,14 @@ func takeSnapshot(ctx context.Context) error {
 		return errWorkloadNotStarted.GenWithStackByArgs()
 	}
 
-	if snapID, err := workerCtx.takeSnapshot(ctx); err != nil {
+	snapID, err := workerCtx.takeSnapshot(ctx)
+	if err != nil {
 		logutil.BgLogger().Info("workload repository manual snapshot failed", zap.String("owner", workerCtx.instanceID), zap.NamedError("err", err))
 		return errCouldNotStartSnapshot.GenWithStackByArgs()
-	} else {
-		logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
-		return nil
 	}
+
+	logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
+	return nil
 }
 
 func init() {
