@@ -658,10 +658,13 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future    oracle.Future
-	store     kv.Storage
-	txnScope  string
-	pipelined bool
+	future                          oracle.Future
+	store                           kv.Storage
+	txnScope                        string
+	pipelined                       bool
+	pipelinedFlushConcurrency       int
+	pipelinedResolveLockConcurrency int
+	pipelinedFlushSpeedRatio        float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -669,7 +672,15 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithDefaultPipelinedTxn())
+			return tf.store.Begin(
+				tikv.WithTxnScope(tf.txnScope),
+				tikv.WithStartTS(startTS),
+				tikv.WithPipelinedTxn(
+					tf.pipelinedFlushConcurrency,
+					tf.pipelinedResolveLockConcurrency,
+					tf.pipelinedFlushSpeedRatio,
+				),
+			)
 		}
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
@@ -679,7 +690,11 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	if tf.pipelined {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithDefaultPipelinedTxn())
+		return tf.store.Begin(
+			tikv.WithTxnScope(tf.txnScope),
+			tikv.WithPipelinedTxn(tf.pipelinedFlushConcurrency,
+				tf.pipelinedResolveLockConcurrency, tf.pipelinedFlushSpeedRatio),
+		)
 	}
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }
