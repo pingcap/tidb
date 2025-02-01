@@ -136,7 +136,7 @@ func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 	sess := _sessctx.(sessionctx.Context)
 
 	var snapID uint64
-	var err error = nil
+	var err error
 	for range snapshotRetries {
 		snapID, err = w.getSnapID(ctx)
 		if err != nil {

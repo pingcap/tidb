@@ -139,9 +139,8 @@ func takeSnapshot(ctx context.Context) error {
 		return errCouldNotStartSnapshot.GenWithStackByArgs()
 	} else {
 		logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
+		return nil
 	}
-
-	return nil
 }
 
 func init() {
