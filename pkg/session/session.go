@@ -936,9 +936,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
 			)
 			return kv.ErrAssertionFailed
-		} else {
-			s.sessionVars.LastCommitTS = s.txn.lastCommitTS
 		}
+		s.sessionVars.LastCommitTS = s.txn.lastCommitTS
 	}
 
 	// record the TTLInsertRows in the metric
