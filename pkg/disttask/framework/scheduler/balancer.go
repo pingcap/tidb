@@ -98,6 +98,9 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	if err != nil {
 		return err
 	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	}
 	if len(eligibleNodes) == 0 {
 		return errors.New("no eligible nodes to balance subtasks")
 	}
