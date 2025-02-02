@@ -832,6 +832,7 @@ type Explain struct {
 	baseSchemaProducer
 
 	TargetPlan       base.Plan
+	LogicalPlan      base.LogicalPlan
 	Format           string
 	Analyze          bool
 	ExecStmt         ast.StmtNode
@@ -903,6 +904,14 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatUnityPredication:
+		fieldNames = []string{"unity predication"}
+	case format == types.ExplainFormatUnityOffline_:
+		fieldNames = []string{"unity offline"}
+	case format == types.ExplainFormatUnityOffline:
+		fieldNames = []string{"unity offline"}
+	case format == types.ExplainFormatUnityOnline:
+		fieldNames = []string{"unity online"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -924,6 +933,13 @@ func (e *Explain) prepareSchema() error {
 func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
+	}
+
+	if e.Format == types.ExplainFormatUnityOffline_ {
+		if e.Analyze == false {
+			return errors.New("explain format unity plan must be used with analyze")
+		}
+
 	}
 
 	if e.Analyze && e.Format == types.ExplainFormatTrueCardCost {
@@ -1017,6 +1033,14 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatUnityOffline_:
+		e.Rows = append(e.Rows, []string{e.UnityOffline_()})
+	case types.ExplainFormatUnityOffline:
+		e.Rows = append(e.Rows, []string{e.UnityOffline()})
+	case types.ExplainFormatUnityOnline:
+		e.Rows = append(e.Rows, []string{e.UnityOnline()})
+	case types.ExplainFormatUnityPredication:
+		e.Rows = append(e.Rows, []string{e.UnityPredication()})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1183,10 +1207,11 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
+		EstCost:      estCost,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
