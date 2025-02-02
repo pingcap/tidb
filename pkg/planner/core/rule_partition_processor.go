@@ -1588,10 +1588,23 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
 			col, con = arg0, arg1
 		}
-	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == p.col.ID {
-		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
+	} else if arg1, ok := op.GetArgs()[1].(*expression.Column); ok && arg1.ID == p.col.ID {
+		if arg0, ok := op.GetArgs()[0].(*expression.Constant); ok {
 			ret.op = opposite(ret.op)
-			col, con = arg0, arg1
+			col, con = arg1, arg0
+		}
+	} else if sarg0, ok := op.GetArgs()[0].(*expression.ScalarFunction); ok && sarg0.FuncName.L == ast.Cast {
+		if arg0, ok := sarg0.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.col.ID {
+			if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
+				col, con = arg0, arg1
+			}
+		}
+	} else if sarg1, ok := op.GetArgs()[1].(*expression.ScalarFunction); ok && sarg1.FuncName.L == ast.Cast {
+		if arg1, ok := sarg1.GetArgs()[0].(*expression.Column); ok && arg1.ID == p.col.ID {
+			if arg0, ok := op.GetArgs()[0].(*expression.Constant); ok {
+				ret.op = opposite(ret.op)
+				col, con = arg1, arg0
+			}
 		}
 	}
 	if col == nil || con == nil {
@@ -1601,6 +1614,14 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
 	if p.partFn != nil {
+		// If arg0 or arg1 is ScalarFunction, just skip it.
+		// Maybe more complicated cases would be considered in the future.
+		_, ok1 := op.GetArgs()[0].(*expression.ScalarFunction)
+		_, ok2 := op.GetArgs()[1].(*expression.ScalarFunction)
+		if ok1 || ok2 {
+			return ret, false
+		}
+
 		// If the partition function is not monotone, only EQ condition can be pruning.
 		if p.monotonous == monotoneModeInvalid && ret.op != ast.EQ {
 			return ret, false
@@ -1621,11 +1642,37 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		// If the partition expression is col, use constExpr.
 		constExpr = con
 	}
-	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-	if err == nil && !isNull {
-		ret.c = c
-		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
-		return ret, true
+	evalType := constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).EvalType()
+	if evalType == types.ETInt {
+		c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err == nil && !isNull {
+			ret.c = c
+			ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
+			return ret, true
+		}
+	} else if evalType == types.ETReal {
+		f, isNull, err := constExpr.EvalReal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		c := int64(f)
+		if err == nil && !isNull {
+			ret.c = c
+			ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
+			return ret, true
+		}
+	} else if evalType == types.ETDecimal {
+		d, isNull, err := constExpr.EvalDecimal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return ret, false
+		}
+		f, err := d.ToFloat64()
+		if err != nil {
+			return ret, false
+		}
+		if err == nil && !isNull {
+			ret.c = int64(f)
+			ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
+			return ret, true
+		}
+	} else {
 	}
 	return ret, false
 }
