@@ -520,10 +520,11 @@ var TestReorgGoroutineRunning = make(chan struct{})
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+	ctx := jobCtx.stepCtx
 	failpoint.Inject("mockInfiniteReorgLogic", func() {
 		TestReorgGoroutineRunning <- struct{}{}
 		<-ctx.Done()
@@ -587,7 +588,7 @@ func (w *worker) updateCurrentElement(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
