@@ -35,7 +35,7 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 		return CPUUsage{}, errors.New("no cpu controller detected")
 	}
 
-	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "cpu,cpuacct")
+	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "cpu")
 	if err != nil {
 		return CPUUsage{}, err
 	}
