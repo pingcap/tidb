@@ -61,6 +61,7 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 }
 
 // AnalyzeResult is used to represent analyze result.
+// AnalyzeResult represents the analyze result of one column/index.
 type AnalyzeResult struct {
 	Hist    []*Histogram
 	Cms     []*CMSketch
@@ -84,6 +85,7 @@ type AnalyzeResults struct {
 	Err      error
 	ExtStats *ExtendedStatsColl
 	Job      *AnalyzeJob
+	// The analyze results of each column/index.
 	Ars      []*AnalyzeResult
 	TableID  AnalyzeTableID
 	Count    int64
