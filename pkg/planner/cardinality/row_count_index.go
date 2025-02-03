@@ -433,7 +433,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, corrsel float64, success bool, err error) {
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, corrSel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -528,21 +528,21 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
-	// corrsel is the selectivity of the most filtering column
-	corrsel = max(idxLowBound, singleColumnEstResults[0])
+	// corrSel is the selectivity of the most filtering column
+	corrSel = max(idxLowBound, singleColumnEstResults[0])
 	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
 	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
 	if l == 2 {
-		return max(minTwoCol, multTwoCol), corrsel, true, nil
+		return max(minTwoCol, multTwoCol), corrSel, true, nil
 	}
 	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
 	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
 	if l == 3 {
-		return max(minThreeCol, multThreeCol), corrsel, true, nil
+		return max(minThreeCol, multThreeCol), corrSel, true, nil
 	}
 	minFourCol := min(minThreeCol, singleColumnEstResults[3])
 	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
-	return max(minFourCol, multFourCol), corrsel, true, nil
+	return max(minFourCol, multFourCol), corrSel, true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

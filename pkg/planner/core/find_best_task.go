@@ -708,16 +708,6 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
-func compareEqualIn(lhs, rhs *candidatePath) int {
-	if lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount {
-		return 1
-	}
-	if rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount {
-		return -1
-	}
-	return 0
-}
-
 func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
 	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
@@ -728,32 +718,12 @@ func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 	}
 	// lhs has lower risk
-	if (lhsCorrRatio < rhsCorrRatio || (lhsCorrRatio > 1 && lhs.path.CorrCountAfterAccess < rhs.path.CountAfterAccess)) &&
-		len(lhs.path.TableFilters) <= len(rhs.path.TableFilters) {
-		// And lhs has lower index selectivity
-		if lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
-			return 1, lhsCorrRatio
-		}
-		// Add 10% of the difference between correlated and actual and compare
-		rhsAdjustCount := rhs.path.CountAfterAccess + ((rhs.path.CorrCountAfterAccess - rhs.path.CountAfterAccess) * 0.1)
-		if (lhs.path.CountAfterAccess < 10 || lhs.path.CountAfterAccess < (rhs.path.CountAfterAccess*10)) &&
-			lhs.path.CorrCountAfterAccess < rhsAdjustCount {
-			return 1, lhsCorrRatio
-		}
+	if lhsCorrRatio < rhsCorrRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
+		return 1, lhsCorrRatio
 	}
 	// rhs has lower risk
-	if (rhsCorrRatio < lhsCorrRatio || (rhsCorrRatio > 1 && rhs.path.CorrCountAfterAccess < lhs.path.CountAfterAccess)) &&
-		len(rhs.path.TableFilters) <= len(lhs.path.TableFilters) {
-		// And rhs has lower index selectivity
-		if rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
-			return -1, rhsCorrRatio
-		}
-		// Add 10% of the difference between correlated and actual and compare
-		lhsAdjustCount := lhs.path.CountAfterAccess + ((lhs.path.CorrCountAfterAccess - lhs.path.CountAfterAccess) * 0.1)
-		if (rhs.path.CountAfterAccess < 10 || rhs.path.CountAfterAccess < (lhs.path.CountAfterAccess*10)) &&
-			rhs.path.CorrCountAfterAccess < lhsAdjustCount {
-			return -1, rhsCorrRatio
-		}
+	if rhsCorrRatio < lhsCorrRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
+		return -1, rhsCorrRatio
 	}
 	return 0, 0
 }
@@ -802,42 +772,31 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	eqInResult := compareEqualIn(lhs, rhs)
-	corrResult := 0
-	// corrResult focuses on comparing competing indexes with statistics - potentially those index estimates may have an
-	// implied correlation. Thus - exclude if validity of statistics between lhs & rhs or if these are full scans
-	if lhsPseudo == rhsPseudo && !lhsFullScan && !rhsFullScan {
-		// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
-		corrResult, _ = compareCorrRatio(lhs, rhs)
-		if corrResult > 0 && accessResult < 0 {
-			corrResult = 0
-		} else if corrResult < 0 && accessResult > 0 {
-			corrResult = 0
-		}
-	}
-	sum := accessResult + scanResult + matchResult + globalResult + corrResult
+	// TODO: corrResult is not added to sum to limit change to existing logic. Further testing required.
+	corrResult, _ := compareCorrRatio(lhs, rhs)
+	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
-			lhs.path.EqOrInCondCount > 0 && eqInResult >= 0 {
+			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
-			rhs.path.EqOrInCondCount > 0 && eqInResult <= 0 {
+			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && eqInResult > 0 && globalResult >= 0 && sum >= 0 &&
+			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
-			if rhsPseudo && eqInResult < 0 && globalResult <= 0 && sum <= 0 &&
+			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
 				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
@@ -846,38 +805,39 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
-		lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+			// corrResult is included to ensure we don't preference to a higher risk plan given that
+			// this rule does not check the other criteria included below.
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
 	}
 
-	// Below compares the two candidate paths on multiple dimensions:
+	// Below compares the two candidate paths on four dimensions:
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
 	// (4): it's a global index path or not.
-	// (5): whether it's correlation ration indicates that it has high risk in it's index scan estimate
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	if !comparable1 && sum == 0 {
+	if !comparable1 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if !comparable2 && sum == 0 {
+	if !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && corrResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && corrResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
