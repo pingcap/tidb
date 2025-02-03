@@ -809,13 +809,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if lhsPseudo == rhsPseudo && !lhsFullScan && !rhsFullScan {
 		// corrResult returns the left vs right comparison as a boolean, but also the actual ratio - which will be used in future
 		corrResult, _ = compareCorrRatio(lhs, rhs)
-		if corrResult > 0 && len(lhs.indexCondsColMap) < len(rhs.indexCondsColMap) {
+		if corrResult > 0 && accessResult < 0 {
 			corrResult = 0
-		} else if corrResult < 0 && len(rhs.indexCondsColMap) < len(lhs.indexCondsColMap) {
+		} else if corrResult < 0 && accessResult > 0 {
 			corrResult = 0
 		}
 	}
-	sum := accessResult + scanResult + matchResult + globalResult + corrResult + eqInResult
+	sum := accessResult + scanResult + matchResult + globalResult + corrResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
@@ -874,10 +874,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if !comparable2 && sum == 0 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && corrResult >= 0 && eqInResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && corrResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && corrResult <= 0 && eqInResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && corrResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
