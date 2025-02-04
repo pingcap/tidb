@@ -25,7 +25,7 @@ const (
 
 	DistinctFactor = 0.8
 
-	// ToleranceFactor is an aribtrary value used in (some) floating point
+	// ToleranceFactor is an arbitrary value used in (some) floating point
 	// comparisons to account for precision errors
 	ToleranceFactor = 0.00001
 )
