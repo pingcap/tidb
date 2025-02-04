@@ -27,10 +27,11 @@ import (
 type DB struct {
 	se            glue.Session
 	preallocedIDs *prealloctableid.PreallocIDs
+	onlinePitr    bool
 }
 
 // NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
+func NewDB(g glue.Glue, store kv.Storage, policyMode string, onlinePitr bool) (*DB, bool, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -61,7 +62,8 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 		}
 	}
 	return &DB{
-		se: se,
+		se:         se,
+		onlinePitr: onlinePitr,
 	}, supportPolicy, nil
 }
 
@@ -281,7 +283,16 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
+// SetOnline sets whether this is an online restore
+func (db *DB) SetOnline(online bool) {
+	db.onlinePitr = online
+}
+
 func (db *DB) canReuseTableID(ti *model.TableInfo) bool {
+	// never reuse table IDs in online restore
+	if db.onlinePitr {
+		return false
+	}
 	if db.preallocedIDs == nil {
 		return false
 	}
@@ -299,6 +310,12 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 		idReusableTbls := map[string][]*model.TableInfo{}
 		idNonReusableTbls := map[string][]*model.TableInfo{}
 		for _, table := range tables {
+			// set table mode to restore state
+			if db.onlinePitr {
+				log.Info("######### creating table with restore mode")
+				table.Info.TableMode = model.TableModeRestore
+
+			}
 			if db.canReuseTableID(table.Info) {
 				idReusableTbls[table.DB.Name.L] = append(idReusableTbls[table.DB.Name.L], table.Info)
 			} else {
@@ -329,6 +346,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			}
 		}
 
+		// adjust existing tables only for incremental restore
 		for _, table := range tables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
 			if err != nil {
@@ -352,6 +370,12 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		}
 	}
 
+	// set table mode to restore state
+	if db.onlinePitr {
+		log.Info("######### creating table with restore mode")
+		table.Info.TableMode = model.TableModeRestore
+	}
+
 	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 		ttlInfo.Enable = false
 	}
@@ -366,6 +390,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		return errors.Trace(err)
 	}
 
+	// adjust existing tables only for incremental restore
 	err = db.CreateTablePostRestore(ctx, table, ddlTables)
 	if err != nil {
 		return errors.Trace(err)

@@ -1987,14 +1987,9 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkPiTRRequirements(mgr *conn.Mgr) error {
-	return restore.AssertUserDBsEmpty(mgr.GetDomain())
-}
-
 type PiTRTaskInfo struct {
-	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
-	NeedFullRestore     bool
-	FullRestoreCheckErr error
+	CheckpointInfo  *checkpoint.CheckpointTaskInfoForLogRestore
+	NeedFullRestore bool
 }
 
 func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
@@ -2055,22 +2050,6 @@ func generatePiTRTaskInfo(
 	}
 	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
-	// restore full snapshot precheck.
-	if doFullRestore {
-		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
-			// Only when use checkpoint and not the first execution,
-			// skip checking requirements.
-			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(mgr); err != nil {
-				// delay cluster checks after we get the backupmeta.
-				// for the case that the restore inc + log backup,
-				// we can still restore them.
-				checkInfo.FullRestoreCheckErr = err
-				return checkInfo, nil
-			}
-		}
-	}
-
 	return checkInfo, nil
 }
 

@@ -62,7 +62,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.Equal(t, uint64(globalAutoID), autoIncID)
 	// Alter AutoIncID to the next AutoIncID + 100
 	table.Info.AutoIncID = globalAutoID + 100
-	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoErrorf(t, err, "Error create DB")
 	tk.MustExec("drop database if exists test;")
 	// Test empty collate value
@@ -259,7 +259,7 @@ func TestPolicyMode(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("drop table if exists `t`;")
 	// Test SQL Mode
-	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 	require.True(t, supportPolicy)
 	defer db.Close()
@@ -339,7 +339,7 @@ func TestUpdateMetaVersion(t *testing.T) {
 	tk.MustExec("drop table if exists `t`;")
 
 	// Test SQL Mode
-	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 	require.True(t, supportPolicy)
 	defer db.Close()
@@ -400,7 +400,7 @@ func TestCreateTablesInDb(t *testing.T) {
 		}
 		ddlJobMap[restore.UniqueTableName{DB: dbSchema.Name.String(), Table: tables[i].Info.Name.String()}] = false
 	}
-	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
@@ -414,7 +414,7 @@ func TestDDLJobMap(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@sql_mode=''")
 
-	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 	require.True(t, supportPolicy)
 	defer db.Close()
@@ -477,7 +477,7 @@ func TestDB_ExecDDL(t *testing.T) {
 		},
 	}
 
-	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 
 	for _, ddlJob := range ddlJobs {
@@ -540,7 +540,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 		},
 	}
 
-	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 
 	for _, ddlJob := range ddlJobs {
@@ -556,7 +556,7 @@ func TestCreateTableConsistent(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@sql_mode=''")
 
-	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT", false)
 	require.NoError(t, err)
 	require.True(t, supportPolicy)
 	defer db.Close()

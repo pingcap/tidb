@@ -535,7 +535,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 ) (map[string]struct{}, error) {
 	sstCheckpointSets := make(map[string]struct{})
 
-	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+	if checkpoint.ExistsSstRestoreCheckpoint(rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
 		// we need to load the checkpoint data for the following restore
 		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {

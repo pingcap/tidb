@@ -91,6 +91,7 @@ type SnapClient struct {
 	keepaliveConf       keepalive.ClientParameters
 	rateLimit           uint64
 	tlsConf             *tls.Config
+	onlinePitr          bool
 
 	switchCh chan struct{}
 
@@ -294,6 +295,10 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
 func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+	// don't reuse/pre-alloc table id if it's online pitr since will have conflicts with existing table
+	if rc.onlinePitr {
+		return nil
+	}
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -321,12 +326,12 @@ func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	g glue.Glue, store kv.Storage,
 	config *pdutil.ClusterConfig,
-	checkpointFirstRun bool,
+	checkpointExists bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
-	if !checkpointFirstRun {
+	if checkpointExists {
 		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
@@ -464,17 +469,16 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 
 // InitConnections create db connection and domain for storage.
 func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
-	// setDB must happen after set PolicyMode.
-	// we will use policyMode to set session variables.
 	var err error
-	rc.db, rc.supportPolicy, err = tidallocdb.NewDB(g, store, rc.policyMode)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	rc.dom, err = g.GetDomain(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rc.db, rc.supportPolicy, err = tidallocdb.NewDB(g, store, rc.policyMode, rc.onlinePitr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.db.SetOnline(rc.onlinePitr)
 
 	// init backupMeta only for passing unit test
 	if rc.backupMeta == nil {
@@ -489,7 +493,7 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	// So these jobs won't be faster or slower when machine become faster or slower,
 	// hence make it a fixed value would be fine.
 	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*tidallocdb.DB, error) {
-		db, _, err := tidallocdb.NewDB(g, store, rc.policyMode)
+		db, _, err := tidallocdb.NewDB(g, store, rc.policyMode, rc.onlinePitr)
 		return db, err
 	})
 	if err != nil {
@@ -617,6 +621,8 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	loadStats bool,
 	RawStartKey []byte,
 	RawEndKey []byte,
+	hasExplicitFilter bool,
+	isFullRestore bool,
 ) error {
 	if needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
@@ -638,11 +644,16 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 			}
 		}
 		rc.ddlJobs = ddlJobs
+		log.Info("loaded backup meta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	}
 	rc.backupMeta = backupMeta
-	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
+	if err := rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	rc.InitFullClusterRestore(hasExplicitFilter, isFullRestore)
+	return nil
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
@@ -1034,33 +1045,28 @@ func (rc *SnapClient) createTablesSingle(
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
-func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool) {
-	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool, isFullRestore bool) {
+	rc.fullClusterRestore = !explicitFilter && !rc.IsIncremental() && isFullRestore
 
-	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+	log.Info("mark full cluster restore", zap.Bool("value", rc.fullClusterRestore))
 }
 
 func (rc *SnapClient) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
 }
 
-// IsFull returns whether this backup is full.
-func (rc *SnapClient) IsFull() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(false)
-	})
-	return !rc.IsIncremental()
-}
-
 // IsIncremental returns whether this backup is incremental.
 func (rc *SnapClient) IsIncremental() bool {
+	failpoint.Inject("mock-incr-backup-data", func() {
+		failpoint.Return(true)
+	})
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
 		rc.backupMeta.StartVersion == 0)
 }
 
 // NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
-func (rc *SnapClient) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
-	return rc.IsFull() && !ExplicitFilter && firstRun
+func (rc *SnapClient) NeedCheckFreshCluster(ExplicitFilter bool, checkpointEnabledAndExists bool) bool {
+	return !rc.IsIncremental() && !ExplicitFilter && !checkpointEnabledAndExists
 }
 
 // EnableSkipCreateSQL sets switch of skip create schema and tables.
@@ -1073,11 +1079,10 @@ func (rc *SnapClient) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// CheckTargetClusterFresh check whether the target cluster is fresh or not
-// if there's no user dbs or tables, we take it as a fresh cluster, although
-// user may have created some users or made other changes.
-func (rc *SnapClient) CheckTargetClusterFresh(ctx context.Context) error {
-	log.Info("checking whether target cluster is fresh")
+// EnsureNoUserTables returns error if target cluster contains user tables.
+// However, user may have created some db users or made other changes.
+func (rc *SnapClient) EnsureNoUserTables() error {
+	log.Info("checking whether cluster contains user dbs and tables")
 	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
@@ -1178,4 +1183,9 @@ func (rc *SnapClient) execAndValidateChecksum(
 	}
 	logger.Info("success in validating checksum")
 	return nil
+}
+
+// SetOnlinePitr sets whether this is an online pitr
+func (rc *SnapClient) SetOnlinePitr(onlinePitr bool) {
+	rc.onlinePitr = onlinePitr
 }
