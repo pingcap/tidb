@@ -234,7 +234,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	tolerance := 0.0001
+	tolerance := 0.00001
 	if (path.CountAfterAccess+tolerance) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
@@ -334,7 +334,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	tolerance := 0.00001
+	if (path.CountAfterAccess+tolerance) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return err
@@ -372,7 +374,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	}
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	tolerance := 0.00001
+	if (path.CountAfterAccess+tolerance) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return nil
