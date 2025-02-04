@@ -713,7 +713,9 @@ func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
 	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
 	// lhs/rhsCorrRatio represents the "risk" of the CountAfterAccess value - lower value means less risk that
 	// we do NOT know about actual correlation between indexed columns
-	if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
+	// TODO - corrCountAfterAccess is only currently used to compete 2 indexes - since they are the only paths
+	// that potentially go through expBackOffEstimation
+	if lhs.path.CorrCountAfterAccess > 0 && rhs.path.CorrCountAfterAccess > 0 {
 		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
 		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
 	}
