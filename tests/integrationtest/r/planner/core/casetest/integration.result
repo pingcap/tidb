@@ -1115,7 +1115,7 @@ Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_12	3.33	19551.99	root		
+IndexLookUp_12	3.33	19531.97	root		
 ├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
 └─Selection_11(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
   └─TableRowIDScan_10	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
