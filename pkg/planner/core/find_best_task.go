@@ -1704,9 +1704,8 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		scans = append(scans, scan)
 	}
 	totalRowCount := path.CountAfterAccess
-	tolerance := 0.00001
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (prop.ExpectedCnt + tolerance) < ds.StatsInfo().RowCount {
+	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
 	ts, remainingFilters2, moreColumn, err := buildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp)
@@ -2950,9 +2949,8 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
-	tolerance := 0.00001
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (prop.ExpectedCnt + tolerance) < ds.StatsInfo().RowCount {
+	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
 			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
