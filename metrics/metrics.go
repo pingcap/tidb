@@ -46,7 +46,6 @@ var (
 
 // metrics labels.
 const (
-<<<<<<< HEAD:metrics/metrics.go
 	LabelSession   = "session"
 	LabelDomain    = "domain"
 	LabelDDLOwner  = "ddl-owner"
@@ -55,19 +54,7 @@ const (
 	LabelDDLSyncer = "ddl-syncer"
 	LabelGCWorker  = "gcworker"
 	LabelAnalyze   = "analyze"
-=======
-	LabelSession    = "session"
-	LabelDomain     = "domain"
-	LabelDDLOwner   = "ddl-owner"
-	LabelDDL        = "ddl"
-	LabelDDLWorker  = "ddl-worker"
-	LabelDistReorg  = "dist-reorg"
-	LabelDDLSyncer  = "ddl-syncer"
-	LabelGCWorker   = "gcworker"
-	LabelAnalyze    = "analyze"
-	LabelWorkerPool = "worker-pool"
-	LabelStats      = "stats"
->>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739)):pkg/metrics/metrics.go
+	LabelStats     = "stats"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
