@@ -1096,7 +1096,6 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "LEASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
 	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
