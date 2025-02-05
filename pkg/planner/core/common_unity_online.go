@@ -16,33 +16,41 @@ func (e *Explain) UnityOnline() string {
 
 func (e *Explain) unityOnlineSubPlan(op base.PhysicalPlan) *UnityOnlinePlanNode {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
-	flatOp := flat.Main[0]
-	taskTp := ""
-	if flatOp.IsRoot {
-		taskTp = "root"
-	} else {
-		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
-	}
-	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
+	var iterSubPlanFunc func(op *FlatOperator) *UnityOnlinePlanNode
+	iterSubPlanFunc = func(flatOp *FlatOperator) *UnityOnlinePlanNode {
+		if !flatOp.IsRoot {
+			return nil
+		}
 
-	estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(op, textTreeExplainID)
-	preSequence := planPreSequences(op)
+		taskTp := ""
+		if flatOp.IsRoot {
+			taskTp = "root"
+		} else {
+			taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
+		}
+		explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+		textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	node := &UnityOnlinePlanNode{
-		ID:           explainID,
-		EstRows:      estRows,
-		TaskType:     taskTp,
-		AccessObject: accessObject,
-		OperatorInfo: operatorInfo,
-		EstCost:      estCost,
-		PreSequence:  preSequence,
-	}
+		estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(op, textTreeExplainID)
+		preSequence := planPreSequences(op)
 
-	for _, childIdx := range flatOp.ChildrenIdx {
-		node.SubOperators = append(node.SubOperators, e.unityOnlineSubPlan(flat.Main[childIdx].Origin.(base.PhysicalPlan)))
+		node := &UnityOnlinePlanNode{
+			ID:           explainID,
+			EstRows:      estRows,
+			TaskType:     taskTp,
+			AccessObject: accessObject,
+			OperatorInfo: operatorInfo,
+			EstCost:      estCost,
+			PreSequence:  preSequence,
+		}
+		for _, childIdx := range flatOp.ChildrenIdx {
+			if childOp := iterSubPlanFunc(flat.Main[childIdx]); childOp != nil {
+				node.SubOperators = append(node.SubOperators, childOp)
+			}
+		}
+		return node
 	}
-	return node
+	return iterSubPlanFunc(flat.Main[0])
 }
 
 type UnityOnlinePlanNode struct {
