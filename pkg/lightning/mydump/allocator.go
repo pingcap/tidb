@@ -15,14 +15,11 @@
 package mydump
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
@@ -77,22 +74,22 @@ type arena interface {
 	reset()
 }
 
-type globalArenaPool struct {
+type arenaPool struct {
 	arenas    chan arena
 	allocated int
 	lock      sync.Mutex
 }
 
-func (ga *globalArenaPool) adjustGCPercent() {
+func (ap *arenaPool) adjustGCPercent() {
 	gogc := os.Getenv("GOGC")
 	memTotal, err := tidbmemory.MemTotal()
 	if gogc == "" && err == nil {
-		if ga.allocated == 0 {
+		if ap.allocated == 0 {
 			debug.SetGCPercent(100)
 			return
 		}
-		percent := int(memTotal)*90/(ga.allocated*defaultArenaSize) - 100
-		percent = min(percent, 100) / 10 * 10
+		percent := int(memTotal)*90/(ap.allocated*defaultArenaSize) - 100
+		percent = min(percent, 50) / 10 * 10
 		percent = max(percent, 5)
 
 		old := debug.SetGCPercent(percent)
@@ -102,27 +99,27 @@ func (ga *globalArenaPool) adjustGCPercent() {
 			zap.Int("old", old),
 			zap.Int("new", percent),
 			zap.Int("total memory", int(memTotal)),
-			zap.Int("allocated memory", ga.allocated*defaultArenaSize),
+			zap.Int("allocated memory", ap.allocated*defaultArenaSize),
 		)
 	}
 }
 
-func (ga *globalArenaPool) get() arena {
+func (ap *arenaPool) get() arena {
 	// First try to get cached arena
 	select {
-	case a := <-ga.arenas:
+	case a := <-ap.arenas:
 		return a
 	default:
 	}
 
-	ga.lock.Lock()
-	defer ga.lock.Unlock()
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
 
 	// Create a new one and return
-	if ga.allocated < maxArenaCount {
-		ga.allocated++
+	if ap.allocated < maxArenaCount {
+		ap.allocated++
 		bd := GetArena(defaultArenaSize)
-		ga.adjustGCPercent()
+		ap.adjustGCPercent()
 		return bd
 	}
 
@@ -130,33 +127,33 @@ func (ga *globalArenaPool) get() arena {
 	return nil
 }
 
-func (ga *globalArenaPool) put(a arena) {
-	ga.lock.Lock()
-	defer ga.lock.Unlock()
+func (ap *arenaPool) put(a arena) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
 
 	// discard it if necessary
-	if ga.allocated > maxArenaCount {
+	if ap.allocated > maxArenaCount {
 		a.reset()
-		ga.adjustGCPercent()
+		ap.adjustGCPercent()
 		return
 	}
 
-	ga.arenas <- a
+	ap.arenas <- a
 }
 
-func (ga *globalArenaPool) free() {
-	ga.lock.Lock()
-	defer ga.lock.Unlock()
+func (ap *arenaPool) free() {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
 
-	ga.allocated = 0
-	for len(ga.arenas) > 0 {
-		a := <-ga.arenas
+	ap.allocated = 0
+	for len(ap.arenas) > 0 {
+		a := <-ap.arenas
 		a.reset()
 	}
-	ga.adjustGCPercent()
+	ap.adjustGCPercent()
 }
 
-var globalPool *globalArenaPool
+var globalPool *arenaPool
 
 type defaultAllocator struct {
 	arenas       []arena
@@ -164,41 +161,10 @@ type defaultAllocator struct {
 
 	allocatedOutside    atomic.Int64
 	allocatedOutsideNum atomic.Int64
-
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
 }
 
 func (alloc *defaultAllocator) init() {
 	alloc.allocatedBuf = make(map[uintptr]int, 8)
-	ctx, cancel := context.WithCancel(context.Background())
-	alloc.wg.Add(1)
-	go func() {
-		defer alloc.wg.Done()
-		tick := time.NewTicker(2 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				var m runtime.MemStats
-				runtime.ReadMemStats(&m)
-
-				num := 0
-				for _, a := range alloc.arenas {
-					num += int(a.allocated())
-				}
-
-				fmt.Printf("[Allocator] num arenas = %d, num blocks = %d, outside the allocator: %d MiB(%d blocks)\n",
-					len(alloc.arenas), num,
-					int(alloc.allocatedOutsideNum.Load()),
-					int(alloc.allocatedOutside.Load())/1024/1024,
-				)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	alloc.cancel = cancel
 }
 
 func (alloc *defaultAllocator) Allocate(size int) []byte {
@@ -240,9 +206,6 @@ func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
 }
 
 func (alloc *defaultAllocator) Close() {
-	alloc.cancel()
-	alloc.wg.Wait()
-
 	// If global pool is initialized, return allocated arena to the pool.
 	if globalPool != nil {
 		for _, a := range alloc.arenas {
@@ -265,7 +228,7 @@ func GetDefaultAllocator() memory.Allocator {
 // If you call this function, remember to call FreeMemory.
 func InitializeGlobalArena(size int) {
 	maxArenaCount = size / defaultArenaSize
-	globalPool = &globalArenaPool{}
+	globalPool = &arenaPool{}
 	globalPool.arenas = make(chan arena, maxArenaCount)
 }
 

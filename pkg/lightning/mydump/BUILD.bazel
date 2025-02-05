@@ -4,7 +4,6 @@ go_library(
     name = "mydump",
     srcs = [
         "allocator.go",
-        "buddy_allocator.go",
         "bytes.go",
         "charset_convertor.go",
         "csv_parser.go",
@@ -37,7 +36,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/filter",
         "//pkg/util/intest",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",

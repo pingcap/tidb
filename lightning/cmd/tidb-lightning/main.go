@@ -19,11 +19,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 	"runtime/debug"
-	"runtime/pprof"
 	"syscall"
-	"time"
 
 	"github.com/pingcap/tidb/lightning/pkg/server"
 	"github.com/pingcap/tidb/lightning/pkg/web"
@@ -32,56 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-
-	"net/http"
-	_ "net/http/pprof"
 )
 
-func bToMb(b uint64) uint64 {
-	return b / (1024 * 1024)
-}
-
-func TrackSysMemUsage(ctx context.Context) {
-	tick := time.NewTicker(time.Second)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-
-			fmt.Printf("HeapInUse = %v MiB, limit = %d MiB, canReturn = %dMiB\n",
-				bToMb(m.HeapInuse), bToMb(m.Sys-m.HeapReleased), bToMb(m.HeapIdle-m.HeapReleased))
-		}
-	}
-}
-
 func main() {
-	go func() {
-		http.ListenAndServe("0.0.0.0:8899", nil)
-	}()
-
-	// Create a memory profile file
-	f, err := os.Create("mem.pprof")
-	if err != nil {
-		fmt.Println("Failed to create memory profile file:", err)
-		return
-	}
-	defer f.Close()
-
-	// Start the memory profile
-	if err := pprof.StartCPUProfile(f); err != nil {
-		fmt.Println("Failed to start memory profile:", err)
-		return
-	}
-	defer pprof.StopCPUProfile()
-
-	// Track heap in use
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go TrackSysMemUsage(ctx)
-
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	logToFile := globalCfg.App.File != "" && globalCfg.App.File != "-"
 	if logToFile {
@@ -125,7 +75,7 @@ func main() {
 		}
 	}
 
-	err = app.GoServe()
+	err := app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)

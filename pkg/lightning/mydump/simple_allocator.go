@@ -28,6 +28,10 @@ const (
 // This value will be modifed in test
 var alignSize = 16 << 10
 
+func roundUp(n, sz int) int {
+	return (n + sz - 1) / sz * sz
+}
+
 func simpleGetAllocationSize(size int) int {
 	return roundUp(size+metaSize, alignSize) * 2
 }
