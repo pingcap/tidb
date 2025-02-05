@@ -812,9 +812,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 	var probeSpillBytes []int64
 	if e.HashJoinCtxV2.stats != nil {
 		start = time.Now()
-		if e.spillHelper.isSpillTriggered() {
-			probeSpillBytes = make([]int64, e.Concurrency)
-		}
+		probeSpillBytes = make([]int64, e.Concurrency)
 	}
 
 	if e.inRestore {
@@ -846,7 +844,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 			e.waitJoinWorkers(start)
 			if e.HashJoinCtxV2.stats != nil && e.spillHelper.isSpillTriggered() {
 				for _, bytes := range probeSpillBytes {
-					e.spillHelper.totalProbeSpillBytes += bytes
+					e.spillHelper.totalProbeSpillBytesEachRound[e.spillHelper.round] += bytes
 				}
 			}
 		}, nil)
@@ -1064,17 +1062,27 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 		return
 	}
 
-	e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, e.spillHelper.totalBuildSpillBytes+e.spillHelper.totalProbeSpillBytes)
-	e.stats.spill.spillBuildBytesPerRound = append(e.stats.spill.spillBuildBytesPerRound, e.spillHelper.totalBuildSpillBytes)
-
-	partitionNum := 0
-	for _, isSpilled := range e.spillHelper.spilledPartitions {
-		if isSpilled {
-			partitionNum++
+	e.stats.spill.partitionNumPerRound = make([]int, e.stats.spill.round)
+	for k, v := range e.spillHelper.spilledPartitionEachRound {
+		if len(v) > 0 {
+			e.stats.spill.partitionNumPerRound[k] = len(v)
 		}
 	}
-	e.stats.spill.partitionNumPerRound = append(e.stats.spill.partitionNumPerRound, partitionNum)
-	e.spillHelper.resetStats()
+
+	e.stats.spill.round = len(e.stats.spill.partitionNumPerRound)
+	if e.stats.spill.round == 0 {
+		return
+	}
+
+	e.stats.spill.totalSpillBytesPerRound = make([]int64, len(e.spillHelper.totalBuildSpillBytesEachRound))
+	e.stats.spill.spillBuildBytesPerRound = e.spillHelper.totalBuildSpillBytesEachRound
+
+	for i, buildBytes := range e.stats.spill.spillBuildBytesPerRound {
+		e.stats.spill.totalSpillBytesPerRound[i] = buildBytes + e.spillHelper.totalProbeSpillBytesEachRound[i]
+	}
+
+	e.stats.spill.totalSpillBytesPerRound = e.stats.spill.totalSpillBytesPerRound[:e.stats.spill.round]
+	e.stats.spill.spillBuildBytesPerRound = e.stats.spill.spillBuildBytesPerRound[:e.stats.spill.round]
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
@@ -1085,9 +1093,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		}
 		close(e.joinResultCh)
 
-		if e.stats != nil {
-			e.stats.spill.round = lastRound
-		}
+		e.collectSpillStats()
 	}()
 
 	for {
@@ -1101,7 +1107,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
-		e.collectSpillStats()
 		e.reset()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
@@ -1116,6 +1121,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 			// No more data to restore
 			return
 		}
+		e.spillHelper.round = restoredPartition.round
 
 		if e.memTracker.BytesConsumed() != 0 {
 			e.isMemoryClearedForTest = false
@@ -1124,6 +1130,10 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		lastRound = restoredPartition.round
 		e.restoredBuildInDisk = restoredPartition.buildSideChunks
 		e.restoredProbeInDisk = restoredPartition.probeSideChunks
+
+		if e.stats != nil && e.stats.spill.round < lastRound {
+			e.stats.spill.round = lastRound
+		}
 
 		e.inRestore = true
 	}

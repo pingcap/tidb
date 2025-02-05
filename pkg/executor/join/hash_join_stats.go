@@ -21,8 +21,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
+
+func convertBytesStatsToString(bytes []int64) string {
+	info := "["
+	for i, byte := range bytes {
+		if i == 0 {
+			info = fmt.Sprintf("%s%.2f", info, util.ByteToGiB(float64(byte)))
+		} else {
+			info = fmt.Sprintf("%s %.2f", info, util.ByteToGiB(float64(byte)))
+		}
+	}
+	info += "]"
+	return info
+}
 
 type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
@@ -216,10 +230,10 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		buf.WriteString(strconv.Itoa(e.spill.round))
 		buf.WriteString(", partition num per round:")
 		buf.WriteString(fmt.Sprintf("%v", e.spill.partitionNumPerRound))
-		buf.WriteString(", total spill bytes per round:")
-		buf.WriteString(fmt.Sprintf("%v", e.spill.totalSpillBytesPerRound))
-		buf.WriteString(", build spill bytes per round:")
-		buf.WriteString(fmt.Sprintf("%v", e.spill.spillBuildBytesPerRound))
+		buf.WriteString(", total spill GiB per round:")
+		buf.WriteString(convertBytesStatsToString(e.spill.totalSpillBytesPerRound))
+		buf.WriteString(", build spill GiB per round:")
+		buf.WriteString(convertBytesStatsToString(e.spill.spillBuildBytesPerRound))
 		buf.WriteString("}")
 	}
 	return buf.String()

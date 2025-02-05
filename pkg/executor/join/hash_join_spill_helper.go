@@ -76,8 +76,10 @@ type hashJoinSpillHelper struct {
 
 	canSpillFlag atomic.Bool
 
-	totalBuildSpillBytes int64
-	totalProbeSpillBytes int64
+	totalBuildSpillBytesEachRound []int64
+	totalProbeSpillBytesEachRound []int64
+	spilledPartitionEachRound     []map[int]struct{}
+	round                         int
 
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
@@ -111,6 +113,12 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
+
+	helper.totalBuildSpillBytesEachRound = make([]int64, 1)
+	helper.totalProbeSpillBytesEachRound = make([]int64, 1)
+	helper.spilledPartitionEachRound = make([]map[int]struct{}, 1)
+	helper.spilledPartitionEachRound[0] = make(map[int]struct{})
+	helper.round = 0
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -191,6 +199,7 @@ func (h *hashJoinSpillHelper) getUnspilledPartitions() []int {
 func (h *hashJoinSpillHelper) setPartitionSpilled(partIDs []int) {
 	for _, partID := range partIDs {
 		h.spilledPartitions[partID] = true
+		h.spilledPartitionEachRound[h.round][partID] = struct{}{}
 	}
 	h.spillTriggered = true
 }
@@ -476,7 +485,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	for _, bytes := range spillBytes {
-		h.totalBuildSpillBytes += bytes
+		h.totalBuildSpillBytesEachRound[h.round] += bytes
 	}
 
 	return nil
@@ -532,11 +541,6 @@ func (h *hashJoinSpillHelper) reset() {
 	h.spillTriggered = false
 }
 
-func (h *hashJoinSpillHelper) resetStats() {
-	h.totalBuildSpillBytes = 0
-	h.totalProbeSpillBytes = 0
-}
-
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	err := triggerIntest(10)
 	if err != nil {
@@ -575,6 +579,11 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 				round:           lastRound + 1,
 			}
 			h.stack.push(rd)
+			for len(h.totalBuildSpillBytesEachRound) < rd.round+1 {
+				h.totalBuildSpillBytesEachRound = append(h.totalBuildSpillBytesEachRound, 0)
+				h.totalProbeSpillBytesEachRound = append(h.totalProbeSpillBytesEachRound, 0)
+				h.spilledPartitionEachRound = append(h.spilledPartitionEachRound, make(map[int]struct{}))
+			}
 		}
 	}
 
