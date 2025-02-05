@@ -37,7 +37,7 @@ import (
 )
 
 const (
-	defaultBatchSize = 16
+	defaultBatchSize = 128
 
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
