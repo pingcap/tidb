@@ -223,7 +223,7 @@ func (e *Explain) unityFillUpStats(o *UnityOutput) {
 		for colName, col := range tblInfo.Columns {
 			colStats := tblStats.HistColl.GetCol(tblInfo.col2id[colName])
 			if colStats == nil {
-				continue
+				continue // TODO
 			}
 			col.NDV = int(colStats.NDV)
 			col.Nulls = int(colStats.NullCount)
@@ -269,6 +269,9 @@ func (e *Explain) unityFillUpStats(o *UnityOutput) {
 				continue
 			}
 			idxStats := tblStats.HistColl.GetIdx(idxID)
+			if idxStats == nil {
+				continue // TODO
+			}
 			idx.NDV = int(idxStats.NDV)
 			idx.Nulls = int(idxStats.NullCount)
 		}
