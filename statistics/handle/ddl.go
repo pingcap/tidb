@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -37,7 +37,7 @@ import (
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
-	defer util.Recover(metrics.LabelStats, "handleDDLEvent", nil, false)
+	defer tidbutil.Recover(metrics.LabelStats, "handleDDLEvent", nil, false)
 	switch t.Tp {
 	case model.ActionCreateTable, model.ActionTruncateTable:
 		ids := h.getInitStateTableIDs(t.TableInfo)
