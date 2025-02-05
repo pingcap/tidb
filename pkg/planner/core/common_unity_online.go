@@ -1,41 +1,57 @@
 package core
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/texttree"
+)
 
 func (e *Explain) UnityOnline() string {
-	up := new(UnityOnlinePlan)
-	up.SubPlans = e.unityOnlineSubPlan()
-	data, err := json.Marshal(up)
+	node := e.unityOnlineSubPlan(e.TargetPlan.(base.PhysicalPlan))
+	data, err := json.Marshal(node)
 	must(err)
 	return string(data)
 }
 
-func (e *Explain) unityOnlineSubPlan() (subPlans []*UnityOnlinePlanNode) {
+func (e *Explain) unityOnlineSubPlan(op base.PhysicalPlan) *UnityOnlinePlanNode {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
-	var iterSubPlanFunc func(op *FlatOperator)
-	iterSubPlanFunc = func(op *FlatOperator) {
-		if !op.IsRoot {
-			return
-		}
-		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
-		planNode := &UnityOnlinePlanNode{
-			ExplainInfoForEncode: explainNode,
-			PreSequence:          planPreSequences(op.Origin),
-		}
-		subPlans = append(subPlans, planNode)
-		for _, childIdx := range op.ChildrenIdx {
-			iterSubPlanFunc(flat.Main[childIdx])
-		}
+	flatOp := flat.Main[0]
+	taskTp := ""
+	if flatOp.IsRoot {
+		taskTp = "root"
+	} else {
+		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	iterSubPlanFunc(flat.Main[0])
-	return
-}
+	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-type UnityOnlinePlan struct {
-	SubPlans []*UnityOnlinePlanNode `json:"subPlans"`
+	estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(op, textTreeExplainID)
+	preSequence := planPreSequences(op)
+
+	node := &UnityOnlinePlanNode{
+		ID:           explainID,
+		EstRows:      estRows,
+		TaskType:     taskTp,
+		AccessObject: accessObject,
+		OperatorInfo: operatorInfo,
+		EstCost:      estCost,
+		PreSequence:  preSequence,
+	}
+
+	for _, childIdx := range flatOp.ChildrenIdx {
+		node.SubOperators = append(node.SubOperators, e.unityOnlineSubPlan(flat.Main[childIdx].Origin.(base.PhysicalPlan)))
+	}
+	return node
 }
 
 type UnityOnlinePlanNode struct {
-	*ExplainInfoForEncode
-	PreSequence *UnityPreSequence `json:"preSequence"`
+	ID           string                 `json:"id"`
+	EstRows      string                 `json:"estRows"`
+	TaskType     string                 `json:"taskType"`
+	AccessObject string                 `json:"accessObject,omitempty"`
+	OperatorInfo string                 `json:"operatorInfo,omitempty"`
+	EstCost      string                 `json:"estCost,omitempty"`
+	SubOperators []*UnityOnlinePlanNode `json:"subOperators,omitempty"`
+	PreSequence  *UnityPreSequence      `json:"preSequence"`
 }
