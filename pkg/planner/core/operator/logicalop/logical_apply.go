@@ -120,11 +120,15 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	if la.StatsInfo() != nil {
+func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
-		return la.StatsInfo(), nil
+		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
 	la.SetStats(&property.StatsInfo{
@@ -142,7 +146,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		}
 	}
 	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
-	return la.StatsInfo(), nil
+	return la.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.

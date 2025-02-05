@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -127,7 +127,7 @@ func GCStats(
 
 	if err := ClearOutdatedHistoryStats(sctx); err != nil {
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
-			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
+			zap.Duration("duration", vardef.HistoricalStatsDuration.Load()),
 			zap.Error(err))
 	}
 
@@ -196,7 +196,7 @@ func forCount(total int64, batch int64) int64 {
 // ClearOutdatedHistoryStats clear outdated historical stats
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
 		return err
 	}
@@ -212,14 +212,14 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	if count > 0 {
 		for n := int64(0); n < forCount(count, int64(1000)); n++ {
 			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
-			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			if err != nil {
 				return err
 			}
 		}
 		for n := int64(0); n < forCount(count, int64(50)); n++ {
 			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
-			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			return err
 		}
 		logutil.BgLogger().Info("clear outdated historical stats")

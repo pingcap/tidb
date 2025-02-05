@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -169,11 +168,9 @@ func NewRemoteDupControllerForDDLIngest(ctx context.Context, job *model.Job, sto
 		return nil, nil, err
 	}
 	resGroupName := job.ReorgMeta.ResourceGroupName
-	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	cfg, err := newLocalBackendConfig(ctx, "", LitMemRoot, true, resGroupName, concurrency, 0)
-	if err != nil {
-		return nil, nil, err
-	}
+	concurrency := job.ReorgMeta.GetConcurrency()
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
+	cfg := newLocalBackendConfig(ctx, "", LitMemRoot, true, resGroupName, concurrency, maxWriteSpeed)
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	discovery := pdCli.GetServiceDiscovery()

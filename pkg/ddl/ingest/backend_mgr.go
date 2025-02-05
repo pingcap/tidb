@@ -30,11 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -86,29 +84,16 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
-func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
+func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
 	ctx, store, job := b.ctx, b.store, b.job
-	sortPath, err := GenIngestTempDataDir()
+	jobSortPath, err := genJobSortPath(job.ID)
 	if err != nil {
 		return nil, err
 	}
-	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID))
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex)
 	intest.Assert(job.ReorgMeta != nil)
 
-	resGroupName := job.ReorgMeta.ResourceGroupName
-	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := newLocalBackendConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
-	if err != nil {
-		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
-		return nil, err
-	}
 	failpoint.Inject("beforeCreateLocalBackend", func() {
 		ResignOwnerForTest.Store(true)
 	})
@@ -133,24 +118,66 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 		return mockBackend, nil
 	}
 
-	discovery := pdCli.GetServiceDiscovery()
-	bd, err := createLocalBackend(ctx, cfg, discovery)
-	if err != nil {
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
-		return nil, err
-	}
-
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
 		defaultSystemVarsForDuplicateCheck, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
-
-	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
-		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
-		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
-		zap.Bool("has unique index", hasUnique))
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
 	return bCtx, nil
+}
+
+func genJobSortPath(jobID int64) (string, error) {
+	sortPath, err := GenIngestTempDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(sortPath, encodeBackendTag(jobID)), nil
+}
+
+// CreateLocalBackend creates a local backend for adding index.
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job) (*local.BackendConfig, *local.Backend, error) {
+	jobSortPath, err := genJobSortPath(job.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
+		job.Type == model.ActionAddIndex)
+	intest.Assert(job.ReorgMeta != nil)
+
+	resGroupName := job.ReorgMeta.ResourceGroupName
+	concurrency := job.ReorgMeta.GetConcurrency()
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
+	hasUnique, err := hasUniqueIndex(job)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := newLocalBackendConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
+
+	tidbCfg := config.GetGlobalConfig()
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
+		nil, nil, nil,
+	)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
+		return nil, nil, err
+	}
+
+	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
+		zap.String("sortDir", cfg.LocalStoreDir),
+		zap.String("keyspaceName", cfg.KeyspaceName),
+		zap.Int64("job ID", job.ID),
+		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
+		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
+		zap.Bool("has unique index", hasUnique))
+
+	//nolint: forcetypeassert
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
+	return cfg, be, err
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
@@ -165,30 +192,6 @@ func hasUniqueIndex(job *model.Job) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func createLocalBackend(
-	ctx context.Context,
-	cfg *local.BackendConfig,
-	pdSvcDiscovery sd.ServiceDiscovery,
-) (*local.Backend, error) {
-	tidbCfg := config.GetGlobalConfig()
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
-		nil, nil, nil,
-	)
-	if err != nil {
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
-		return nil, err
-	}
-
-	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
-		zap.String("sortDir", cfg.LocalStoreDir),
-		zap.String("keyspaceName", cfg.KeyspaceName))
-	return local.NewBackend(ctx, tls, *cfg, pdSvcDiscovery)
 }
 
 const checkpointUpdateInterval = 10 * time.Minute

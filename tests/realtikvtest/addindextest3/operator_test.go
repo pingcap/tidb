@@ -55,7 +55,7 @@ func getRealAddIndexJob(t *testing.T, tk *testkit.TestKit) *model.Job {
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.Type == model.ActionAddIndex {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
 			realJob = job.Clone()
 		}
 	})
@@ -159,7 +159,10 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build()
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+		require.NoError(t, err)
+		defer bd.Close()
+		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
 		require.NoError(t, err)
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
@@ -206,7 +209,10 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	ctx := context.Background()
 	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 	defer cancel()
-	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build()
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	require.NoError(t, err)
+	defer bd.Close()
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	defer bcCtx.Close()
 	mockEngine := ingest.NewMockEngineInfo(nil)
@@ -243,7 +249,10 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	regionCnt := 10
 	tbl, idxInfo, startKey, endKey, _ := prepare(t, tk, dom, regionCnt)
 	sessPool := newSessPoolForTest(t, store)
-	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	require.NoError(t, err)
+	defer bd.Close()
+	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	defer bcCtx.Close()
 	mockEngine := ingest.NewMockEngineInfo(nil)
@@ -427,7 +436,10 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+		require.NoError(t, err)
+		defer bd.Close()
+		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 		require.NoError(t, err)
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)

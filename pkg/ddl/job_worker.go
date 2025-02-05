@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -277,7 +277,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !variable.EnableMDL.Load() {
+	if !vardef.EnableMDL.Load() {
 		return nil
 	}
 	if ver == 0 {
@@ -715,7 +715,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	if err1 := loadDDLVars(w); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
-	errorCount := variable.GetDDLErrorCountLimit()
+	errorCount := vardef.GetDDLErrorCountLimit()
 
 	if job.ErrorCount > errorCount {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
@@ -743,8 +743,8 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
 		job.State = model.JobStateCancelling
 	}
 	return err
@@ -884,9 +884,9 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateRunning:
 							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
 							}
 						}
 					}
@@ -1101,7 +1101,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

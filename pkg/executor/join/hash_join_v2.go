@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -729,7 +729,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
 	e.maxSpillRound = 1
 
-	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
+	if vardef.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
 		e.initMaxSpillRound()
 		e.spillAction = newHashJoinSpillAction(e.spillHelper)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)

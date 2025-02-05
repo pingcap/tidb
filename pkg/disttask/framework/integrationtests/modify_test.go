@@ -74,7 +74,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		executor.EXPECT().SetResource(gomock.Any()).AnyTimes()
 		executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
 		executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
-		executor.EXPECT().TaskMetaModified(gomock.Any()).DoAndReturn(func(newTask *proto.Task) error {
+		executor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).DoAndReturn(func(newTask *proto.Task) error {
 			runtimeInfo.currentTask = newTask
 			return nil
 		}).AnyTimes()

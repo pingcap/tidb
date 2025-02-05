@@ -28,7 +28,7 @@ require (
 	github.com/cheynewallace/tabby v1.1.1
 	github.com/ckaznocha/intrange v0.3.0
 	github.com/cloudfoundry/gosigar v1.3.6
-	github.com/cockroachdb/pebble v1.1.0
+	github.com/cockroachdb/pebble v1.1.4-0.20250120151818-5dd133a1e6fb
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
@@ -133,7 +133,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/net v0.34.0
-	golang.org/x/oauth2 v0.24.0
+	golang.org/x/oauth2 v0.25.0
 	golang.org/x/sync v0.10.0
 	golang.org/x/sys v0.29.0
 	golang.org/x/term v0.28.0
@@ -155,7 +155,8 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/apache/arrow/go/v12 v12.0.1 // indirect
-	github.com/cockroachdb/errors v1.11.1 // indirect
+	github.com/cockroachdb/errors v1.11.3 // indirect
+	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
