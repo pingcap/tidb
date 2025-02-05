@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -80,7 +80,7 @@ func TestNormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, domain.InfoCache())
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
@@ -113,7 +113,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, domain.InfoCache())
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
@@ -162,7 +162,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 	require.Equal(t, len(dbs), 5)
 }
 
-func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
+func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	lease := 100 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -187,14 +187,14 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 		dbName := fmt.Sprintf("test_%d", i)
 		tk.MustExec("create database " + dbName)
 	}
-	variable.SchemaCacheSize.Store(1000000)
+	vardef.SchemaCacheSize.Store(1000000)
 
 	dbs, err = domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)
 	require.Equal(t, len(dbs), 1003)
 
 	// inject the failpoint
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "1*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
 	}()

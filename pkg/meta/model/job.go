@@ -22,10 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ActionType is the type for DDL action.
@@ -111,6 +112,7 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionModifyEngineAttribute  ActionType = 74
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -183,6 +185,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionModifyEngineAttribute:         "modify engine attribute",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -254,8 +257,6 @@ const (
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
 	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
@@ -368,7 +369,7 @@ type Job struct {
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
+	TraceInfo *tracing.TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
 	BDRRole string `json:"bdr_role"`
@@ -640,6 +641,14 @@ func (job *Job) IsPausable() bool {
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
+// IsAlterable checks whether the job type can be altered.
+func (job *Job) IsAlterable() bool {
+	// Currently, only non-distributed add index reorg task can be altered
+	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
+}
+
 // IsResumable checks whether the job can be rollback.
 func (job *Job) IsResumable() bool {
 	return job.IsPaused()
@@ -727,8 +736,10 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropForeignKey, ActionDropTablePartition, ActionTruncateTablePartition:
+		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionTruncateTablePartition:
+		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
@@ -740,6 +751,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionFlashbackCluster:
 		if job.SchemaState == StateWriteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
 			return false
 		}
 	}
@@ -783,7 +800,6 @@ type SubJob struct {
 	CtxVars     []any           `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -851,8 +867,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
+	if proxyJob.ReorgMeta != nil {
+		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	}
 }
 
 // FillArgs fills args.
@@ -882,23 +899,23 @@ type MultiSchemaInfo struct {
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
-	AddColumns    []model.CIStr `json:"-"`
-	DropColumns   []model.CIStr `json:"-"`
-	ModifyColumns []model.CIStr `json:"-"`
-	AddIndexes    []model.CIStr `json:"-"`
-	DropIndexes   []model.CIStr `json:"-"`
-	AlterIndexes  []model.CIStr `json:"-"`
+	AddColumns    []ast.CIStr `json:"-"`
+	DropColumns   []ast.CIStr `json:"-"`
+	ModifyColumns []ast.CIStr `json:"-"`
+	AddIndexes    []ast.CIStr `json:"-"`
+	DropIndexes   []ast.CIStr `json:"-"`
+	AlterIndexes  []ast.CIStr `json:"-"`
 
 	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
-	RelativeColumns []model.CIStr `json:"-"`
-	PositionColumns []model.CIStr `json:"-"`
+	RelativeColumns []ast.CIStr `json:"-"`
+	PositionColumns []ast.CIStr `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
 type AddForeignKeyInfo struct {
-	Name model.CIStr
-	Cols []model.CIStr
+	Name ast.CIStr
+	Cols []ast.CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -1151,13 +1168,24 @@ func (h *HistoryInfo) Clean() {
 
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
-	Name     string `json:"name"`
-	Offset   int    `json:"offset"` // seconds east of UTC
+	Name   string `json:"name"`
+	Offset int    `json:"offset"` // seconds east of UTC
+	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
+	mu       sync.RWMutex
 }
 
 // GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	tz.mu.RLock()
+	if tz.location != nil {
+		tz.mu.RUnlock()
+		return tz.location, nil
+	}
+	tz.mu.RUnlock()
+
+	tz.mu.Lock()
+	defer tz.mu.Unlock()
 	if tz.location != nil {
 		return tz.location, nil
 	}
@@ -1171,12 +1199,19 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	return tz.location, err
 }
 
-// TraceInfo is the information for trace.
-type TraceInfo struct {
-	// ConnectionID is the id of the connection
-	ConnectionID uint64 `json:"connection_id"`
-	// SessionAlias is the alias of session
-	SessionAlias string `json:"session_alias"`
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
 }
 
 func init() {

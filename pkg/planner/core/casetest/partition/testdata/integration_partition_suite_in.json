@@ -53,7 +53,12 @@
       "explain format = 'brief' replace tlist select * from tlist where a in (2)",
       "explain format = 'brief' replace tlist select * from tlist where a in (0, 5)",
       "explain format = 'brief' replace tcollist select * from tcollist where a in (2)",
-      "explain format = 'brief' replace tcollist select * from tcollist where a in (0, 5)"
+      "explain format = 'brief' replace tcollist select * from tcollist where a in (0, 5)",
+      // for non partition column
+      "explain format = 'brief' select * from tlist where b > 0",
+      "explain format = 'brief' select * from tcollist where b > 0",
+      "explain format = 'brief' select * from tlist where b < 0",
+      "explain format = 'brief' select * from tcollist where b < 0"
     ]
   },
   {

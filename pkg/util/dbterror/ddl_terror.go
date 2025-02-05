@@ -58,6 +58,8 @@ var (
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
 	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
 	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
+	// ErrUnsupportedEngineAttribute means engine attribute option is unsupported
+	ErrUnsupportedEngineAttribute = ClassDDL.NewStd(mysql.ErrEngineAttributeNotSupported)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -229,6 +231,8 @@ var (
 	ErrErrorOnRename = ClassDDL.NewStd(mysql.ErrErrorOnRename)
 	// ErrViewSelectClause returns error for create view with select into clause
 	ErrViewSelectClause = ClassDDL.NewStd(mysql.ErrViewSelectClause)
+	// ErrViewSelectVariable returns error for create view with select into clause
+	ErrViewSelectVariable = ClassDDL.NewStd(mysql.ErrViewSelectVariable)
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)
@@ -501,6 +505,11 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+
+	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
+	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
+	// ErrStorageClassInvalidSpec is reserved for future use.
+	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

@@ -38,28 +38,29 @@ import (
 )
 
 var (
-	// LitBackCtxMgr is the entry for the lightning backfill process.
-	LitBackCtxMgr BackendCtxMgr
 	// LitMemRoot is used to track the memory usage of the lightning backfill process.
 	LitMemRoot MemRoot
-	// litDiskRoot is used to track the disk usage of the lightning backfill process.
-	litDiskRoot DiskRoot
+	// LitDiskRoot is used to track the disk usage of the lightning backfill process.
+	LitDiskRoot DiskRoot
 	// litRLimit is the max open file number of the lightning backfill process.
 	litRLimit uint64
 	// LitInitialized is the flag indicates whether the lightning backfill process is initialized.
 	LitInitialized bool
 )
 
-const defaultMemoryQuota = 2 * size.GB
+const (
+	defaultMemoryQuota     = 2 * size.GB
+	distributedKeyTTLInSec = 10 // seconds
+)
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv(path string) (ok bool) {
 	log.SetAppLogger(logutil.DDLIngestLogger())
 	globalCfg := config.GetGlobalConfig()
-	if globalCfg.Store != "tikv" {
+	if globalCfg.Store != config.StoreTypeTiKV {
 		logutil.DDLIngestLogger().Warn(LitWarnEnvInitFail,
 			zap.String("storage limitation", "only support TiKV storage"),
-			zap.String("current storage", globalCfg.Store),
+			zap.Stringer("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
 		return false
 	}
@@ -75,12 +76,18 @@ func InitGlobalLightningEnv(path string) (ok bool) {
 		i := val.(int)
 		memTotal = uint64(i) * size.MB
 	})
-	LitBackCtxMgr = NewLitBackendCtxMgr(path, memTotal)
+	LitMemRoot = NewMemRootImpl(int64(memTotal))
+	LitDiskRoot = NewDiskRootImpl(path)
+	LitDiskRoot.UpdateUsage()
+	err = LitDiskRoot.StartupCheck()
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("ingest backfill may not be available", zap.Error(err))
+	}
 	litRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.DDLIngestLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", memTotal),
-		zap.String("disk usage info", litDiskRoot.UsageInfo()),
+		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", litRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
 	return true
@@ -158,7 +165,12 @@ func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
 	for id := range toCheckJobIDs {
 		logutil.DDLIngestLogger().Info("remove stale temp index data",
 			zap.Int64("jobID", id))
-		p := filepath.Join(path, encodeBackendTag(id))
+		p := filepath.Join(path, encodeBackendTag(id, false))
+		err = os.RemoveAll(p)
+		if err != nil {
+			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))
+		}
+		p = filepath.Join(path, encodeBackendTag(id, true))
 		err = os.RemoveAll(p)
 		if err != nil {
 			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))

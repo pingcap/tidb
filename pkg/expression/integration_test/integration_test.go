@@ -33,12 +33,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -60,6 +62,101 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func TestVectorLong(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	genVec := func(d int, startValue int) string {
+		vb := strings.Builder{}
+		vb.WriteString("[")
+		value := startValue
+		for i := 0; i < d; i++ {
+			if i > 0 {
+				vb.WriteString(",")
+			}
+			vb.WriteString(strconv.FormatInt(int64(value), 10))
+			value += 100
+		}
+		vb.WriteString("]")
+		return vb.String()
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	runWorkload := func() {
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 200)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 50)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows())
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (2, '%s')`, genVec(16383, 200)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (3, '%s')`, genVec(16383, 300)))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"1",
+		))
+		tk.MustExec(fmt.Sprintf(`update t1 set vec = '%s' where id = 1`, genVec(16383, 500)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows(
+			"1 "+genVec(16383, 500),
+			"2 "+genVec(16383, 200),
+			"3 "+genVec(16383, 300),
+		))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"3",
+		))
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table t1")
+
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383),
+			VECTOR INDEX ((vec_cosine_distance(vec)))
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	tk.MustExec(`alter table t1 set tiflash replica 1`)
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+	tk.MustExec(`alter table t1 add VECTOR INDEX ((vec_cosine_distance(vec)))`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+}
 
 func TestVectorDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -322,6 +419,24 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
 }
 
+func TestVectorExplainTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+
+	// TODO: The output can be improved.
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+		VEC_COSINE_DISTANCE(c, '[3,100,12345,10000]'),
+		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
+		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
+	FROM t;`).Check(testkit.Rows(
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`└─TableReader 10000.00 root  data:TableFullScan`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+}
+
 func TestVectorConstantExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -339,12 +454,11 @@ func TestVectorConstantExplain(t *testing.T) {
 	))
 	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
 		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─Projection 10.00 root  test.t.c",
-		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
-		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
-		"      └─TableReader 10.00 root  data:TopN",
-		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
-		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TopN 10.00 root  Column#4, offset:0, count:10",
+		"  └─TableReader 10.00 root  data:TopN",
+		"    └─TopN 10.00 cop[tikv]  Column#4, offset:0, count:10",
+		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// Prepare a large Vector string
@@ -372,15 +486,65 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.NoError(t, err)
 	fmt.Println(planTree)
 	fmt.Println("++++")
-	require.Equal(t, strings.Join([]string{
-		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
-		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
-	}, "\n"), planTree)
-
+	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
+	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+}
+
+func TestVectorIndexExplain(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			vec vector(100)
+		)
+	`)
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
+		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender`,
+		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+	))
 }
 
 func TestFixedVector(t *testing.T) {
@@ -798,9 +962,12 @@ func TestVectorArithmatic(t *testing.T) {
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + 2;`)
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + '2';`)
 
+	// Input outside the float32 value range will result in an error.
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[3e38]') + '[3e38]';`)
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2,3]') * '[4,5,6]';`).Check(testkit.Rows("[4,10,18]"))
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1e37]') * '[1e37]';`)
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]') + 1")
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]')*0 + 1")
 }
 
 func TestVectorFunctions(t *testing.T) {
@@ -850,6 +1017,204 @@ func TestVectorMiscFunctions(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [1,1,1] 10"))
 	tk.MustExec("INSERT INTO a VALUES (1, '[1,5,7]', 15) ON DUPLICATE KEY UPDATE time=VEC_DIMS(c), c=VALUES(c)+VALUES(c);")
 	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [2,10,14] 3"))
+}
+
+func testVectorSearchInternal(tk *testkit.TestKit) {
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(3),
+			a int,
+			b int,
+			c vector(3),
+			d vector,
+			VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
+		)
+	`)
+	tk.MustExec(`
+	insert into t1 values
+		(1, '[1,1,1]', 11, 111, '[1,1,1]', '[1,1,1]'),
+		(2, '[2,2,2]', 22, 222, '[2,2,2]', '[2,2,2]'),
+		(3, '[3,3,3]', 33, 333, '[3,3,3]', '[3,3,3]');
+	`)
+	tk.MustExec("analyze table t1")
+
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows(
+		"1",
+		"2",
+		"3",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 1").Check(testkit.Rows(
+		"3",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]')").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select * from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 [3,3,3] [3,3,3]",
+		"2 [2,2,2] 22 222 [2,2,2] [2,2,2]",
+		"1 [1,1,1] 11 111 [1,1,1] [1,1,1]",
+	))
+	tk.MustQuery("select id, a, b from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 33 333",
+		"2 22 222",
+		"1 11 111",
+	))
+	tk.MustQuery("select a, id, b from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"33 3 333",
+		"22 2 222",
+		"11 1 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 [3,3,3] [3,3,3] 0",
+		"2 [2,2,2] 22 222 [2,2,2] [2,2,2] 1.7320508075688772",
+		"1 [1,1,1] 11 111 [1,1,1] [1,1,1] 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from t1 order by d limit 10").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, a, b, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 33 333 0",
+		"2 22 222 1.7320508075688772",
+		"1 11 111 3.4641016151377544",
+	))
+
+	tk.MustExec(`
+		create table tp (
+			id int,
+			vec vector(3) comment 'hnsw(distance=cosine)',
+			a int, b int,
+			store_id int
+		) PARTITION BY RANGE COLUMNS(store_id) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (200),
+			PARTITION p2 VALUES LESS THAN (MAXVALUE)
+		);
+	`)
+	tk.MustExec(`
+		insert into tp values
+			(1, '[1,1,1]', 11, 111, 50),
+			(2, '[2,2,2]', 22, 222, 150),
+			(3, '[3,3,3]', 33, 333, 250);
+	`)
+	tk.MustExec("analyze table tp")
+
+	tk.MustQuery("select id from tp order by id").Check(testkit.Rows(
+		"1",
+		"2",
+		"3",
+	))
+	tk.MustQuery("select id from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select id from tp order by vec_l2_distance(vec, '[3,3,3]')").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select * from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 250",
+		"2 [2,2,2] 22 222 150",
+		"1 [1,1,1] 11 111 50",
+	))
+	tk.MustQuery("select id, a, b from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 33 333",
+		"2 22 222",
+		"1 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from tp order by d limit 10").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from tp order by d limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 250 0",
+		"2 [2,2,2] 22 222 150 1.7320508075688772",
+		"1 [1,1,1] 11 111 50 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp order by d limit 10").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp order by d").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+
+	tk.MustQuery("select id from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1",
+	))
+	tk.MustQuery("select * from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1 [1,1,1] 11 111 50",
+	))
+	tk.MustQuery("select id, a, b from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 [1,1,1] 11 111 50 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp partition (p0) order by d").Check(testkit.Rows(
+		"1 3.4641016151377544 11 111",
+	))
+}
+
+func TestVectorSearchExtractProj(t *testing.T) {
+	{
+		store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test;")
+		testVectorSearchInternal(tk)
+	}
+	{
+		store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test;")
+		tk.MustExec("SET SESSION tidb_opt_fix_control = '56318:OFF';")
+		testVectorSearchInternal(tk)
+	}
+}
+
+func TestVectorSearchPreparedStatement(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("CREATE TABLE t1 (pk INT PRIMARY KEY, vec vector(3), VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec))) );")
+	tk.MustExec("INSERT INTO t1 VALUES (1, '[1,2,3]'), (2, '[4,5,6]'), (3, '[7,8,9]');")
+	tk.MustExec("ANALYZE TABLE t1;")
+
+	tk.MustExec("PREPARE stmt FROM 'SELECT pk FROM t1 ORDER BY vec_cosine_distance(vec, ?) LIMIT ?';")
+	tk.MustExec("SET @pvec = '[7,8,9]';")
+	tk.MustExec("SET @plimit = 10;")
+	tk.MustQuery("EXECUTE stmt USING @pvec, @plimit;").Check(testkit.Rows("3", "2", "1"))
 }
 
 func TestGetLock(t *testing.T) {
@@ -1257,7 +1622,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	getTime := func(year, month, day int, timeType byte) types.Time {
 		ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
@@ -1288,7 +1653,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
 		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
@@ -1327,7 +1692,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key nonclustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	buildTableRowKey := func(tableID, rowID int64) string {
 		return hex.EncodeToString(
@@ -1346,7 +1711,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
@@ -1358,7 +1723,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
@@ -1459,7 +1824,7 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1495,7 +1860,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1556,8 +1921,8 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", vardef.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -2499,13 +2864,13 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select addtime(cast('01:01:11' as time(4)), '00:00:01.013'), addtime(cast('01:01:11.00' " +
 		"as datetime(3)), '00:00:01')," + " addtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), addtime(cast" +
 		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
-	result.Check(testkit.Rows("01:01:12.0130 2001-01-11 00:00:01.000 00:00:01 2017-01-01 00:00:01.88"))
+	result.Check(testkit.Rows("01:01:12.0130 2001-01-11 00:00:01.000 2017-01-01 00:00:01 2017-01-01 00:00:01.88"))
 	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 5), addtime('2017-01-01 01:01:01', -5), addtime('2017-01-01 01:01:01', 0.0), addtime('2017-01-01 01:01:01', 1.34);")
 	result.Check(testkit.Rows("2017-01-01 01:01:06 2017-01-01 01:00:56 2017-01-01 01:01:01 2017-01-01 01:01:02.340000"))
 	result = tk.MustQuery("select addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
 	result.Check(testkit.Rows("2001-01-11 00:00:01.000 2001-01-11 00:00:01.00000"))
 	result = tk.MustQuery("select addtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
-	result.Check(testkit.Rows("00:00:01"))
+	result.Check(testkit.Rows("2001-01-11 00:00:01"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time)")
 	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01")`)
@@ -2529,7 +2894,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select subtime(cast('01:01:11' as time(4)), '00:00:01.013'), subtime(cast('01:01:11.00' " +
 		"as datetime(3)), '00:00:01')," + " subtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), subtime(cast" +
 		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
-	result.Check(testkit.Rows("01:01:09.9870 2001-01-10 23:59:59.000 -00:00:01 2016-12-31 23:59:58.12"))
+	result.Check(testkit.Rows("01:01:09.9870 2001-01-10 23:59:59.000 2016-12-31 23:59:59 2016-12-31 23:59:58.12"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 5), subtime('2017-01-01 01:01:01', -5), subtime('2017-01-01 01:01:01', 0.0), subtime('2017-01-01 01:01:01', 1.34);")
 	result.Check(testkit.Rows("2017-01-01 01:00:56 2017-01-01 01:01:06 2017-01-01 01:01:01 2017-01-01 01:00:59.660000"))
 	result = tk.MustQuery("select subtime('01:01:11', '0:0:1.013'), subtime('01:01:11.00', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1.120000');")
@@ -2537,7 +2902,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
 	result.Check(testkit.Rows("2001-01-10 23:59:59.000 2001-01-10 23:59:59.00000"))
 	result = tk.MustQuery("select subtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
-	result.Check(testkit.Rows("-00:00:01"))
+	result.Check(testkit.Rows("2001-01-10 23:59:59"))
 	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
 		"c), subtime(c,a), subtime(c,b) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
@@ -2561,13 +2926,13 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 0b1), addtime('2017-01-01', b'1'), addtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
-	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
+	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 2017-01-01 00:00:01"))
 	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
-	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
+	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 2016-12-31 23:59:59"))
 
 	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
@@ -2694,7 +3059,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_add")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_add")
 	}
 
 	// for period_diff
@@ -2706,7 +3071,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_diff")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_diff")
 	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
@@ -3480,12 +3845,12 @@ func TestSetVariables(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	require.Error(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -3529,10 +3894,10 @@ func TestSetVariables(t *testing.T) {
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
 	// Previously global values were cached. This is incorrect.
 	// See: https://github.com/pingcap/tidb/issues/24368
@@ -3902,4 +4267,81 @@ func TestIssue44706(t *testing.T) {
 	tk.MustQuery("SELECT MIN(t0.c2) FROM t0 WHERE false").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT (NULL))))").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT MIN(t0.c2) FROM t0 WHERE false)))").Check(testkit.Rows())
+}
+
+func TestIssue55885(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_jg8o (c_s int not null unique ,c__qy double ,c_z int not null ,c_a90ol text not null);")
+	tk.MustExec("insert into t_jg8o (c_s, c__qy, c_z, c_a90ol) values" +
+		"(-975033779, 85.65, -355481284, 'gnip' ),(-2018599732, 85.86, 1617093413, 'm' )," +
+		"(-960107027, 4.6, -2042358076, 'y1q')," +
+		"(-3, 38.1, -1528586343, 'ex_2')," +
+		"(69386953, 32768.0, -62220810, 'tfkxjj5c')," +
+		"(587181689, -9223372036854775806.3, -1666156943, 'queemvgj')," +
+		"(-218561796, 85.2, -670390288, 'nf990nol')," +
+		"(858419954, 2147483646.0, -1649362344, 'won_9')," +
+		"(-1120115215, 22.100, 1509989939, 'w')," +
+		"(-1388119356, 94.32, -1694148464, 'gu4i4knyhm')," +
+		"(-1016230734, -4294967295.8, 1430313391, 's')," +
+		"(-1861825796, 36.52, -1457928755, 'j')," +
+		"(1963621165, 88.87, 18928603, 'gxbsloff' )," +
+		"(1492879828, cast(null as double), 759883041, 'zwue')," +
+		"(-1607192175, 12.36, 1669523024, 'qt5zch71a')," +
+		"(1534068569, 46.79, -392085130, 'bc')," +
+		"(155707446, 9223372036854775809.4, 1727199557, 'qyghenu9t6')," +
+		"(-1524976778, 75.99, 335492222, 'sdgde0z')," +
+		"(175403335, cast(null as double), -69711503, 'ja')," +
+		"(-272715456, 48.62, 753928713, 'ur')," +
+		"(-2035825967, 257.3, -1598426762, 'lmqmn')," +
+		"(-1178957955, 2147483648.100000, 1432554380, 'dqpb210')," +
+		"(-2056628646, 254.5, -1476177588, 'k41ajpt7x')," +
+		"(-914210874, 126.7, -421919910, 'x57ud7oy1')," +
+		"(-88586773, 1.2, 1568247510, 'drmxi8')," +
+		"(-834563269, -4294967296.7, 1163133933, 'wp')," +
+		"(-84490060, 54.13, -630289437, '_3_twecg5h')," +
+		" (267700893, 54.75, 370343042, 'n72')," +
+		"(552106333, 32766.2, 2365745, 's7tt')," +
+		"(643440707, 65536.8, -850412592, 'wmluxa9a')," +
+		"(1709853766, -4294967296.5, -21041749, 'obqj0uu5v')," +
+		"(-7, 80.88, 528792379, 'n5qr9m26i')," +
+		"(-456431629, 28.43, 1958788149, 'b')," +
+		"(-28841240, 11.86, -1089765168, 'pqg')," +
+		"(-807839288, 25.89, 504535500, 'cs3tkhs')," +
+		"(-52910064, 85.16, 354032882, '_ffjo67yxe')," +
+		"(1919869830, 81.81, -272247558, 'aj')," +
+		"(165434725, -2147483648.0, 11, 'xxnsf5')," +
+		"(3, -2147483648.7, 1616632952, 'g7t8tqyi')," +
+		"(1851859144, 70.73, -1105664209, 'qjfhjr');")
+
+	tk.MustQuery("SELECT subq_0.c3 as c1 FROM (select c_a90ol as c3, c_a90ol as c4, var_pop(cast(c__qy as double)) over (partition by c_a90ol, c_s order by c_z) as c5 from t_jg8o limit 65) as subq_0 LIMIT 37")
+}
+
+func TestIssue55886(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null);")
+	tk.MustExec("create table t2(c_g7eofzlxn int);")
+	tk.MustExec("set collation_connection='latin1_bin';")
+	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
+		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
+		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
+}
+
+func TestIssue57608(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 ( c1 int primary key);")
+	tk.MustExec("insert into t1 (c1) values (1), (2), (3), (4), (5), (6), (7), (11), (12), (13), (14), (15), (16), (17), (21), (22), (23), (24), (25), (26), (27), (116), (127), (121), (122), (113), (214), (251), (261), (217), (91), (92), (39), (94), (95), (69), (79), (191), (129);")
+	tk.MustExec("create view v2 as select 0 as q2 from t1;")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));").Check(testkit.Rows(
+			"<nil> <nil> <nil>",
+		))
+	}
 }

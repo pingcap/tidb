@@ -36,18 +36,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -542,7 +542,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames, err := findDependedColumnNames(pmodel.NewCIStr(""), pmodel.NewCIStr(""), colDef)
+				_, dependColNames, err := findDependedColumnNames(ast.NewCIStr(""), ast.NewCIStr(""), colDef)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -554,7 +554,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
-				if !variable.EnableCheckConstraint.Load() {
+				if !vardef.EnableCheckConstraint.Load() {
 					ctx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
@@ -1223,6 +1223,21 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
+		}
+	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 		}
 	}
 	return hasDefaultValue, value, nil

@@ -45,6 +45,7 @@ const (
 	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
 	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
 	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
+	CheckPDTiDBFromSameCluster    CheckItemID = "CHECK_PD_TIDB_FROM_SAME_CLUSTER"
 )
 
 var (
@@ -63,6 +64,7 @@ var (
 		CheckLocalDiskPlacement:       "Local disk placement",
 		CheckLocalTempKVDir:           "Local temp KV dir",
 		CheckTargetUsingCDCPITR:       "Target using CDC/PITR",
+		CheckPDTiDBFromSameCluster:    "PD and TiDB are from the same cluster",
 	}
 )
 

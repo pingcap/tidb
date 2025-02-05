@@ -200,7 +200,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
@@ -266,7 +266,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
@@ -431,7 +431,7 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
-	b.args = make([]Expression, 0, len(b.args))
+	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
@@ -926,12 +926,8 @@ var funcs = map[string]functionClass{
 	ast.AesEncrypt:               &aesEncryptFunctionClass{baseFunctionClass{ast.AesEncrypt, 2, 3}},
 	ast.Compress:                 &compressFunctionClass{baseFunctionClass{ast.Compress, 1, 1}},
 	ast.Decode:                   &decodeFunctionClass{baseFunctionClass{ast.Decode, 2, 2}},
-	ast.DesDecrypt:               &desDecryptFunctionClass{baseFunctionClass{ast.DesDecrypt, 1, 2}},
-	ast.DesEncrypt:               &desEncryptFunctionClass{baseFunctionClass{ast.DesEncrypt, 1, 2}},
 	ast.Encode:                   &encodeFunctionClass{baseFunctionClass{ast.Encode, 2, 2}},
-	ast.Encrypt:                  &encryptFunctionClass{baseFunctionClass{ast.Encrypt, 1, 2}},
 	ast.MD5:                      &md5FunctionClass{baseFunctionClass{ast.MD5, 1, 1}},
-	ast.OldPassword:              &oldPasswordFunctionClass{baseFunctionClass{ast.OldPassword, 1, 1}},
 	ast.PasswordFunc:             &passwordFunctionClass{baseFunctionClass{ast.PasswordFunc, 1, 1}},
 	ast.RandomBytes:              &randomBytesFunctionClass{baseFunctionClass{ast.RandomBytes, 1, 1}},
 	ast.SHA1:                     &sha1FunctionClass{baseFunctionClass{ast.SHA1, 1, 1}},

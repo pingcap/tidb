@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	resolve "github.com/pingcap/tidb/pkg/planner/core/resolve"
 	chunk "github.com/pingcap/tidb/pkg/util/chunk"
 	sqlexec "github.com/pingcap/tidb/pkg/util/sqlexec"
 	gomock "go.uber.org/mock/gomock"

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -89,8 +89,8 @@ func (record *memoryUsageAlarm) updateVariable() {
 	if time.Since(record.lastUpdateVariableTime) < 60*time.Second {
 		return
 	}
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
+	record.memoryUsageAlarmRatio = vardef.MemoryUsageAlarmRatio.Load()
+	record.memoryUsageAlarmKeepRecordNum = vardef.MemoryUsageAlarmKeepRecordNum.Load()
 	record.serverMemoryLimit = memory.ServerMemoryLimit.Load()
 	if record.serverMemoryLimit != 0 {
 		record.isServerMemoryLimitSet = true
@@ -203,15 +203,15 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	fields := make([]zap.Field, 0, 6)
 	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
 	if record.isServerMemoryLimitSet {
-		fields = append(fields, zap.Any("tidb_server_memory_limit", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+		fields = append(fields, zap.Uint64("tidb_server_memory_limit", record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64("tidb-server memory usage", memUsage))
 	} else {
-		fields = append(fields, zap.Any("system memory total", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("system memory usage", memUsage))
-		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
+		fields = append(fields, zap.Uint64("system memory total", record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64("system memory usage", memUsage))
+		fields = append(fields, zap.Uint64("tidb-server memory usage", instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
-	fields = append(fields, zap.Any("record path", record.baseRecordDir))
+	fields = append(fields, zap.Float64("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
+	fields = append(fields, zap.String("record path", record.baseRecordDir))
 	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
@@ -268,7 +268,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
-	oomAction := variable.OOMAction.Load()
+	oomAction := vardef.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]

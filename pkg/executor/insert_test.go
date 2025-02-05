@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -239,6 +240,24 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 		"<nil>/<nil>/x/1.2",
 		"<nil>/<nil>/x/1.2"))
 
+	// Test issue 56829
+	tk.MustExec(`
+		CREATE TABLE cache (
+			cache_key varchar(512) NOT NULL,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			expired_at datetime GENERATED ALWAYS AS (if(expires > 0, date_add(updated_at, interval expires second), date_add(updated_at, interval 99 year))) VIRTUAL,
+			expires int(11),
+			PRIMARY KEY (cache_key) /*T![clustered_index] CLUSTERED */,
+			KEY idx_c_on_expired_at (expired_at)
+		)`)
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("admin check table cache")
+	rs1 := tk.MustQuery("select cache_key, expired_at from cache use index() order by cache_key")
+	rs2 := tk.MustQuery("select cache_key, expired_at from cache use index(idx_c_on_expired_at) order by cache_key")
+	require.True(t, rs1.Equal(rs2.Rows()))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
@@ -416,7 +435,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+	for _, enable := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 		tk.Session().GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -656,4 +675,31 @@ func TestMySQLInsertID(t *testing.T) {
 	// Then transaction conflict and retry, in the second time it modify nothing.
 	tk.MustExec("insert into tb(a, b) values(1,2) on duplicate key update b = 2;")
 	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
+}
+
+func TestInsertNullInNonStrictMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, col1 varchar(10) not null default '')")
+	tk.MustExec("create table t2 (id int primary key, col1 varchar(10))")
+	tk.MustExec("insert into t2 values (1, null)")
+	tk.MustExec("insert ignore into t1 values(5, null)")
+
+	tk.MustExec("set session sql_mode = ''")
+
+	err := tk.ExecToErr("insert into t1 values(1, null)")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	err = tk.ExecToErr("insert into t1 set id = 1, col1 = null")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	err = tk.ExecToErr("insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	tk.MustExec("insert into t1 select * from t2")
+	tk.MustExec("insert into t1 values(2, null), (3, 3), (4, 4)")
+	tk.MustExec("update t1 set col1 = null where id = 3")
+	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
 }

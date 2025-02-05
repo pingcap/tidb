@@ -173,8 +173,22 @@
       "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
       // Test TopN + Left Join + Proj.
       "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
-      // Test TopN + Left Join + Proj.
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is unique key and not null.
       "select * from t left outer join t s on t.a = s.a order by t.a limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is unique key and not null.
+      "select * from t left outer join t s on t.f = s.f and t.g = s.g order by t.f, t.g limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is unique key and not null.
+      "select * from t left outer join t s on t.f = s.f and t.g = s.g order by t.g, t.f limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is part of unique key and not null.
+      "select * from t left outer join t s on t.g = s.g order by t.g limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is part of unique key and not null.
+      "select * from t left outer join t s on t.g = s.g order by t.f, t.g limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is unique key(c, d, e) but nullable.
+      "select * from t left outer join t s on t.c = s.c and t.d=s.d and t.e=s.e order by t.c, t.d, t.e limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is part of unique key(c, d, e) but nullable.
+      "select * from t left outer join t s on t.c = s.c and t.d=s.d order by t.c, t.d limit 5, 5",
+      // Test TopN(with offset) + Left Join + Proj, outer side join key is not unique.
+      "select * from t left outer join t s on t.b = s.b order by t.b limit 5, 5",
       // Test Limit + Left Join + Proj.
       "select * from t left outer join t s on t.a = s.a limit 5",
       // Test Limit + Left Join Apply + Proj.

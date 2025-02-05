@@ -327,6 +327,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.
@@ -346,17 +347,19 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
-// StoreType represents the type of a store.
+// StoreType represents the type of storage engine.
 type StoreType uint8
 
 const (
-	// TiKV means the type of a store is TiKV.
+	// TiKV means the type of store engine is TiKV.
 	TiKV StoreType = iota
-	// TiFlash means the type of a store is TiFlash.
+	// TiFlash means the type of store engine is TiFlash.
 	TiFlash
-	// TiDB means the type of a store is TiDB.
+	// TiDB means the type of store engine is TiDB.
+	// used to read memory data from other instances to have a global view of the
+	// data, such as for information_schema.cluster_slow_query.
 	TiDB
-	// UnSpecified means the store type is unknown
+	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255
 )
 
@@ -600,6 +603,8 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxExecutionTime is the timeout of the whole query execution
+	MaxExecutionTime uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 
@@ -717,6 +722,10 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.
 	GetCodec() tikv.Codec
+	// SetOption is a thin wrapper around sync.Map.
+	SetOption(k any, v any)
+	// GetOption is a thin wrapper around sync.Map.
+	GetOption(k any) (any, bool)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

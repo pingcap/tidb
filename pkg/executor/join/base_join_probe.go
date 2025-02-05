@@ -185,6 +185,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			return errors.New("Previous chunk is not probed yet")
 		}
 	}
+
 	j.currentChunk = chk
 	logicalRows := chk.NumRows()
 	// if chk.sel != nil, then physicalRows is different from logicalRows
@@ -312,6 +313,20 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	defer func() {
+		if j.ctx.spillHelper.areAllPartitionsSpilled() {
+			// We will not call `Probe` function when all partitions are spilled.
+			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
+			j.currentProbeRow = j.chunkRows
+		}
+	}()
+
+	if j.currentChunk != nil {
+		if j.currentProbeRow < j.chunkRows {
+			return errors.New("Previous chunk is not probed yet")
+		}
+	}
+
 	hashValueCol := chk.Column(0)
 	serializedKeysCol := chk.Column(1)
 	colNum := chk.NumCols()
@@ -478,7 +493,7 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chun
 	j.nextCachedBuildRowIndex = 0
 	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
-	if j.ctx.OtherCondition != nil {
+	if j.ctx.hasOtherCondition() {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
 		j.selected = j.selected[:0]
@@ -560,8 +575,8 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
-					size := *(*uint64)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
-					j.cachedBuildRows[index].buildRowOffset += sizeOfLengthField + int(size)
+					size := *(*uint32)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
+					j.cachedBuildRows[index].buildRowOffset += sizeOfElementSize + int(size)
 				}
 			} else {
 				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
@@ -687,10 +702,26 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	case FixedSerializedKey:
 		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength))
 	case VariableSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))))
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfElementSize), int(meta.getSerializedKeyLength(rowStart))))
 	default:
 		panic("unknown key match type")
 	}
+}
+
+func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
+	totalRowCount := base.ctx.hashTableContext.hashTable.totalRowCount()
+	concurrency := base.ctx.Concurrency
+	workID := uint64(base.workID)
+	avgRowPerWorker := totalRowCount / uint64(concurrency)
+	startIndex := workID * avgRowPerWorker
+	endIndex := (workID + 1) * avgRowPerWorker
+	if workID == uint64(concurrency-1) {
+		endIndex = totalRowCount
+	}
+	if endIndex > totalRowCount {
+		endIndex = totalRowCount
+	}
+	return base.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
 }
 
 // NewJoinProbe create a join probe used for hash join v2
@@ -747,6 +778,32 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
 	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
+	case logicalop.SemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for semi join")
+		}
+		return newSemiJoinProbe(base, !rightAsBuildSide)
+	case logicalop.AntiSemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for anti semi join")
+		}
+		return newAntiSemiJoinProbe(base, !rightAsBuildSide)
+	case logicalop.LeftOuterSemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for left outer semi join")
+		}
+		if rightAsBuildSide {
+			return newLeftOuterSemiJoinProbe(base, false)
+		}
+		panic("unsupported join type")
+	case logicalop.AntiLeftOuterSemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for left outer anti semi join")
+		}
+		if rightAsBuildSide {
+			return newLeftOuterSemiJoinProbe(base, true)
+		}
+		panic("unsupported join type")
 	default:
 		panic("unsupported join type")
 	}

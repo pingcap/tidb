@@ -943,6 +943,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
 	ErrConstraintNotFound:                                    mysql.Message("Constraint '%s' does not exist.", nil),
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
+	ErrEngineAttributeNotSupported:                           mysql.Message("Storage engine does not support ENGINE_ATTRIBUTE.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
@@ -1078,7 +1079,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
 	ErrDeleteNotFoundColumn:             mysql.Message("Delete can not find column %s for table %s", nil),
-	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
+	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
+
+	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1152,6 +1155,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query [%s]", nil),
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
+
+	ErrEngineAttributeInvalidFormat: mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

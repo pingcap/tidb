@@ -26,7 +26,7 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -233,7 +233,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	}
 }
 
-func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo) []string {
+func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Session, schema ast.CIStr, tblInfo *model.TableInfo) []string {
 	if tblInfo.Partition == nil {
 		key := buildTimerKey(tblInfo, nil)
 		if _, err := g.syncOneTimer(ctx, se, schema, tblInfo, nil, false); err != nil {
@@ -255,7 +255,7 @@ func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Ses
 	return keys
 }
 
-func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) bool {
+func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) bool {
 	if timer == nil {
 		return true
 	}
@@ -269,7 +269,7 @@ func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pm
 		timer.SchedPolicyExpr != policyExpr
 }
 
-func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
+func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
 	key := buildTimerKey(tblInfo, partition)
 	tags := getTimerTags(schema, tblInfo, partition)
 	ttlInfo := tblInfo.TTLInfo
@@ -365,7 +365,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 	return timer, nil
 }
 
-func getTimerTags(schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
+func getTimerTags(schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
 	dbTag := fmt.Sprintf("db=%s", schema.O)
 	tblTag := fmt.Sprintf("table=%s", tblInfo.Name.O)
 	if partition != nil {
@@ -414,7 +414,9 @@ func getTTLSchedulePolicy(info *model.TTLInfo) (timerapi.SchedPolicyType, string
 	interval := info.JobInterval
 	if interval == "" {
 		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
-		interval = model.DefaultJobIntervalStr
+		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+		// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+		interval = model.OldDefaultTTLJobInterval
 	}
 	return timerapi.SchedEventInterval, interval
 }

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -279,7 +279,11 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 	ver := strconv.FormatInt(version, 10)
 	var err error
 	var path string
-	if variable.EnableMDL.Load() {
+	if vardef.EnableMDL.Load() {
+		// If jobID is 0, it doesn't need to put into etcd `DDLAllSchemaVersionsByJob` key.
+		if jobID == 0 {
+			return nil
+		}
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
 		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
@@ -318,7 +322,7 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
 func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
-	if !variable.EnableMDL.Load() {
+	if !vardef.EnableMDL.Load() {
 		time.Sleep(CheckVersFirstWaitTime)
 	}
 	notMatchVerCnt := 0
@@ -341,7 +345,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			return errors.Trace(err)
 		}
 
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			serverInfos, err := infosync.GetAllServerInfo(ctx)
 			if err != nil {
 				return err
@@ -368,17 +372,17 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 		}
 
 		// Check all schema versions.
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			notifyCh := make(chan struct{})
-			var unmatchedNodeID atomic.Pointer[string]
+			var unmatchedNodeInfo atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
-				if len(nodeVersions) < len(updatedMap) {
+				if len(nodeVersions) == 0 {
 					return false
 				}
-				for tidbID := range updatedMap {
+				for tidbID, info := range updatedMap {
 					if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
-						id := tidbID
-						unmatchedNodeID.Store(&id)
+						linfo := info
+						unmatchedNodeInfo.Store(&linfo)
 						return false
 					}
 				}
@@ -394,9 +398,9 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 				return errors.Trace(ctx.Err())
 			case <-time.After(time.Second):
 				item.clearMatchFn()
-				if id := unmatchedNodeID.Load(); id != nil {
+				if info := unmatchedNodeInfo.Load(); info != nil {
 					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
-						zap.String("info", *id),
+						zap.String("info", *info),
 						zap.Int64("ddl job id", jobID),
 						zap.Int64("ver", latestVer))
 				} else {

@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,8 +37,8 @@ func TestV2Basic(t *testing.T) {
 	}()
 	is := NewInfoSchemaV2(r, nil, NewData())
 
-	schemaName := pmodel.NewCIStr("testDB")
-	tableName := pmodel.NewCIStr("test")
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("test")
 
 	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
 	is.Data.addDB(1, dbInfo)
@@ -72,7 +72,7 @@ func TestV2Basic(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, gotTblInfo, getTableInfo.Meta())
 
-	gotTblInfo, err = is.TableInfoByName(schemaName, pmodel.NewCIStr("notexist"))
+	gotTblInfo, err = is.TableInfoByName(schemaName, ast.NewCIStr("notexist"))
 	require.Error(t, err)
 	require.Nil(t, gotTblInfo)
 
@@ -113,11 +113,11 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 
-	tables, err = is.SchemaTableInfos(context.Background(), pmodel.NewCIStr("notexist"))
+	tables, err = is.SchemaTableInfos(context.Background(), ast.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
 
-	tblInfos, err = is.SchemaTableInfos(context.Background(), pmodel.NewCIStr("notexist"))
+	tblInfos, err = is.SchemaTableInfos(context.Background(), ast.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tblInfos))
 
@@ -127,7 +127,7 @@ func TestV2Basic(t *testing.T) {
 	schemaNameByTableIDTests := []struct {
 		name       string
 		tableID    int64
-		wantSchema pmodel.CIStr
+		wantSchema ast.CIStr
 		wantOK     bool
 	}{
 		{
@@ -139,13 +139,13 @@ func TestV2Basic(t *testing.T) {
 		{
 			name:       "non-existent table ID",
 			tableID:    tblInfo.ID + 1,
-			wantSchema: pmodel.CIStr{},
+			wantSchema: ast.CIStr{},
 			wantOK:     false,
 		},
 		{
 			name:       "invalid table ID (negative)",
 			tableID:    -1,
-			wantSchema: pmodel.CIStr{},
+			wantSchema: ast.CIStr{},
 			wantOK:     false,
 		},
 	}
@@ -168,7 +168,7 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -289,9 +289,9 @@ func TestBundles(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := pmodel.NewCIStr("testDB")
-	tableName := pmodel.NewCIStr("test")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("test")
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -410,9 +410,9 @@ func TestReferredFKInfo(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := pmodel.NewCIStr("testDB")
-	tableName := pmodel.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -431,9 +431,9 @@ func TestReferredFKInfo(t *testing.T) {
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.ForeignKeys = []*model.FKInfo{{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_1"),
-		RefSchema: pmodel.NewCIStr("t1"),
-		RefTable:  pmodel.NewCIStr("parent"),
+		Name:      ast.NewCIStr("fk_1"),
+		RefSchema: ast.NewCIStr("t1"),
+		RefTable:  ast.NewCIStr("parent"),
 		Version:   1,
 	}}
 	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
@@ -450,9 +450,9 @@ func TestReferredFKInfo(t *testing.T) {
 	// check ReferredFKInfo after add foreign key
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &model.FKInfo{
 		ID:        2,
-		Name:      pmodel.NewCIStr("fk_2"),
-		RefSchema: pmodel.NewCIStr("t1"),
-		RefTable:  pmodel.NewCIStr("parent"),
+		Name:      ast.NewCIStr("fk_2"),
+		RefSchema: ast.NewCIStr("t1"),
+		RefTable:  ast.NewCIStr("parent"),
 		Version:   1,
 	})
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
@@ -516,9 +516,9 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := pmodel.NewCIStr("testDB")
-	tableName := pmodel.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -551,12 +551,12 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// tests partition info correctness in schema change
 	tblInfo.Partition = &model.PartitionInfo{
 		Expr: "aa+1",
-		Columns: []pmodel.CIStr{
-			pmodel.NewCIStr("aa"),
+		Columns: []ast.CIStr{
+			ast.NewCIStr("aa"),
 		},
 		Definitions: []model.PartitionDefinition{
-			{ID: 1, Name: pmodel.NewCIStr("p1")},
-			{ID: 2, Name: pmodel.NewCIStr("p2")},
+			{ID: 1, Name: ast.NewCIStr("p1")},
+			{ID: 2, Name: ast.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,
@@ -572,7 +572,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// test placement policy correctness in schema change
 	tblInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("p3"),
+		Name: ast.NewCIStr("p3"),
 	}
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, infoschemacontext.PlacementPolicyAttribute, true)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfo1.PlacementPolicyRef)
@@ -592,7 +592,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	// test table lock correctness in schema change
 	tblInfo.Lock = &model.TableLockInfo{
-		Tp:    pmodel.TableLockRead,
+		Tp:    ast.TableLockRead,
 		State: model.TableLockStatePublic,
 		TS:    1,
 	}
@@ -604,11 +604,11 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_1"),
-		RefSchema: pmodel.NewCIStr("t"),
-		RefTable:  pmodel.NewCIStr("t"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("a")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
+		Name:      ast.NewCIStr("fk_1"),
+		RefSchema: ast.NewCIStr("t"),
+		RefTable:  ast.NewCIStr("t"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("a")},
+		Cols:      []ast.CIStr{ast.NewCIStr("t_a")},
 		State:     model.StateWriteOnly,
 	}}
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, infoschemacontext.ForeignKeysAttribute, true)
@@ -623,9 +623,9 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := pmodel.NewCIStr("testDB")
-	tableName := pmodel.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -639,10 +639,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
-	dbIDName, ok := v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
+	dbIDName, ok := v2.Data.schemaID2Name.Load().Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
 	require.True(t, ok)
 	require.Equal(t, dbIDName.name, dbInfo.Name)
-	dbItem, ok := v2.Data.schemaMap.Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	dbItem, ok := v2.Data.schemaMap.Load().Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.Equal(t, dbItem.dbInfo.ID, dbInfo.ID)
 
@@ -653,10 +653,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	tblItem, ok := v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
+	tblItem, ok := v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
 	require.True(t, ok)
 	require.Equal(t, tblItem.tableID, tblInfo.ID)
-	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 2})
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 2})
 	require.True(t, ok)
 	require.Equal(t, tblItem.dbID, dbInfo.ID)
 	tbl, ok := v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 2})
@@ -664,19 +664,19 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tbl.Meta().Name, tblInfo.Name)
 
 	// verify partition related fields after add partition
-	require.Equal(t, v2.Data.pid2tid.Len(), 0)
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 0)
 	tblInfo.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
-			{ID: 1, Name: pmodel.NewCIStr("p1")},
-			{ID: 2, Name: pmodel.NewCIStr("p2")},
+			{ID: 1, Name: ast.NewCIStr("p1")},
+			{ID: 2, Name: ast.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,
 	}
 	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
-	require.Equal(t, v2.Data.pid2tid.Len(), 2)
-	tblInfoItem, ok := v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 3})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 2)
+	tblInfoItem, ok := v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 2, schemaVersion: 3})
 	require.True(t, ok)
 	require.Equal(t, tblInfoItem.tableID, tblInfo.ID)
 
@@ -684,11 +684,11 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
-	require.Equal(t, v2.Data.pid2tid.Len(), 4)
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 4})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 4)
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 4})
 	require.True(t, ok)
 	require.False(t, tblInfoItem.tomb)
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 4})
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 2, schemaVersion: 4})
 	require.True(t, ok)
 	require.True(t, tblInfoItem.tomb)
 
@@ -699,16 +699,16 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	// at first, the table will not be removed
-	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	tblItem, ok = v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
 	require.True(t, ok)
 	require.False(t, tblItem.tomb)
-	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 5})
 	require.True(t, ok)
 	require.False(t, tblItem.tomb)
 	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
 	require.True(t, ok)
-	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 5})
 	require.True(t, ok)
 	require.False(t, tblInfoItem.tomb)
 	// after actually drop the table, the info will be tomb
@@ -716,16 +716,16 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	// at first, the table will not be removed
-	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	tblItem, ok = v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
-	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
 	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
 	require.False(t, ok)
-	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblInfoItem.tomb)
 
@@ -734,10 +734,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
-	dbIDName, ok = v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
+	dbIDName, ok = v2.Data.schemaID2Name.Load().Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
 	require.True(t, ok)
 	require.True(t, dbIDName.tomb)
-	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	dbItem, ok = v2.Data.schemaMap.Load().Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.True(t, dbItem.tomb)
 }

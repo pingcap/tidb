@@ -20,37 +20,22 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
-type taskTypeOptions struct {
-}
+var factoryFns = make(map[proto.TaskType]FactoryFn)
 
-// TaskTypeOption is the option of TaskType.
-type TaskTypeOption func(opts *taskTypeOptions)
-
-var (
-	// key is task type
-	taskTypes             = make(map[proto.TaskType]taskTypeOptions)
-	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
-)
-
-type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
+// FactoryFn is a function to create a TaskExecutor.
+type FactoryFn func(ctx context.Context, task *proto.Task, param Param) TaskExecutor
 
 // RegisterTaskType registers the task type.
-func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, opts ...TaskTypeOption) {
-	var option taskTypeOptions
-	for _, opt := range opts {
-		opt(&option)
-	}
-	taskTypes[taskType] = option
-	taskExecutorFactories[taskType] = factory
+func RegisterTaskType(taskType proto.TaskType, factory FactoryFn) {
+	factoryFns[taskType] = factory
 }
 
 // GetTaskExecutorFactory gets taskExecutorFactory by task type.
-func GetTaskExecutorFactory(taskType proto.TaskType) taskExecutorFactoryFn {
-	return taskExecutorFactories[taskType]
+func GetTaskExecutorFactory(taskType proto.TaskType) FactoryFn {
+	return factoryFns[taskType]
 }
 
 // ClearTaskExecutors is only used in test
 func ClearTaskExecutors() {
-	taskTypes = make(map[proto.TaskType]taskTypeOptions)
-	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
+	factoryFns = make(map[proto.TaskType]FactoryFn)
 }

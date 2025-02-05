@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -136,7 +137,7 @@ func TestInfo(t *testing.T) {
 	require.True(t, syncerStarted)
 
 	stmt := &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("aaa"),
+		Name: ast.NewCIStr("aaa"),
 		// Make sure loading schema is normal.
 		Options: []*ast.DatabaseOption{
 			{
@@ -181,7 +182,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext())
+	dom.gcStatsWorker()
 	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
@@ -261,7 +262,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}()
 	dom.sysVarCache.Lock()
 	dom.sysVarCache.global = map[string]string{
-		variable.TiDBReplicaRead: "closest-adaptive",
+		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
 
@@ -423,7 +424,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 
@@ -485,20 +486,4 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
-}
-
-func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
-	etcdStore, addrs, err := getEtcdAddrs(nil)
-	require.NoError(t, err)
-	require.Empty(t, addrs)
-	require.Nil(t, etcdStore)
-
-	etcdStore, addrs, err = getEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
-	require.NoError(t, err)
-	require.Equal(t, []string{"localhost:2379"}, addrs)
-	require.NotNil(t, etcdStore)
-
-	cli, err := NewEtcdCli(nil)
-	require.NoError(t, err)
-	require.Nil(t, cli)
 }
