@@ -36,11 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util/stringutil"
-=======
-	"github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> fa765507677 (infoschema: fix schema and data mismatch for TIDB_SERVERS_INFO (#59246))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
