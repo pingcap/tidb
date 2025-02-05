@@ -378,7 +378,25 @@ func TestForServersInfo(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	rows := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO").Rows()
+	ctx := context.Background()
+	sql := "select * from information_schema.TIDB_SERVERS_INFO"
+	comment := fmt.Sprintf("sql:%s", sql)
+	rs, err := tk.ExecWithContext(ctx, sql)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	fields := rs.Fields()
+	require.Len(t, fields, 8)
+	require.Equal(t, fields[0].ColumnAsName.L, "ddl_id")
+	require.Equal(t, fields[1].ColumnAsName.L, "ip")
+	require.Equal(t, fields[2].ColumnAsName.L, "port")
+	require.Equal(t, fields[3].ColumnAsName.L, "status_port")
+	require.Equal(t, fields[4].ColumnAsName.L, "lease")
+	require.Equal(t, fields[5].ColumnAsName.L, "version")
+	require.Equal(t, fields[6].ColumnAsName.L, "git_hash")
+	require.Equal(t, fields[7].ColumnAsName.L, "labels")
+
+	res := tk.ResultSetToResultWithCtx(ctx, rs, comment)
+	rows := res.Rows()
 	require.Len(t, rows, 1)
 	require.Len(t, rows[0], 8)
 
