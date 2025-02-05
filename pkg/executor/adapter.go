@@ -603,7 +603,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
-		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
@@ -1852,8 +1852,17 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() (string, string) {
-		return getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+	planGenerator := func() (p string, h string, e any) {
+		defer func() {
+			e = recover()
+			if e != nil {
+				logutil.BgLogger().Warn("fail to generate plan info",
+					zap.Stack("backtrace"),
+					zap.Any("error", e))
+			}
+		}()
+		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+		return
 	}
 	var binPlanGen func() string
 	if variable.GenerateBinaryPlan.Load() {

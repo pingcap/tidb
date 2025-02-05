@@ -33,18 +33,61 @@ func (f fakeValue) Type() string {
 }
 
 func TestUrlNoQuery(t *testing.T) {
-	flag := &pflag.Flag{
-		Name:  flagStorage,
-		Value: fakeValue("s3://some/what?secret=a123456789&key=987654321"),
+	testCases := []struct {
+		inputName     string
+		expectedName  string
+		inputValue    string
+		expectedValue string
+	}{
+		{
+			inputName:     flagSendCreds,
+			expectedName:  "send-credentials-to-tikv",
+			inputValue:    "true",
+			expectedValue: "true",
+		},
+		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    "s3://some/what?secret=a123456789&key=987654321",
+			expectedValue: "s3://some/what",
+		},
+		{
+			inputName:     FlagStreamFullBackupStorage,
+			expectedName:  "full-backup-storage",
+			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/prefix/",
+		},
+		{
+			inputName:     flagCipherKey,
+			expectedName:  "crypter.key",
+			inputValue:    "537570657253656372657456616C7565",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "azblob.encryption-key",
+			expectedName:  "azblob.encryption-key",
+			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
 	}
-	field := flagToZapField(flag)
-	require.Equal(t, flagStorage, field.Key)
-	require.Equal(t, "s3://some/what", field.Interface.(fmt.Stringer).String())
+
+	for _, tc := range testCases {
+		flag := pflag.Flag{
+			Name:  tc.inputName,
+			Value: fakeValue(tc.inputValue),
+		}
+		field := flagToZapField(&flag)
+		require.Equal(t, tc.expectedName, field.Key, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+		if stringer, ok := field.Interface.(fmt.Stringer); ok {
+			field.String = stringer.String()
+		}
+		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+	}
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
-	restoreConfig := enableTiDBConfig()
+	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
@@ -190,8 +233,10 @@ func expectedDefaultConfig() Config {
 }
 
 func expectedDefaultBackupConfig() BackupConfig {
+	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Checksum = false
 	return BackupConfig{
-		Config: expectedDefaultConfig(),
+		Config: defaultConfig,
 		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
@@ -231,13 +276,16 @@ func TestDefault(t *testing.T) {
 }
 
 func TestDefaultBackup(t *testing.T) {
-	def := DefaultBackupConfig()
+	commonConfig := DefaultConfig()
+	commonConfig.OverrideDefaultForBackup()
+	def := DefaultBackupConfig(commonConfig)
 	defaultConfig := expectedDefaultBackupConfig()
 	require.Equal(t, defaultConfig, def)
 }
 
 func TestDefaultRestore(t *testing.T) {
-	def := DefaultRestoreConfig()
+	commonConfig := DefaultConfig()
+	def := DefaultRestoreConfig(commonConfig)
 	defaultConfig := expectedDefaultRestoreConfig()
 	require.Equal(t, defaultConfig, def)
 }

@@ -76,7 +76,7 @@ func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
 	}
 	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)

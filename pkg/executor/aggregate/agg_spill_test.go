@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strconv"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,49 +46,6 @@ import (
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-type resultsContainer struct {
-	rows []chunk.Row
-}
-
-func (r *resultsContainer) add(chk *chunk.Chunk) {
-	iter := chunk.NewIterator4Chunk(chk.CopyConstruct())
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		r.rows = append(r.rows, row)
-	}
-}
-
-func (r *resultsContainer) check(expectRes map[string]float64) bool {
-	if len(r.rows) != len(expectRes) {
-		return false
-	}
-
-	cols := getColumns()
-	retFields := []*types.FieldType{cols[0].RetType, cols[1].RetType}
-	for _, row := range r.rows {
-		key := ""
-		for i, field := range retFields {
-			d := row.GetDatum(i, field)
-			resStr, err := d.ToString()
-			if err != nil {
-				panic("Fail to convert to string")
-			}
-
-			if i == 0 {
-				key = resStr
-			} else {
-				expectVal, ok := expectRes[key]
-				if !ok {
-					return false
-				}
-				if resStr != strconv.Itoa(int(expectVal)) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 func getRandString() string {
 	b := make([]byte, 5)
 	for i := range b {
@@ -108,9 +65,9 @@ func generateData(rowNum int, ndv int) ([]string, []float64) {
 
 	// Generate data
 	for i := 0; i < rowNum; i++ {
-		key := keys[i%ndv]
+		key := keys[rand.Intn(ndv)]
 		col0Data = append(col0Data, key)
-		col1Data = append(col1Data, 1) // Always 1
+		col1Data = append(col1Data, float64(rand.Intn(10000000)))
 	}
 
 	// Shuffle data
@@ -146,24 +103,77 @@ func buildMockDataSource(opt testutil.MockDataSourceParameters, col0Data []strin
 	return mockDatasource
 }
 
-func generateResult(col0 []string) map[string]float64 {
-	result := make(map[string]float64, 0)
-	length := len(col0)
+func generateCMPFunc(fieldTypes []*types.FieldType) func(chunk.Row, chunk.Row) int {
+	cmpFuncs := make([]chunk.CompareFunc, 0, len(fieldTypes))
+	for _, colType := range fieldTypes {
+		cmpFuncs = append(cmpFuncs, chunk.GetCompareFunc(colType))
+	}
 
-	for i := 0; i < length; i++ {
-		_, ok := result[col0[i]]
-		if ok {
-			result[col0[i]]++
-		} else {
-			result[col0[i]] = 1
+	cmp := func(rowI, rowJ chunk.Row) int {
+		for i, cmpFunc := range cmpFuncs {
+			cmp := cmpFunc(rowI, i, rowJ, i)
+			if cmp != 0 {
+				return cmp
+			}
+		}
+		return 0
+	}
+
+	return cmp
+}
+
+func sortRows(rows []chunk.Row, fieldTypes []*types.FieldType) []chunk.Row {
+	cmp := generateCMPFunc(fieldTypes)
+
+	sort.Slice(rows, func(i, j int) bool {
+		return cmp(rows[i], rows[j]) < 0
+	})
+	return rows
+}
+
+func generateResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource) []chunk.Row {
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	resultRows := make([]chunk.Row, 0)
+	aggExec.Open(tmpCtx)
+	for {
+		chk := exec.NewFirstChunk(aggExec)
+		err := aggExec.Next(tmpCtx, chk)
+		require.Equal(t, nil, err)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		rowNum := chk.NumRows()
+		for i := 0; i < rowNum; i++ {
+			resultRows = append(resultRows, chk.GetRow(i))
 		}
 	}
-	return result
+	aggExec.Close()
+
+	require.False(t, aggExec.IsSpillTriggeredForTest())
+	return sortRows(resultRows, getRetTypes())
+}
+
+func getRetTypes() []*types.FieldType {
+	return []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+	}
 }
 
 func getColumns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 	}
 }
@@ -191,22 +201,50 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	schema := expression.NewSchema(childCols...)
 	groupItems := []expression.Expression{childCols[0]}
 
-	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	var err error
+	var aggFirstRow *aggregation.AggFuncDesc
+	var aggSum *aggregation.AggFuncDesc
+	var aggCount *aggregation.AggFuncDesc
+	var aggAvg *aggregation.AggFuncDesc
+	var aggMin *aggregation.AggFuncDesc
+	var aggMax *aggregation.AggFuncDesc
+	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggFunc, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
+	aggSum, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggFunc}
+	aggCount, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggAvg, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggMin, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncMin, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggMax, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncMax, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
 
 	aggExec := &aggregate.HashAggExec{
 		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
 		Sc:               ctx.GetSessionVars().StmtCtx,
 		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		FinalAggFuncs:    make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
 		GroupByItems:     groupItems,
 		IsUnparallelExec: false,
 	}
@@ -215,6 +253,10 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	for i, aggDesc := range aggFuncs {
 		ordinal := []int{partialOrdinal}
 		partialOrdinal++
+		if aggDesc.Name == ast.AggFuncAvg {
+			ordinal = append(ordinal, partialOrdinal+1)
+			partialOrdinal++
+		}
 		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
 		partialAggFunc := aggfuncs.Build(ctx.GetExprCtx(), partialAggDesc, i)
 		finalAggFunc := aggfuncs.Build(ctx.GetExprCtx(), finalDesc, i)
@@ -237,30 +279,48 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-// select t0, sum(t1) from t group by t0;
-func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, result map[string]float64) {
+func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []*types.FieldType) bool {
+	if len(expectResult) != len(actualResult) {
+		return false
+	}
+
+	rowNum := len(expectResult)
+	for i := 0; i < rowNum; i++ {
+		if expectResult[i].ToString(retTypes) != actualResult[i].ToString(retTypes) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, expectResult []chunk.Row) {
 	if aggExec == nil {
 		aggExec = buildHashAggExecutor(t, ctx, dataSource)
 	}
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(aggExec)
-	resContainer := resultsContainer{}
+	resultRows := make([]chunk.Row, 0)
 	aggExec.Open(tmpCtx)
-
 	for {
+		chk := exec.NewFirstChunk(aggExec)
 		err := aggExec.Next(tmpCtx, chk)
 		require.Equal(t, nil, err)
 		if chk.NumRows() == 0 {
 			break
 		}
-		resContainer.add(chk)
-		chk.Reset()
+
+		rowNum := chk.NumRows()
+		for i := 0; i < rowNum; i++ {
+			resultRows = append(resultRows, chk.GetRow(i))
+		}
 	}
 	aggExec.Close()
 
 	require.True(t, aggExec.IsSpillTriggeredForTest())
-	require.True(t, resContainer.check(result))
+	retTypes := getRetTypes()
+	resultRows = sortRows(resultRows, retTypes)
+	require.True(t, checkResult(expectResult, resultRows, retTypes))
 }
 
 func fallBackActionTest(t *testing.T) {
@@ -283,15 +343,12 @@ func fallBackActionTest(t *testing.T) {
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
 	chk := exec.NewFirstChunk(aggExec)
-	resContainer := resultsContainer{}
 	aggExec.Open(tmpCtx)
-
 	for {
 		aggExec.Next(tmpCtx, chk)
 		if chk.NumRows() == 0 {
 			break
 		}
-		resContainer.add(chk)
 		chk.Reset()
 	}
 	aggExec.Close()
@@ -340,21 +397,23 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	})
 }
 
+// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
-	hardLimitBytesNum := int64(6000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
+	initCtx(ctx, newRootExceedAction, -1, 1024)
 
 	rowNum := 100000
 	ndv := 50000
-	col1, col2 := generateData(rowNum, ndv)
-	result := generateResult(col1)
+	col0, col1 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
-	dataSource := buildMockDataSource(opt, col1, col2)
+	dataSource := buildMockDataSource(opt, col0, col1)
+	result := generateResult(t, ctx, dataSource)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 
 	finished := atomic.Bool{}
 	wg := sync.WaitGroup{}
@@ -372,6 +431,9 @@ func TestGetCorrectResult(t *testing.T) {
 		wg.Done()
 	}()
 
+	hardLimitBytesNum := int64(6000000)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
+
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 	for i := 0; i < 5; i++ {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result)
@@ -380,7 +442,6 @@ func TestGetCorrectResult(t *testing.T) {
 
 	finished.Store(true)
 	wg.Wait()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 }
 
 func TestFallBackAction(t *testing.T) {

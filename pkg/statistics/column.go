@@ -166,7 +166,7 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 				ID:               cid,
 				IsIndex:          false,
 				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			})
+			}, true)
 		}
 	}
 	if histColl.Pseudo {
@@ -262,4 +262,14 @@ func (c *Column) StatsAvailable() bool {
 	// However, when we add/modify a column, its stats are generated according to the default value without setting
 	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
 	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+}
+
+// EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
+func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column {
+	return &Column{
+		PhysicalID: tid,
+		Info:       colInfo,
+		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
+		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+	}
 }

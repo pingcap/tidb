@@ -55,20 +55,25 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		return err
 	}
 	defer h.statsHandler.SPool().Put(sctx)
-	if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
-		return err
-	} else if isSysDB {
-		// EXCHANGE PARTITION EVENT NOTES:
-		// 1. When a partition is exchanged with a system table, we need to adjust the global statistics
-		//    based on the count delta and modify count delta. However, due to the involvement of the system table,
-		//    a complete update of the global statistics is not feasible. Therefore, we bypass the statistics update
-		//    for the table in this scenario. Despite this, the table id still changes, so the statistics for the
-		//    system table will still be visible.
-		// 2. If the system table is a partitioned table, we will update the global statistics for the partitioned table.
-		//    It is rare to exchange a partition from a system table, so we can ignore this case. In this case,
-		//    the system table will have statistics, but this is not a significant issue.
-		logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
-		return nil
+
+	// ActionFlashbackCluster will not create any new stats info
+	// and it's SchemaID alwayws equals to 0, so skip check it.
+	if t.GetType() != model.ActionFlashbackCluster {
+		if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
+			return err
+		} else if isSysDB {
+			// EXCHANGE PARTITION EVENT NOTES:
+			// 1. When a partition is exchanged with a system table, we need to adjust the global statistics
+			//    based on the count delta and modify count delta. However, due to the involvement of the system table,
+			//    a complete update of the global statistics is not feasible. Therefore, we bypass the statistics update
+			//    for the table in this scenario. Despite this, the table id still changes, so the statistics for the
+			//    system table will still be visible.
+			// 2. If the system table is a partitioned table, we will update the global statistics for the partitioned table.
+			//    It is rare to exchange a partition from a system table, so we can ignore this case. In this case,
+			//    the system table will have statistics, but this is not a significant issue.
+			logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
+			return nil
+		}
 	}
 	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
 
@@ -196,6 +201,15 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	return nil
 }
 
+// UpdateStatsWithCountDeltaAndModifyCountDeltaForTest updates the global stats with the given count delta and modify count delta.
+func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
+	sctx sessionctx.Context,
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	return updateStatsWithCountDeltaAndModifyCountDelta(sctx, tableID, countDelta, modifyCountDelta)
+}
+
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
@@ -236,7 +250,7 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(sctx, tableID)
 	if err != nil {
 		return err
 	}

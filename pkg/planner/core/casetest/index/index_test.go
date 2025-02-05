@@ -95,3 +95,18 @@ func TestInvisibleIndex(t *testing.T) {
 			`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
 			`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 }
+
+func TestOrderedIndexWithIsNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// https://github.com/pingcap/tidb/issues/56116
+	tk.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
+	tk.MustExec("insert into t2 values (), (), ()")
+	tk.MustExec("analyze table t2")
+	tk.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
+		"StreamAgg_17 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_18 1.00 root  index:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_16 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+}

@@ -80,9 +80,9 @@ const (
 	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
-	defaultMetaSchemaName     = "lightning_metadata"
-	defaultTaskInfoSchemaName = "lightning_task_info"
-	defaultMaxRecordRows      = 100
+	defaultMetaSchemaName           = "lightning_metadata"
+	defaultTaskInfoSchemaName       = "lightning_task_info"
+	DefaultRecordDuplicateThreshold = 10000
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -179,7 +179,10 @@ func (d *DBStore) adjust(
 	}
 
 	switch d.TLS {
-	case "skip-verify", "preferred":
+	case "preferred":
+		d.Security.AllowFallbackToPlaintext = true
+		fallthrough
+	case "skip-verify":
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
@@ -187,14 +190,22 @@ func (d *DBStore) adjust(
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
-			d.Security.AllowFallbackToPlaintext = true
+		} else {
+			d.Security.TLSConfig.InsecureSkipVerify = true
 		}
 	case "cluster":
 		if len(s.CAPath) == 0 {
 			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
-	case "", "false":
-		d.TLS = "false"
+	case "":
+	case "false":
+		d.Security.TLSConfig = nil
+		d.Security.CAPath = ""
+		d.Security.CertPath = ""
+		d.Security.KeyPath = ""
+		d.Security.CABytes = nil
+		d.Security.CertBytes = nil
+		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
@@ -595,7 +606,7 @@ const (
 	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
 	// ReplaceOnDup records all duplicate records, remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
-	// Users need to analyze the lightning_task_info.conflict_error_v2 table to check whether the reserved data
+	// Users need to analyze the lightning_task_info.conflict_error_v3 table to check whether the reserved data
 	// cater to their need and check whether they need to add back the correct rows.
 	ReplaceOnDup
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
@@ -873,6 +884,11 @@ func (m *MydumperRuntime) adjust() error {
 	if err := m.CSV.adjust(); err != nil {
 		return err
 	}
+	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack(
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
+
 	for _, rule := range m.FileRouters {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
@@ -1339,7 +1355,7 @@ type Conflict struct {
 
 // adjust assigns default values and check illegal values. The arguments must be
 // adjusted before calling this function.
-func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
+func (c *Conflict) adjust(i *TikvImporter) error {
 	strategyConfigFrom := "conflict.strategy"
 	if c.Strategy == NoneOnDup {
 		if i.OnDuplicate == NoneOnDup && i.Backend == BackendTiDB {
@@ -1378,15 +1394,10 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 
 	if c.Threshold < 0 {
 		switch c.Strategy {
-		case ErrorOnDup:
+		case ErrorOnDup, NoneOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
-			c.Threshold = math.MaxInt64
-		case NoneOnDup:
-			c.Threshold = 0
-			if i.Backend == BackendLocal && c.Strategy != NoneOnDup {
-				c.Threshold = math.MaxInt64
-			}
+			c.Threshold = DefaultRecordDuplicateThreshold
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
@@ -1394,32 +1405,20 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			`conflict.threshold cannot be set when use conflict.strategy = "error"`)
 	}
 
-	if c.MaxRecordRows < 0 {
-		maxErr := l.MaxError
-		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
-		if maxAccepted < defaultMaxRecordRows {
-			maxAccepted = defaultMaxRecordRows
+	if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
+		// due to we use batch insert, we can't know which row is duplicated.
+		if c.MaxRecordRows >= 0 {
+			// only warn when it is set by user.
+			log.L().Warn(`Cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = \"tidb\" and conflict.strategy = \"replace\".
+				The value of conflict.max-record-rows has been converted to 0.`)
 		}
-		if maxAccepted > c.Threshold {
-			maxAccepted = c.Threshold
-		}
-		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
-			// due to we use batch insert, we can't know which row is duplicated.
-			maxAccepted = 0
-		}
-		c.MaxRecordRows = maxAccepted
+		c.MaxRecordRows = 0
 	} else {
-		// only check it when it is set by user.
-		if c.MaxRecordRows > c.Threshold {
-			return common.ErrInvalidConfig.GenWithStack(
-				"conflict.max-record-rows (%d) cannot be larger than conflict.threshold (%d)",
-				c.MaxRecordRows, c.Threshold)
+		if c.MaxRecordRows >= 0 {
+			// only warn when it is set by user.
+			log.L().Warn("Setting conflict.max-record-rows does not take affect. The value of conflict.max-record-rows has been converted to conflict.threshold.")
 		}
-		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
-			return common.ErrInvalidConfig.GenWithStack(
-				`cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
-		}
+		c.MaxRecordRows = c.Threshold
 	}
 	return nil
 }
@@ -1622,7 +1621,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if err = cfg.Routes.adjust(&cfg.Mydumper); err != nil {
 		return err
 	}
-	return cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App)
+	return cfg.Conflict.adjust(&cfg.TikvImporter)
 }
 
 // AdjustForDDL acts like Adjust, but DDL will not use some functionalities so

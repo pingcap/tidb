@@ -193,7 +193,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -253,7 +253,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
@@ -446,6 +446,35 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 		baseBuiltinFunc: builtinFunc,
 		inUnion:         inUnion,
 	}
+}
+
+func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
+	var bf baseBuiltinFunc
+	var err error
+	if isExplicitCharset {
+		bf = baseBuiltinFunc{
+			bufAllocator:           newLocalColumnPool(),
+			childrenVectorizedOnce: new(sync.Once),
+
+			args: args,
+			tp:   tp,
+		}
+		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
+		bf.setCollator(collate.GetCollator(tp.GetCollate()))
+		bf.SetCoercibility(CoercibilityExplicit)
+		bf.SetExplicitCharset(true)
+		if tp.GetCharset() == charset.CharsetASCII {
+			bf.SetRepertoire(ASCII)
+		} else {
+			bf.SetRepertoire(UNICODE)
+		}
+	} else {
+		bf, err = newBaseBuiltinFunc(ctx, funcName, args, tp)
+		if err != nil {
+			return baseBuiltinFunc{}, err
+		}
+	}
+	return bf, nil
 }
 
 // vecBuiltinFunc contains all vectorized methods for a builtin function.

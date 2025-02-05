@@ -519,15 +519,81 @@ func TestWriterSort(t *testing.T) {
 		}
 		return false
 	})
-	println("thread quick sort", time.Since(ts).String())
+	t.Log("thread quick sort", time.Since(ts).String())
 
 	ts = time.Now()
 	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
-	println("quick sort", time.Since(ts).String())
+	t.Log("quick sort", time.Since(ts).String())
 
 	for i := 0; i < 1000000; i++ {
 		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
+	}
+}
+
+type writerFirstCloseFailStorage struct {
+	storage.ExternalStorage
+	shouldFail bool
+}
+
+func (s *writerFirstCloseFailStorage) Create(
+	ctx context.Context,
+	path string,
+	option *storage.WriterOption,
+) (storage.ExternalFileWriter, error) {
+	w, err := s.ExternalStorage.Create(ctx, path, option)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(path, statSuffix) {
+		return &firstCloseFailWriter{ExternalFileWriter: w, shouldFail: &s.shouldFail}, nil
+	}
+	return w, nil
+}
+
+type firstCloseFailWriter struct {
+	storage.ExternalFileWriter
+	shouldFail *bool
+}
+
+func (w *firstCloseFailWriter) Close(ctx context.Context) error {
+	if *w.shouldFail {
+		*w.shouldFail = false
+		return fmt.Errorf("first close fail")
+	}
+	return w.ExternalFileWriter.Close(ctx)
+}
+
+func TestFlushKVsRetry(t *testing.T) {
+	ctx := context.Background()
+	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
+
+	writer := NewWriterBuilder().
+		SetPropKeysDistance(4).
+		SetMemorySizeLimit(100).
+		SetBlockSize(100). // 2 KV pair will trigger flush
+		Build(store, "/test", "0")
+	err := writer.WriteRow(ctx, []byte("key1"), []byte("val1"), nil)
+	require.NoError(t, err)
+	err = writer.WriteRow(ctx, []byte("key3"), []byte("val3"), nil)
+	require.NoError(t, err)
+	err = writer.WriteRow(ctx, []byte("key2"), []byte("val2"), nil)
+	require.NoError(t, err)
+	// manually test flushKVs
+	err = writer.flushKVs(ctx, false)
+	require.NoError(t, err)
+
+	require.False(t, store.shouldFail)
+
+	r, err := newStatsReader(ctx, store, "/test/0_stat/0", 100)
+	require.NoError(t, err)
+	p, err := r.nextProp()
+	lastKey := []byte{}
+	for err != io.EOF {
+		require.NoError(t, err)
+		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
+		lastKey = append(lastKey[:0], p.firstKey...)
+		p, err = r.nextProp()
 	}
 }

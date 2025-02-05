@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -40,7 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -76,7 +78,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	execIDs []string,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
-	logger := logutil.BgLogger().With(
+	logger := logutil.DDLLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
@@ -265,7 +267,7 @@ func generateNonPartitionPlan(
 
 	subTaskMetas := make([][]byte, 0, 4)
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-	err = handle.RunWithRetry(d.ctx, 8, backoffer, logutil.Logger(d.ctx), func(_ context.Context) (bool, error) {
+	err = handle.RunWithRetry(d.ctx, 8, backoffer, tidblogutil.Logger(d.ctx), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
@@ -404,6 +406,16 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
+	pdCli := store.GetPDClient()
+	p, l, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(p, l)
+	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
+		i := val.(int)
+		ts = uint64(i)
+	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
 	if err != nil {
@@ -419,7 +431,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -436,6 +448,14 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
+		rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+		rangeJobKeys = append(rangeJobKeys, startKey)
+		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+		rangeJobKeys = append(rangeJobKeys, endKey)
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
@@ -444,7 +464,9 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
-			RangeSplitKeys: rangeSplitKeys,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
+			TS:             ts,
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -555,16 +577,16 @@ func getRangeSplitter(
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
-	var maxSizePerRange = int64(config.SplitRegionSize)
-	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	var regionSplitSize = int64(config.SplitRegionSize)
+	var regionSplitKeys = int64(config.SplitRegionKeys)
 	if store != nil {
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
 			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
-				maxSizePerRange = max(maxSizePerRange, size)
-				maxKeysPerRange = max(maxKeysPerRange, keys)
+				regionSplitSize = max(regionSplitSize, size)
+				regionSplitKeys = max(regionSplitKeys, keys)
 			} else {
 				logger.Warn("fail to get region split keys and size", zap.Error(err))
 			}
@@ -573,8 +595,11 @@ func getRangeSplitter(
 		}
 	}
 
+	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+		rangeGroupSize, rangeGroupKeys,
+		int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		regionSplitSize, regionSplitKeys)
 }
 
 func forEachBackfillSubtaskMeta(
@@ -590,9 +615,7 @@ func forEachBackfillSubtaskMeta(
 	for _, subTaskMeta := range subTaskMetas {
 		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error",
-				zap.String("category", "ddl"),
-				zap.Error(err))
+			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)
 		}
 		fn(subtask)

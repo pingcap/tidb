@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/context"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -42,6 +42,12 @@ func calcFraction(lower, upper, value float64) float64 {
 	}
 	return frac
 }
+
+// UTCWithAllowInvalidDateCtx is introduced for the following reason:
+//
+//	Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+//	Hence, when reading statistics, we should skip invalid date check. See #39336.
+var UTCWithAllowInvalidDateCtx = types.NewContext(types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr, time.UTC, context.IgnoreWarn)
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
@@ -72,8 +78,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
-		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
-		return float64(valueTime.Sub(sc.TypeCtx(), &minTime).Duration)
+		return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -101,23 +106,26 @@ func (hg *Histogram) PreCalculateScalar() {
 	}
 	switch hg.GetLower(0).Kind() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
+		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
 		for i := 0; i < l; i++ {
-			hg.Scalars[i] = scalar{
-				lower: convertDatumToScalar(hg.GetLower(i), 0),
-				upper: convertDatumToScalar(hg.GetUpper(i), 0),
-			}
+			// It's read-only, so we don't need to allocate new datum each time.
+			hg.LowerToDatum(i, &lower)
+			hg.UpperToDatum(i, &upper)
+			hg.Scalars[i].lower = convertDatumToScalar(&lower, 0)
+			hg.Scalars[i].upper = convertDatumToScalar(&upper, 0)
 		}
 	case types.KindBytes, types.KindString:
+		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
 		for i := 0; i < l; i++ {
-			lower, upper := hg.GetLower(i), hg.GetUpper(i)
+			// It's read-only, so we don't need to allocate new datum each time.
+			hg.LowerToDatum(i, &lower)
+			hg.UpperToDatum(i, &upper)
 			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-			hg.Scalars[i] = scalar{
-				commonPfxLen: common,
-				lower:        convertDatumToScalar(lower, common),
-				upper:        convertDatumToScalar(upper, common),
-			}
+			hg.Scalars[i].commonPfxLen = common
+			hg.Scalars[i].lower = convertDatumToScalar(&lower, common)
+			hg.Scalars[i].upper = convertDatumToScalar(&upper, common)
 		}
 	}
 }

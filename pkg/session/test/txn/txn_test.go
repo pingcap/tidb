@@ -508,3 +508,74 @@ func TestInTrans(t *testing.T) {
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
 }
+
+func TestMemBufferSnapshotRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b int, index i(b));")
+
+	tk.MustExec("set session tidb_distsql_scan_concurrency = 1;")
+	tk.MustExec("set session tidb_index_lookup_join_concurrency = 1;")
+	tk.MustExec("set session tidb_projection_concurrency=1;")
+	tk.MustExec("set session tidb_init_chunk_size=1;")
+	tk.MustExec("set session tidb_max_chunk_size=40;")
+	tk.MustExec("set session tidb_index_join_batch_size = 10")
+
+	tk.MustExec("begin;")
+	// write (0, 0), (1, 1), ... ,(100, 100) into membuffer
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i <= 100; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec(sb.String())
+
+	// insert on duplicate key statement should update the table to (0, 100), (1, 99), ... (100, 0)
+	// This statement will create UnionScan dynamically during execution, and some UnionScan will see staging data(should be bypassed),
+	// so it relies on correct snapshot read to get the expected result.
+	tk.MustExec("insert into t (select /*+ INL_JOIN(t1) */ 100 - t1.a as a, t1.b from t t1, (select a, b from t) t2 where t1.b = t2.b) on duplicate key update b = values(b)")
+
+	require.Empty(t, tk.MustQuery("select a, b from t where a + b != 100;").Rows())
+	tk.MustExec("commit;")
+	require.Empty(t, tk.MustQuery("select a, b from t where a + b != 100;").Rows())
+
+	tk.MustExec("set session tidb_distsql_scan_concurrency = default;")
+	tk.MustExec("set session tidb_index_lookup_join_concurrency = default;")
+	tk.MustExec("set session tidb_projection_concurrency=default;")
+	tk.MustExec("set session tidb_init_chunk_size=default;")
+	tk.MustExec("set session tidb_max_chunk_size=default;")
+	tk.MustExec("set session tidb_index_join_batch_size = default")
+}
+
+func TestMemBufferCleanupMemoryLeak(t *testing.T) {
+	// Test if cleanup memory will cause a memory leak.
+	// When an in-txn statement fails, TiDB cleans up the mutations from this statement.
+	// If there's a memory leak, the memory usage could increase uncontrollably with retries.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(255) primary key)")
+	key1 := strings.Repeat("a", 255)
+	key2 := strings.Repeat("b", 255)
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	tk.MustExec("set session tidb_mem_quota_query=10240")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(?)", key2)
+	for i := 0; i < 100; i++ {
+		// The insert statement will fail because of the duplicate key error.
+		err := tk.ExecToErr("insert into t values(?), (?)", key1, key2)
+		require.Error(t, err)
+		if strings.Contains(err.Error(), "Duplicate") {
+			continue
+		}
+		require.NoError(t, err)
+	}
+	tk.MustExec("commit")
+}

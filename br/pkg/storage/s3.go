@@ -289,10 +289,22 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
-		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+		log.Warn("failed to get aliyun ram credential", zap.Error(err))
+		return nil, nil
 	}
-	ncred := cred.(*alicred.StsTokenCredential)
-	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+	var aliCred, ok = cred.(*alicred.StsTokenCredential)
+	if !ok {
+		return nil, errors.Errorf("invalid credential type %T", cred)
+	}
+	newCred := credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+		&credentials.StaticProvider{Value: credentials.Value{AccessKeyID: aliCred.AccessKeyId, SecretAccessKey: aliCred.AccessKeySecret, SessionToken: aliCred.AccessKeyStsToken, ProviderName: ""}},
+	})
+	if _, err := newCred.Get(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newCred, nil
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.

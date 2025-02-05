@@ -58,8 +58,8 @@ func (e *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult,
 
 func (e *baseCount) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
-	result := *(*partialResult4Count)(pr)
-	success := helper.deserializePartialResult4Count(&result)
+	result := (*partialResult4Count)(pr)
+	success := helper.deserializePartialResult4Count(result)
 	if !success {
 		return nil, 0
 	}

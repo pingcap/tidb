@@ -134,7 +134,8 @@ func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk
 type tidbFromBinaryFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                           *types.FieldType
+	cannotConvertStringAsWarning bool
 }
 
 func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -150,7 +151,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 			return nil, err
 		}
 		bf.tp = c.tp
-		sig = &builtinInternalFromBinarySig{bf}
+		sig = &builtinInternalFromBinarySig{bf, c.cannotConvertStringAsWarning}
 		sig.setPbCode(tipb.ScalarFuncSig_FromBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
@@ -160,6 +161,9 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinInternalFromBinarySig struct {
 	baseBuiltinFunc
+
+	// TODO: also pass this field when pushing down this function. The behavior of TiDB and TiKV is different on this function now.
+	cannotConvertStringAsWarning bool
 }
 
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
@@ -179,8 +183,20 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	if err != nil {
 		strHex := formatInvalidChars(valBytes)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+		if b.cannotConvertStringAsWarning {
+			tc := typeCtx(ctx)
+			tc.AppendWarning(err)
+			if sqlMode(ctx).HasStrictMode() {
+				return "", true, nil
+			}
+
+			return string(ret), false, nil
+		}
+
+		return "", false, err
 	}
-	return string(ret), false, err
+	return string(ret), false, nil
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -209,7 +225,21 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
 			strHex := formatInvalidChars(str)
-			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+			if b.cannotConvertStringAsWarning {
+				tc := typeCtx(ctx)
+				tc.AppendWarning(err)
+				if sqlMode(ctx).HasStrictMode() {
+					result.AppendNull()
+					continue
+				}
+
+				result.AppendBytes(str)
+				continue
+			}
+
+			return err
 		}
 		result.AppendBytes(val)
 	}
@@ -232,8 +262,8 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
+func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
+	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return expr
@@ -305,7 +335,7 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string) Expression {
+func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
 	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
@@ -326,7 +356,7 @@ func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, f
 			ft := expr.GetType().Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
-			return BuildFromBinaryFunction(ctx, expr, ft)
+			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)
 		}
 	}
 	return expr

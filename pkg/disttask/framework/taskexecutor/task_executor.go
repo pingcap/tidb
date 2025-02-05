@@ -131,14 +131,6 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Error("get subtasks failed", zap.Error(err))
 			continue
 		}
-		if ctx.Err() != nil {
-			// workaround for https://github.com/pingcap/tidb/issues/50089
-			// timeline to trigger this:
-			// 	- this routine runs GetSubtasksByExecIDAndStepAndStates
-			// 	- outer runSubtask finishes and cancel check-context
-			// 	- GetSubtasksByExecIDAndStepAndStates returns with no err and no result
-			return
-		}
 		if len(subtasks) == 0 {
 			e.logger.Info("subtask is scheduled away, cancel running")
 			// cancels runStep, but leave the subtask state unchanged.

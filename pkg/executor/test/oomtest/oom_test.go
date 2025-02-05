@@ -56,12 +56,9 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 
 	oom.SetTracker("")
 	oom.ClearMessageFilter()
-	oom.AddMessageFilter(
-		"expensive_query during bootstrap phase",
-		"schemaLeaseChecker is not set for this transaction")
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
 
 	tk.Session().GetSessionVars().MemQuotaQuery = 244
 	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
@@ -81,12 +78,9 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	log.SetLevel(zap.InfoLevel)
 
 	oom.SetTracker("")
-	oom.AddMessageFilter(
-		"schemaLeaseChecker is not set for this transaction",
-		"expensive_query during bootstrap phase")
+	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")

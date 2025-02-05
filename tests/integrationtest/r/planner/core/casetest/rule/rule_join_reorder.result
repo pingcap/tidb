@@ -1879,31 +1879,31 @@ HashJoin	304261169.13	root		CARTESIAN inner join
 explain format = 'brief' select * from ((select /*+ leading(t5, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	2431655263674.32	root		CARTESIAN inner join
-├─HashJoin(Build)	124625374.88	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t7.b, planner__core__casetest__rule__rule_join_reorder.t6.b) eq(planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t6.a)]
-│ ├─TableReader(Build)	9980.01	root		data:Selection
-│ │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.b))
-│ │   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
-│ └─HashJoin(Probe)	99800100.00	root		CARTESIAN inner join
+├─HashJoin(Build)	19511.72	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+│ ├─TableReader(Build)	9990.00	root		data:Selection
+│ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+│ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│ └─HashJoin(Probe)	15609.38	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
 │   ├─TableReader(Build)	9990.00	root		data:Selection
-│   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t7.b))
-│   │   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
-│   └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-│     └─IndexFullScan	9990.00	cop[tikv]	table:t5, index:a(a)	keep order:false, stats:pseudo
-└─HashJoin(Probe)	19511.72	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-  ├─TableReader(Build)	9990.00	root		data:Selection
-  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	15609.38	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+│   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
+│   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│   └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t8.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
+│     ├─TableReader(Build)	9990.00	root		data:Selection
+│     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.a))
+│     │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│     └─TableReader(Probe)	9990.00	root		data:Selection
+│       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t8.a))
+│         └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+└─HashJoin(Probe)	124625374.88	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t7.b, planner__core__casetest__rule__rule_join_reorder.t6.b) eq(planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t6.a)]
+  ├─TableReader(Build)	9980.01	root		data:Selection
+  │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.b))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	99800100.00	root		CARTESIAN inner join
     ├─TableReader(Build)	9990.00	root		data:Selection
-    │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t8.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
-      ├─TableReader(Build)	9990.00	root		data:Selection
-      │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.a))
-      │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-      └─TableReader(Probe)	9990.00	root		data:Selection
-        └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t8.a))
-          └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t7.b))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+      └─IndexFullScan	9990.00	cop[tikv]	table:t5, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from ((select /*+ leading(t6, t8, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	304261169.13	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]

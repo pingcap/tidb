@@ -35,7 +35,6 @@ go_test(
         ":refresher",
         "//pkg/parser/model",
         "//pkg/statistics",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",

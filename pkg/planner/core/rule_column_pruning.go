@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -34,7 +35,7 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
-	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
 		return nil, planChanged, err
 	}
@@ -119,6 +120,10 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	if err != nil {
 		return nil, err
 	}
+	// If its columns are all pruned, we directly use its child. The child will output at least one column.
+	if p.Schema().Len() == 0 {
+		return p.Children()[0], nil
+	}
 	return p, nil
 }
 
@@ -131,6 +136,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	if err != nil {
 		return nil, err
 	}
+	addConstOneForEmptyProjection(p.children[0])
 	return p, nil
 }
 
@@ -635,10 +641,6 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return p, nil
-	}
-
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	var err error

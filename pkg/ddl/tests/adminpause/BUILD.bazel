@@ -11,10 +11,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl",
+        "//pkg/ddl/logutil",
         "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/testkit",
-        "//pkg/util/logutil",
     ],
 )
 

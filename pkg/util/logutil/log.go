@@ -223,7 +223,9 @@ func Logger(ctx context.Context) *zap.Logger {
 	return log.L()
 }
 
-// BgLogger is alias of `logutil.BgLogger()`
+// BgLogger is alias of `logutil.BgLogger()`. It's initialized in tidb-server's
+// main function. Don't use it in `init` or equivalent functions otherwise it
+// will print to stdout.
 func BgLogger() *zap.Logger {
 	return log.L()
 }

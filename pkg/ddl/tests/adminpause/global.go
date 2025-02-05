@@ -19,15 +19,15 @@ import (
 	"time"
 
 	ddlctrl "github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 const dbTestLease = 600 * time.Millisecond
 
 // Logger is the global logger in this package
-var Logger = logutil.BgLogger()
+var Logger = logutil.DDLLogger()
 
 func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.TestKit) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -312,7 +313,8 @@ func getDupDetectClient(
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
 	leader := region.Leader
 	if leader == nil {
-		leader = region.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", region.Region.Id)
 	}
 	importClient, err := importClientFactory.Create(ctx, leader.GetStoreId())
 	if err != nil {
@@ -1136,8 +1138,8 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 			}
 			return value, nil
 		},
-		func(ctx context.Context, key []byte) error {
-			err := local.deleteDuplicateRow(ctx, logger, key)
+		func(ctx context.Context, keys [][]byte) error {
+			err := local.deleteDuplicateRows(ctx, logger, keys)
 			if err != nil {
 				logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
 				return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
@@ -1166,10 +1168,10 @@ func (local *DupeController) getLatestValue(
 	return value, nil
 }
 
-func (local *DupeController) deleteDuplicateRow(
+func (local *DupeController) deleteDuplicateRows(
 	ctx context.Context,
 	logger *log.Task,
-	key []byte,
+	keys [][]byte,
 ) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
@@ -1186,10 +1188,15 @@ func (local *DupeController) deleteDuplicateRow(
 		}
 	}()
 
-	logger.Debug("deleteDuplicateRow will delete key",
-		zap.String("category", "resolve-dupe"),
-		logutil.Key("key", key))
-	err = txn.Delete(key)
+	for _, key := range keys {
+		logger.Debug("deleteDuplicateRows will delete key",
+			zap.String("category", "resolve-dupe"),
+			logutil.Key("key", key))
+		if err := txn.Delete(key); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
-	return errors.Trace(err)
+	logger.Debug("number of KV pairs deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
+	return nil
 }

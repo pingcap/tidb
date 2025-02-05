@@ -9,7 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -26,7 +26,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
         "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_errors//:errors",

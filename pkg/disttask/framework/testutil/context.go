@@ -317,6 +317,13 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 	return ids
 }
 
+// GetNodeIDByIdx returns nodeID by idx in nodes.
+func (c *TestDXFContext) GetNodeIDByIdx(idx int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mu.nodes[idx].id
+}
+
 // NodeCount returns the number of nodes.
 func (c *TestDXFContext) NodeCount() int {
 	c.mu.RLock()

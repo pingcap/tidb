@@ -195,17 +195,26 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	colIDSet := intset.NewFastIntSet()
 
 	for _, col := range columns {
+		// If the column is plan-generated one, Skip it.
+		// TODO: we may need to consider the ExtraHandle.
+		if col.ID < 0 {
+			continue
+		}
 		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 		colIDSet.Insert(int(col.ID))
 		c.histNeededCols[tblColID] = true
 	}
-	for _, col := range ds.Columns {
-		if !colIDSet.Has(int(col.ID)) && !col.Hidden {
-			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-			if _, ok := c.histNeededCols[tblColID]; ok {
-				continue
+	for _, column := range ds.tableInfo.Columns {
+		// If the column is plan-generated one, Skip it.
+		// TODO: we may need to consider the ExtraHandle.
+		if column.ID < 0 {
+			continue
+		}
+		if !column.Hidden {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
+			if _, ok := c.histNeededCols[tblColID]; !ok {
+				c.histNeededCols[tblColID] = false
 			}
-			c.histNeededCols[tblColID] = false
 		}
 	}
 }
@@ -426,7 +435,7 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
 		if histNeeded {
 			collector.histNeededCols[*colToTriggerLoad] = true
 		} else {
-			statistics.HistogramNeededItems.Insert(*colToTriggerLoad)
+			statistics.HistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
 	var (

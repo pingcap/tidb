@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
+        "//pkg/parser/mysql",
         "//pkg/statistics/handle/internal",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

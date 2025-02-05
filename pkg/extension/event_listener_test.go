@@ -332,12 +332,18 @@ func TestExtensionStmtEvents(t *testing.T) {
 			dispatchData: append([]byte{mysql.ComInitDB}, []byte("db1")...),
 			originalText: "use `db1`",
 			redactText:   "use `db1`",
+			tables: []stmtctx.TableEntry{
+				{DB: "db1", Table: ""},
+			},
 		},
 		{
 			dispatchData: append([]byte{mysql.ComInitDB}, []byte("noexistdb")...),
 			originalText: "use `noexistdb`",
 			redactText:   "use `noexistdb`",
 			err:          "[schema:1049]Unknown database 'noexistdb'",
+			tables: []stmtctx.TableEntry{
+				{DB: "noexistdb", Table: ""},
+			},
 		},
 		{
 			sql:          "set @@tidb_session_alias='alias123'",
@@ -448,7 +454,8 @@ func TestExtensionStmtEvents(t *testing.T) {
 				r := record.tables[j]
 				return l.DB < r.DB || (l.DB == r.DB && l.Table < r.Table)
 			})
-			require.Equal(t, subCase.tables, record.tables)
+			require.Equal(t, subCase.tables, record.tables,
+				"sql: %s\noriginalText: %s\n", subCase.sql, subCase.originalText)
 
 			require.Equal(t, len(subCase.executeParams), len(record.params))
 			for k, param := range subCase.executeParams {

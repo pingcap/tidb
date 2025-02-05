@@ -242,8 +242,8 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	// DeleteTiFlashPlacementRule
-	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	// DeleteTiFlashPlacementRules
+	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(rules))

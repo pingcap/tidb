@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/logutil",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/domain",
@@ -30,7 +31,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
-        "//pkg/util/logutil",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",

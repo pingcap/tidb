@@ -149,15 +149,13 @@ create table s (id int, name varchar(10));
 explain Update t, (select * from s where s.id>1) tmp set t.name=tmp.name where t.id=tmp.id;
 id	estRows	task	access object	operator info
 Update_8	N/A	root		N/A
-└─Projection_11	4166.67	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.t._tidb_rowid, planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.s.name
-  └─HashJoin_12	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-    ├─Projection_17(Build)	3333.33	root		planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.s.name
-    │ └─TableReader_20	3333.33	root		data:Selection_19
-    │   └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-    │     └─TableFullScan_18	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-    └─TableReader_16(Probe)	3333.33	root		data:Selection_15
-      └─Selection_15	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-        └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_12	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+  ├─TableReader_20(Build)	3333.33	root		data:Selection_19
+  │ └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+  │   └─TableFullScan_18	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_16(Probe)	3333.33	root		data:Selection_15
+    └─Selection_15	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));

@@ -160,6 +160,7 @@ func addMockBootstrapVersionForTest(s types.Session) {
 
 	TestHook.OnBootstrapBefore(s)
 	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
+		// TODO if we run all tests in this pkg, it will append again, and fail the test.
 		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)

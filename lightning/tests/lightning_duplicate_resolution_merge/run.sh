@@ -45,5 +45,14 @@ check_contains 'count(*): 10'
 run_sql 'select count(*) from lightning_task_info.conflict_records'
 check_contains 'count(*): 16'
 
-run_sql 'select count(*) from lightning_task_info.conflict_error_v2'
+run_sql 'select count(*) from lightning_task_info.conflict_error_v3'
+check_contains 'count(*): 4'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view'
+check_contains 'count(*): 20'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view where is_precheck_conflict = 1'
+check_contains 'count(*): 16'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view where is_precheck_conflict = 0'
 check_contains 'count(*): 4'

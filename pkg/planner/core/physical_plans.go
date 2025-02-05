@@ -2520,6 +2520,7 @@ type PhysicalTableSample struct {
 	physicalSchemaProducer
 	TableSampleInfo *TableSampleInfo
 	TableInfo       table.Table
+	PhysicalTableID int64
 	Desc            bool
 }
 
@@ -2553,7 +2554,7 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 	}
 	return &TableSampleInfo{
 		AstNode:    node,
-		FullSchema: fullSchema,
+		FullSchema: fullSchema.Clone(),
 		Partitions: pt,
 	}
 }
@@ -2692,7 +2693,15 @@ func (p *CTEDefinition) ExplainInfo() string {
 		res = "Non-Recursive CTE"
 	}
 	if p.CTE.HasLimit {
-		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+		offset, count := p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg
+		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		case errors.RedactLogMarker:
+			res += fmt.Sprintf(", limit(offset:‹%v›, count:‹%v›)", offset, count)
+		case errors.RedactLogDisable:
+			res += fmt.Sprintf(", limit(offset:%v, count:%v)", offset, count)
+		case errors.RedactLogEnable:
+			res += ", limit(offset:?, count:?)"
+		}
 	}
 	return res
 }

@@ -24,4 +24,28 @@ alter table test_add_index_with_dup add index c (b, a, b);
 alter table test_add_index_with_dup add index c (b, a, B);
 drop table test_add_index_with_dup;
 
+# TestAddIndexRestoreData
+set global tidb_ddl_enable_fast_reorg=true;
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100) NOT NULL primary key, b int) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', 0);
+alter table test_add_index_restore_data add index idx(b);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
 
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100), b int NOT NULL primary key) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', 0);
+alter table test_add_index_restore_data add index idx(b);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
+
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100) NOT NULL, b date NOT NULL DEFAULT '2005-02-12', c int, primary key(a, b)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', '1972-11-10', 0);
+alter table test_add_index_restore_data add index idx(c);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
+
+drop table if exists test_add_index_restore_data;
+set global tidb_ddl_enable_fast_reorg=default;

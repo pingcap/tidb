@@ -369,21 +369,6 @@ func (mr *MockTaskManagerMockRecorder) GetAllSubtasksByStepAndState(arg0, arg1, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasksByStepAndState), arg0, arg1, arg2, arg3)
 }
 
-// GetManagedNodes mocks base method.
-func (m *MockTaskManager) GetManagedNodes(arg0 context.Context) ([]proto.ManagedNode, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetManagedNodes", arg0)
-	ret0, _ := ret[0].([]proto.ManagedNode)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetManagedNodes indicates an expected call of GetManagedNodes.
-func (mr *MockTaskManagerMockRecorder) GetManagedNodes(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetManagedNodes", reflect.TypeOf((*MockTaskManager)(nil).GetManagedNodes), arg0)
-}
-
 // GetSubtaskCntGroupByStates mocks base method.
 func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, error) {
 	m.ctrl.T.Helper()

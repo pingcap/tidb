@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -155,7 +155,7 @@ func (*serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Cli
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("get key failed", zap.String("key", key), zap.Error(err))
+			logutil.DDLLogger().Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -184,7 +184,7 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 	}
 	err = state.Unmarshal(kvs[0].Value)
 	if err != nil {
-		logutil.BgLogger().Warn("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
+		logutil.DDLLogger().Warn("get global state failed", zap.String("key", s.etcdPath), zap.ByteString("value", kvs[0].Value), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	s.clusterState.Store(state)

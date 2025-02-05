@@ -67,7 +67,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	Scalars   []scalar
 	ID        int64 // Column ID.
-	NDV       int64 // Number of distinct values.
+	NDV       int64 // Number of distinct values. Note that It contains the NDV of the TopN which is excluded from histogram.
 	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
@@ -200,13 +200,13 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 }
 
 // ConvertTo converts the histogram bucket values into `tp`.
-func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
+func (hg *Histogram) ConvertTo(tctx types.Context, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
-		d, err := d.ConvertTo(sc.TypeCtx(), tp)
+		d, err := d.ConvertTo(tctx, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -795,14 +795,21 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	for i := 0; i < hg.Len(); i++ {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
-			LowerBound: hg.GetLower(i).GetBytes(),
-			UpperBound: hg.GetUpper(i).GetBytes(),
+			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
+			UpperBound: DeepSlice(hg.GetUpper(i).GetBytes()),
 			Repeats:    hg.Buckets[i].Repeat,
 			Ndv:        &hg.Buckets[i].NDV,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
 	return protoHg
+}
+
+// DeepSlice sallowly clones a slice.
+func DeepSlice[T any](s []T) []T {
+	r := make([]T, len(s))
+	copy(r, s)
+	return r
 }
 
 // HistogramFromProto converts Histogram from its protobuf representation.
@@ -1001,6 +1008,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
+		return 0
+	}
+	if math.IsInf(histWidth, 1) {
+		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
 		return 0
 	}
 	boundL := histL - histWidth

@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -48,6 +50,10 @@ const (
 	ChecksumRetryTime       = 8
 	ChecksumWaitInterval    = 1 * time.Second
 	ChecksumMaxWaitInterval = 30 * time.Second
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
 
 	gRPC_Cancel = "the client connection is closing"
 )
@@ -168,12 +174,14 @@ func NewBackupSSTBackoffer() Backoffer {
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
-	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
+	errs := multierr.Errors(err)
+	lastErr := errs[len(errs)-1]
+	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
 	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		e := errors.Cause(err)
+		e := errors.Cause(lastErr)
 		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
@@ -188,7 +196,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
@@ -264,6 +272,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
@@ -272,4 +283,36 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 
 func (bo *pdReqBackoffer) Attempt() int {
 	return bo.attempt
+}
+
+type RawClientBackoffStrategy struct {
+	Attempts    int
+	BaseBackoff time.Duration
+	MaxBackoff  time.Duration
+}
+
+func NewRawClientBackoffStrategy() Backoffer {
+	return &RawClientBackoffStrategy{
+		Attempts:    rawClientMaxAttempts,
+		BaseBackoff: rawClientDelayTime,
+		MaxBackoff:  rawClientMaxAttempts,
+	}
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *RawClientBackoffStrategy) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > b.MaxBackoff {
+		b.BaseBackoff = b.MaxBackoff
+	}
+	return bo
+}
+
+func (b *RawClientBackoffStrategy) Attempt() int {
+	return b.Attempts
 }

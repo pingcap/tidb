@@ -18,6 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -50,6 +51,8 @@ type HandleCols interface {
 	IsInt() bool
 	// String implements the fmt.Stringer interface.
 	String() string
+	// StringWithCtx implements the fmt.Stringer interface.
+	StringWithCtx(string) string
 	// GetCol gets the column by idx.
 	GetCol(idx int) *expression.Column
 	// NumCols returns the number of columns.
@@ -158,6 +161,11 @@ func (cb *CommonHandleCols) NumCols() int {
 
 // String implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) String() string {
+	return cb.StringWithCtx(perrors.RedactLogDisable)
+}
+
+// StringWithCtx implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) StringWithCtx(_ string) string {
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
@@ -269,6 +277,11 @@ func (*IntHandleCols) IsInt() bool {
 
 // String implements the kv.HandleCols interface.
 func (ib *IntHandleCols) String() string {
+	return ib.col.ColumnExplainInfo(false)
+}
+
+// StringWithCtx implements the kv.HandleCols interface.
+func (ib *IntHandleCols) StringWithCtx(_ string) string {
 	return ib.col.ColumnExplainInfo(false)
 }
 

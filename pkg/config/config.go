@@ -1019,7 +1019,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrentlyInitStats:             true,
+		ConcurrentlyInitStats:             false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

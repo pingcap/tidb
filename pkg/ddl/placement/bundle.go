@@ -465,23 +465,29 @@ func (c *constraintsGroup) MergeTransformableRoles() {
 	c.rules = newRules
 }
 
+// GetRangeStartAndEndKeyHex get startKeyHex and endKeyHex of range by rangeBundleID.
+func GetRangeStartAndEndKeyHex(rangeBundleID string) (startKey string, endKey string) {
+	startKey, endKey = "", ""
+	if rangeBundleID == TiDBBundleRangePrefixForMeta {
+		startKey = hex.EncodeToString(metaPrefix)
+		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
+	}
+	return startKey, endKey
+}
+
 // RebuildForRange rebuilds the bundle for system range.
 func (b *Bundle) RebuildForRange(rangeName string, policyName string) *Bundle {
 	rule := b.Rules
-	startKey := ""
-	endKey := ""
 	switch rangeName {
 	case KeyRangeGlobal:
 		b.ID = TiDBBundleRangePrefixForGlobal
 		b.Index = RuleIndexKeyRangeForGlobal
 	case KeyRangeMeta:
-		// change range
-		startKey = hex.EncodeToString(metaPrefix)
-		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
 		b.ID = TiDBBundleRangePrefixForMeta
 		b.Index = RuleIndexKeyRangeForMeta
 	}
 
+	startKey, endKey := GetRangeStartAndEndKeyHex(b.ID)
 	b.Override = true
 	newRules := make([]*pd.Rule, 0, len(rule))
 	for i, r := range b.Rules {

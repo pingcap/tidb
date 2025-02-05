@@ -79,11 +79,6 @@ type TaskManager interface {
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
-	// GetManagedNodes returns the nodes managed by dist framework and can be used
-	// to execute tasks. If there are any nodes with background role, we use them,
-	// else we use nodes without role.
-	// returned nodes are sorted by node id(host:port).
-	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
 
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
 	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)

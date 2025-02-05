@@ -96,8 +96,7 @@ create table t (d int default '18446744073709551616' );
 Error 1067 (42000): Invalid default value for 'd'
 set sql_mode='';
 create table t (d int default '18446744073709551616' );
-Level	Code	Message
-Warning	1690	BIGINT value is out of range in '18446744073709551616'
+Error 1067 (42000): Invalid default value for 'd'
 set sql_mode=DEFAULT;
 drop table if exists t;
 create table t(a int not null, b int, primary key(a), unique idx_b(b));

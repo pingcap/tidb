@@ -110,12 +110,13 @@ func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []any) {
 type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
-	StartTime         time.Time
-	EndTime           time.Time
-	Watch             rmpb.RunawayWatchType
-	WatchText         string
-	Source            string
-	Action            rmpb.RunawayAction
+	// startTime and endTime are in UTC.
+	StartTime time.Time
+	EndTime   time.Time
+	Watch     rmpb.RunawayWatchType
+	WatchText string
+	Source    string
+	Action    rmpb.RunawayAction
 }
 
 // GetRecordKey is used to get the key in ttl cache.
@@ -184,6 +185,9 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []any) {
 
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
+	syncerInitialized atomic.Bool
+	logOnce           sync.Once
+
 	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
 	// in order to avoid repeated additions, we need a lock to ensure that
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
@@ -219,6 +223,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	m := &RunawayManager{
+		syncerInitialized:     atomic.Bool{},
 		resourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
@@ -245,11 +250,25 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	return m
 }
 
+// MarkSyncerInitialized is used to mark the syncer is initialized.
+func (rm *RunawayManager) MarkSyncerInitialized() {
+	rm.syncerInitialized.Store(true)
+}
+
+// IsSyncerInitialized is used to check whether the syncer is initialized.
+func (rm *RunawayManager) IsSyncerInitialized() bool {
+	return rm.syncerInitialized.Load()
+}
+
 // DeriveChecker derives a RunawayChecker from the given resource group
 func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
 	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
+		return nil
+	}
+	// Only check the normal statement.
+	if len(planDigest) == 0 {
 		return nil
 	}
 	rm.activeLock.RLock()
@@ -282,6 +301,12 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
+	if !rm.syncerInitialized.Load() {
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
+		return
+	}
 	select {
 	case rm.quarantineChan <- record:
 	default:
@@ -380,6 +405,12 @@ func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 
 func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
 	source := rm.serverID
+	if !rm.syncerInitialized.Load() {
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
+		return
+	}
 	select {
 	case rm.runawayQueriesChan <- &RunawayRecord{
 		ResourceGroupName: resourceGroupName,

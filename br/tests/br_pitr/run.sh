@@ -22,13 +22,21 @@ CUR=$(cd `dirname $0`; pwd)
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
+
 # start a new cluster
 echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
+run_sql_file $CUR/prepare_data/ingest_repair.sql
 # ...
 
 # check something after prepare the data
@@ -46,6 +54,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 # load the incremental data
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
+run_sql_file $CUR/incremental_data/ingest_repair.sql
 # ...
 
 # check something after load the incremental data
@@ -92,18 +101,21 @@ done
 
 # start a new cluster
 echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # PITR restore
 echo "run pitr"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
+## check feature history ddl delete range
 check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
 run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
 expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
+## check feature compatibility between PITR and accelerate indexing
+bash $CUR/check/check_ingest_repair.sh

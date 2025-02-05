@@ -45,7 +45,7 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version",
         "//pkg/config",
-        "//pkg/ddl",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

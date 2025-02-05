@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -602,6 +603,8 @@ type Request struct {
 	ConnID uint64
 	// ConnAlias stores the session connection alias.
 	ConnAlias string
+	// SQLKiller is a flag to indicate that this query is killed.
+	SQLKiller *sqlkiller.SQLKiller
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -181,4 +182,45 @@ func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyV
 	kv := kvs[0]
 	require.Equal(t, key, string(kv.Key))
 	require.Equal(t, val, string(kv.Value))
+}
+
+func TestPutKVToEtcdMono(t *testing.T) {
+	integration.BeforeTestExternal(t)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(2))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(3))
+	require.NoError(t, err)
+
+	eg := util.NewErrorGroupWithRecover()
+	for i := 0; i < 30; i++ {
+		eg.Go(func() error {
+			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			return err
+		})
+	}
+	// PutKVToEtcdMono should be conflicted and get errors.
+	require.Error(t, eg.Wait())
+
+	eg = util.NewErrorGroupWithRecover()
+	for i := 0; i < 30; i++ {
+		eg.Go(func() error {
+			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			return err
+		})
+	}
+	require.NoError(t, eg.Wait())
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
 }

@@ -17,9 +17,8 @@ package ddl
 import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // workerPool is used to new worker.
@@ -80,7 +79,7 @@ func (wp *workerPool) close() {
 		return
 	}
 	wp.exit.Store(true)
-	logutil.BgLogger().Info("closing workerPool", zap.String("category", "ddl"))
+	logutil.DDLLogger().Info("closing workerPool")
 	wp.resPool.Close()
 }
 

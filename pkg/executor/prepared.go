@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -60,6 +61,8 @@ type PrepareExec struct {
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	// Also, the second case need charset_client param since SQL is directly passed from clients.
+	// While the text-prepare already transformed charset by parser.
 	needReset bool
 }
 
@@ -85,23 +88,28 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return nil
 		}
 	}
-	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
+	var params []parser.ParseParam
+	if e.needReset {
+		params = vars.GetParseParams()
+	} else {
+		var paramsArr [2]parser.ParseParam
+		charset, collation := vars.GetCharsetInfo()
+		paramsArr[0] = parser.CharsetConnection(charset)
+		paramsArr[1] = parser.CollationConnection(collation)
+		params = paramsArr[:]
+	}
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.ParseSQL(e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, warns, err = p.ParseSQL(e.sqlText, params...)
 		for _, warn := range warns {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
@@ -119,7 +127,7 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 	}
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.Ctx(), true, stmt0.Text(), stmt0, nil)
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.Ctx(), true, stmt0.Text(), stmt0, sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema())
 	if err != nil {
 		return err
 	}
@@ -208,7 +216,7 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(e.Ctx(), preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, preparedObj.SchemaVersion,
-			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 		if err != nil {
 			return err
 		}

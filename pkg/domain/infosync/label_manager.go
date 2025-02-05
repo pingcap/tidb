@@ -60,8 +60,8 @@ func (lm *PDLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, 
 }
 
 // GetLabelRules implements GetLabelRules
-func (lm *PDLabelManager) GetLabelRules(ctx context.Context, _ []string) (map[string]*label.Rule, error) {
-	labelRules, err := lm.pdHTTPCli.GetAllRegionLabelRules(ctx)
+func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+	labelRules, err := lm.pdHTTPCli.GetRegionLabelRulesByIDs(ctx, ruleIDs)
 	if err != nil {
 		return nil, err
 	}

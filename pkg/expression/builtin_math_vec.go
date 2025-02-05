@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -290,7 +291,7 @@ func (b *builtinExpSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		}
 		exp := math.Exp(f64s[i])
 		if math.IsInf(exp, 0) || math.IsNaN(exp) {
-			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(errors.RedactLogDisable))
 			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
 				return err
 			}
@@ -313,7 +314,7 @@ func (b *builtinRadiansSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = f64s[i] * math.Pi / 180
+		f64s[i] = f64s[i] * (math.Pi / 180)
 	}
 	return nil
 }

@@ -360,6 +360,11 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
 func PropagateConstant(ctx BuildContext, conditions []Expression) []Expression {
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.InConstantPropagateCheck = true
+	defer func() {
+		sc.InConstantPropagateCheck = false
+	}()
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 

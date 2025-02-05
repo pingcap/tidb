@@ -171,7 +171,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
 	IsStaleness          bool
-	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
+	SnapshotTSEvaluator  func(context.Context, sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
@@ -533,7 +533,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := extractTableList(originNode, nil, false)
+	tblNames := ExtractTableList(originNode, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -554,7 +554,9 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		tn.TableInfo = tableInfo
 		tn.DBInfo = dbInfo
 	}
-
+	aliasChecker := &aliasChecker{}
+	originNode.Accept(aliasChecker)
+	hintedNode.Accept(aliasChecker)
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
 	hintedSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()), false)
 	if originSQL != hintedSQL {
@@ -1422,21 +1424,22 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.GetDecimal() > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
+		tpFlen := tp.GetFlen()
+		tpDecimal := tp.GetDecimal()
+		if tpDecimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tpDecimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
-
-		if tp.GetFlen() > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tpFlen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tpFlen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
-
-		if tp.GetFlen() < tp.GetDecimal() {
+		if tpFlen < tpDecimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
+		if tpFlen == 0 && (tpDecimal == 0 || tpDecimal == types.UnspecifiedLength) {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
 			tp.SetFlen(defaultFlen)
+			tp.SetDecimal(0)
 		}
 	case mysql.TypeBit:
 		if tp.GetFlen() <= 0 {
@@ -1818,6 +1821,12 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	var err error
+	defer func() {
+		if err == nil && !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = struct{}{}
+		}
+	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1836,7 +1845,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {
@@ -1924,4 +1932,60 @@ func (p *preprocessor) skipLockMDL() bool {
 	// because it's a batch process and will do both DML and DDL.
 	// skip lock mdl for ANALYZE statement.
 	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
+}
+
+// aliasChecker is used to check the alias of the table in delete statement.
+//
+//	for example: delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id
+//	  `delete tt1` will be transformed to `delete current_database.t1` by default.
+//	   because `tt1` cannot be used as alias in delete statement.
+//	   so we have to set `tt1` as alias by aliasChecker.
+type aliasChecker struct{}
+
+func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
+		// 1. check the tableRefs of deleteStmt to find the alias
+		var aliases []*model.CIStr
+		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
+			tableRefs := deleteStmt.TableRefs.TableRefs
+			if val := getTableRefsAlias(tableRefs.Left); val != nil {
+				aliases = append(aliases, val)
+			}
+			if val := getTableRefsAlias(tableRefs.Right); val != nil {
+				aliases = append(aliases, val)
+			}
+		}
+		// 2. check the Tables to tag the alias
+		if deleteStmt.Tables != nil && deleteStmt.Tables.Tables != nil {
+			for _, table := range deleteStmt.Tables.Tables {
+				if table.Schema.String() != "" {
+					continue
+				}
+				for _, alias := range aliases {
+					if table.Name.L == alias.L {
+						table.IsAlias = true
+						break
+					}
+				}
+			}
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *model.CIStr {
+	switch v := tableRefs.(type) {
+	case *ast.Join:
+		if v.Left != nil {
+			return getTableRefsAlias(v.Left)
+		}
+	case *ast.TableSource:
+		return &v.AsName
+	}
+	return nil
+}
+
+func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }

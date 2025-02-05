@@ -39,6 +39,8 @@ func NewSession(s sessionctx.Context) *Session {
 	return &Session{s}
 }
 
+// TODO(lance6716): provide a NewSessionWithCtx
+
 // Begin starts a transaction.
 func (s *Session) Begin() error {
 	err := sessiontxn.NewTxn(context.Background(), s.Context)

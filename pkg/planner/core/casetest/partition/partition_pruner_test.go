@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -232,4 +233,295 @@ func TestPointGetIntHandleNotFirst(t *testing.T) {
 
 	tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
+}
+
+type ExtractTestCase struct {
+	TimeUnit    string
+	ColumnTypes []string
+	PruneResult []string // cmpOps + BETWEEN pRange[1] [, pRange[2]]
+	NoFspResult string
+}
+
+// TODO: test LIST/HASH pruning?
+func TestRangeDatePruningExtract(t *testing.T) {
+	for _, colType := range []string{"DATE", "DATETIME", "DATETIME(1)", "DATETIME(6)"} {
+		extractTestCases := []ExtractTestCase{
+			{
+				"YEAR",
+				[]string{"DATE", "DATETIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+				"QUARTER",
+				[]string{"DATE", "DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"YEAR_MONTH",
+				[]string{"DATE", "DATETIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+
+				"MONTH",
+				[]string{"DATE", "DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"WEEK",
+				[]string{},
+				[]string{},
+				"",
+			}, {
+				"DAY",
+				[]string{"DATE", "DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"DAY_HOUR",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"DAY_MINUTE",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"DAY_SECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"DAY_MICROSECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				// Would also be affected by FSP truncation, but since the partition definitions
+				// in this test are increasing for each partition, this will not be noticed
+				"",
+			}, {
+				"HOUR",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"HOUR_MINUTE",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"HOUR_SECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"HOUR_MICROSECOND",
+				[]string{"DATETIME"},
+				// If no fsp is given, the partitioning expression still records
+				// the fsp, but evaluation will truncate it, so that is why
+				// the pruning will give p1, which is actually correct!
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"p1",
+			}, {
+				"MINUTE",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"MINUTE_SECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"MINUTE_MICROSECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"p1",
+			}, {
+				"SECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"SECOND_MICROSECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"p1",
+			}, {
+				"MICROSECOND",
+				[]string{"DATETIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"p1",
+			},
+		}
+		runExtractTestCases(t, colType, extractTestCases)
+	}
+}
+
+func runExtractTestCases(t *testing.T, colType string, extractTestCases []ExtractTestCase) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Loop over different datatypes, DATE, DATETIME(fsp), TIMESTAMP(fsp)
+	pRanges := []string{
+		"1990-01-01 00:00:00.000000",
+		"1991-04-02 01:01:01.100000",
+		"1992-08-03 02:02:02.200000",
+		"1993-12-31 23:59:59.999999",
+	}
+	cmpOps := []string{"=", "<", ">", "<=", ">="}
+	for _, tc := range extractTestCases {
+		found := false
+		hasFsp := strings.HasSuffix(colType, ")")
+		for _, cType := range tc.ColumnTypes {
+			end := strings.TrimPrefix(colType, cType)
+
+			if end == "" || end[:1] == "(" {
+				found = true
+			}
+		}
+		pRangesStrings := make([]string, 0, len(pRanges))
+		partDefs := ""
+		for i, pString := range pRanges {
+			r := tk.MustQuery(`SELECT EXTRACT(` + tc.TimeUnit + ` FROM '` + pString + `')`)
+			pRangesStrings = append(pRangesStrings, r.Rows()[0][0].(string))
+			if i > 0 {
+				partDefs += ", "
+			}
+			partDefs += "PARTITION p" +
+				strconv.Itoa(i) +
+				" VALUES LESS THAN (" +
+				pRangesStrings[i] + ")"
+		}
+		tk.MustExec(`drop table if exists t`)
+		createSQL := `create table t (d ` + colType + `, f varchar(255)) partition by range (EXTRACT(` + tc.TimeUnit + ` FROM d)) (` + partDefs + `, partition pMax values less than (maxvalue))`
+		if !found {
+			tk.MustContainErrMsg(createSQL, `[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed`)
+			continue
+		}
+		tk.MustExec(createSQL)
+		for i, op := range cmpOps {
+			res := tk.MustQuery(`explain select * from t where d ` + op + ` '` + pRanges[1] + `'`)
+			parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
+			require.Greater(t, len(tc.PruneResult), i, "PruneResults does not include enough values, colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
+			expects := tc.PruneResult[i]
+			if i == 0 && !hasFsp && tc.NoFspResult != "" {
+				expects = tc.NoFspResult
+			}
+			require.Equal(t, expects, parts, "colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
+		}
+		res := tk.MustQuery(`explain select * from t where d between '` + pRanges[1] + `' and '` + pRanges[2] + `'`)
+		parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
+		require.Equal(t, tc.PruneResult[len(cmpOps)], parts, "colType %s, EXTRACT %s, BETWEEN", colType, tc.TimeUnit)
+	}
+}
+
+func TestRangeTimePruningExtract(t *testing.T) {
+	for _, colType := range []string{"TIME", "TIME(1)", "TIME(6)", "TIMESTAMP", "TIMESTAMP(1)", "TIMESTAMP(6)"} {
+		extractTestCases := []ExtractTestCase{
+			{
+				"YEAR",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"QUARTER",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"YEAR_MONTH",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"MONTH",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"WEEK",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"DAY",
+				[]string{"DATE", "DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"DAY_HOUR",
+				[]string{"DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"DAY_MINUTE",
+				[]string{"DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"DAY_SECOND",
+				[]string{"DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"DAY_MICROSECOND",
+				[]string{"DATETIME"},
+				[]string{},
+				"",
+			}, {
+				"HOUR",
+				[]string{"TIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+				"HOUR_MINUTE",
+				[]string{"TIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+				"HOUR_SECOND",
+				[]string{"TIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+				"HOUR_MICROSECOND",
+				[]string{"TIME"},
+				[]string{"p2", "p0,p1,p2", "p2,p3,pMax", "p0,p1,p2", "p2,p3,pMax", "p2,p3"},
+				"",
+			}, {
+				"MINUTE",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"MINUTE_SECOND",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"MINUTE_MICROSECOND",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"SECOND",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"SECOND_MICROSECOND",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			}, {
+				"MICROSECOND",
+				[]string{"TIME"},
+				[]string{"p2", "all", "all", "all", "all", "all"},
+				"",
+			},
+		}
+		runExtractTestCases(t, colType, extractTestCases)
+	}
 }

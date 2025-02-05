@@ -290,4 +290,51 @@ func TestCacheWithSchemaTsZero(t *testing.T) {
 	checkFn(1, 84, false)
 	checkFn(85, 100, true)
 	require.Equal(t, 16, ic.Size())
+
+	// Test cache with schema version hole, which is cause by schema version doesn't has related schema-diff.
+	ic = infoschema.NewCache(nil, 16)
+	require.NotNil(t, ic)
+	for i := 1; i <= 8; i++ {
+		ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, int64(i)), uint64(i))
+	}
+	checkFn(1, 10, true)
+	// mock for schema version hole, schema-version 9 is missing.
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 10), 10)
+	checkFn(1, 7, true)
+	// without empty schema version map, get snapshot by ts 8, 9 will both failed.
+	checkFn(8, 9, false)
+	checkFn(10, 10, true)
+	// add empty schema version 9.
+	ic.InsertEmptySchemaVersion(9)
+	// after set empty schema version, get snapshot by ts 8, 9 will both success.
+	checkFn(1, 8, true)
+	checkFn(10, 10, true)
+	is := ic.GetBySnapshotTS(uint64(9))
+	require.NotNil(t, is)
+	// since schema version 9 is empty, so get by ts 9 will get schema which version is 8.
+	require.Equal(t, int64(8), is.SchemaMetaVersion())
+}
+
+func TestCacheEmptySchemaVersion(t *testing.T) {
+	ic := infoschema.NewCache(nil, 16)
+	require.NotNil(t, ic)
+	require.Equal(t, 0, len(ic.GetEmptySchemaVersions()))
+	for i := 0; i < 16; i++ {
+		ic.InsertEmptySchemaVersion(int64(i))
+	}
+	emptyVersions := ic.GetEmptySchemaVersions()
+	require.Equal(t, 16, len(emptyVersions))
+	for i := 0; i < 16; i++ {
+		_, ok := emptyVersions[int64(i)]
+		require.True(t, ok)
+	}
+	for i := 16; i < 20; i++ {
+		ic.InsertEmptySchemaVersion(int64(i))
+	}
+	emptyVersions = ic.GetEmptySchemaVersions()
+	require.Equal(t, 16, len(emptyVersions))
+	for i := 4; i < 20; i++ {
+		_, ok := emptyVersions[int64(i)]
+		require.True(t, ok)
+	}
 }

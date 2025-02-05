@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // FullRange represent used all partitions.
@@ -497,7 +498,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(errors.RedactLogDisable)))
 	}
 	return names, nil
 }
@@ -1072,15 +1073,69 @@ func makePartitionByFnCol(sctx PlanContext, columns []*expression.Column, names 
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
 		args := raw.GetArgs()
-		// Special handle for floor(unix_timestamp(ts)) as partition expression.
-		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
-		if raw.FuncName.L == ast.Floor {
+		// Optimizations for a limited set of functions
+		switch raw.FuncName.L {
+		case ast.Floor:
+			// Special handle for floor(unix_timestamp(ts)) as partition expression.
+			// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 				args1 := ut.GetArgs()
 				if len(args1) == 1 {
 					if c, ok1 := args1[0].(*expression.Column); ok1 {
 						return c, raw, monotoneModeNonStrict, nil
 					}
+				}
+			}
+		case ast.Extract:
+			con, ok := args[0].(*expression.Constant)
+			if !ok {
+				break
+			}
+			col, ok = args[1].(*expression.Column)
+			if !ok {
+				// Special case where CastTimeToDuration is added
+				expr, ok := args[1].(*expression.ScalarFunction)
+				if !ok {
+					break
+				}
+				if expr.Function.PbCode() != tipb.ScalarFuncSig_CastTimeAsDuration {
+					break
+				}
+				castArgs := expr.GetArgs()
+				col, ok = castArgs[0].(*expression.Column)
+				if !ok {
+					break
+				}
+			}
+			if con.Value.Kind() != types.KindString {
+				break
+			}
+			val := con.Value.GetString()
+			colType := col.GetType().GetType()
+			switch colType {
+			case mysql.TypeDate, mysql.TypeDatetime:
+				switch val {
+				// Only YEAR, YEAR_MONTH can be considered monotonic, the rest will wrap around!
+				case "YEAR", "YEAR_MONTH":
+					// Note, this function will not have the column as first argument,
+					// so in replaceColumnWithConst it will replace the second argument, which
+					// is special handling there too!
+					return col, raw, monotoneModeNonStrict, nil
+				default:
+					return col, raw, monotonous, nil
+				}
+			case mysql.TypeDuration:
+				switch val {
+				// Only HOUR* can be considered monotonic, the rest will wrap around!
+				// TODO: if fsp match for HOUR_SECOND or HOUR_MICROSECOND we could
+				// mark it as monotoneModeStrict
+				case "HOUR", "HOUR_MINUTE", "HOUR_SECOND", "HOUR_MICROSECOND":
+					// Note, this function will not have the column as first argument,
+					// so in replaceColumnWithConst it will replace the second argument, which
+					// is special handling there too!
+					return col, raw, monotoneModeNonStrict, nil
+				default:
+					return col, raw, monotonous, nil
 				}
 			}
 		}
@@ -1557,6 +1612,15 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 			args[0] = con
 			return partFn
 		}
+	} else if partFn.FuncName.L == ast.Extract {
+		if expr, ok := args[1].(*expression.ScalarFunction); ok && expr.Function.PbCode() == tipb.ScalarFuncSig_CastTimeAsDuration {
+			// Special handing if Cast is added
+			funcArgs := expr.GetArgs()
+			funcArgs[0] = con
+			return partFn
+		}
+		args[1] = con
+		return partFn
 	}
 
 	// No 'copy on write' for the expression here, this is a dangerous operation.

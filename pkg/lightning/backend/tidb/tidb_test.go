@@ -67,7 +67,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
 	require.NoError(t, err)
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -286,7 +286,7 @@ func testStrictMode(t *testing.T) {
 	ft.SetCharset(charset.CharsetASCII)
 	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
 	require.NoError(t, err)
 
 	ctx := context.Background()

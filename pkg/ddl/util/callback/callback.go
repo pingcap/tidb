@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -67,11 +67,11 @@ func (tc *TestDDLCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 	if tc.Do != nil {
 		err = tc.Do.Reload()
 		if err != nil {
-			logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+			logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 		}
 	}
 	return nil
@@ -81,7 +81,7 @@ func (tc *TestDDLCallback) OnChanged(err error) error {
 func (tc *TestDDLCallback) OnSchemaStateChanged(schemaVer int64) {
 	if tc.Do != nil {
 		if err := tc.Do.Reload(); err != nil {
-			logutil.BgLogger().Warn("reload failed on schema state changed", zap.Error(err))
+			logutil.DDLLogger().Warn("reload failed on schema state changed", zap.Error(err))
 		}
 	}
 
@@ -93,7 +93,7 @@ func (tc *TestDDLCallback) OnSchemaStateChanged(schemaVer int64) {
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
@@ -108,7 +108,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 
 // OnJobRunAfter is used to run the user customized logic of `OnJobRunAfter` first.
 func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
-	logutil.BgLogger().Info("on job run after", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run after", zap.String("job", job.String()))
 	if tc.OnJobRunAfterExported != nil {
 		tc.OnJobRunAfterExported(job)
 		return
@@ -119,7 +119,7 @@ func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
 
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job updated", zap.String("job", job.String()))
 	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
 		(*onJobUpdatedExportedFunc)(job)
 		return

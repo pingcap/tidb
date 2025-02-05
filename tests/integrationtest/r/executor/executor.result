@@ -4367,7 +4367,7 @@ StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->C
 set tidb_track_aggregate_memory_usage = on;
 explain analyze select /*+ HASH_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	<num> Bytes
+HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
 └─TableReader_10	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_5	<num> Bytes	N/A
   └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
     └─TableFullScan_8	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
@@ -4419,7 +4419,7 @@ create table t1 (a int, b int);
 insert into t1 values (1,2),(2,3),(3,4);
 explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_11	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	<num> Bytes
+HashAgg_11	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	N/A
 └─TableReader_12	1.00	1	root	NULL	time.*loops.*cop_task.*	data:HashAgg_6	<num> Bytes	N/A
   └─HashAgg_6	1.00	1	cop[tikv]	NULL	tikv_task:.*	funcs:count(1)->Column#5	N/A	N/A
     └─Selection_10	3323.33	3	cop[tikv]	NULL	tikv_task:.*	lt(executor__executor.t1.a, 10)	N/A	N/A
@@ -4577,5 +4577,6 @@ GRANT SELECT ON test2.* to 'testuser'@'localhost';
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
 Error 8020 (HY000): Table 't' was locked in WRITE by server: <server> session: <session>
+unlock tables;
 unlock tables;
 drop user 'testuser'@'localhost';

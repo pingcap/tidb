@@ -542,6 +542,9 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
+
 	DBID int64 `json:"-"`
 }
 
@@ -1841,6 +1844,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
+
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {

@@ -36,6 +36,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/set",
         "//pkg/util/size",
+        "//pkg/util/sqlkiller",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
         "//pkg/util/trxevents",

@@ -92,3 +92,23 @@ select hex('一a'), '一a';
 hex('涓?')	涓?
 E4B83F	涓?
 set @@sql_mode=default;
+set @@character_set_client=default;
+set @@character_set_connection=default;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin
+set default_collation_for_utf8mb4 = 'utf8mb4_general_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_general_ci
+set default_collation_for_utf8mb4 = 'utf8mb4_0900_ai_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_0900_ai_ci
+set default_collation_for_utf8mb4 = default;
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin

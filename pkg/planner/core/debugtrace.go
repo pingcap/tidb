@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -106,7 +107,7 @@ func DebugTraceReceivedCommand(s PlanContext, cmd byte, stmtNode ast.StmtNode) {
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
 			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
-			execInfo.BinaryParamsInfo[i].Value = param.String()
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(errors.RedactLogDisable)
 		}
 	}
 }
