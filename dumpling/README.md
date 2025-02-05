@@ -29,7 +29,11 @@ Building
 --------
 
 0. Under directory `tidb`
+<<<<<<< HEAD
 1. Install Go 1.16 or above
+=======
+1. Install Go 1.23.6 or above
+>>>>>>> ba90abd5138 (*: upgrade go.1.23.6 (#59242))
 2. Run `make build_dumpling` to compile. The output is in `bin/dumpling`.
 3. Run `make dumpling_unit_test` to run the unit tests.
 4. Run `make dumpling_integration_test` to run integration tests. For integration test:
