@@ -31,7 +31,7 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/driver/error",
         "//pkg/table/tables",
         "//pkg/types",

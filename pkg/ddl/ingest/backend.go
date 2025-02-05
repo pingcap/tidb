@@ -102,6 +102,7 @@ type litBackendCtx struct {
 	memRoot MemRoot
 	jobID   int64
 	tbl     table.Table
+	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
 	backend *local.Backend
 	ctx     context.Context
 	cfg     *local.BackendConfig
@@ -319,14 +320,14 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.
-var ForceSyncFlagForTest = false
+var ForceSyncFlagForTest atomic.Bool
 
 func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 	failpoint.Inject("forceSyncFlagForTest", func() {
 		// used in a manual test
-		ForceSyncFlagForTest = true
+		ForceSyncFlagForTest.Store(true)
 	})
-	if ForceSyncFlagForTest {
+	if ForceSyncFlagForTest.Load() {
 		return true, true
 	}
 	LitDiskRoot.UpdateUsage()
@@ -359,7 +360,6 @@ func (bc *litBackendCtx) Close() {
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("jobID", bc.jobID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()))
-	bc.backend.Close()
 	LitDiskRoot.Remove(bc.jobID)
 	BackendCounterForTest.Dec()
 }

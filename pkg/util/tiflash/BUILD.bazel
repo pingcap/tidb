@@ -5,4 +5,5 @@ go_library(
     srcs = ["tiflash_replica_read.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/tiflash",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/sessionctx/vardef"],
 )

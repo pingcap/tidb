@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -305,7 +306,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 	}()
 	var skipTypes map[string]struct{}
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get global variable", zap.Error(err))
 	} else {
@@ -572,14 +573,12 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+				tbl.DelCol(col.ID)
 			}
 		}
 		for _, idx := range tbl.HistColl.GetIdxSlice() {
 			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+				tbl.DelIdx(idx.ID)
 			}
 		}
 		tbl.ColAndIdxExistenceMap.SetChecked()

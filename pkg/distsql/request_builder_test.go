@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -316,7 +316,7 @@ func TestRequestBuilder1(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -400,7 +400,7 @@ func TestRequestBuilder2(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -450,7 +450,7 @@ func TestRequestBuilder3(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -499,7 +499,7 @@ func TestRequestBuilder4(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -637,7 +637,7 @@ func TestRequestBuilder8(t *testing.T) {
 		StartTs:           0x0,
 		Data:              []uint8(nil),
 		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		MemTracker:        (*memory.Tracker)(nil),
@@ -663,7 +663,7 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		StartTs:               0x0,
 		Data:                  []uint8(nil),
 		KeyRanges:             kv.NewNonPartitionedKeyRanges(nil),
-		Concurrency:           variable.DefDistSQLScanConcurrency,
+		Concurrency:           vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:        0,
 		Priority:              0,
 		MemTracker:            (*memory.Tracker)(nil),
@@ -690,7 +690,7 @@ func TestRequestBuilderMaxExecutionTime(t *testing.T) {
 		StartTs:           0x0,
 		Data:              []uint8(nil),
 		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		MemTracker:        (*memory.Tracker)(nil),

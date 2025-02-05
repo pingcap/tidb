@@ -27,6 +27,7 @@ import (
 )
 
 //go:generate go run ../../generator/hash64_equals/hash64_equals_generator.go -- hash64_equals_generated.go
+//go:generate go run ../../generator/shallow_ref/shallow_ref_generator.go -- shallow_ref_generated.go
 
 var (
 	_ base.LogicalPlan = &LogicalJoin{}

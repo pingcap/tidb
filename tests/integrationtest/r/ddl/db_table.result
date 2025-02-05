@@ -77,3 +77,10 @@ Error 1064 (42000): You have an error in your SQL syntax; check the manual that 
 alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near "then (b / a) end))" 
 drop table if exists t;
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"key": "value"}';
+Error 3981 (HY000): Storage engine does not support ENGINE_ATTRIBUTE.
+create table t (a int);
+alter table t ENGINE_ATTRIBUTE = '{"key": "value"}';
+Error 3981 (HY000): Storage engine does not support ENGINE_ATTRIBUTE.
+drop table if exists t;

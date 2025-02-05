@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -44,8 +44,8 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		return plan, planChanged, nil
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
-	histNeeded := syncWait > 0
-	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan, histNeeded)
+	syncLoadEnabled := syncWait > 0
+	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
 	// opNum is collected via the common stats load rule, some operators may be cleaned like proj for later rule.
 	// so opNum is not that accurate, but it's enough for the memo hashmap's init capacity.
 	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
@@ -65,10 +65,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
 
-	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, histNeeded)
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
+	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
@@ -82,10 +79,19 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
-	if len(histNeededItems) > 0 {
+	if len(histNeededItems) == 0 {
+		return plan, planChanged, nil
+	}
+	if syncLoadEnabled {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
+	}
+	// We are loading some unnecessary items here since the static pruning hasn't happened yet.
+	// It's not easy to solve the problem and the static pruning is being deprecated, so we just leave it here.
+	for _, item := range histNeededItems {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
 	}
 	return plan, planChanged, nil
 }
@@ -252,7 +258,7 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-		if variable.StatsLoadPseudoTimeout.Load() {
+		if vardef.StatsLoadPseudoTimeout.Load() {
 			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
@@ -272,7 +278,7 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-		if variable.StatsLoadPseudoTimeout.Load() {
+		if vardef.StatsLoadPseudoTimeout.Load() {
 			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
