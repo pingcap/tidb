@@ -645,25 +645,26 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		err error
 	)
 
-	if e.txn.Valid() && !e.txn.IsReadOnly() {
+	if snapshot := e.Ctx().GetSessionVars().TxnCtx.MemBufferSnapshot; snapshot != nil {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = snapshot.Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
-		// key does not exist in mem buffer, check the lock cache
-		if e.lock {
-			var ok bool
-			val, ok = e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-			if ok {
-				return val, nil
-			}
+		// fallthrough to pessimistic lock cache & snapshot get.
+	}
+
+	// key does not exist in mem buffer, check the lock cache
+	if e.lock {
+		var ok bool
+		val, ok = e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+		if ok {
+			return val, nil
 		}
-		// fallthrough to snapshot get.
 	}
 
 	lock := e.tblInfo.Lock
