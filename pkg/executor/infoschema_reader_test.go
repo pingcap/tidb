@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -368,10 +368,19 @@ func TestForAnalyzeStatus(t *testing.T) {
 }
 
 func TestForServersInfo(t *testing.T) {
+	globalCfg := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(globalCfg)
+	})
+	newCfg := *globalCfg
+	newCfg.Labels = map[string]string{"dc": "dc1"}
+	config.StoreGlobalConfig(&newCfg)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO").Rows()
 	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 8)
 
 	info, err := infosync.GetServerInfo()
 	require.NoError(t, err)
@@ -383,7 +392,7 @@ func TestForServersInfo(t *testing.T) {
 	require.Equal(t, info.Lease, rows[0][4])
 	require.Equal(t, info.Version, rows[0][5])
 	require.Equal(t, info.GitHash, rows[0][6])
-	require.Equal(t, stringutil.BuildStringFromLabels(info.Labels), rows[0][8])
+	require.Equal(t, "dc=dc1", rows[0][7])
 }
 
 func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
@@ -628,7 +637,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4983"))
+		testkit.RowsWithSep("|", "4982"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
