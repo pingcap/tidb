@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -221,6 +222,11 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 		retryable = true
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		sessVars := p.sctx.GetSessionVars()
+		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
+		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
+			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
+		}
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
