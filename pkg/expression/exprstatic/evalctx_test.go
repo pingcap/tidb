@@ -27,6 +27,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -57,9 +58,9 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 	require.Equal(t, types.NewContext(types.StrictFlags, time.UTC, ctx), ctx.TypeCtx())
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{}, ctx), ctx.ErrCtx())
 	require.Equal(t, "", ctx.CurrentDB())
-	require.Equal(t, variable.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
-	require.Equal(t, variable.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
-	require.Equal(t, variable.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
+	require.Equal(t, vardef.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
+	require.Equal(t, vardef.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
+	require.Equal(t, vardef.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
 	require.Empty(t, ctx.AllParamValues())
 	require.Equal(t, variable.NewUserVars(), ctx.GetUserVarsReader())
 	require.True(t, ctx.GetOptionalPropSet().IsEmpty())
@@ -571,7 +572,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 			field: "$.defaultWeekFormatMode",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "5", ctx.GetDefaultWeekFormatMode())
-				mode, ok := vars.GetSystemVar(variable.DefaultWeekFormat)
+				mode, ok := vars.GetSystemVar(vardef.DefaultWeekFormat)
 				require.True(t, ok)
 				require.Equal(t, mode, ctx.GetDefaultWeekFormatMode())
 			},
@@ -661,7 +662,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// additional check about @@timestamp
 	// setting to `variable.DefTimestamp` should return the current timestamp
 	ctx, err = defaultEvalCtx.LoadSystemVars(map[string]string{
-		"timestamp": variable.DefTimestamp,
+		"timestamp": vardef.DefTimestamp,
 	})
 	require.NoError(t, err)
 	tm, err := ctx.CurrentTime()

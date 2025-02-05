@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -599,14 +599,14 @@ func (mgr *TaskManager) SwitchTaskStep(
 ) error {
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
-		if vars.MemQuotaQuery < variable.DefTiDBMemQuotaQuery {
+		if vars.MemQuotaQuery < vardef.DefTiDBMemQuotaQuery {
 			bak := vars.MemQuotaQuery
-			if err := vars.SetSystemVar(variable.TiDBMemQuotaQuery,
-				strconv.Itoa(variable.DefTiDBMemQuotaQuery)); err != nil {
+			if err := vars.SetSystemVar(vardef.TiDBMemQuotaQuery,
+				strconv.Itoa(vardef.DefTiDBMemQuotaQuery)); err != nil {
 				return err
 			}
 			defer func() {
-				_ = vars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.Itoa(int(bak)))
+				_ = vars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.Itoa(int(bak)))
 			}()
 		}
 		err := mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep)

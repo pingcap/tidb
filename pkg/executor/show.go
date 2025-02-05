@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -898,7 +899,7 @@ func (e *ShowExec) fetchShowCharset() error {
 		defaultCollation := desc.DefaultCollation
 		if desc.Name == charset.CharsetUTF8MB4 {
 			var err error
-			defaultCollation, err = sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+			defaultCollation, err = sessVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.DefaultCollationForUTF8MB4)
 			if err != nil {
 				return err
 			}
@@ -939,8 +940,8 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
-			if v.Scope != variable.ScopeSession {
-				if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			if v.Scope != vardef.ScopeSession {
+				if v.IsNoop && !vardef.EnableNoopVariables.Load() {
 					continue
 				}
 				if fieldFilter != "" && v.Name != fieldFilter {
@@ -965,7 +966,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+		if v.IsNoop && !vardef.EnableNoopVariables.Load() {
 			continue
 		}
 		if fieldFilter != "" && v.Name != fieldFilter {
@@ -993,7 +994,7 @@ func (e *ShowExec) fetchShowStatus() error {
 	}
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	for status, v := range statusVars {
-		if e.GlobalScope && v.Scope == variable.ScopeSession {
+		if e.GlobalScope && v.Scope == vardef.ScopeSession {
 			continue
 		}
 		// Skip invisible status vars if permission fails.
@@ -1671,7 +1672,7 @@ func isUTF8MB4AndDefaultCollation(sessVars *variable.SessionVars, cs, co string)
 	if cs != charset.CharsetUTF8MB4 {
 		return false, false, nil
 	}
-	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.DefaultCollationForUTF8MB4)
 	if err != nil {
 		return false, false, err
 	}
@@ -1763,7 +1764,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
 
-	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return errors.Trace(err)
 	}

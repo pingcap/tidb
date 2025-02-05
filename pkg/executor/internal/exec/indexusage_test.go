@@ -269,7 +269,8 @@ func TestIndexUsageReporterWithRealData(t *testing.T) {
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}},
+				// The point get will always use smallest bucket.
+				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		{
@@ -339,7 +340,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 10)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet in a partition
@@ -389,7 +390,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t use index(idx_1) where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet on global index
@@ -519,13 +520,15 @@ func TestIndexUsageReporterWithClusterIndex(t *testing.T) {
 		{
 			"select * from t0 where id = 1",
 			"Point_Get",
-			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}}},
+			// The point get will always use smallest bucket.
+			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// PointGet on CommonHandle
 		{
 			"select * from t1 where id = \"1\"",
 			"Point_Get",
-			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}}},
+			// The point get will always use smallest bucket.
+			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// BatchPointGet on PKAsHandle
 		{

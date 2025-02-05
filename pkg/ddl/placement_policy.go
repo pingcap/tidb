@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -553,10 +553,10 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 	}
 
 	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+	if sessVars.PlacementMode == vardef.PlacementModeIgnore {
 		dbInfo.PlacementPolicyRef = nil
 		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", vardef.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -568,9 +568,9 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 
 func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
+	if sessVars.PlacementMode == vardef.PlacementModeIgnore && removeTablePlacement(tbInfo) {
 		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", vardef.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -595,9 +595,9 @@ func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
 	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
+	if sessVars.PlacementMode == vardef.PlacementModeIgnore && removePartitionPlacement(partInfo) {
 		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", vardef.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -634,9 +634,9 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 
 func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+	if sessVars.PlacementMode == vardef.PlacementModeIgnore {
 		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", vardef.PlacementModeIgnore),
 		)
 		return true
 	}

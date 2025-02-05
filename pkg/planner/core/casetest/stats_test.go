@@ -69,7 +69,7 @@ func TestGroupNDVs(t *testing.T) {
 		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = core.RecursiveDeriveStats4Test(lp)
+		_, _, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
 		var agg *logicalop.LogicalAggregation
 		var join *logicalop.LogicalJoin

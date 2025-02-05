@@ -135,8 +135,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
 	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
-	var selfUsedCols []*expression.Column
+	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 
@@ -222,17 +221,21 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	if la.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childProfile, gbyCols)
-		return la.StatsInfo(), nil
+		return la.StatsInfo(), false, nil
 	}
 	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.SetStats(&property.StatsInfo{
@@ -245,7 +248,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	la.InputCount = childProfile.RowCount
 	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childProfile, gbyCols)
-	return la.StatsInfo(), nil
+	return la.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -597,13 +600,12 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	//nolint: prealloc
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
 	subDNFItem := expression.SplitDNFItems(cond)
 	if len(subDNFItem) == 1 {
 		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
 	}
+	condsToPush := make([]expression.Expression, 0, len(subDNFItem))
+	var ret []expression.Expression
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subDNFItem {
 		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)

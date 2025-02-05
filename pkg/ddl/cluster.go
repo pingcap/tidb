@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -162,9 +163,9 @@ func getGlobalSysVarAsBool(sess sessionctx.Context, name string) (bool, error) {
 }
 
 func setGlobalSysVarFromBool(ctx context.Context, sess sessionctx.Context, name string, value bool) error {
-	sv := variable.On
+	sv := vardef.On
 	if !value {
-		sv = variable.Off
+		sv = vardef.Off
 	}
 
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, name, sv)
@@ -207,13 +208,13 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 	if err = closePDSchedule(ctx); err != nil {
 		return err
 	}
-	if err = setGlobalSysVarFromBool(ctx, se, variable.TiDBEnableAutoAnalyze, false); err != nil {
+	if err = setGlobalSysVarFromBool(ctx, se, vardef.TiDBEnableAutoAnalyze, false); err != nil {
 		return err
 	}
-	if err = setGlobalSysVarFromBool(ctx, se, variable.TiDBSuperReadOnly, true); err != nil {
+	if err = setGlobalSysVarFromBool(ctx, se, vardef.TiDBSuperReadOnly, true); err != nil {
 		return err
 	}
-	if err = setGlobalSysVarFromBool(ctx, se, variable.TiDBTTLJobEnable, false); err != nil {
+	if err = setGlobalSysVarFromBool(ctx, se, vardef.TiDBTTLJobEnable, false); err != nil {
 		return err
 	}
 
@@ -651,7 +652,7 @@ func flashbackToVersion(
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
 		store.(tikv.Storage),
-		int(variable.GetDDLFlashbackConcurrency()),
+		int(vardef.GetDDLFlashbackConcurrency()),
 		handler,
 	).RunOnRange(ctx, startKey, endKey)
 }
@@ -718,19 +719,19 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 
-		args.EnableAutoAnalyze, err = getGlobalSysVarAsBool(sess, variable.TiDBEnableAutoAnalyze)
+		args.EnableAutoAnalyze, err = getGlobalSysVarAsBool(sess, vardef.TiDBEnableAutoAnalyze)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
-		args.SuperReadOnly, err = getGlobalSysVarAsBool(sess, variable.TiDBSuperReadOnly)
+		args.SuperReadOnly, err = getGlobalSysVarAsBool(sess, vardef.TiDBSuperReadOnly)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
-		args.EnableTTLJob, err = getGlobalSysVarAsBool(sess, variable.TiDBTTLJobEnable)
+		args.EnableTTLJob, err = getGlobalSysVarAsBool(sess, vardef.TiDBTTLJobEnable)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -866,18 +867,18 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			}
 		}
 
-		if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBSuperReadOnly, args.SuperReadOnly); err != nil {
+		if err = setGlobalSysVarFromBool(w.workCtx, sess, vardef.TiDBSuperReadOnly, args.SuperReadOnly); err != nil {
 			return errors.Trace(err)
 		}
 
 		if job.IsCancelled() {
 			// only restore `tidb_ttl_job_enable` when flashback failed
-			if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBTTLJobEnable, args.EnableTTLJob); err != nil {
+			if err = setGlobalSysVarFromBool(w.workCtx, sess, vardef.TiDBTTLJobEnable, args.EnableTTLJob); err != nil {
 				return errors.Trace(err)
 			}
 		}
 
-		if err := setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBEnableAutoAnalyze, args.EnableAutoAnalyze); err != nil {
+		if err := setGlobalSysVarFromBool(w.workCtx, sess, vardef.TiDBEnableAutoAnalyze, args.EnableAutoAnalyze); err != nil {
 			return errors.Trace(err)
 		}
 

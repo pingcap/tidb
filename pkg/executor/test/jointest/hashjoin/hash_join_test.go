@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -432,7 +432,7 @@ func TestIssue31129(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))

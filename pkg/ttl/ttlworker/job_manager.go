@@ -27,7 +27,7 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	ttltablestore "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -368,12 +368,12 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, err))
 	}
 
-	if !variable.EnableTTLJob.Load() {
+	if !vardef.EnableTTLJob.Load() {
 		responseErr(errors.New("tidb_ttl_job_enable is disabled"))
 		return
 	}
 
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
+	if !timeutil.WithinDayTimePeriod(vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -602,10 +602,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	cancelJobs := false
 	cancelReason := ""
 	switch {
-	case !variable.EnableTTLJob.Load():
+	case !vardef.EnableTTLJob.Load():
 		cancelJobs = true
 		cancelReason = "tidb_ttl_job_enable turned off"
-	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+	case !timeutil.WithinDayTimePeriod(vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load(), now):
 		cancelJobs = true
 		cancelReason = "out of TTL job schedule window"
 	}

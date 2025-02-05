@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
 
 // digestBiMap represents a bidirectional map between noDBDigest and sqlDigest, used to support cross-db binding.
@@ -152,7 +152,7 @@ type bindingCache struct {
 func newBindCache() BindingCache {
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
-		MaxCost:     variable.MemQuotaBindingCache.Load(),
+		MaxCost:     vardef.MemQuotaBindingCache.Load(),
 		BufferItems: 64,
 		Cost: func(value any) int64 {
 			return int64(value.(*Binding).size())

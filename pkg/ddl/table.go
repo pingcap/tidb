@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -897,7 +897,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
 	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
-	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
 	is := infoCache.GetLatest()

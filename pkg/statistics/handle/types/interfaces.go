@@ -48,7 +48,7 @@ type StatsGC interface {
 
 	// DeleteTableStatsFromKV deletes table statistics from kv.
 	// A statsID refers to statistic of a table or a partition.
-	DeleteTableStatsFromKV(statsIDs []int64) (err error)
+	DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error)
 }
 
 // ColStatsTimeInfo records usage information of this column stats.
@@ -109,8 +109,8 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
