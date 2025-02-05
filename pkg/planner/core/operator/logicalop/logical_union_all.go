@@ -204,18 +204,14 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 	// check the output columns' not-null property.
 	res := &fd.FDSet{}
 	notNullCols := intset.NewFastIntSet()
-	for _, col := range p.Schema().Columns {
-		flag := true
-		for _, childFD := range childFDs {
-			if childFD.NotNullCols.Has(int(col.UniqueID)) {
-				flag = false
-				break
-			}
-		}
-		if flag {
-			notNullCols.Insert(int(col.UniqueID))
-		}
+	for _, childFD := range childFDs {
+		notNullCols.IntersectionWith(childFD.NotNullCols)
 	}
+	currentCols := intset.NewFastIntSet()
+	for _, col := range p.Schema().Columns {
+		currentCols.Insert(int(col.UniqueID))
+	}
+	notNullCols.IntersectionWith(currentCols)
 	res.MakeNotNull(notNullCols)
 	// check the equivalency between children.
 	for i := 0; i < p.Schema().Len(); i++ {
