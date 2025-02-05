@@ -512,9 +512,11 @@ func (pp *ParquetParser) setDecimalData(readNum, col, offset int) error {
 
 	for i := 0; i < readNum; i++ {
 		if colTp == parquet.Types.Int64 || colTp == parquet.Types.Int32 {
-			v := int64buf[i]
+			var v int64
 			if colTp == parquet.Types.Int32 {
 				v = int64(int32buf[i])
+			} else {
+				v = int64buf[i]
 			}
 			if !decimal.IsSet || decimal.Scale == 0 {
 				pp.rows[offset+i][col].SetInt64(v)
