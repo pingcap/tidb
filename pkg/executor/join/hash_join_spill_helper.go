@@ -418,7 +418,9 @@ func (h *hashJoinSpillHelper) getProbeSpillBytesInOneWorker(workerID int) int64 
 func (h *hashJoinSpillHelper) getSpillBytesInOneWorkerImpl(disks []*chunk.DataInDiskByChunks) int64 {
 	totalBytes := int64(0)
 	for _, disk := range disks {
-		totalBytes += disk.GetTotalBytesInDisk()
+		if disk != nil {
+			totalBytes += disk.GetTotalBytesInDisk()
+		}
 	}
 	return totalBytes
 }
