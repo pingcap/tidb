@@ -248,7 +248,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			continue
 		}
 
-		ownerKey, currRev, err := GetOwnerInfo(campaignContext, logCtx, elec, m.id)
+		ownerKey, currRev, err := GetOwnerKeyInfo(campaignContext, logCtx, elec, m.id)
 		if err != nil {
 			continue
 		}
@@ -285,8 +285,8 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 	return string(resp.Kvs[0].Value), nil
 }
 
-// GetOwnerInfo gets the owner information.
-func GetOwnerInfo(ctx, logCtx context.Context, elec *concurrency.Election, id string) (string, int64, error) {
+// GetOwnerKeyInfo gets the owner information.
+func GetOwnerKeyInfo(ctx, logCtx context.Context, elec *concurrency.Election, id string) (string, int64, error) {
 	resp, err := elec.Leader(ctx)
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.

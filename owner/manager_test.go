@@ -179,7 +179,7 @@ func TestCluster(t *testing.T) {
 	election := concurrency.NewElection(session, DDLOwnerKey)
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, _, err = owner.GetOwnerInfo(context.Background(), logCtx, election, "useless id")
+	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, election, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 }
 
@@ -223,7 +223,7 @@ func TestWatchOwner(t *testing.T) {
 	require.NoError(t, err)
 	// test the GetOwnerInfo()
 	election := concurrency.NewElection(session, DDLOwnerKey)
-	ownerKey, currRevision, err := owner.GetOwnerInfo(ctx, context.TODO(), election, id)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), election, id)
 	require.NoError(t, err)
 	// watch the ownerKey.
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Millisecond*300)
@@ -295,7 +295,7 @@ func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 
 	// get the ownkey informations.
 	election := concurrency.NewElection(session, DDLOwnerKey)
-	ownerKey, currRevision, err := owner.GetOwnerInfo(ctx, context.TODO(), election, id)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), election, id)
 	require.NoError(t, err)
 	// delete the ownerkey
 	err = deleteLeader(client, DDLOwnerKey)
