@@ -873,8 +873,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.logTableHistoryManager != nil {
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
-		err := AdjustTablesToRestoreAndCreateTableTracker(cfg.logTableHistoryManager, cfg.RestoreConfig,
-			client.GetDatabaseMap(), fileMap, tableMap, dbMap)
+		err = AdjustTablesToRestoreAndCreateTableTracker(
+			cfg.logTableHistoryManager,
+			cfg.RestoreConfig,
+			client.GetDatabaseMap(),
+			fileMap,
+			tableMap,
+			dbMap,
+		)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -883,9 +889,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("files", len(fileMap)),
 			zap.Int("tables", len(tableMap)),
 			zap.Int("db", len(dbMap)))
-
-		// need to update to include all eligible table id from snapshot restore
-		UpdatePiTRTableTracker(cfg.RestoreConfig, tableMap)
 	}
 	files := utils.FlattenValues(fileMap)
 	tables := utils.Values(tableMap)
@@ -1417,14 +1420,66 @@ func getDBNameFromIDInBackup(
 	return "", false
 }
 
-// getTableIDToTrack determines which ID should be tracked in the PiTR table tracker
-// For regular tables, it returns the physical id itself
-// For partitioned tables, it returns the parent table ID
-func getTableIDToTrack(uniqueID int64, end *stream.TableLocationInfo) int64 {
-	if end.IsPartition() {
-		return end.ParentTableID // return parent table ID for partitions
+// handleTableRenames processes table-level operations (renames) and determines which tables need to be restored
+func handleTableRenames(
+	history *stream.LogBackupTableHistoryManager,
+	snapshotDBMap map[int64]*metautil.Database,
+	cfg *RestoreConfig,
+	existingTableMap map[int64]*metautil.Table,
+	existingDBMap map[int64]*metautil.Database,
+	existingFileMap map[int64][]*backuppb.File,
+	pitrIdTracker *utils.PiTRIdTracker,
+) {
+	for tableId, dbIDAndTableName := range history.GetTableHistory() {
+		start := dbIDAndTableName[0]
+		end := dbIDAndTableName[1]
+
+		startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
+		if !exists {
+			continue
+		}
+		endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
+		if !exists {
+			continue
+		}
+
+		startMatches := utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
+		endMatches := utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable)
+
+		// add both to tracker, table may be renamed from different db but still in filter so need to track both
+		if startMatches && endMatches {
+			pitrIdTracker.TrackTableId(end.DbID, tableId)
+			pitrIdTracker.TrackTableId(start.DbID, tableId)
+		}
+
+		// skip if both match or not match, no need to adjust tables
+		// it should handle most of the cases
+		if startMatches == endMatches {
+			continue
+		}
+
+		// If end matches but start doesn't -> need to restore (add)
+		// If start matches but end doesn't -> need to remove
+		if startDB, exists := snapshotDBMap[start.DbID]; exists {
+			// Always add DB to map - we want to track it even if it has no tables
+			existingDBMap[startDB.Info.ID] = startDB
+
+			for _, table := range startDB.Tables {
+				if table.Info != nil && table.Info.ID == tableId {
+					if endMatches {
+						// need to restore this table
+						existingTableMap[table.Info.ID] = table
+						existingFileMap[table.Info.ID] = table.Files
+					} else {
+						// need to remove this table
+						delete(existingTableMap, table.Info.ID)
+						delete(existingFileMap, table.Info.ID)
+					}
+					break
+				}
+			}
+		}
 	}
-	return uniqueID // return uniqueID for regular tables
 }
 
 func AdjustTablesToRestoreAndCreateTableTracker(
@@ -1436,122 +1491,29 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	dbMap map[int64]*metautil.Database,
 ) (err error) {
 	// build tracker for pitr restore to use later
-	piTRTableTracker := utils.NewPiTRTableTracker()
+	piTRIdTracker := utils.NewPiTRIdTracker()
 
-	// put all the newly created db that matches the filter during log backup into the pitr table tracker
+	// track newly created databases
 	newlyCreatedDBs := logBackupTableHistory.GetNewlyCreatedDBHistory()
 	for dbId, dbName := range newlyCreatedDBs {
 		if utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
-			piTRTableTracker.AddDB(dbId)
+			piTRIdTracker.AddDB(dbId)
 		}
 	}
 
-	// get all the tables seen during the log backup
-	tableHistory := logBackupTableHistory.GetTableHistory()
+	// first handle table renames to determine which tables we need
+	handleTableRenames(logBackupTableHistory, snapshotDBMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
 
-	// physical id can be table id or partition id
-	for physicalID, dbIDAndTableName := range tableHistory {
-		start := dbIDAndTableName[0]
-		end := dbIDAndTableName[1]
-		log.Info("#### table history", zap.Any("start", start.TableName),
-			zap.Any("start parent id", start.ParentTableID), zap.Any("end", end.TableName),
-			zap.Any("end parent id", end.ParentTableID))
-		// get end state DB name
-		endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, logBackupTableHistory)
-		if !exists {
-			continue
-		}
+	// handle partition exchange if needed in future
 
-		startTableID := getTableIDToTrack(physicalID, &start)
-		endTableID := getTableIDToTrack(physicalID, &end)
-		// handle end state in filter range cases
-		// 1. original == current, didn't have renaming
-		// 2. original has been renamed/exchanged and current is in the filter range
-		// we need to restore original table
-		if utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable) {
-			// put this db/table id into pitr tracker as it matches with user's filter
-			// have to update tracker here since table might be empty or not in snapshot so nothing will be returned .
-			// but we still need to capture this table id to restore during log restore.
-			piTRTableTracker.AddPhysicalId(end.DbID, endTableID)
-			log.Info("####### putting into tracker", zap.Any("end table", endTableID),
-				zap.Any("start table", startTableID))
-
-			// if start table id is already tracked, continue
-			if _, exists = tableMap[startTableID]; exists {
-				continue
-			}
-
-			// check if snapshot contains the start db/table
-			startDB, exists := snapshotDBMap[start.DbID]
-			if !exists {
-				// original db created during log backup, or full backup has a filter that filters out this db,
-				// either way snapshot doesn't have information about this db so doesn't need to restore at snapshot
-				continue
-			}
-			log.Info("####### adding extra", zap.Any("end table", endTableID),
-				zap.Any("start table", startTableID))
-
-			// need to restore the matching table in snapshot restore phase
-			// note: assuming below op is less likely to happen, if it happens a lot we can build a map
-			// to optimize
-			for _, startTable := range startDB.Tables {
-				if startTable.Info == nil {
-					continue
-				}
-				if startTable.Info.ID == startTableID {
-					// tracks this start table
-					piTRTableTracker.AddPhysicalId(start.DbID, startTableID)
-					if startTable.Info.Partition != nil {
-						for _, partInfo := range startTable.Info.Partition.Definitions {
-							piTRTableTracker.AddPhysicalId(start.DbID, partInfo.ID)
-						}
-					}
-					// clean up if needed after restore finishes
-					piTRTableTracker.AddTableToCleanup(start.DbID, startTableID)
-					fileMap[startTable.Info.ID] = startTable.Files
-					dbMap[start.DbID] = startDB
-					tableMap[startTable.Info.ID] = startTable
-					// only one table id will match
-					break
-				}
-			}
-		} else {
-			startDbName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, logBackupTableHistory)
-			if !exists {
-				continue
-			}
-			// check if start state is in filter range
-			if utils.MatchTable(cfg.TableFilter, startDbName, start.TableName, cfg.WithSysTable) {
-				// if start state is in the tracker meaning it was added on purpose in previous step, don't remove it
-				// if start is partition, don't remove the table as rest of the table is still needed
-				if piTRTableTracker.ContainsPhysicalId(start.DbID, startTableID) || start.IsPartition() {
-					// clean up later after restore
-					piTRTableTracker.AddTableToCleanup(end.DbID, endTableID)
-					continue
-				}
-
-				// if is a table, remove it now since will be moved out later
-				// for correctness, don't remove db even if all tables are filtered out
-				delete(fileMap, startTableID)
-				delete(tableMap, startTableID)
-			}
-		}
+	// track all snapshot tables that's going to restore in PiTR tracker
+	for tableID, table := range tableMap {
+		piTRIdTracker.TrackTableId(table.DB.ID, tableID)
 	}
-	// store the tracker into config
-	cfg.PiTRTableTracker = piTRTableTracker
-	return
-}
 
-func UpdatePiTRTableTracker(cfg *RestoreConfig, tableMap map[int64]*metautil.Table) {
-	for _, table := range tableMap {
-		cfg.PiTRTableTracker.AddPhysicalId(table.DB.ID, table.Info.ID)
-		if table.Info.Partition != nil {
-			for _, partInfo := range table.Info.Partition.Definitions {
-				cfg.PiTRTableTracker.AddPhysicalId(table.DB.ID, partInfo.ID)
-			}
-		}
-	}
-	log.Info("pitr table tracker", zap.String("map", cfg.PiTRTableTracker.String()))
+	log.Info("pitr table tracker", zap.String("map", piTRIdTracker.String()))
+	cfg.PiTRTableTracker = piTRIdTracker
+	return nil
 }
 
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
@@ -1785,22 +1747,4 @@ func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
 	_, ok := actions[action]
 	return ok
-}
-
-func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan *snapclient.CreatedTable {
-	outCh := make(chan *snapclient.CreatedTable)
-
-	go func() {
-		defer close(outCh)
-
-		for _, createdTable := range createdTables {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				outCh <- createdTable
-			}
-		}
-	}()
-	return outCh
 }

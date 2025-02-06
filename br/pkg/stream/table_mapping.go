@@ -430,18 +430,18 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	return nil
 }
 
-func (tm *TableMappingManager) FilterDBReplaceMap(tracker *utils.PiTRIdTracker) {
+func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTracker) {
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
 		if !tracker.ContainsDB(dbID) {
-			dbReplace.Filtered = true
+			dbReplace.FilteredOut = true
 			continue
 		}
 
 		// filter tables in this database
 		for tableID, tableReplace := range dbReplace.TableMap {
-			if !tracker.ContainsPhysicalId(dbID, tableID) {
-				tableReplace.Filtered = true
+			if !tracker.ContainsTableId(dbID, tableID) {
+				tableReplace.FilteredOut = true
 			}
 		}
 	}
@@ -458,8 +458,8 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 				UpstreamId:   dbID,
 				DownstreamId: dr.DbID,
 			},
-			Tables:   make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
-			Filtered: dr.Filtered,
+			Tables:      make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
+			FilteredOut: dr.FilteredOut,
 		}
 
 		for tblID, tr := range dr.TableMap {
@@ -469,8 +469,8 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 					UpstreamId:   tblID,
 					DownstreamId: tr.TableID,
 				},
-				Partitions: make([]*backuppb.IDMap, 0, len(tr.PartitionMap)),
-				Filtered:   tr.Filtered,
+				Partitions:  make([]*backuppb.IDMap, 0, len(tr.PartitionMap)),
+				FilteredOut: tr.FilteredOut,
 			}
 
 			for upID, downID := range tr.PartitionMap {
@@ -492,12 +492,12 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 
 	for _, db := range dbMaps {
 		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
-		dr.Filtered = db.Filtered
+		dr.FilteredOut = db.FilteredOut
 		dbReplaces[db.IdMap.UpstreamId] = dr
 
 		for _, tbl := range db.Tables {
 			tr := NewTableReplace(tbl.Name, tbl.IdMap.DownstreamId)
-			tr.Filtered = tbl.Filtered
+			tr.FilteredOut = tbl.FilteredOut
 			dr.TableMap[tbl.IdMap.UpstreamId] = tr
 			for _, p := range tbl.Partitions {
 				tr.PartitionMap[p.UpstreamId] = p.DownstreamId

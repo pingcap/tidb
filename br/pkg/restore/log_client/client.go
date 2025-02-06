@@ -1028,7 +1028,7 @@ func readFilteredFullBackupTables(
 				tableAdded = true
 				continue
 			}
-			if !piTRIdTracker.ContainsPhysicalId(db.Info.ID, table.Info.ID) {
+			if !piTRIdTracker.ContainsTableId(db.Info.ID, table.Info.ID) {
 				continue
 			}
 			tables[table.Info.ID] = table

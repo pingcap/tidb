@@ -757,7 +757,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 
 			for dbID, tableIDs := range tc.expectedTableIDs {
 				for _, tableID := range tableIDs {
-					require.True(t, cfg.PiTRTableTracker.ContainsPhysicalId(dbID, tableID))
+					require.True(t, cfg.PiTRTableTracker.ContainsTableId(dbID, tableID))
 				}
 			}
 

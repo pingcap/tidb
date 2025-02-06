@@ -1654,12 +1654,6 @@ func restoreStream(
 		return errors.Annotate(err, "failed to clean up")
 	}
 
-	// we could restore some extra tables if exchange partition happens
-	// clean up tables that's not in the filter range
-	if err = cleanUpFilteredOutTables(ctx, client, cfg.RestoreConfig, schemasReplace); err != nil {
-		return errors.Annotate(err, "failed to drop filtered tables")
-	}
-
 	// to delete range(table, schema) that's dropped during log backup
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
@@ -1934,11 +1928,11 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 	rules := make(map[int64]*restoreutils.RewriteRules)
 
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
-		if dbReplace.Filtered {
+		if dbReplace.FilteredOut {
 			continue
 		}
 		for oldTableID, tableReplace := range dbReplace.TableMap {
-			if tableReplace.Filtered {
+			if tableReplace.FilteredOut {
 				continue
 			}
 			if _, exist := rules[oldTableID]; !exist {
@@ -2148,7 +2142,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	} else {
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 		if cfg.PiTRTableTracker != nil {
-			tableMappingManager.FilterDBReplaceMap(cfg.PiTRTableTracker)
+			tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 		} else {
 			log.Warn("pitr table tracker is nil, base map is not from full backup")
 		}
@@ -2175,66 +2169,4 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
-}
-
-func cleanUpFilteredOutTables(ctx context.Context, client *logclient.LogClient, cfg *RestoreConfig,
-	schemaReplace *stream.SchemasReplace) error {
-	if cfg.PiTRTableTracker == nil || cfg.PiTRTableTracker.TableToCleanup == nil {
-		return nil
-	}
-	tablesToCleanup := cfg.PiTRTableTracker.TableToCleanup
-	tableFilter := cfg.TableFilter
-	infoSchema := client.GetDomain().InfoSchema()
-	log.Info("start to drop filtered out tables post restore")
-	for upDbID, tables := range tablesToCleanup {
-		dbReplace, exist := schemaReplace.DbReplaceMap[upDbID]
-		if !exist {
-			return errors.Errorf("database ID mapping not found in schema replace for upstream DB ID %d", upDbID)
-		}
-		downDbID := dbReplace.DbID
-
-		dbInfo, exist := infoSchema.SchemaByID(downDbID)
-		if !exist {
-			log.Info("database not found during cleanup, skipping",
-				zap.Int64("upstream_db_id", upDbID),
-				zap.Int64("downstream_db_id", downDbID))
-			continue
-		}
-
-		for upTableID := range tables {
-			// get downstream table ID from schema replace
-			tableReplace, exist := dbReplace.TableMap[upTableID]
-			if !exist {
-				return errors.Errorf("table ID mapping not found in schema replace for upstream table ID %d in DB %d",
-					upTableID, upDbID)
-			}
-			downTableID := tableReplace.TableID
-			tbl, exist := infoSchema.TableByID(ctx, downTableID)
-			if !exist {
-				log.Info("table not found during cleanup, skipping",
-					zap.Int64("upstream_db_id", upDbID),
-					zap.Int64("downstream_db_id", downDbID),
-					zap.Int64("upstream_table_id", upTableID),
-					zap.Int64("downstream_table_id", downTableID))
-				continue
-			}
-
-			// check if table matches filter
-			if !tableFilter.MatchTable(dbInfo.Name.O, tbl.Meta().Name.O) {
-				log.Info("dropping filtered out table",
-					zap.String("db", dbInfo.Name.O),
-					zap.String("table", tbl.Meta().Name.O),
-					zap.Int64("upstream_db_id", upDbID),
-					zap.Int64("downstream_db_id", downDbID),
-					zap.Int64("upstream_table_id", upTableID),
-					zap.Int64("downstream_table_id", downTableID))
-
-				err := client.DropTable(ctx, dbInfo.Name.O, tbl.Meta().Name.O)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-	return nil
 }

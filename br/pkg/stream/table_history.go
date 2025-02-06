@@ -14,17 +14,10 @@
 
 package stream
 
-const defaultParentTableID = 0
-
 // TableLocationInfo stores the table name, db id, and parent table id if is a partition
 type TableLocationInfo struct {
-	DbID          int64
-	TableName     string
-	ParentTableID int64 // tracking parent table if is a partition
-}
-
-func (t *TableLocationInfo) IsPartition() bool {
-	return t.ParentTableID != defaultParentTableID
+	DbID      int64
+	TableName string
 }
 
 type LogBackupTableHistoryManager struct {
@@ -43,22 +36,10 @@ func NewTableHistoryManager() *LogBackupTableHistoryManager {
 // AddTableHistory adds or updates history for a regular table
 func (info *LogBackupTableHistoryManager) AddTableHistory(tableId int64, tableName string, dbID int64) {
 	locationInfo := TableLocationInfo{
-		DbID:          dbID,
-		TableName:     tableName,
-		ParentTableID: defaultParentTableID,
+		DbID:      dbID,
+		TableName: tableName,
 	}
 	info.addHistory(tableId, locationInfo)
-}
-
-// AddPartitionHistory adds or updates history for a partition
-func (info *LogBackupTableHistoryManager) AddPartitionHistory(
-	partitionId int64, dbID int64, parentTableID int64, parentTableName string) {
-	locationInfo := TableLocationInfo{
-		DbID:          dbID,
-		TableName:     parentTableName,
-		ParentTableID: parentTableID,
-	}
-	info.addHistory(partitionId, locationInfo)
 }
 
 // addHistory is a helper method to maintain the history

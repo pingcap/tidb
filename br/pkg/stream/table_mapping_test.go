@@ -42,11 +42,11 @@ func TestToProto(t *testing.T) {
 	tr := NewTableReplace(tblName, newTblID)
 	tr.PartitionMap[oldPID1] = newPID1
 	tr.PartitionMap[oldPID2] = newPID2
-	tr.Filtered = true
+	tr.FilteredOut = true
 
 	dr := NewDBReplace(dbName, newDBID)
 	dr.TableMap[oldTblID] = tr
-	dr.Filtered = true
+	dr.FilteredOut = true
 
 	drs := make(map[UpstreamID]*DBReplace)
 	drs[oldDBID] = dr
@@ -61,14 +61,14 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, dbMap[0].Name, dbName)
 	require.Equal(t, dbMap[0].IdMap.UpstreamId, oldDBID)
 	require.Equal(t, dbMap[0].IdMap.DownstreamId, newDBID)
-	require.Equal(t, dbMap[0].Filtered, true)
+	require.Equal(t, dbMap[0].FilteredOut, true)
 
 	tableMap := dbMap[0].Tables
 	require.Equal(t, len(tableMap), 1)
 	require.Equal(t, tableMap[0].Name, tblName)
 	require.Equal(t, tableMap[0].IdMap.UpstreamId, oldTblID)
 	require.Equal(t, tableMap[0].IdMap.DownstreamId, newTblID)
-	require.Equal(t, tableMap[0].Filtered, true)
+	require.Equal(t, tableMap[0].FilteredOut, true)
 
 	partitionMap := tableMap[0].Partitions
 	require.Equal(t, len(partitionMap), 2)
@@ -357,10 +357,10 @@ func TestMergeBaseDBReplace(t *testing.T) {
 							PartitionMap: map[UpstreamID]DownstreamID{
 								100: -100,
 							},
-							Filtered: true,
+							FilteredOut: true,
 						},
 					},
-					Filtered: true,
+					FilteredOut: true,
 				},
 			},
 			base: map[UpstreamID]*DBReplace{
@@ -374,10 +374,10 @@ func TestMergeBaseDBReplace(t *testing.T) {
 							PartitionMap: map[UpstreamID]DownstreamID{
 								100: 1100,
 							},
-							Filtered: true,
+							FilteredOut: true,
 						},
 					},
-					Filtered: true,
+					FilteredOut: true,
 				},
 			},
 			expected: map[UpstreamID]*DBReplace{
@@ -391,10 +391,10 @@ func TestMergeBaseDBReplace(t *testing.T) {
 							PartitionMap: map[UpstreamID]DownstreamID{
 								100: 1100,
 							},
-							Filtered: true,
+							FilteredOut: true,
 						},
 					},
-					Filtered: true,
+					FilteredOut: true,
 				},
 			},
 		},
@@ -443,7 +443,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToPhysicalId: map[int64]map[int64]struct{}{},
+				DBIdToTableId: map[int64]map[int64]struct{}{},
 			},
 			expected: map[UpstreamID]*DBReplace{},
 		},
@@ -466,7 +466,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToPhysicalId: map[int64]map[int64]struct{}{
+				DBIdToTableId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 				},
 			},
@@ -494,7 +494,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToPhysicalId: map[int64]map[int64]struct{}{
+				DBIdToTableId: map[int64]map[int64]struct{}{
 					1: {
 						10: struct{}{},
 						12: struct{}{},
@@ -539,7 +539,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToPhysicalId: map[int64]map[int64]struct{}{
+				DBIdToTableId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 				},
 			},
@@ -588,7 +588,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToPhysicalId: map[int64]map[int64]struct{}{
+				DBIdToTableId: map[int64]map[int64]struct{}{
 					1: {10: struct{}{}},
 					2: {
 						20: struct{}{},
@@ -621,7 +621,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 			tm := NewTableMappingManager()
 			tm.DBReplaceMap = tt.initial
 
-			tm.FilterDBReplaceMap(tt.filter)
+			tm.ApplyFilterToDBReplaceMap(tt.filter)
 
 			// verify DBReplaceMap is as expected
 			require.Equal(t, tt.expected, tm.DBReplaceMap)

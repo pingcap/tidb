@@ -435,105 +435,6 @@ test_with_checkpoint() {
     echo "table filter checkpoint passed"
 }
 
-test_exchange_partition() {
-    restart_services || { echo "Failed to restart services"; exit 1; }
-
-    echo "start testing exchange partition with filter"
-    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
-
-    run_sql "create schema $DB;"
-
-    # create a partitioned table and a normal table for exchange
-    run_sql "CREATE TABLE $DB.full_partitioned (
-        id INT,
-        value INT
-    ) PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100),
-        PARTITION p1 VALUES LESS THAN (200)
-    );"
-
-    run_sql "CREATE TABLE $DB.log_table (
-        id INT,
-        value INT
-    );"
-
-    run_sql "INSERT INTO $DB.full_partitioned VALUES (50, 1), (150, 2);"
-    run_sql "INSERT INTO $DB.log_table VALUES (75, 3);"
-
-    run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
-
-    # exchange partition and create some new tables with log_ prefix
-    run_sql "ALTER TABLE $DB.full_partitioned EXCHANGE PARTITION p0 WITH TABLE $DB.log_table;"
-    run_sql "CREATE TABLE $DB.log_after_exchange (id INT, value INT);"
-    run_sql "INSERT INTO $DB.log_after_exchange VALUES (1, 1);"
-
-    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
-
-    restart_services || { echo "Failed to restart services"; exit 1; }
-
-    # Test case 1: Restore with full* filter
-    echo "Testing restoration with full* filter"
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.full*"
-
-    # Verify full_partitioned table has the exchanged data
-    run_sql "SELECT count(*) = 1 FROM $DB.full_partitioned WHERE id = 75 AND value = 3" || {
-        echo "full_partitioned doesn't have the exchanged partition data (75,3)"
-        exit 1
-    }
-    run_sql "SELECT count(*) = 1 FROM $DB.full_partitioned WHERE id = 150 AND value = 2" || {
-        echo "full_partitioned missing original data (150,2)"
-        exit 1
-    }
-
-    # log_table and log_after_exchange should not exist with full* filter
-    if run_sql "SELECT * FROM $DB.log_table" 2>/dev/null; then
-        echo "log_table exists but should not with full* filter"
-        exit 1
-    fi
-    if run_sql "SELECT * FROM $DB.log_after_exchange" 2>/dev/null; then
-        echo "log_after_exchange exists but should not with full* filter"
-        exit 1
-    fi
-
-    # Clean up for next test
-    run_sql "drop schema $DB;"
-
-    # Test case 2: Restore with log* filter
-    echo "Testing restoration with log* filter"
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.log*"
-
-    # Verify log tables exist with correct data
-    run_sql "SELECT count(*) = 1 FROM $DB.log_table WHERE id = 50 AND value = 1" || {
-        echo "log_table doesn't have the exchanged partition data (50,1)"
-        exit 1
-    }
-    run_sql "SELECT count(*) = 1 FROM $DB.log_after_exchange WHERE id = 1 AND value = 1" || {
-        echo "log_after_exchange missing its data (1,1)"
-        exit 1
-    }
-
-    # full_partitioned should not exist with log* filter
-    if run_sql "SELECT * FROM $DB.full_partitioned" 2>/dev/null; then 
-        echo "full_partitioned exists but should not with log* filter"
-        exit 1
-    fi
-
-    # Verify table counts in both databases
-    verify_no_unexpected_tables 2 "$DB" || {
-        echo "Found unexpected number of tables in exchange partition test"
-        exit 1
-    }
-    verify_no_unexpected_tables 0 "${DB}_other" || {
-        echo "Found unexpected number of tables in ${DB}_other"
-        exit 1
-    }
-
-    # cleanup
-    rm -rf "$TEST_DIR/$TASK_NAME"
-
-    echo "exchange partition with filter test passed"
-}
-
 test_system_tables() {
     restart_services || { echo "Failed to restart services"; exit 1; }
 
@@ -803,14 +704,13 @@ test_index_filter() {
     echo "Index filter test passed"
 }
 
- run all test cases
- test_basic_filter
- test_with_full_backup_filter
- test_table_rename
- test_with_checkpoint
- test_exchange_partition
- test_system_tables
- test_foreign_keys
+echo "run all test cases"
+test_basic_filter
+test_with_full_backup_filter
+test_table_rename
+test_with_checkpoint
+test_system_tables
+test_foreign_keys
 test_index_filter
 
 echo "br pitr table filter all tests passed"

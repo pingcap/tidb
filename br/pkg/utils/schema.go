@@ -49,8 +49,8 @@ func TemporaryDBName(db string) ast.CIStr {
 	return ast.NewCIStr(temporaryDBNamePrefix + db)
 }
 
-// StripTempTableNamePrefixIfNeeded get the original name of system DB
-func StripTempTableNamePrefixIfNeeded(tempDB string) (string, bool) {
+// StripTempDBPrefixIfNeeded get the original name of system DB
+func StripTempDBPrefixIfNeeded(tempDB string) (string, bool) {
 	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}

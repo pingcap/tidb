@@ -84,7 +84,7 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// AddPhysicalId global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+	// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
 	// the latest schema update.
 	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
 		return errors.Trace(err)
@@ -206,14 +206,6 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 
 				// add to table rename history
 				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
-
-				// track partition information if table is partitioned
-				// this is needed since a table might get exchanged
-				if tableInfo.Partition != nil {
-					for _, def := range tableInfo.Partition.Definitions {
-						mp.tableHistoryManager.AddPartitionHistory(def.ID, dbID, tableInfo.ID, tableInfo.Name.O)
-					}
-				}
 			}
 		}
 	}

@@ -42,15 +42,15 @@ type TableReplace struct {
 	TableID      DownstreamID
 	PartitionMap map[UpstreamID]DownstreamID
 	IndexMap     map[UpstreamID]DownstreamID
-	Filtered     bool
+	FilteredOut  bool
 }
 
 // DBReplace specifies database information mapping from up-stream cluster to down-stream cluster.
 type DBReplace struct {
-	Name     string
-	DbID     DownstreamID
-	TableMap map[UpstreamID]*TableReplace
-	Filtered bool
+	Name        string
+	DbID        DownstreamID
+	TableMap    map[UpstreamID]*TableReplace
+	FilteredOut bool
 }
 
 // SchemasReplace specifies schemas information mapping from up-stream cluster to down-stream cluster.
@@ -72,17 +72,17 @@ func NewTableReplace(name string, newID DownstreamID) *TableReplace {
 		TableID:      newID,
 		PartitionMap: make(map[UpstreamID]DownstreamID),
 		IndexMap:     make(map[UpstreamID]DownstreamID),
-		Filtered:     false,
+		FilteredOut:  false,
 	}
 }
 
 // NewDBReplace creates a DBReplace struct.
 func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 	return &DBReplace{
-		Name:     name,
-		DbID:     newID,
-		TableMap: make(map[UpstreamID]*TableReplace),
-		Filtered: false,
+		Name:        name,
+		DbID:        newID,
+		TableMap:    make(map[UpstreamID]*TableReplace),
+		FilteredOut: false,
 	}
 }
 
@@ -95,11 +95,11 @@ func NewSchemasReplace(
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbReplaceMap {
-		if dr.Filtered {
+		if dr.FilteredOut {
 			continue
 		}
 		for tblID, tr := range dr.TableMap {
-			if tr.Filtered {
+			if tr.FilteredOut {
 				continue
 			}
 			globalTableIdMap[tblID] = tr.TableID
@@ -133,7 +133,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbMap.Filtered {
+	if dbMap.FilteredOut {
 		return nil, nil
 	}
 
@@ -154,7 +154,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
 	}
-	if dbMap.Filtered {
+	if dbMap.FilteredOut {
 		return nil, nil
 	}
 
@@ -219,7 +219,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbReplace.Filtered {
+	if dbReplace.FilteredOut {
 		return nil, nil
 	}
 
@@ -227,7 +227,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
-	if tableReplace.Filtered {
+	if tableReplace.FilteredOut {
 		return nil, nil
 	}
 
@@ -256,7 +256,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbReplace.Filtered {
+	if dbReplace.FilteredOut {
 		return nil, nil
 	}
 
@@ -264,7 +264,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
 	}
-	if tableReplace.Filtered {
+	if tableReplace.FilteredOut {
 		return nil, nil
 	}
 
