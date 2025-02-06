@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"testing"
@@ -35,6 +36,46 @@ func getClonedTableInfoFromDomain(dbName string, tableName string, dom *domain.D
 		return nil, err
 	}
 	return tbl.Meta().Clone(), nil
+}
+
+func setTableModeTest(ctx sessionctx.Context, t *testing.T, store kv.Storage, de ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableModeState) error {
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  dbInfo.ID,
+		TableID:   tblInfo.ID,
+	}
+	job := &model.Job{
+		Version:    model.JobVersion2,
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterTableMode,
+		BinlogInfo: &model.HistoryInfo{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: dbInfo.Name.L,
+				Table:    tblInfo.Name.L,
+			},
+		},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+
+	if err == nil {
+		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+		testCheckJobDone(t, store, job.ID, true)
+		checkTableModeTest(t, store, dbInfo, tblInfo, mode)
+	}
+
+	return err
+}
+
+// TODO(xiaoyuan): consider use different error code for transition error and not-accessible error
+func checkErrorCode(t *testing.T, err error, expected int) {
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	require.True(t, ok)
+	sqlErr := terror.ToSQLError(tErr)
+	require.Equal(t, expected, int(sqlErr.Code))
 }
 
 func TestCreateTableWithModeInfo(t *testing.T) {
@@ -71,84 +112,36 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 	// For testing insert is not allowed when table is in ModeImport
 	tk.MustGetErrCode("insert into t1_restore values(1)", 8020)
 
-	// TODO(xiaoyuan): extract as function and reuse the code
-	// For testing AlterTable from ModeRestore to ModeImport is not allowed
-	args := &model.AlterTableModeArgs{
-		TableMode: model.TableModeImport,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	job := &model.Job{
-		Version:    model.JobVersion2,
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTableMode,
-		BinlogInfo: &model.HistoryInfo{},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: dbInfo.Name.L,
-				Table:    tblInfo.Name.L,
-			},
-		},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.(ddl.ExecutorForTest).DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
-	// TODO(xiaoyuan): consider use different error code for transition error and not-accessible error
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	require.True(t, ok)
-	sqlErr := terror.ToSQLError(tErr)
-	require.Equal(t, 8020, int(sqlErr.Code))
+	// For testing AlterTable ModeRestore -> ModeImport is not allowed
+	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeImport)
+	checkErrorCode(t, err, 8020)
 
-	// For testing AlterTableMode from ModeRestore to ModeNormal
-	args = &model.AlterTableModeArgs{
-		TableMode: model.TableModeNormal,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	job = &model.Job{
-		Version:    model.JobVersion2,
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTableMode,
-		BinlogInfo: &model.HistoryInfo{},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: dbInfo.Name.L,
-				Table:    tblInfo.Name.L,
-			},
-		},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.(ddl.ExecutorForTest).DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
-	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(t, store, job.ID, true)
-	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeNormal)
+	// For testing AlterTableMode ModeRestore -> ModeNormal
+	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeNormal)
+	require.NoError(t, err)
 
-	// For testing AlterTableMode from ModeNormal to ModeRestore
-	args = &model.AlterTableModeArgs{
-		TableMode: model.TableModeImport,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	job = &model.Job{
-		Version:    model.JobVersion2,
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTableMode,
-		BinlogInfo: &model.HistoryInfo{},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: dbInfo.Name.L,
-				Table:    tblInfo.Name.L,
-			},
-		},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.(ddl.ExecutorForTest).DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
-	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(t, store, job.ID, true)
-	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeImport)
+	// For testing AlterTableMode ModeNormal -> ModeRestore
+	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeRestore)
+	require.NoError(t, err)
 
-	// TODO: batch create tables with ModeRestore test
+	// For testing batch create tables with info
+	var tblInfo1, tblInfo2, tblInfo3 *model.TableInfo
+	tblInfo1, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo1.Name = ast.NewCIStr("t1_1")
+	tblInfo1.TableMode = model.TableModeNormal
+	tblInfo2, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo2.Name = ast.NewCIStr("t1_2")
+	tblInfo2.TableMode = model.TableModeImport
+	tblInfo3, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo3.Name = ast.NewCIStr("t1_3")
+	tblInfo3.TableMode = model.TableModeRestore
+	err = de.BatchCreateTableWithInfo(
+		ctx,
+		ast.NewCIStr("test"),
+		[]*model.TableInfo{tblInfo1, tblInfo2, tblInfo3},
+		ddl.WithOnExist(ddl.OnExistIgnore),
+	)
+	checkTableModeTest(t, store, dbInfo, tblInfo1, model.TableModeNormal)
+	checkTableModeTest(t, store, dbInfo, tblInfo2, model.TableModeImport)
+	checkTableModeTest(t, store, dbInfo, tblInfo3, model.TableModeRestore)
 }
