@@ -288,6 +288,9 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
+	if err == nil && oldTableID > 0 {
+		err = infoschema.ErrTableExists
+	}
 	failpoint.Inject("onDDLCreateView", func() {
 		OnCreateViewForTest(job)
 	})
