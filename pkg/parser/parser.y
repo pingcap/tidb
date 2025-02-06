@@ -416,6 +416,7 @@ import (
 	enforced              "ENFORCED"
 	engine                "ENGINE"
 	engines               "ENGINES"
+	engine_attribute      "ENGINE_ATTRIBUTE"
 	enum                  "ENUM"
 	errorKwd              "ERROR"
 	identSQLErrors        "ERRORS"
@@ -4891,6 +4892,10 @@ PartDefOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $4}
 	}
+|	"ENGINE_ATTRIBUTE" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngineAttribute, StrValue: $3}
+	}
 |	"INSERT_METHOD" EqOpt StringName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionInsertMethod, StrValue: $3}
@@ -6809,6 +6814,7 @@ UnReservedKeyword:
 |	"ENFORCED"
 |	"ENGINE"
 |	"ENGINES"
+|	"ENGINE_ATTRIBUTE"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -14320,7 +14326,7 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SHOW"
+|	"RECOMMEND" "INDEX" "SHOW" "OPTION"
 	{
 		x := &ast.RecommendIndexStmt{
 			Action: "show",

@@ -371,11 +371,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Tables) != 0:
 		tables := make([]filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
-			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
+			table := filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O}
+			tables = append(tables, table)
+			cfg.FilterStr = append(cfg.FilterStr, table.String())
 		}
 		cfg.TableFilter = filter.NewTablesFilter(tables...)
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+		for _, schema := range s.Schemas {
+			cfg.FilterStr = append(cfg.FilterStr, fmt.Sprintf("`%s`.*", schema))
+		}
 	default:
 		cfg.TableFilter = filter.All()
 	}

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1605,21 +1606,31 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
+// invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
-// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// SetTSBeforeImportEngine allocates a new TS for the engine before it is imported.
 // This is typically called after persisting the chosen TS of the engine to make
 // sure TS is not changed after task failover.
-func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
 	}
 	defer e.unlock()
+	if ts == 0 {
+		p, l, err := local.pdCli.GetTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
+			failpoint.Return(errors.Errorf("mock err"))
+		})
+		ts = oracle.ComposeTS(p, l)
+	}
 	e.engineMeta.TS = ts
 	return e.saveEngineMeta()
 }

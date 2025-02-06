@@ -401,7 +401,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	dbMap[dbID2] = NewDBReplace(db2.Name.O, dbID2+100)
 	dbMap[dbID2].TableMap[tableID2] = NewTableReplace(t2.Name.O, tableID2+100)
 
-	tc := NewTableMappingManager(dbMap, mockGenGenGlobalID)
+	tc := NewTableMappingManager(dbMap, mockGenGlobalID)
 
 	//exchange partition, t1 partition0 with the t2
 	t1Copy := t1.Clone()

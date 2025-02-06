@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -995,10 +996,10 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
 	clonedScan.TableAsName = ts.TableAsName
 	clonedScan.rangeInfo = ts.rangeInfo
-	clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
-	for i, rf := range ts.runtimeFilterList {
+	clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(ts.runtimeFilterList))
+	for _, rf := range ts.runtimeFilterList {
 		clonedRF := rf.Clone()
-		clonedScan.runtimeFilterList[i] = clonedRF
+		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
 	}
 	return clonedScan, nil
 }
@@ -1062,25 +1063,36 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 
 	oldNumColumns := len(schema.Columns)
 	numExtraColumns := 0
+	ordinaryColumnExists := false
 	for i := oldNumColumns - 1; i >= 0; i-- {
 		cid := schema.Columns[i].ID
 		// Move extra columns to the end.
 		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
 		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
 		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
+			ordinaryColumnExists = true
 			break
 		}
 		numExtraColumns++
 	}
+	if ordinaryColumnExists && numExtraColumns > 0 {
+		extraColumns := make([]*expression.Column, numExtraColumns)
+		copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
+		schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
 
-	extraColumns := make([]*expression.Column, numExtraColumns)
-	copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
-	schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
+		extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
+		copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
+		copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
 
-	extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
-	copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
-	copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
+		copyColumn = expandVirtualColumn(schema, copyColumn, colsInfo)
+		schema.Columns = append(schema.Columns, extraColumns...)
+		copyColumn = append(copyColumn, extraColumnModels...)
+		return copyColumn
+	}
+	return expandVirtualColumn(schema, copyColumn, colsInfo)
+}
 
+func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnInfo, colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -1095,9 +1107,6 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 			}
 		}
 	}
-
-	schema.Columns = append(schema.Columns, extraColumns...)
-	copyColumn = append(copyColumn, extraColumnModels...)
 	return copyColumn
 }
 
@@ -1841,7 +1850,7 @@ type PhysicalExchangeSender struct {
 	HashCols             []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
-	CompressionMode kv.ExchangeCompressionMode
+	CompressionMode vardef.ExchangeCompressionMode
 }
 
 // Clone implements op.PhysicalPlan interface.

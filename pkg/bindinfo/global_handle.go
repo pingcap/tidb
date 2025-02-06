@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -509,8 +510,8 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (*globalBindingHandle) GetScope(_ string) variable.ScopeFlag {
-	return variable.ScopeSession
+func (*globalBindingHandle) GetScope(_ string) vardef.ScopeFlag {
+	return vardef.ScopeSession
 }
 
 // Stats returns the server statistics.

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -418,6 +419,24 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
 }
 
+func TestVectorExplainTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+
+	// TODO: The output can be improved.
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+		VEC_COSINE_DISTANCE(c, '[3,100,12345,10000]'),
+		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
+		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
+	FROM t;`).Check(testkit.Rows(
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`└─TableReader 10000.00 root  data:TableFullScan`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+}
+
 func TestVectorConstantExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -473,6 +492,59 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+}
+
+func TestVectorIndexExplain(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			vec vector(100)
+		)
+	`)
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
+		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender`,
+		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+	))
 }
 
 func TestFixedVector(t *testing.T) {
@@ -890,9 +962,12 @@ func TestVectorArithmatic(t *testing.T) {
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + 2;`)
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + '2';`)
 
+	// Input outside the float32 value range will result in an error.
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[3e38]') + '[3e38]';`)
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2,3]') * '[4,5,6]';`).Check(testkit.Rows("[4,10,18]"))
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1e37]') * '[1e37]';`)
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]') + 1")
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]')*0 + 1")
 }
 
 func TestVectorFunctions(t *testing.T) {
@@ -1846,8 +1921,8 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", vardef.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -2984,7 +3059,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_add")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_add")
 	}
 
 	// for period_diff
@@ -2996,7 +3071,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_diff")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_diff")
 	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
@@ -3770,12 +3845,12 @@ func TestSetVariables(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	require.Error(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -3819,10 +3894,10 @@ func TestSetVariables(t *testing.T) {
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
 	// Previously global values were cached. This is incorrect.
 	// See: https://github.com/pingcap/tidb/issues/24368

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -315,16 +315,16 @@ func showCommentsFromJob(job *model.Job) string {
 		}
 	}
 	if job.MayNeedReorg() {
-		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
-		maxWriteSpeed := m.GetMaxWriteSpeedOrDefault()
-		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
+		concurrency := m.GetConcurrency()
+		batchSize := m.GetBatchSize()
+		maxWriteSpeed := m.GetMaxWriteSpeed()
+		if concurrency != vardef.DefTiDBDDLReorgWorkerCount {
 			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
 		}
-		if batchSize != variable.DefTiDBDDLReorgBatchSize {
+		if batchSize != vardef.DefTiDBDDLReorgBatchSize {
 			labels = append(labels, fmt.Sprintf("batch_size=%d", batchSize))
 		}
-		if maxWriteSpeed != variable.DefTiDBDDLReorgMaxWriteSpeed {
+		if maxWriteSpeed != vardef.DefTiDBDDLReorgMaxWriteSpeed {
 			labels = append(labels, fmt.Sprintf("max_write_speed=%d", maxWriteSpeed))
 		}
 		if m.TargetScope != "" {

@@ -165,6 +165,11 @@ func (e *GroupExpression) addr() unsafe.Pointer {
 	return unsafe.Pointer(e)
 }
 
+// GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
+	return e.LogicalPlan
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -195,7 +200,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	})
 	if !skipDeriveStats {
 		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
+		tmpStats, _, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
 		if err != nil {
 			return err
 		}

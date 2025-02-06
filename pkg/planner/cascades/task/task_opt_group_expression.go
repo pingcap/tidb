@@ -18,7 +18,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/ruleset"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 )
 
@@ -33,7 +35,7 @@ type OptGroupExpressionTask struct {
 }
 
 // NewOptGroupExpressionTask return a targeting optimizing group expression task.
-func NewOptGroupExpressionTask(ctx cascadesctx.CascadesContext, ge *memo.GroupExpression) *OptGroupExpressionTask {
+func NewOptGroupExpressionTask(ctx cascadesctx.Context, ge *memo.GroupExpression) *OptGroupExpressionTask {
 	return &OptGroupExpressionTask{
 		BaseTask:        BaseTask{ctx: ctx},
 		groupExpression: ge,
@@ -42,8 +44,8 @@ func NewOptGroupExpressionTask(ctx cascadesctx.CascadesContext, ge *memo.GroupEx
 
 // Execute implements the task.Execute interface.
 func (ge *OptGroupExpressionTask) Execute() error {
-	ruleList := ge.getValidRules()
-	for _, one := range ruleList {
+	ruleMap := ge.getValidRules()
+	for _, one := range ruleMap[pattern.GetOperand(ge.groupExpression.GetWrappedLogicalPlan())] {
 		ge.Push(NewApplyRuleTask(ge.ctx, ge.groupExpression, one))
 	}
 	// since it's a stack-order, LIFO, when we want to apply a rule for a specific group expression,
@@ -62,7 +64,6 @@ func (ge *OptGroupExpressionTask) Desc(w util.StrBufferWriter) {
 }
 
 // getValidRules filter the allowed rule from session variable, and system config.
-func (*OptGroupExpressionTask) getValidRules() []rule.Rule {
-	// todo: add rule set
-	return []rule.Rule{}
+func (*OptGroupExpressionTask) getValidRules() map[pattern.Operand][]rule.Rule {
+	return ruleset.DefaultRuleSet
 }

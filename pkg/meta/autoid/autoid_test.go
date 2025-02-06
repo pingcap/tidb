@@ -355,6 +355,11 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, int64(6544), id)
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
+	// This looks weird, but it's the mysql behaviour.
+	// For example, in MySQL, CREATE TABLE t1 (pk BIGINT UNSIGNED AUTO_INCREMENT, PRIMARY KEY (pk));
+	// 	INSERT INTO t1 VALUES (18446744073709551615-1);   -- rebase to maxinum-1 success
+	// 	INSERT INTO t1 VALUES ();  -- the next alloc fail, cannot allocate 18446744073709551615
+	// 	INSERT INTO t1 VALUES (18446744073709551615);   -- but directly rebase to maxinum success
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(context.Background(), un, true)
