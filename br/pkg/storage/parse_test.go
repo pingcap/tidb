@@ -56,7 +56,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "https://s3.example.com", s3.Endpoint)
 	require.False(t, s3.ForcePathStyle)
 
-	s, err = ParseBackend("ks3://bucket2/prefix/", s3opt)
+	s, err = ParseBackend("ks3://bucket2/prefix/?storage-class=express-one-zone", s3opt)
 	require.NoError(t, err)
 	s3 = s.GetS3()
 	require.NotNil(t, s3)
@@ -65,6 +65,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "https://s3.example.com", s3.Endpoint)
 	require.Equal(t, ks3SDKProvider, s3.Provider)
 	require.False(t, s3.ForcePathStyle)
+	require.Equal(t, "express-one-zone", s3.StorageClass)
 
 	// nolint:lll
 	s, err = ParseBackend(`s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&SSE=aws:kms&sse-kms-key-id=TestKey&xyz=abc`, nil)
