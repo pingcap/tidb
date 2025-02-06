@@ -271,7 +271,7 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 // Updates the service GC safe point for the cluster.
 // Returns the latest service GC safe point.
 // If the arguments is `0`, this would remove the service safe point.
-func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+func (f *fakeCluster) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, at uint64) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.serviceGCSafePoint > at {
@@ -281,7 +281,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	return at, nil
 }
 
-func (f *fakeCluster) UnblockGC(ctx context.Context) error {
+func (f *fakeCluster) UnblockGC(ctx context.Context, serviceID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.serviceGCSafePointDeleted = true
@@ -659,7 +659,6 @@ type testEnv struct {
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
 	mu sync.Mutex
-	pd.Client
 }
 
 func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
