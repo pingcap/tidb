@@ -76,10 +76,7 @@ type hashJoinSpillHelper struct {
 
 	canSpillFlag atomic.Bool
 
-	totalBuildSpillBytesEachRound []int64
-	totalProbeSpillBytesEachRound []int64
-	spilledPartitionEachRound     []map[int]struct{}
-	round                         int
+	round int
 
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
@@ -114,10 +111,6 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
 
-	helper.totalBuildSpillBytesEachRound = make([]int64, 1)
-	helper.totalProbeSpillBytesEachRound = make([]int64, 1)
-	helper.spilledPartitionEachRound = make([]map[int]struct{}, 1)
-	helper.spilledPartitionEachRound[0] = make(map[int]struct{})
 	helper.round = 0
 
 	// hashJoinExec may be nil in test
@@ -199,7 +192,6 @@ func (h *hashJoinSpillHelper) getUnspilledPartitions() []int {
 func (h *hashJoinSpillHelper) setPartitionSpilled(partIDs []int) {
 	for _, partID := range partIDs {
 		h.spilledPartitions[partID] = true
-		h.spilledPartitionEachRound[h.round][partID] = struct{}{}
 	}
 	h.spillTriggered = true
 }
@@ -401,25 +393,25 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
-func (h *hashJoinSpillHelper) getBuildSpillBytesInOneWorker(workerID int) int64 {
-	if h.buildRowsInDisk == nil || h.buildRowsInDisk[workerID] == nil {
-		return 0
-	}
-	return h.getSpillBytesInOneWorkerImpl(h.buildRowsInDisk[workerID])
+func (h *hashJoinSpillHelper) getSpilledPartitionsNum() int {
+	return len(h.getSpilledPartitions())
 }
 
-func (h *hashJoinSpillHelper) getProbeSpillBytesInOneWorker(workerID int) int64 {
-	if h.probeRowsInDisk == nil || h.probeRowsInDisk[workerID] == nil {
-		return 0
-	}
-	return h.getSpillBytesInOneWorkerImpl(h.probeRowsInDisk[workerID])
+func (h *hashJoinSpillHelper) getBuildSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.buildRowsInDisk)
 }
 
-func (h *hashJoinSpillHelper) getSpillBytesInOneWorkerImpl(disks []*chunk.DataInDiskByChunks) int64 {
+func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.probeRowsInDisk)
+}
+
+func (h *hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
 	totalBytes := int64(0)
 	for _, disk := range disks {
-		if disk != nil {
-			totalBytes += disk.GetTotalBytesInDisk()
+		for _, d := range disk {
+			if d != nil {
+				totalBytes += d.GetTotalBytesInDisk()
+			}
 		}
 	}
 	return totalBytes
@@ -441,7 +433,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
-	spillBytes := make([]int64, workerNum)
 	for i := 0; i < workerNum; i++ {
 		workerID := i
 		wg.RunWithRecover(
@@ -463,8 +454,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 					}
 
 				}
-
-				spillBytes[workerID] = h.getBuildSpillBytesInOneWorker(workerID)
 			},
 			func(r any) {
 				if r != nil {
@@ -484,10 +473,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	err := triggerIntest(10)
 	if err != nil {
 		return err
-	}
-
-	for _, bytes := range spillBytes {
-		h.totalBuildSpillBytesEachRound[h.round] += bytes
 	}
 
 	return nil
@@ -581,11 +566,6 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 				round:           lastRound + 1,
 			}
 			h.stack.push(rd)
-			for len(h.totalBuildSpillBytesEachRound) < rd.round+1 {
-				h.totalBuildSpillBytesEachRound = append(h.totalBuildSpillBytesEachRound, 0)
-				h.totalProbeSpillBytesEachRound = append(h.totalProbeSpillBytesEachRound, 0)
-				h.spilledPartitionEachRound = append(h.spilledPartitionEachRound, make(map[int]struct{}))
-			}
 		}
 	}
 
