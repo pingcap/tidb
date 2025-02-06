@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -523,8 +522,7 @@ func TestSkipInitIsUsed(t *testing.T) {
 			// sure we don't introduce any new variables with skipInit, which seems
 			// to be a problem.
 			switch sv.Name {
-			case vardef.TiDBTxnScope,
-				vardef.TiDBSnapshot,
+			case vardef.TiDBSnapshot,
 				vardef.TiDBEnableChunkRPC,
 				vardef.TxnIsolationOneShot,
 				vardef.TiDBDDLReorgPriority,
@@ -708,7 +706,6 @@ func TestOrderByDependency(t *testing.T) {
 		vardef.TiDBEnableNoopFuncs:                     "1",
 		vardef.TiDBEnforceMPPExecution:                 "1",
 		vardef.TiDBAllowMPPExecution:                   "1",
-		vardef.TiDBTxnScope:                            kv.LocalTxnScope,
 		vardef.TiDBEnableLocalTxn:                      "1",
 		vardef.TiDBEnablePlanReplayerContinuousCapture: "1",
 		vardef.TiDBEnableHistoricalStats:               "1",
@@ -718,7 +715,6 @@ func TestOrderByDependency(t *testing.T) {
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))
 	// Depended variables below are global variables, so actually it doesn't matter.
-	require.Greater(t, slices.Index(names, vardef.TiDBTxnScope), slices.Index(names, vardef.TiDBEnableLocalTxn))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, vardef.TiDBEnableHistoricalStats))
 	require.Contains(t, names, "unknown")
 }
