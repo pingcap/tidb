@@ -22,11 +22,7 @@ LOG=/$TEST_DIR/backup.log
 RESTORE_LOG=LOG=/$TEST_DIR/restore.log
 BACKUP_STAT=/$TEST_DIR/backup_stat
 RESOTRE_STAT=/$TEST_DIR/restore_stat
-<<<<<<< HEAD
-=======
-CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
->>>>>>> 5399ca70da9 (br: fix br integration test (#53836))
 
 run_sql "CREATE DATABASE $DB;"
 go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
