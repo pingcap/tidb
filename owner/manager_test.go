@@ -179,8 +179,135 @@ func TestCluster(t *testing.T) {
 	election := concurrency.NewElection(session, DDLOwnerKey)
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, err = owner.GetOwnerInfo(context.Background(), logCtx, election, "useless id")
+	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, election, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
+}
+
+func TestWatchOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+	ctx := context.Background()
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	d := NewDDL(
+		ctx,
+		WithEtcdClient(client),
+		WithStore(store),
+		WithLease(testLease),
+		WithInfoCache(ic),
+	)
+	ownerManager := d.OwnerManager()
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+	// create etcd session.
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+	// test the GetOwnerInfo()
+	election := concurrency.NewElection(session, DDLOwnerKey)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), election, id)
+	require.NoError(t, err)
+	// watch the ownerKey.
+	ctx2, cancel2 := context.WithTimeout(ctx, time.Millisecond*300)
+	defer cancel2()
+	watchDone := make(chan bool)
+	watched := false
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+	select {
+	case watched = <-watchDone:
+	case <-ctx2.Done():
+	}
+	require.False(t, watched)
+	// delete the owner, and can watch the DELETE event.
+	err = deleteLeader(client, DDLOwnerKey)
+	require.NoError(t, err)
+	watched = <-watchDone
+	require.True(t, watched)
+	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+	watched = <-watchDone
+	require.True(t, watched)
+}
+
+func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+	ctx := context.Background()
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	d := NewDDL(
+		ctx,
+		WithEtcdClient(client),
+		WithStore(store),
+		WithLease(testLease),
+		WithInfoCache(ic),
+	)
+	ownerManager := d.OwnerManager()
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+
+	// get the ownkey informations.
+	election := concurrency.NewElection(session, DDLOwnerKey)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), election, id)
+	require.NoError(t, err)
+	// delete the ownerkey
+	err = deleteLeader(client, DDLOwnerKey)
+	require.NoError(t, err)
+	// watch the ownerKey with the current revisoin.
+	watchDone := make(chan bool)
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+	<-watchDone
 }
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
