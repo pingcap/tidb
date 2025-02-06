@@ -55,7 +55,7 @@ fi
 echo "restore start..."
 LOG_OUTPUT=$(run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
 
-# Check if the log contains 'ErrTableAlreadyExisted'
+# Check if the log contains 'table already exists:'
 if ! echo "$LOG_OUTPUT" | grep -q "table already exists:"; then
     echo "table already exists:' not found in logs."
     echo "Log output:"
