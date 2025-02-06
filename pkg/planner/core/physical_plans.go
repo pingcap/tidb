@@ -2417,8 +2417,7 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 type PhysicalTableDual struct {
 	physicalSchemaProducer
 
-	RowCount int
-
+	ContainsDualRows bool
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
 	names []*types.FieldName
