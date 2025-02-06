@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const avgRowSizeForDistTask = 0
+
 type readIndexExecutor struct {
 	taskexecutor.BaseStepExecutor
 	d       *ddl
@@ -58,6 +61,8 @@ type readIndexExecutor struct {
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 	backendCfg     *local.BackendConfig
 	backend        *local.Backend
+	// pipeline of current running subtask, it's nil when no subtask is running.
+	currPipe atomic.Pointer[operator.AsyncPipeline]
 }
 
 type readIndexSummary struct {
@@ -102,7 +107,7 @@ func (r *readIndexExecutor) Init(ctx context.Context) error {
 
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.DDLLogger().Info("read index executor run subtask",
-		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
+		zap.Bool("use cloud", r.isGlobalSort()))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
@@ -118,12 +123,12 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	r.curRowCount.Store(0)
 
 	concurrency := int(r.GetResource().CPU.Capacity())
-	if len(r.cloudStorageURI) > 0 {
+	if r.isGlobalSort() {
 		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, concurrency)
 		if err != nil {
 			return err
 		}
-		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0); err != nil {
+		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, avgRowSizeForDistTask); err != nil {
 			return errors.Trace(err)
 		}
 		return r.onFinished(ctx, subtask)
@@ -141,7 +146,11 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0)
+	r.currPipe.Store(pipe)
+	defer func() {
+		r.currPipe.Store(nil)
+	}()
+	err = executeAndClosePipeline(opCtx, pipe, nil, nil, avgRowSizeForDistTask)
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
@@ -172,9 +181,56 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
+func (r *readIndexExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	if r.isGlobalSort() {
+		return goerrors.New("not support modify task meta for global sort")
+	}
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	newBatchSize := newTaskMeta.Job.ReorgMeta.GetBatchSize()
+	if newBatchSize != r.job.ReorgMeta.GetBatchSize() {
+		r.job.ReorgMeta.SetBatchSize(newBatchSize)
+	}
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != r.job.ReorgMeta.GetMaxWriteSpeed() {
+		r.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if r.backend != nil {
+			r.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
+	return nil
+}
+
+func (r *readIndexExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	if r.isGlobalSort() {
+		return goerrors.New("not support modify resource for global sort")
+	}
+	pipe := r.currPipe.Load()
+	if pipe == nil {
+		// let framework retry
+		return goerrors.New("no subtask running")
+	}
+	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
+	reader := opR.(*TableScanOperator)
+	writer := opW.(*IndexIngestOperator)
+	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), avgRowSizeForDistTask)
+	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+	if int32(targetReaderCnt) != currentReaderCnt {
+		reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+		// wait
+	}
+	if int32(targetWriterCnt) != currentWriterCnt {
+		writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+		// wait
+	}
+	return nil
+}
+
 func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
-	if len(r.cloudStorageURI) == 0 {
+	if !r.isGlobalSort() {
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
@@ -206,6 +262,10 @@ func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	}
 	subtask.Meta = meta
 	return nil
+}
+
+func (r *readIndexExecutor) isGlobalSort() bool {
+	return len(r.cloudStorageURI) > 0
 }
 
 func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (

@@ -173,8 +173,8 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	rm := reorgMeta
-	if rm.IsDistReorg {
-		// Currently, only the batch size of local ingest mode can be adjusted
+	if rm.UseCloudStorage {
+		// param cannot be modified at runtime for global sort right now.
 		rm = nil
 	}
 
