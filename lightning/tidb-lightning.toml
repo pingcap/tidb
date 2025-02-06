@@ -236,7 +236,7 @@ strict-format = false
 #   *-schema-view.sql, *-schema-trigger.sql, *-schema-post.sql --> ignore all the sql files end with these pattern
 #default-file-rules = false
 
-# only import tables if the wildcard rules are matched. See documention for details.
+# only import tables if the wildcard rules are matched. See documentation for details.
 filter = ['*.*', '!mysql.*', '!sys.*', '!INFORMATION_SCHEMA.*', '!PERFORMANCE_SCHEMA.*', '!METRICS_SCHEMA.*', '!INSPECTION_SCHEMA.*']
 
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
