@@ -1069,7 +1069,6 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
-	lastRound := 0
 	defer func() {
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
@@ -1077,6 +1076,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		close(e.joinResultCh)
 	}()
 
+	lastRound := 0
 	for {
 		if e.finished.Load() {
 			return

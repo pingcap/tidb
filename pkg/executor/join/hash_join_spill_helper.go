@@ -452,7 +452,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 					if err != nil {
 						errChannel <- util.GetRecoverError(err)
 					}
-
 				}
 			},
 			func(r any) {
