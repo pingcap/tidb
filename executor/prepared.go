@@ -90,9 +90,6 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		stmts []ast.StmtNode
 		err   error
 	)
-<<<<<<< HEAD:executor/prepared.go
-	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
-=======
 	var params []parser.ParseParam
 	if e.needReset {
 		params = vars.GetParseParams()
@@ -103,8 +100,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		paramsArr[1] = parser.CollationConnection(collation)
 		params = paramsArr[:]
 	}
-	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
->>>>>>> 6fac45960ff (executor: fix prepared protocol charset (#58872)):pkg/executor/prepared.go
+	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
 		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
 	} else {
