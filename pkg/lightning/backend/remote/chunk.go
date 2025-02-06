@@ -75,8 +75,8 @@ func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
 		return meta.chunkData, nil
 	}
 
-	path := filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
-	file, err := os.Open(filepath.Clean(path))
+	fileName := c.getChunkFilePath(chunkID)
+	file, err := os.Open(filepath.Clean(fileName))
 	if err != nil {
 		return nil, err
 	}
@@ -99,18 +99,17 @@ func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
 
 func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 	if c.usingMem {
-		c.chunks[chunkID] = chunkMeta{size: len(buf), chunkData: buf}
+		c.chunks[chunkID] = chunkMeta{chunkData: buf}
 		return nil
 	}
 
-	fileName := filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
+	fileName := c.getChunkFilePath(chunkID)
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 
 	checksum := crc32.ChecksumIEEE(buf)
-
 	for {
 		n, err := file.Write(buf)
 		if err != nil {
@@ -123,20 +122,18 @@ func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 		}
 		buf = buf[n:]
 	}
+
 	c.chunks[chunkID] = chunkMeta{size: len(buf), checksum: checksum}
 	return file.Close()
 }
 
 func (c *chunkCache) clean(chunkID uint64) error {
-	if _, ok := c.chunks[chunkID]; !ok {
-		return nil
-	}
 	delete(c.chunks, chunkID)
 	if c.usingMem {
 		return nil
 	}
 
-	fileName := filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
+	fileName := c.getChunkFilePath(chunkID)
 	return os.Remove(fileName)
 }
 
@@ -147,6 +144,10 @@ func (c *chunkCache) close() error {
 	}
 
 	return os.RemoveAll(c.baseDir)
+}
+
+func (c *chunkCache) getChunkFilePath(chunkID uint64) string {
+	return filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
 }
 
 func getDefaultTempDir() string {
