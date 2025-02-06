@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -296,7 +297,7 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLine(reader, int(variable.MaxOfMaxAllowedPacket))
+	return util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
 }
 
 type offset struct {
@@ -865,7 +866,10 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
-	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows, variable.SlowLogUnpackedBytesSentTiKVTotal,
+		variable.SlowLogUnpackedBytesReceivedTiKVTotal, variable.SlowLogUnpackedBytesSentTiKVCrossZone, variable.SlowLogUnpackedBytesReceivedTiKVCrossZone,
+		variable.SlowLogUnpackedBytesSentTiFlashTotal, variable.SlowLogUnpackedBytesReceivedTiFlashTotal, variable.SlowLogUnpackedBytesSentTiFlashCrossZone,
+		variable.SlowLogUnpackedBytesReceivedTiFlashCrossZone:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {

@@ -678,7 +678,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	}
 
 	if tf.pipelined {
-		options = append(options, tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithDefaultPipelinedTxn())
 	}
 
 	return tf.store.Begin(options...)

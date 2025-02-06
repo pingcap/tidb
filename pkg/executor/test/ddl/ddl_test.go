@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -783,20 +784,20 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(variable.DefTiDBDDLReorgWorkerCount), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(vardef.DefTiDBDDLReorgWorkerCount), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(1), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(1), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
 	tk.MustGetDBError("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
@@ -818,7 +819,7 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 10;")
 	tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("10"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("256"))
-	require.Equal(t, int32(256), variable.GetDDLReorgWorkerCounter())
+	require.Equal(t, int32(256), vardef.GetDDLReorgWorkerCounter())
 }
 
 func TestSetDDLReorgBatchSize(t *testing.T) {
@@ -827,23 +828,23 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(variable.DefTiDBDDLReorgBatchSize), variable.GetDDLReorgBatchSize())
+	require.Equal(t, int32(vardef.DefTiDBDDLReorgBatchSize), vardef.GetDDLReorgBatchSize())
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, variable.MinDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
-	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	require.Equal(t, vardef.MinDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", vardef.MaxDDLReorgBatchSize+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", vardef.MaxDDLReorgBatchSize+1)))
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, variable.MaxDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
+	require.Equal(t, vardef.MaxDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
 	tk.MustGetDBError("set @@global.tidb_ddl_reorg_batch_size = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgBatchSize())
+	require.Equal(t, int32(100), vardef.GetDDLReorgBatchSize())
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
 
@@ -868,23 +869,23 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(variable.DefTiDBDDLErrorCountLimit), variable.GetDDLErrorCountLimit())
+	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
 
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), variable.GetDDLErrorCountLimit())
+	require.Equal(t, int64(0), vardef.GetDDLErrorCountLimit())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(math.MaxInt64), variable.GetDDLErrorCountLimit())
+	require.Equal(t, int64(math.MaxInt64), vardef.GetDDLErrorCountLimit())
 	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
+	require.Equal(t, int64(100), vardef.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
 }
@@ -892,19 +893,19 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.Equal(t, int64(variable.DefTiDBDDLReorgMaxWriteSpeed), variable.DDLReorgMaxWriteSpeed.Load())
+	require.Equal(t, int64(vardef.DefTiDBDDLReorgMaxWriteSpeed), vardef.DDLReorgMaxWriteSpeed.Load())
 
 	// valid values
 	for _, val := range []int64{1, 0, 100, 1024 * 1024, 2147483647, units.PiB} {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = %d", val))
-		require.Equal(t, val, variable.DDLReorgMaxWriteSpeed.Load())
+		require.Equal(t, val, vardef.DDLReorgMaxWriteSpeed.Load())
 		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(val, 10)))
 	}
 	for _, val := range []string{"1", "0", "100", "2KB", "3MiB", "4 gb", "2147483647", "1125899906842624" /* 1PiB */} {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = '%s'", val))
 		expected, err := units.RAMInBytes(val)
 		require.NoError(t, err)
-		require.Equal(t, expected, variable.DDLReorgMaxWriteSpeed.Load())
+		require.Equal(t, expected, vardef.DDLReorgMaxWriteSpeed.Load())
 		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(expected, 10)))
 	}
 
@@ -919,13 +920,13 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
+	require.Equal(t, vardef.DefTiDBEnableDistTask, vardef.EnableDistTask.Load())
 	tk.MustGetDBError("set @@global.tidb_enable_dist_task = invalid_val", variable.ErrWrongValueForVar)
-	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
+	require.Equal(t, vardef.DefTiDBEnableDistTask, vardef.EnableDistTask.Load())
 	tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
-	require.Equal(t, true, variable.EnableDistTask.Load())
+	require.Equal(t, true, vardef.EnableDistTask.Load())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", false))
-	require.Equal(t, false, variable.EnableDistTask.Load())
+	require.Equal(t, false, vardef.EnableDistTask.Load())
 }
 
 func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
