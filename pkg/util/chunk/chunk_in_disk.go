@@ -120,6 +120,11 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 	return
 }
 
+// GetTotalBytesInDisk returns total bytes in disk
+func (d *DataInDiskByChunks) GetTotalBytesInDisk() int64 {
+	return d.totalDataSize
+}
+
 func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 	totalChunkNum := len(d.offsetOfEachChunk)
 	if chkIdx == totalChunkNum-1 {

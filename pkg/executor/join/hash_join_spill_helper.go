@@ -76,6 +76,8 @@ type hashJoinSpillHelper struct {
 
 	canSpillFlag atomic.Bool
 
+	round int
+
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
 	spillTriggedInBuildingStageForTest           bool
@@ -108,6 +110,8 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
+
+	helper.round = 0
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -387,6 +391,30 @@ func (h *hashJoinSpillHelper) init() {
 			}
 		}
 	}
+}
+
+func (h *hashJoinSpillHelper) getSpilledPartitionsNum() int {
+	return len(h.getSpilledPartitions())
+}
+
+func (h *hashJoinSpillHelper) getBuildSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.buildRowsInDisk)
+}
+
+func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.probeRowsInDisk)
+}
+
+func (_ *hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
+	totalBytes := int64(0)
+	for _, disk := range disks {
+		for _, d := range disk {
+			if d != nil {
+				totalBytes += d.GetTotalBytesInDisk()
+			}
+		}
+	}
+	return totalBytes
 }
 
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {

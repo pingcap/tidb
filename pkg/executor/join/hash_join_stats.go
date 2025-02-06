@@ -21,8 +21,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
+
+func convertBytesStatsToString(bytes []int64) string {
+	info := "["
+	for i, byte := range bytes {
+		if i == 0 {
+			info = fmt.Sprintf("%s%.2f", info, util.ByteToGiB(float64(byte)))
+		} else {
+			info = fmt.Sprintf("%s %.2f", info, util.ByteToGiB(float64(byte)))
+		}
+	}
+	info += "]"
+	return info
+}
 
 type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
@@ -107,6 +121,13 @@ func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
+type spillStats struct {
+	round                   int
+	totalSpillBytesPerRound []int64
+	partitionNumPerRound    []int
+	spillBuildBytesPerRound []int64
+}
+
 type hashJoinRuntimeStatsV2 struct {
 	concurrent     int
 	probeCollision int64
@@ -127,6 +148,8 @@ type hashJoinRuntimeStatsV2 struct {
 	maxBuildHashTableForCurrentRound int64
 	maxProbeForCurrentRound          int64
 	maxFetchAndProbeForCurrentRound  int64
+
+	spill spillStats
 }
 
 func setMaxValue(addr *int64, currentValue int64) {
@@ -200,6 +223,17 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.FormatInt(e.probeCollision, 10))
 		}
+		buf.WriteString("}")
+	}
+	if e.spill.round > 0 {
+		buf.WriteString(", spill:{round:")
+		buf.WriteString(strconv.Itoa(e.spill.round))
+		buf.WriteString(", partition num per round:")
+		fmt.Fprintf(buf, "%v", e.spill.partitionNumPerRound)
+		buf.WriteString(", total spill GiB per round:")
+		buf.WriteString(convertBytesStatsToString(e.spill.totalSpillBytesPerRound))
+		buf.WriteString(", build spill GiB per round:")
+		buf.WriteString(convertBytesStatsToString(e.spill.spillBuildBytesPerRound))
 		buf.WriteString("}")
 	}
 	return buf.String()
