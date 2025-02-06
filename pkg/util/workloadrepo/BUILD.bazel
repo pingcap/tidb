@@ -28,6 +28,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+        "//pkg/store/helper",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/dbterror",
