@@ -229,7 +229,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		buf.WriteString(", spill:{round:")
 		buf.WriteString(strconv.Itoa(e.spill.round))
 		buf.WriteString(", partition num per round:")
-		buf.WriteString(fmt.Sprintf("%v", e.spill.partitionNumPerRound))
+		fmt.Fprintf(buf, "%v", e.spill.partitionNumPerRound)
 		buf.WriteString(", total spill GiB per round:")
 		buf.WriteString(convertBytesStatsToString(e.spill.totalSpillBytesPerRound))
 		buf.WriteString(", build spill GiB per round:")
