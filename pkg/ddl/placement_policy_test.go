@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -230,15 +230,15 @@ func testPlacementPolicy(t *testing.T) {
 
 	tk.MustGetErrCode("create placement policy x "+
 		"PRIMARY_REGION=\"cn-east-1\" "+
-		"REGIONS=\"cn-east-1,cn-east-2\" ", mysql.ErrPlacementPolicyExists)
+		"REGIONS=\"cn-east-1,cn-east-2\" ", errno.ErrPlacementPolicyExists)
 
 	tk.MustGetErrCode("create placement policy X "+
 		"PRIMARY_REGION=\"cn-east-1\" "+
-		"REGIONS=\"cn-east-1,cn-east-2\" ", mysql.ErrPlacementPolicyExists)
+		"REGIONS=\"cn-east-1,cn-east-2\" ", errno.ErrPlacementPolicyExists)
 
 	tk.MustGetErrCode("create placement policy `X` "+
 		"PRIMARY_REGION=\"cn-east-1\" "+
-		"REGIONS=\"cn-east-1,cn-east-2\" ", mysql.ErrPlacementPolicyExists)
+		"REGIONS=\"cn-east-1,cn-east-2\" ", errno.ErrPlacementPolicyExists)
 
 	tk.MustExec("create placement policy if not exists X " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
@@ -250,7 +250,7 @@ func testPlacementPolicy(t *testing.T) {
 	require.Equal(t, len(bundles), 0)
 
 	tk.MustExec("drop placement policy x")
-	tk.MustGetErrCode("drop placement policy x", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("drop placement policy x", errno.ErrPlacementPolicyNotExists)
 	tk.MustExec("drop placement policy if exists x")
 	//nolint:revive,all_revive
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
@@ -464,8 +464,8 @@ func TestResetSchemaPlacement(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestResetPlacementDB;")
 	tk.MustExec("create placement policy `TestReset` followers=4;")
-	tk.MustGetErrCode("create placement policy `default` followers=4;", mysql.ErrReservedSyntax)
-	tk.MustGetErrCode("create placement policy default followers=4;", mysql.ErrParse)
+	tk.MustGetErrCode("create placement policy `default` followers=4;", errno.ErrReservedSyntax)
+	tk.MustGetErrCode("create placement policy default followers=4;", errno.ErrParse)
 
 	tk.MustExec("create database TestResetPlacementDB placement policy `TestReset`;")
 	tk.MustExec("use TestResetPlacementDB")
@@ -607,8 +607,8 @@ func TestAlterPlacementPolicy(t *testing.T) {
 	// test alter not exist policies
 	tk.MustExec("drop table tp")
 	tk.MustExec("drop placement policy x")
-	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
-	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", errno.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", errno.ErrPlacementPolicyNotExists)
 	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows())
 }
 
@@ -636,7 +636,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 
 	// Only placement policy should check the policy existence.
 	tk.MustGetErrCode("create table t(a int)"+
-		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+		"PLACEMENT POLICY=\"x\"", errno.ErrPlacementPolicyNotExists)
 	tk.MustExec("create placement policy x " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
@@ -1098,7 +1098,7 @@ func TestAlterTablePartitionWithPlacementPolicy(t *testing.T) {
 
 	// Only placement policy should check the policy existence.
 	tk.MustGetErrCode("alter table t1 partition p0 "+
-		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+		"PLACEMENT POLICY=\"x\"", errno.ErrPlacementPolicyNotExists)
 	tk.MustExec("create placement policy x " +
 		"FOLLOWERS=2 ")
 	tk.MustExec("alter table t1 partition p0 " +
@@ -2208,25 +2208,25 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// exchange par2, t1
-	tk.MustGetErrCode("alter table tp exchange partition p2 with table t1", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t1", errno.ErrTablesDifferentMetadata)
 
 	// exchange par3, t1
-	tk.MustGetErrCode("alter table tp exchange partition p3 with table t1", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p3 with table t1", errno.ErrTablesDifferentMetadata)
 
 	// exchange par1, t2
-	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", errno.ErrTablesDifferentMetadata)
 
 	// exchange par2, t2
-	tk.MustGetErrCode("alter table tp exchange partition p2 with table t2", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t2", errno.ErrTablesDifferentMetadata)
 
 	// exchange par3, t2
-	tk.MustGetErrCode("alter table tp exchange partition p3 with table t2", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p3 with table t2", errno.ErrTablesDifferentMetadata)
 
 	// exchange par1, t3
-	tk.MustGetErrCode("alter table tp exchange partition p1 with table t3", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t3", errno.ErrTablesDifferentMetadata)
 
 	// exchange par2, t3
-	tk.MustGetErrCode("alter table tp exchange partition p2 with table t3", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p2 with table t3", errno.ErrTablesDifferentMetadata)
 
 	// exchange par3, t3
 	tk.MustExec("alter table tp exchange partition p3 with table t3")
@@ -2312,7 +2312,7 @@ func TestPDFail(t *testing.T) {
 	checkAllBundlesNotChange(t, existBundles)
 
 	// exchange partition
-	tk.MustGetErrCode("alter table tp exchange partition p1 with table t1", mysql.ErrTablesDifferentMetadata)
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t1", errno.ErrTablesDifferentMetadata)
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))

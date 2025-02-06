@@ -27,7 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -46,7 +46,7 @@ const topNThreshold = uint64(10)
 
 var (
 	// ErrQueryInterrupted indicates interrupted
-	ErrQueryInterrupted = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
+	ErrQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 )
 
 // CMSketch is used to estimate point queries.

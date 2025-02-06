@@ -15,20 +15,20 @@
 package structure
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 var (
 	// ErrInvalidHashKeyFlag used by structure
-	ErrInvalidHashKeyFlag = dbterror.ClassStructure.NewStd(mysql.ErrInvalidHashKeyFlag)
+	ErrInvalidHashKeyFlag = dbterror.ClassStructure.NewStd(errno.ErrInvalidHashKeyFlag)
 	// ErrInvalidListIndex used by structure
-	ErrInvalidListIndex = dbterror.ClassStructure.NewStd(mysql.ErrInvalidListIndex)
+	ErrInvalidListIndex = dbterror.ClassStructure.NewStd(errno.ErrInvalidListIndex)
 	// ErrInvalidListMetaData used by structure
-	ErrInvalidListMetaData = dbterror.ClassStructure.NewStd(mysql.ErrInvalidListMetaData)
+	ErrInvalidListMetaData = dbterror.ClassStructure.NewStd(errno.ErrInvalidListMetaData)
 	// ErrWriteOnSnapshot used by structure
-	ErrWriteOnSnapshot = dbterror.ClassStructure.NewStd(mysql.ErrWriteOnSnapshot)
+	ErrWriteOnSnapshot = dbterror.ClassStructure.NewStd(errno.ErrWriteOnSnapshot)
 )
 
 // NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -330,15 +330,15 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 	tk.MustExec("begin")
 	tkDDL.MustExec("alter table test.t add index idx(a);")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil>"))
-	tk.MustGetErrCode("select * from t use index(idx)", mysql.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index(idx)", errno.ErrKeyDoesNotExist)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1 <nil>"))
 
 	// Modify column(reorg).
 	tk.MustExec("begin")
 	tkDDL.MustExec("alter table test.t modify column a char(10);")
-	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
-	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("select * from t", errno.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("select * from t", errno.ErrInfoSchemaChanged)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil>"))
 
@@ -1113,7 +1113,7 @@ func TestMDLDisable2Enable(t *testing.T) {
 
 	wg.Wait()
 
-	tk.MustGetErrCode("commit", mysql.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	tk3.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
@@ -1153,7 +1153,7 @@ func TestMDLEnable2Disable(t *testing.T) {
 
 	wg.Wait()
 
-	tk.MustGetErrCode("commit", mysql.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	tk3.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
@@ -1322,11 +1322,11 @@ func TestMDLTableCreate(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustQuery("select * from t;")
-	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t1;", errno.ErrNoSuchTable)
 
 	tkDDL.MustExec("create table test.t1(a int);")
 
-	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t1;", errno.ErrNoSuchTable)
 
 	tk.MustExec("commit")
 }
@@ -1346,7 +1346,7 @@ func TestMDLTableDrop(t *testing.T) {
 
 	tkDDL.MustExec("drop table test.t;")
 
-	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t;", errno.ErrNoSuchTable)
 
 	tk.MustExec("commit")
 }
@@ -1365,8 +1365,8 @@ func TestMDLDatabaseCreate(t *testing.T) {
 	tkDDL.MustExec("create database test2;")
 	tkDDL.MustExec("create table test2.t(a int);")
 
-	tk.MustGetErrCode("use test2", mysql.ErrBadDB)
-	tk.MustGetErrCode("select * from test2.t;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("use test2", errno.ErrBadDB)
+	tk.MustGetErrCode("select * from test2.t;", errno.ErrNoSuchTable)
 
 	tk.MustExec("commit")
 }
@@ -1387,7 +1387,7 @@ func TestMDLDatabaseDrop(t *testing.T) {
 	tkDDL.MustExec("drop database test;")
 
 	tk.MustExec("use test;")
-	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t;", errno.ErrNoSuchTable)
 
 	tk.MustExec("commit")
 }
@@ -1407,8 +1407,8 @@ func TestMDLRenameTable(t *testing.T) {
 
 	tkDDL.MustExec("rename table test.t to test.t1;")
 
-	tk.MustGetErrCode("select * from t;", mysql.ErrNoSuchTable)
-	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t;", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t1;", errno.ErrNoSuchTable)
 
 	tk.MustExec("commit")
 	tk.MustExec("create database test2")
@@ -1416,8 +1416,8 @@ func TestMDLRenameTable(t *testing.T) {
 
 	tkDDL.MustExec("rename table test.t1 to test2.t1;")
 
-	tk.MustGetErrCode("select * from t1;", mysql.ErrNoSuchTable)
-	tk.MustGetErrCode("select * from test2.t1;", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t1;", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from test2.t1;", errno.ErrNoSuchTable)
 	tk.MustExec("commit")
 }
 

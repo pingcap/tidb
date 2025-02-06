@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -24,12 +25,12 @@ import (
 
 //revive:disable:exported
 var (
-	ErrWarnOptimizerHintUnsupportedHint = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintUnsupportedHint)
-	ErrWarnOptimizerHintInvalidToken    = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidToken)
-	ErrWarnMemoryQuotaOverflow          = terror.ClassParser.NewStd(mysql.ErrWarnMemoryQuotaOverflow)
-	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintParseError)
-	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidInteger)
-	ErrWarnOptimizerHintWrongPos        = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintWrongPos)
+	ErrWarnOptimizerHintUnsupportedHint = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintUnsupportedHint)
+	ErrWarnOptimizerHintInvalidToken    = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintInvalidToken)
+	ErrWarnMemoryQuotaOverflow          = terror.ClassParser.NewStd(errno.ErrWarnMemoryQuotaOverflow)
+	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintParseError)
+	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintInvalidInteger)
+	ErrWarnOptimizerHintWrongPos        = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintWrongPos)
 )
 
 //revive:enable:exported
