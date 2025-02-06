@@ -599,6 +599,10 @@ func splitByColon(line string) (fields []string, values []string) {
 			fields = append(fields, line[start:current])
 			parseKey = false
 			current += 2 // bypass ": "
+			if current >= lineLength {
+				// last empty value
+				values = append(values, "")
+			}
 		} else {
 			start = current
 			if current < lineLength && (line[current] == '{' || line[current] == '[') {
@@ -612,6 +616,13 @@ func splitByColon(line string) (fields []string, values []string) {
 				for current < lineLength && line[current] != ' ' {
 					current++
 				}
+				// Meet empty value cases: "Key: Key:"
+				if current > 0 && line[current-1] == ':' {
+					values = append(values, "")
+					current = start
+					parseKey = true
+					continue
+				}
 			}
 			values = append(values, line[start:mathutil.Min(current, len(line))])
 			parseKey = true
@@ -619,6 +630,10 @@ func splitByColon(line string) (fields []string, values []string) {
 	}
 	if len(errMsg) > 0 {
 		logutil.BgLogger().Warn("slow query parse slow log error", zap.String("Error", errMsg), zap.String("Log", line))
+		return nil, nil
+	}
+	if len(fields) != len(values) {
+		logutil.BgLogger().Warn("slow query parse slow log error", zap.Int("field_count", len(fields)), zap.Int("value_count", len(values)), zap.String("Log", line))
 		return nil, nil
 	}
 	return fields, values
@@ -929,18 +944,6 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			e.stats.totalFileNum = totalFileNum
 		}()
 	}
-	if e.extractor == nil || !e.extractor.Enable {
-		totalFileNum = 1
-		//nolint: gosec
-		file, err := os.Open(logFilePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return []logFile{{file: file}}, nil
-	}
 	var logFiles []logFile
 	logDir := filepath.Dir(logFilePath)
 	ext := filepath.Ext(logFilePath)
@@ -984,15 +987,17 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return handleErr(err)
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
-		notInAllTimeRanges := true
-		for _, tr := range e.checker.timeRanges {
-			if start.Compare(tr.endTime) <= 0 {
-				notInAllTimeRanges = false
-				break
+		if e.checker.enableTimeCheck {
+			notInAllTimeRanges := true
+			for _, tr := range e.checker.timeRanges {
+				if start.Compare(tr.endTime) <= 0 {
+					notInAllTimeRanges = false
+					break
+				}
 			}
-		}
-		if notInAllTimeRanges {
-			return nil
+			if notInAllTimeRanges {
+				return nil
+			}
 		}
 
 		// Get the file end time.
@@ -1000,16 +1005,18 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
-		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-		inTimeRanges := false
-		for _, tr := range e.checker.timeRanges {
-			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
-				inTimeRanges = true
-				break
+		if e.checker.enableTimeCheck {
+			end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+			inTimeRanges := false
+			for _, tr := range e.checker.timeRanges {
+				if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+					inTimeRanges = true
+					break
+				}
 			}
-		}
-		if !inTimeRanges {
-			return nil
+			if !inTimeRanges {
+				return nil
+			}
 		}
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {

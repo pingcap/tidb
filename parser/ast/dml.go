@@ -282,6 +282,11 @@ type TableName struct {
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
+	// IsAlias is true if this table name is an alias.
+	//  sometime, we need to distinguish the table name is an alias or not.
+	//   for example ```delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id```
+	//   ```tt1``` is a alias name. so we need to set IsAlias to true and restore the table name without database name.
+	IsAlias bool
 }
 
 func (*TableName) resultSet() {}
@@ -293,7 +298,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		if n.Schema.String() != "" {
 			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
-		} else if ctx.DefaultDB != "" {
+		} else if ctx.DefaultDB != "" && !n.IsAlias {
 			// Try CTE, for a CTE table name, we shouldn't write the database name.
 			if !ctx.IsCTETableName(n.Name.L) {
 				ctx.WriteName(ctx.DefaultDB)

@@ -1289,7 +1289,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 		if histID != idxInfo.ID {
 			continue
 		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
+		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
