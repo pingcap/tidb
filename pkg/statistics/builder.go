@@ -133,7 +133,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, 0, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +148,7 @@ func buildHist(
 	hg *Histogram,
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
+	minTopN uint64,
 	memTracker *memory.Tracker,
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
@@ -156,6 +157,11 @@ func buildHist(
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := float64(count) / float64(ndv)
+	// skewNDVFactor represents a value that is 4 times than the original ndvFactor, or half the
+	// current lowest value stored in the topN - whichever is greater. A repeat greater than this value
+	// is considered skewed and we should try to make it the last value of the bucket
+	initialSkew := int64(max(float64(minTopN)/2, (ndvFactor * 4)))
+	skewNDVFactor := initialSkew
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -163,9 +169,14 @@ func buildHist(
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+	minNumBuckets := int64(100)
+	maxValuesPerBucket := max(float64(count)/float64(minNumBuckets)+sampleFactor, 2)
+	if numBuckets != 256 || ndv < minNumBuckets {
+		maxValuesPerBucket = valuesPerBucket
+	}
 
 	bucketIdx := 0
-	var lastCount int64
+	var lastCount, lastRepeat int64
 	corrXYSum = float64(0)
 	// The underlying idea is that when a value is sampled,
 	// it does not necessarily mean that the actual row count of this value reaches the sample factor.
@@ -198,6 +209,7 @@ func buildHist(
 			return 0, errors.Trace(err)
 		}
 		totalCount := float64(i+1) * sampleFactor
+		currentCount := totalCount - float64(lastCount)
 		if cmp == 0 {
 			// The new item has the same value as the current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -216,15 +228,37 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
-			// The bucket still has room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
-			lastCount = hg.Buckets[bucketIdx].Count
-			// The bucket is full, store the item in the next bucket.
-			bucketIdx++
-			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			skewedValue := lastRepeat > skewNDVFactor
+			if (!skewedValue && currentCount <= maxValuesPerBucket && valuesPerBucket < maxValuesPerBucket) ||
+				(currentCount <= valuesPerBucket && valuesPerBucket >= maxValuesPerBucket) {
+				// The bucket still has room to store a new item, update the bucket.
+				hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			} else {
+				lastCount = hg.Buckets[bucketIdx].Count
+				// The bucket is full, store the item in the next bucket.
+				bucketIdx++
+				// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
+				hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			}
+		}
+		lastRepeat = hg.Buckets[bucketIdx].Repeat
+		// If we're running out of buckets - we need to increase the skewed value (skewNDVFactor) and
+		// valuesPerBucket to ensure that we don't create too many buckets
+		remainingCount := float64(count) - totalCount
+		remainingBuckets := float64(numBuckets) - float64(bucketIdx)
+		remainingValuesNeeded := remainingCount / remainingBuckets
+		if remainingValuesNeeded > valuesPerBucket {
+			// Increment skewNDVFactor because we're creating too many buckets
+			skewNDVFactor++
+			if minTopN > 0 {
+				skewNDVFactor = min(skewNDVFactor, int64(minTopN)-1)
+			}
+			valuesPerBucket = math.Ceil(remainingValuesNeeded)
+		} else {
+			// Decrement skewNDVFactor because we are NOT creating too many buckets
+			skewNDVFactor--
+			skewNDVFactor = max(skewNDVFactor, initialSkew)
 		}
 	}
 	return corrXYSum, nil
@@ -420,6 +454,7 @@ func BuildHistAndTopN(
 	}
 
 	// Step2: exclude topn from samples
+	var minTopN uint64
 	if numTopN != 0 {
 		for i := int64(0); i < int64(len(samples)); i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
@@ -432,6 +467,12 @@ func BuildHistAndTopN(
 				firstTimeSample types.Datum
 			)
 			for j := 0; j < len(topNList); j++ {
+				// Track the lowest count value in the TopN list
+				if minTopN == 0 {
+					minTopN = topNList[j].Count
+				} else {
+					minTopN = min(minTopN, topNList[j].Count)
+				}
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
@@ -478,7 +519,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), minTopN, memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
