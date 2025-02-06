@@ -41,10 +41,10 @@ type PutChunkResult struct {
 
 // FlushResult is json data that returned by remote server POST API.
 type FlushResult struct {
-	FlushedChunkIDs map[uint64]uint64 `json:"flushed-chunk-ids"`
-	Canceled        bool              `json:"canceled"`
-	Finished        bool              `json:"finished"`
-	Error           string            `json:"error"`
+	FlushedChunkID uint64 `json:"flushed-chunk-id"`
+	Canceled       bool   `json:"canceled"`
+	Finished       bool   `json:"finished"`
+	Error          string `json:"error"`
 }
 
 // chunk is a unit of data that send to remote worker.
@@ -226,7 +226,7 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 			// Reset the ticker when a new task is received. Avoid sending empty chunks too frequently.
 			ticker.Reset(updateFlushedChunkDuration)
 		case <-ticker.C:
-			// Periodically send empty chunks to update the flushed chunkID.
+			// Periodically send empty chunks to get the latest flushed chunkID from remote worker if needed.
 			if c.getFlushedChunkID() == c.getLastChunkID() {
 				continue
 			}
@@ -239,13 +239,14 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 }
 
 func (c *chunkSender) putEmptyChunk(ctx context.Context) error {
+	// Using an empty chunk to get the chunk state from the remote worker.
 	chunk := &chunk{id: c.getLastChunkID(), data: nil}
 	return c.putChunkToRemote(ctx, chunk)
 }
 
 func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error {
-	// cache chunk data
 	if len(chunk.data) != 0 {
+		// Cache the chunk data to avoid the data being lost when the remote worker restarts.
 		err := c.chunksCache.put(chunk.id, chunk.data)
 		if err != nil {
 			return errors.Trace(err)
@@ -359,27 +360,27 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			return nil
 		}
 
-		// make sure all chunks are flushed
-		flushedChunkID := result.FlushedChunkIDs[c.id]
-		if flushedChunkID == c.getLastChunkID() {
-			// all chunks are flushed, clean cache and update state
+		// Make sure all chunks are flushed in remote worker.
+		if result.FlushedChunkID == c.getLastChunkID() {
+			// Clean the cache of chunks that have been flushed and update the state.
 			state := c.state.Load()
 			lastFlushedChunkID := state.FlushedChunkID + 1
-			for lastFlushedChunkID <= flushedChunkID {
+			for lastFlushedChunkID <= result.FlushedChunkID {
 				err := c.chunksCache.clean(lastFlushedChunkID)
 				if err != nil {
 					c.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
 				}
 				lastFlushedChunkID++
 			}
-			state.FlushedChunkID = flushedChunkID
+			state.FlushedChunkID = result.FlushedChunkID
 
 			c.state.Store(state)
 			return nil
 		}
 
-		// the flushed chunkID is not equal to the last sent chunkID,
-		// because the remote worker may restart, retry to put chunk.
+		// The remote don't flush all chunks, we need to put chunk again.
+		// Here, we put an empty chunk to get the `PutChunkResult` to start the put chunk process.
+		// Then we flush again.
 		err = c.putEmptyChunk(ctx)
 		if err != nil {
 			return errors.Trace(err)
