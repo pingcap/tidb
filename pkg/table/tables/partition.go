@@ -130,19 +130,29 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	origIndices := ret.meta.Indices
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	changesArePublic := pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic
+	logutil.BgLogger().Info("newPartitionedTable", zap.String("pi.DDLState", pi.DDLState.String()))
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
+		logutil.BgLogger().Info("newPartitionedTable idx", zap.String("idx.State", idx.State.String()), zap.Int64("idx.ID", idx.ID), zap.Bool("newIdx", newIdx), zap.Bool("ok", ok))
 		if !ok {
 			// Untouched index
-			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			if pi.DDLState != model.StateDeleteReorganization {
-				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
-				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
-				// set the correct assertion on the index.
-				idx = idx.Clone()
-				idx.State = pi.DDLState
+			clonedIdx := idx.Clone()
+			if changesArePublic {
+				// Adding partitions are now public, so we should assert on them.
+				AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+				// Dropping partitions are no longer public, so we cannot assert on them.
+				// Using WriteOnly, since DeleteOnly/DeleteReorganization is not classified
+				// as Writable, see tables.IsIndexWritable().
+				clonedIdx.State = model.StateWriteOnly
+				DroppingDefinitionIndices = append(DroppingDefinitionIndices, clonedIdx)
+				continue
 			}
-			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			// Currently used partitions, continue use StatePublic for assertions
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+			// new partitions, use current state for skipping assertions
+			clonedIdx.State = pi.DDLState
+			AddingDefinitionIndices = append(AddingDefinitionIndices, clonedIdx)
 			continue
 		}
 		if newIdx {
