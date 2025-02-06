@@ -113,6 +113,33 @@ type GCSStorage struct {
 	clients []*storage.Client
 }
 
+// CopyFrom implements Copier.
+func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*GCSStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
+	}
+	dstName := s.objectName(spec.To)
+	srcName := es.objectName(spec.From)
+	// A note here:
+	// https://cloud.google.com/storage/docs/json_api/v1/objects/rewrite
+	// It seems extra configuration is needed when doing cross-region copying.
+	copier := s.GetBucketHandle().Object(dstName).CopierFrom(es.GetBucketHandle().Object(srcName))
+	_, err := copier.Run(ctx)
+	if err != nil {
+		return errors.Annotatef(
+			err,
+			"failed to copy %s/%s to %s/%s",
+			es.gcs.Bucket,
+			srcName,
+			s.gcs.Bucket,
+			dstName,
+		)
+	}
+
+	return nil
+}
+
 func (s *GCSStorage) MarkStrongConsistency() {
 	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
 }
