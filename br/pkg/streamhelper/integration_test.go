@@ -359,15 +359,23 @@ func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	task := "simple"
 	req := require.New(t)
 
-	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
+	newTs, err := metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5)
+	req.NoError(err)
+	req.EqualValues(5, newTs)
 	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
 	req.NoError(err)
 	req.EqualValues(5, ts)
-	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
+
+	newTs, err = metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18)
+	req.NoError(err)
+	req.EqualValues(18, newTs)
 	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
 	req.NoError(err)
 	req.EqualValues(18, ts)
-	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
+
+	newTs, err = metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16)
+	req.NoError(err)
+	req.EqualValues(18, newTs)
 	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
 	req.NoError(err)
 	req.EqualValues(18, ts)
@@ -399,7 +407,9 @@ func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	req.EqualValues(taskInfo.PBInfo.Name, t2.Info.Name)
 
 	// upload global checkpoint
-	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, taskName, 100))
+	newTs, err := metaCli.UploadV3GlobalCheckpointForTask(ctx, taskName, 100)
+	req.NoError(err)
+	req.EqualValues(100, newTs)
 	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, taskName)
 	req.NoError(err)
 	req.EqualValues(100, ts)
