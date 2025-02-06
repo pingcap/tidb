@@ -264,3 +264,13 @@ set @a = 1;
 execute stmt using @a, @a;
 explain select * from t where 1 = id and 1 = k group by id, k;
 
+# TestIssue59275
+-- error 1064
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+SHOW ERRORS;
+-- error 1064
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+SHOW ERRORS;
+-- error 1064
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+SHOW ERRORS;

@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -103,6 +105,8 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		paramsArr[1] = parser.CollationConnection(collation)
 		params = paramsArr[:]
 	}
+
+	warnCountBeforeParse := len(vars.StmtCtx.GetWarnings())
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
 		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
@@ -116,6 +120,17 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 	}
 	if err != nil {
+		if !vars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(vars.EnableRedactLog, e.sqlText)))
+			vars.StmtCtx.AppendError(err)
+		}
+
+		if e.needReset {
+			// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+			// Ref https://github.com/pingcap/tidb/issues/59132
+			vars.StmtCtx.SetWarnings(vars.StmtCtx.GetWarnings()[warnCountBeforeParse:])
+		}
+
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
