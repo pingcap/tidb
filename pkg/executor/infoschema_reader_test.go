@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -370,10 +370,37 @@ func TestForAnalyzeStatus(t *testing.T) {
 }
 
 func TestForServersInfo(t *testing.T) {
+	globalCfg := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(globalCfg)
+	})
+	newCfg := *globalCfg
+	newCfg.Labels = map[string]string{"dc": "dc1"}
+	config.StoreGlobalConfig(&newCfg)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	rows := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO").Rows()
+	ctx := context.Background()
+	sql := "select * from information_schema.TIDB_SERVERS_INFO"
+	comment := fmt.Sprintf("sql:%s", sql)
+	rs, err := tk.ExecWithContext(ctx, sql)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	fields := rs.Fields()
+	require.Len(t, fields, 8)
+	require.Equal(t, fields[0].ColumnAsName.L, "ddl_id")
+	require.Equal(t, fields[1].ColumnAsName.L, "ip")
+	require.Equal(t, fields[2].ColumnAsName.L, "port")
+	require.Equal(t, fields[3].ColumnAsName.L, "status_port")
+	require.Equal(t, fields[4].ColumnAsName.L, "lease")
+	require.Equal(t, fields[5].ColumnAsName.L, "version")
+	require.Equal(t, fields[6].ColumnAsName.L, "git_hash")
+	require.Equal(t, fields[7].ColumnAsName.L, "labels")
+
+	res := tk.ResultSetToResultWithCtx(ctx, rs, comment)
+	rows := res.Rows()
 	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 8)
 
 	info, err := infosync.GetServerInfo()
 	require.NoError(t, err)
@@ -385,7 +412,7 @@ func TestForServersInfo(t *testing.T) {
 	require.Equal(t, info.Lease, rows[0][4])
 	require.Equal(t, info.Version, rows[0][5])
 	require.Equal(t, info.GitHash, rows[0][6])
-	require.Equal(t, stringutil.BuildStringFromLabels(info.Labels), rows[0][8])
+	require.Equal(t, "dc=dc1", rows[0][7])
 }
 
 func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
