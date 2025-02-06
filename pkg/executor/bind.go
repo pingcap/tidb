@@ -138,7 +138,7 @@ func (e *SQLBindExec) createSQLBind() error {
 			BindSQL:     detail.BindSQL,
 			Charset:     detail.Charset,
 			Collation:   detail.Collation,
-			Status:      bindinfo.Enabled,
+			Status:      bindinfo.StatusEnabled,
 			Source:      detail.Source,
 			SQLDigest:   detail.SQLDigest,
 			PlanDigest:  detail.PlanDigest,

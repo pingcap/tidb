@@ -2228,7 +2228,7 @@ func initBindInfoTable(s sessiontypes.Session) {
 func insertBuiltinBindInfoRow(s sessiontypes.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
-		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.StatusBuiltin, bindinfo.StatusBuiltin,
 	)
 }
 
@@ -2328,7 +2328,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		db := row.GetString(1)
 		status := row.GetString(2)
 
-		if status != bindinfo.Enabled && status != bindinfo.Using && status != bindinfo.Builtin {
+		if status != bindinfo.StatusEnabled && status != bindinfo.StatusUsing && status != bindinfo.StatusBuiltin {
 			continue
 		}
 
@@ -2541,7 +2541,7 @@ func upgradeToVer85(s sessiontypes.Session, ver int64) {
 	if ver >= version85 {
 		return
 	}
-	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
+	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.StatusEnabled, bindinfo.StatusUsing))
 }
 
 func upgradeToVer86(s sessiontypes.Session, ver int64) {
