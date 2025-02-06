@@ -4,8 +4,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/apache/arrow/go/v12/arrow/endian"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/stretchr/testify/require"
@@ -22,6 +25,11 @@ import (
 
 // use shared key to access azurite
 type sharedKeyAzuriteClientBuilder struct {
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyAzuriteClientBuilder) GetServiceURL() string {
+	return "http://127.0.0.1:10000/devstoreaccount1"
 }
 
 func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -341,6 +349,11 @@ type fakeClientBuilder struct {
 	Endpoint string
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *fakeClientBuilder) GetServiceURL() string {
+	return b.Endpoint
+}
+
 func (b *fakeClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=%s/devstoreaccount1;", b.Endpoint)
 	return azblob.NewClientFromConnectionString(connStr, getDefaultClientOptions())
@@ -385,4 +398,39 @@ func TestDownloadRetry(t *testing.T) {
 	_, err = s.ReadFile(ctx, "c")
 	require.Error(t, err)
 	require.Less(t, azblobRetryTimes, count)
+}
+
+func TestCopyObject(t *testing.T) {
+	mkTestStrg := func(bucket, prefix string) *AzureBlobStorage {
+		ctx := context.Background()
+		options := &backuppb.AzureBlobStorage{
+			Bucket: bucket,
+			Prefix: prefix,
+		}
+		builder := &sharedKeyAzuriteClientBuilder{}
+		skip, err := createContainer(ctx, builder, options.Bucket)
+		if skip || err != nil {
+			t.Skip(fmt.Sprintf("azurite is not running, skip test (err = %s)", err))
+			panic("just a note, should never reach here")
+		}
+		require.NoError(t, err)
+
+		azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+		require.NoError(t, err)
+		return azblobStorage
+	}
+
+	strg1 := mkTestStrg("alice", "somewhat/")
+	strg2 := mkTestStrg("bob", "complex/prefix/")
+
+	magic := sha256.Sum256(endian.Native.AppendUint64(nil, rand.Uint64()))
+	ctx := context.Background()
+	require.NoError(t, strg1.WriteFile(ctx, "test.txt", magic[:]))
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
+		From: "test.txt",
+		To:   "somewhere/test.txt",
+	}))
+	content, err := strg2.ReadFile(ctx, "somewhere/test.txt")
+	require.NoError(t, err)
+	require.Equal(t, content, magic[:])
 }

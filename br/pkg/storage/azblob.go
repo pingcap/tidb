@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -150,6 +151,16 @@ type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
 	GetServiceClient() (*azblob.Client, error)
 	GetAccountName() string
+	GetServiceURL() string
+}
+
+func urlOfObjectByEndpoint(endpoint, container, object string) (string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", errors.Annotatef(err, "%s isn't a valid url", endpoint)
+	}
+	u.Path = path.Join(u.Path, container, object)
+	return u.String(), nil
 }
 
 // use shared key to access azure blob storage
@@ -159,6 +170,11 @@ type sharedKeyClientBuilder struct {
 	serviceURL  string
 
 	clientOptions *azblob.ClientOptions
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyClientBuilder) GetServiceURL() string {
+	return b.serviceURL
 }
 
 func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -178,6 +194,11 @@ type sasClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *sasClientBuilder) GetServiceURL() string {
+	return b.serviceURL
+}
+
 func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
 }
@@ -193,6 +214,11 @@ type tokenClientBuilder struct {
 	serviceURL  string
 
 	clientOptions *azblob.ClientOptions
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *tokenClientBuilder) GetServiceURL() string {
+	return b.serviceURL
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -324,6 +350,35 @@ type AzureBlobStorage struct {
 
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
+
+	// resolvedAccountName is the final account name we are going to use.
+	resolvedAccountName     string
+	resolvedServiceEndpoint string
+}
+
+// CopyFrom implements Copier.
+func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*AzureBlobStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
+			"AzureBlobStorage.CopyFrom supports *AzureBlobStorage only, got %T", e)
+	}
+
+	url, err := urlOfObjectByEndpoint(es.resolvedServiceEndpoint, es.options.Bucket, es.withPrefix(spec.From))
+	if err != nil {
+		return errors.Annotatef(err, "failed to get url of object %s", spec.From)
+	}
+	dstBlob := s.containerClient.NewBlobClient(s.withPrefix(spec.To))
+
+	// NOTE: `CopyFromURL` supports files up to 256 MiB, which might not be enough for huger regions?
+	// But it seems for now no good solutions for this.
+	// The only solution might be reduce the SST split size when backing up...
+	// REF: https://learn.microsoft.com/en-us/rest/api/storageservices/copy-blob-from-url
+	_, err = dstBlob.CopyFromURL(ctx, url, &blob.CopyFromURLOptions{})
+	if err != nil {
+		return errors.Annotatef(err, "failed to copy blob from %s to %s", url, spec.To)
+	}
+	return nil
 }
 
 func (*AzureBlobStorage) MarkStrongConsistency() {
@@ -396,6 +451,8 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		accessTier,
 		cpkScope,
 		cpkInfo,
+		clientBuilder.GetAccountName(),
+		clientBuilder.GetServiceURL(),
 	}, nil
 }
 
