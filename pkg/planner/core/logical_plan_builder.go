@@ -3507,6 +3507,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 
 func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
 	join, isJoin := p.(*logicalop.LogicalJoin)
+	resultList = make([]*ast.SelectField, 0, len(selectFields))
 	for i, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
