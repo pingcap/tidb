@@ -164,6 +164,7 @@ func updateRecord(
 		}
 	}
 
+	sc.AddTouchedRows(1)
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
@@ -254,8 +255,6 @@ func updateRecord(
 			return false, err
 		}
 	}
-
-	sc.AddTouchedRows(1)
 
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
