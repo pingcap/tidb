@@ -3353,3 +3353,32 @@ func TestAuthSocket(t *testing.T) {
 		ts.CheckRows(t, rows, "u2@%")
 	})
 }
+
+func TestWarningForParseError(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		assertWarningCount := func() {
+			rows, err := conn.QueryContext(context.Background(), "show warnings")
+			require.NoError(t, err)
+			defer rows.Close()
+
+			count := 0
+			for rows.Next() {
+				count++
+			}
+			require.Equal(t, 1, count)
+		}
+
+		for i := 0; i < 5; i++ {
+			stmt, err := conn.PrepareContext(context.Background(), "VALUES ( ('foo'), ROW('bar') )")
+			require.Error(t, err)
+			require.Nil(t, stmt)
+
+			assertWarningCount()
+		}
+	})
+}

@@ -1709,8 +1709,14 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+
+	warnCountBeforeParse := len(sc.GetWarnings())
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
+
+		// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+		// Ref https://github.com/pingcap/tidb/issues/59132
+		sc.SetWarnings(sc.GetWarnings()[warnCountBeforeParse:])
 		return err
 	}
 
