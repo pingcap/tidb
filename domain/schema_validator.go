@@ -170,6 +170,15 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	}
 }
 
+<<<<<<< HEAD:domain/schema_validator.go
+=======
+func (s *schemaValidator) IsLeaseExpired() bool {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	return time.Now().After(s.latestSchemaExpire)
+}
+
+>>>>>>> ddf8c846dfc (br: fix data race for the function IsLeaseExpired (#59098)):pkg/domain/schema_validator.go
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
