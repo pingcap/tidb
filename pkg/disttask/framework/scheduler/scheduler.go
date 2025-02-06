@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	goerrors "errors"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -177,7 +178,7 @@ func (s *BaseScheduler) scheduleTask() {
 		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 		err := s.refreshTaskIfNeeded()
 		if err != nil {
-			if errors.Cause(err) == storage.ErrTaskNotFound {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				// this can happen when task is reverted/succeed, but before
 				// we reach here, cleanup routine move it to history.
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
@@ -551,7 +552,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
 		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
-			if errors.Cause(err) == storage.ErrUnstableSubtasks {
+			if goerrors.Is(err, storage.ErrUnstableSubtasks) {
 				return false, err
 			}
 			return true, err
