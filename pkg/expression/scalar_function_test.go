@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -124,13 +123,8 @@ func TestIssue23309(t *testing.T) {
 	a.RetType.SetFlag(a.RetType.GetFlag() | mysql.NotNullFlag)
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
-	sf, _ := newFunctionWithMockCtx(ast.NE, a, null).(*ScalarFunction)
-	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
-	require.NoError(t, err)
-	require.True(t, v.IsNull())
-
-	ctx := createContext(t)
-	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType(ctx).GetFlag()))
+	sf, _ := newFunctionWithMockCtx(ast.NE, a, null).(*Constant)
+	require.True(t, sf.Value.IsNull())
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {

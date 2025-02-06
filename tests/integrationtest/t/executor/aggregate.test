@@ -724,7 +724,6 @@ select (b-c)*(b+c), min(a) from t group by b+c, b-c;
 select b between c and d from t group by b,c;
 --error 1055
 select case b when 1 then c when 2 then d else d end from t group by b,c;
---error 1055
 select c > (select b from t) from t group by b;
 --error 1055
 select c is null from t group by b;

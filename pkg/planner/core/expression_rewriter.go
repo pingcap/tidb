@@ -395,6 +395,15 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
+		switch op {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			if constantL, ok := l.(*expression.Constant); ok {
+				if constantL.Value.IsNull() {
+					er.disableFoldCounter++
+				}
+			}
+		default:
+		}
 		return er.newFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, expression.ErrOperandColumns.GenWithStackByArgs(lLen)
@@ -1798,6 +1807,11 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	var function expression.Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.GT, opcode.GE, opcode.LT, opcode.LE:
+		if l, ok := er.ctxStack[stkLen-1].(*expression.Constant); ok {
+			if l.Value.IsNull() {
+				er.disableFoldCounter++
+			}
+		}
 		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			v.Op.String())
 	default:
