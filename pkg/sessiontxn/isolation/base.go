@@ -614,6 +614,21 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	if commitTSChecker != nil {
 		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
 	}
+
+	// Optimization:
+	// If an auto-commit optimistic transaction can retry in pessimistic mode,
+	// do not resolve locks when prewrite.
+	// 1. safety: The locks can be resolved later when it retries in pessimistic mode.
+	// 2. benefit: In high-contention scenarios, pessimistic transactions perform better.
+	prewriteEncounterLockPolicy := transaction.TryResolvePolicy
+	if sessVars.TxnCtx.CouldRetry &&
+		sessVars.IsAutocommit() &&
+		!sessVars.InTxn() &&
+		!sessVars.TxnCtx.IsPessimistic {
+		prewriteEncounterLockPolicy = transaction.NoResolvePolicy
+	}
+	txn.SetOption(kv.PrewriteEncounterLockPolicy, prewriteEncounterLockPolicy)
+
 	return nil
 }
 
