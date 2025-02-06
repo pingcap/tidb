@@ -44,7 +44,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrencyPerStore(uint(cfg.Concurrency))
-	err = client.Init(g, mgr.GetStorage())
+	err = client.InitConnections(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {
 		return errors.Trace(err)

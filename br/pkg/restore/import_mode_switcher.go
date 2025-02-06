@@ -176,7 +176,7 @@ func (switcher *ImportModeSwitcher) GoSwitchToImportMode(
 	return nil
 }
 
-// RestorePreWork executes some prepare work before restore.
+// RestorePreWork switches to import mode and removes pd schedulers if needed
 // TODO make this function returns a restore post work.
 func RestorePreWork(
 	ctx context.Context,
