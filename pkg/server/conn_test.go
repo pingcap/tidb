@@ -306,7 +306,7 @@ func TestInitialHandshake(t *testing.T) {
 	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
 	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
 	require.NoError(t, err)
-	expected.WriteByte(uint8(mysql.DefaultCollationID))                             // Server Language
+	expected.WriteByte(byte(mysql.DefaultCollationID))                              // Server Language
 	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
 	require.NoError(t, err)
 	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
@@ -1647,7 +1647,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
 
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
+	tc, err := drv.OpenCtx(uint64(0), 0, mysql.DefaultCollationID, "", nil, nil)
 	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
