@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -2431,16 +2430,10 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
-
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
-	builder := strBuilderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		strBuilderPool.Put(builder)
-	}()
+	builder := &strings.Builder{}
 	if n > 1 {
 		builder.WriteString("(")
 	}
