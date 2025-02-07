@@ -264,6 +264,10 @@ func tsoAfter(ts uint64, n time.Duration) uint64 {
 	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
 }
 
+func (c *CheckpointAdvancer) safepointTTLSeconds() int64 {
+	return int64(max(c.cfg.GetCheckPointLagLimit(), logBackupSafePointTTL).Seconds())
+}
+
 func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 	c.checkpointsMu.Lock()
 	defer c.checkpointsMu.Unlock()
@@ -432,7 +436,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
 		// It's OK to update safepoint by log backup task start-ts when it failed to get the global checkpoint task.
-		p, err := c.env.UpdateServiceGCSafePoint(ctx, c.taskServiceID, int64(max(c.cfg.GetCheckPointLagLimit(), logBackupSafePointTTL).Seconds()), globalCheckpointTs-1)
+		p, err := c.env.UpdateServiceGCSafePoint(ctx, c.taskServiceID, c.safepointTTLSeconds(), globalCheckpointTs-1)
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
@@ -609,7 +613,7 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	}
 	// tidb advancer may fail to collect new checkpoint ts, so use global checkpoint ts from PD instead.
 	safeGlobalCheckpointTs := newGlobalCheckpointTs - 1
-	p, err := c.env.UpdateServiceGCSafePoint(ctx, c.taskServiceID, int64(max(c.cfg.GetCheckPointLagLimit(), logBackupSafePointTTL).Seconds()), safeGlobalCheckpointTs)
+	p, err := c.env.UpdateServiceGCSafePoint(ctx, c.taskServiceID, c.safepointTTLSeconds(), safeGlobalCheckpointTs)
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
