@@ -821,7 +821,7 @@ func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression 
 }
 
 func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
-	ret := make([]Expression, 0, 4)
+	ret := make([]Expression, 0, len(conditions.GetArgs()))
 	for _, arg := range conditions.GetArgs() {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
 			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
