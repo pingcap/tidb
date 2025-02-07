@@ -77,7 +77,7 @@ func (cc *clientConn) getUserConnectionsCounter(targetUser string) int {
 }
 
 // checkUserConnectionCount checks whether the count of connections exceeds the limits.
-func (s *Server) checkUserConnectionCount(cc *clientConn, host string) error {
+func (cc *clientConn) checkUserConnectionCount(host string) error {
 	authUser, err := cc.ctx.MatchIdentity(context.Background(), cc.user, host)
 	if err != nil {
 		return err

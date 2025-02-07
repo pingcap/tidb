@@ -810,7 +810,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 		return err
 	}
 
-	err = cc.server.checkUserConnectionCount(cc, host)
+	err = cc.checkUserConnectionCount(host)
 	if err != nil {
 		return err
 	}

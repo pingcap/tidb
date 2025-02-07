@@ -1017,7 +1017,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
+	{Scope: vardef.ScopeGlobal, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.MaxUserConnectionsCount.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
 			return nil
