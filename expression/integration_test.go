@@ -8078,3 +8078,26 @@ func TestTestIssue53580(t *testing.T) {
 	) then 1 else 2 end;
 	`).Check(testkit.Rows())
 }
+
+func TestCastAsStringExplicitCharSet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE `test` (" +
+		"	`id` bigint(20) NOT NULL," +
+		"	`update_user` varchar(32) DEFAULT NULL," +
+		"	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into test values(1,'张三'), (2,'李四'), (3,'张三'), (4,'李四')")
+	tk.MustQuery("select id from test order by cast(update_user as char character set gbk) desc , id limit 3").Check(testkit.Rows("1", "3", "2"))
+
+	tk.MustExec("drop table test")
+	tk.MustExec("create table test (`id` bigint NOT NULL," +
+		"	`update_user` varchar(32) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL," +
+		"	PRIMARY KEY (`id`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into test values(1,'张三'), (2,'李四'), (3,'张三'), (4,'李四')")
+	tk.MustQuery("select id from test order by cast(update_user as char) desc , id limit 3").Check(testkit.Rows("2", "4", "1"))
+}
