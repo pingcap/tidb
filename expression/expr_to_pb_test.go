@@ -1477,7 +1477,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 	exprs = exprs[:0]
@@ -1486,7 +1486,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
