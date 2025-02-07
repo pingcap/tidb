@@ -469,8 +469,8 @@ func createSession(ctx context.Context, g glue.Glue, store kv.Storage) (glue.Ses
 	return unsafeSession, nil
 }
 
-func createSessions(ctx context.Context, g glue.Glue, store kv.Storage, count uint) (unsafeSessions []glue.Session, createErr error) {
-	unsafeSessions = make([]glue.Session, 0, count)
+func createSessions(ctx context.Context, g glue.Glue, store kv.Storage, count uint) (createdUnsafeSessions []glue.Session, createErr error) {
+	unsafeSessions := make([]glue.Session, 0, count)
 	defer func() {
 		if createErr != nil {
 			closeSessions(unsafeSessions)

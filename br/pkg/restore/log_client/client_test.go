@@ -16,6 +16,7 @@ package logclient_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -40,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -2052,5 +2056,96 @@ func TestPutRawKvWithRetry(t *testing.T) {
 			}
 			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
 		})
+	}
+}
+
+func TestRepairIngestIndex(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeLitMerge,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: ast.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: ast.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	{
+		infoschema := s.Mock.InfoSchema()
+		table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+		require.NoError(t, err)
+		tableInfo := table.Meta()
+		indexIDi1 := int64(0)
+		indexIDi2 := int64(0)
+		for _, indexInfo := range tableInfo.Indices {
+			switch indexInfo.Name.L {
+			case "i1":
+				indexIDi1 = indexInfo.ID
+			case "i2":
+				indexIDi2 = indexInfo.ID
+			}
+		}
+		require.NotEqual(t, int64(0), indexIDi1)
+		require.NotEqual(t, int64(0), indexIDi2)
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "repair_index_t1", tableInfo.ID, indexIDi1, "i1", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
+		), false))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		infoschema = s.Mock.InfoSchema()
+		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+		require.NoError(t, err)
+		tableInfo2 := table2.Meta()
+		existsCount := 0
+		for _, indexInfo2 := range tableInfo2.Indices {
+			switch indexInfo2.Name.L {
+			case "i1":
+				require.Less(t, indexIDi1, indexInfo2.ID)
+				existsCount++
+			case "i2":
+				require.Less(t, indexIDi2, indexInfo2.ID)
+				existsCount++
+			}
+		}
+		require.Equal(t, 2, existsCount)
 	}
 }
