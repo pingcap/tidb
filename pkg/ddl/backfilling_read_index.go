@@ -218,12 +218,10 @@ func (r *readIndexExecutor) ResourceModified(ctx context.Context, newResource *p
 	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), avgRowSizeForDistTask)
 	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 	if int32(targetReaderCnt) != currentReaderCnt {
-		reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-		// wait
+		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)
 	}
 	if int32(targetWriterCnt) != currentWriterCnt {
-		writer.TuneWorkerPoolSize(int32(targetWriterCnt))
-		// wait
+		writer.TuneWorkerPoolSize(int32(targetWriterCnt), true)
 	}
 	return nil
 }
