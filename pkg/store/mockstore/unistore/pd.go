@@ -227,6 +227,14 @@ func (c *mockPDServiceDiscovery) AddServingURLSwitchedCallback(callbacks ...func
 
 func (c *mockPDServiceDiscovery) AddServiceURLsSwitchedCallback(callbacks ...func()) {}
 
+func (c *mockPDServiceDiscovery) AddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {
+}
+
+func (c *mockPDServiceDiscovery) AddMembersChangedCallback(func()) {}
+
+func (c *mockPDServiceDiscovery) ExecAndAddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {
+}
+
 type mockTSFuture struct {
 	pdc  *pdClient
 	ctx  context.Context
