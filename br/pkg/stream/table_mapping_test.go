@@ -432,7 +432,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 		expected map[UpstreamID]*DBReplace
 	}{
 		{
-			name: "empty filter keeps nothing",
+			name: "empty filter marks all as filtered out",
 			initial: map[UpstreamID]*DBReplace{
 				1: {
 					Name: "db1",
@@ -445,7 +445,16 @@ func TestFilterDBReplaceMap(t *testing.T) {
 			filter: &utils.PiTRIdTracker{
 				DBIdToTableId: map[int64]map[int64]struct{}{},
 			},
-			expected: map[UpstreamID]*DBReplace{},
+			expected: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {TableID: 1010, Name: "table1", FilteredOut: true},
+					},
+					FilteredOut: true,
+				},
+			},
 		},
 		{
 			name: "filter specific database",
@@ -478,6 +487,14 @@ func TestFilterDBReplaceMap(t *testing.T) {
 						10: {TableID: 1010, Name: "table1"},
 					},
 				},
+				2: {
+					Name: "db2",
+					DbID: 2000,
+					TableMap: map[UpstreamID]*TableReplace{
+						20: {TableID: 2020, Name: "table2", FilteredOut: true},
+					},
+					FilteredOut: true,
+				},
 			},
 		},
 		{
@@ -507,6 +524,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					DbID: 1000,
 					TableMap: map[UpstreamID]*TableReplace{
 						10: {TableID: 1010, Name: "table1"},
+						11: {TableID: 1011, Name: "table2", FilteredOut: true},
 						12: {TableID: 1012, Name: "table3"},
 					},
 				},
@@ -556,6 +574,15 @@ func TestFilterDBReplaceMap(t *testing.T) {
 								101: 1101,
 							},
 						},
+						11: {
+							TableID: 1011,
+							Name:    "table2",
+							PartitionMap: map[UpstreamID]DownstreamID{
+								102: 1102,
+								103: 1103,
+							},
+							FilteredOut: true,
+						},
 					},
 				},
 			},
@@ -602,6 +629,7 @@ func TestFilterDBReplaceMap(t *testing.T) {
 					DbID: 1000,
 					TableMap: map[UpstreamID]*TableReplace{
 						10: {TableID: 1010, Name: "table1"},
+						11: {TableID: 1011, Name: "table2", FilteredOut: true},
 					},
 				},
 				2: {
@@ -611,6 +639,14 @@ func TestFilterDBReplaceMap(t *testing.T) {
 						20: {TableID: 2020, Name: "table3"},
 						21: {TableID: 2021, Name: "table4"},
 					},
+				},
+				3: {
+					Name: "db3",
+					DbID: 3000,
+					TableMap: map[UpstreamID]*TableReplace{
+						30: {TableID: 3030, Name: "table5", FilteredOut: true},
+					},
+					FilteredOut: true,
 				},
 			},
 		},
@@ -625,6 +661,17 @@ func TestFilterDBReplaceMap(t *testing.T) {
 
 			// verify DBReplaceMap is as expected
 			require.Equal(t, tt.expected, tm.DBReplaceMap)
+
+			// Additional verification for FilteredOut flags
+			for dbID, dbReplace := range tt.expected {
+				require.Contains(t, tm.DBReplaceMap, dbID)
+				require.Equal(t, dbReplace.FilteredOut, tm.DBReplaceMap[dbID].FilteredOut)
+
+				for tblID, tblReplace := range dbReplace.TableMap {
+					require.Contains(t, tm.DBReplaceMap[dbID].TableMap, tblID)
+					require.Equal(t, tblReplace.FilteredOut, tm.DBReplaceMap[dbID].TableMap[tblID].FilteredOut)
+				}
+			}
 		})
 	}
 }

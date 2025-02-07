@@ -1446,10 +1446,9 @@ func handleTableRenames(
 		startMatches := utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
 		endMatches := utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable)
 
-		// add both to tracker, table may be renamed from different db but still in filter so need to track both
-		if startMatches && endMatches {
+		// if end matches, add to tracker
+		if endMatches {
 			pitrIdTracker.TrackTableId(end.DbID, tableId)
-			pitrIdTracker.TrackTableId(start.DbID, tableId)
 		}
 
 		// skip if both match or not match, no need to adjust tables
@@ -1468,6 +1467,8 @@ func handleTableRenames(
 				if table.Info != nil && table.Info.ID == tableId {
 					if endMatches {
 						// need to restore this table
+						// track start as well as it might be in different db
+						pitrIdTracker.TrackTableId(start.DbID, tableId)
 						existingTableMap[table.Info.ID] = table
 						existingFileMap[table.Info.ID] = table.Files
 					} else {

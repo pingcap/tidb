@@ -435,7 +435,6 @@ func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTr
 	for dbID, dbReplace := range tm.DBReplaceMap {
 		if !tracker.ContainsDB(dbID) {
 			dbReplace.FilteredOut = true
-			continue
 		}
 
 		// filter tables in this database
