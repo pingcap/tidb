@@ -295,7 +295,7 @@ func NewRawClientBackoffStrategy() Backoffer {
 	return &RawClientBackoffStrategy{
 		Attempts:    rawClientMaxAttempts,
 		BaseBackoff: rawClientDelayTime,
-		MaxBackoff:  rawClientMaxAttempts,
+		MaxBackoff:  rawClientMaxDelayTime,
 	}
 }
 
