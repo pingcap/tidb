@@ -219,16 +219,8 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 			iID := int(p.schema.Columns[i].UniqueID)
 			jID := int(p.schema.Columns[j].UniqueID)
 			for _, childFD := range childFDs {
-				equivs := childFD.EquivalenceCols()
-				isEquiv := false
-				for _, equiv := range equivs {
-					if equiv.Has(iID) && equiv.Has(jID) {
-						isEquiv = true
-						break
-					}
-				}
 				// once we find the i-th and j-th column are not equivalent in one child, we can break the loop.
-				if !isEquiv {
+				if !childFD.AreColsEquiv(iID, jID) {
 					flag = false
 					break
 				}
