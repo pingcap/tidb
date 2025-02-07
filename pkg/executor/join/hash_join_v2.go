@@ -1053,7 +1053,7 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 	}
 
 	round := e.spillHelper.round
-	for len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
+	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
 		e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, 0)
 		e.stats.spill.spillBuildBytesPerRound = append(e.stats.spill.spillBuildBytesPerRound, 0)
 		e.stats.spill.partitionNumPerRound = append(e.stats.spill.partitionNumPerRound, 0)

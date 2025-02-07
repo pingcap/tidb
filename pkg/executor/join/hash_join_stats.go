@@ -25,17 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
-func convertBytesStatsToString(bytes []int64) string {
-	info := "["
-	for i, byte := range bytes {
+func writeBytesStatsToString(buf *bytes.Buffer, convertedBytes []int64) string {
+	buf.WriteString("[")
+	for i, byte := range convertedBytes {
 		if i == 0 {
-			info = fmt.Sprintf("%s%.2f", info, util.ByteToGiB(float64(byte)))
+			buf.WriteString(fmt.Sprintf("%.2f", util.ByteToGiB(float64(byte))))
 		} else {
-			info = fmt.Sprintf("%s %.2f", info, util.ByteToGiB(float64(byte)))
+			buf.WriteString(fmt.Sprintf(" %.2f", util.ByteToGiB(float64(byte))))
 		}
 	}
-	info += "]"
-	return info
+	buf.WriteString("]")
+	return buf.String()
 }
 
 type hashJoinRuntimeStats struct {
@@ -217,7 +217,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxProbe)))
-		buf.WriteString(", fetch and wait:")
+		buf.WriteString(", fetch_and_wait:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.maxProbe)))
 		if e.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
@@ -228,12 +228,12 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 	if e.spill.round > 0 {
 		buf.WriteString(", spill:{round:")
 		buf.WriteString(strconv.Itoa(e.spill.round))
-		buf.WriteString(", partition num per round:")
+		buf.WriteString(", partition_num_per_round:")
 		fmt.Fprintf(buf, "%v", e.spill.partitionNumPerRound)
-		buf.WriteString(", total spill GiB per round:")
-		buf.WriteString(convertBytesStatsToString(e.spill.totalSpillBytesPerRound))
-		buf.WriteString(", build spill GiB per round:")
-		buf.WriteString(convertBytesStatsToString(e.spill.spillBuildBytesPerRound))
+		buf.WriteString(", total_spill_GiB_per_round:")
+		writeBytesStatsToString(buf, e.spill.totalSpillBytesPerRound)
+		buf.WriteString(", build_spill_GiB_per_round:")
+		writeBytesStatsToString(buf, e.spill.spillBuildBytesPerRound)
 		buf.WriteString("}")
 	}
 	return buf.String()

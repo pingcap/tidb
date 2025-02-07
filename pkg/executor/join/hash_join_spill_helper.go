@@ -405,7 +405,7 @@ func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
 	return h.getSpillBytesImpl(h.probeRowsInDisk)
 }
 
-func (_ *hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
+func (*hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
 	totalBytes := int64(0)
 	for _, disk := range disks {
 		for _, d := range disk {
