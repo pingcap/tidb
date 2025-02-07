@@ -1315,34 +1315,6 @@ func (p *LogicalJoin) ExtractOnCondition(
 			otherCond = append(otherCond, expr)
 		}
 	}
-	if len(rightCond) == len(leftCond) && len(leftCond) == 1 {
-		binrop, ok := rightCond[0].(*expression.ScalarFunction)
-		if !ok {
-			return
-		}
-		binlop, ok := leftCond[0].(*expression.ScalarFunction)
-		if !ok {
-			return
-		}
-		if binlop.FuncName.L == ast.EQ && binrop.FuncName.L == ast.EQ {
-			argl, ok := binlop.GetArgs()[0].(*expression.Column)
-			if !ok {
-				argl, ok = binlop.GetArgs()[1].(*expression.Column)
-				if !ok {
-					return
-				}
-			}
-			argr, ok := binrop.GetArgs()[0].(*expression.Column)
-			if !ok {
-				argr, ok = binrop.GetArgs()[1].(*expression.Column)
-				if !ok {
-					return
-				}
-			}
-			cond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), argl, argr)
-			eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-		}
-	}
 	return
 }
 
