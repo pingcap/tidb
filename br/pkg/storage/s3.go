@@ -51,7 +51,10 @@ const (
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
 	s3ExternalIDOption   = "s3.external-id"
-	notFound             = "NotFound"
+
+	storageExpressOneZone = "express-one-zone"
+
+	notFound = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
 	// max number of retries when meets error
@@ -347,6 +350,16 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
+	if qs.StorageClass == storageExpressOneZone {
+		if qs.Endpoint == "" {
+			return nil, errors.Errorf("must specify endpoint for S3 Express One Zone storage class")
+		}
+		if qs.Region == "" {
+			return nil, errors.Errorf("must specify region for S3 Express One Zone storage class")
+		}
+		awsConfig.WithS3DisableContentMD5Validation(true).
+			WithS3ForcePathStyle(false)
+	}
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
@@ -401,7 +414,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	c := s3.New(ses, s3CliConfigs...)
 
 	var region string
-	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+	if (len(qs.Provider) == 0 || qs.Provider == "aws") && qs.StorageClass != storageExpressOneZone {
 		confCred := ses.Config.Credentials
 		setCredOpt := func(req *request.Request) {
 			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
@@ -717,17 +730,14 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
 	}
-	req := &s3.ListObjectsInput{
+	req := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int64(maxKeys),
 	}
 
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjectsWithContext(ctx, req)
+		res, err := rs.svc.ListObjectsV2WithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -741,7 +751,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// "If response does not include the NextMarker and it is truncated,
 			// you can use the value of the last Key in the response as the marker
 			// in the subsequent request to get the next set of object keys."
-			req.Marker = r.Key
+			req.StartAfter = r.Key
 
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
