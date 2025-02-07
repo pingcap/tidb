@@ -1202,11 +1202,13 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	}
+	toCharset, origCharset := to.GetCharset(), origin.GetCharset()
 
 	err = checkModifyCharsetAndCollation(to.GetCharset(), to.GetCollate(), origin.GetCharset(), origin.GetCollate(), needRewriteCollationData)
 
 	if err != nil {
-		if to.GetCharset() == charset.CharsetGBK || origin.GetCharset() == charset.CharsetGBK {
+		if toCharset == charset.CharsetGBK || origCharset == charset.CharsetGBK ||
+			toCharset == charset.CharsetGB18030 || origCharset == charset.CharsetGB18030 {
 			return errors.Trace(err)
 		}
 		// column type change can handle the charset change between these two types in the process of the reorg.

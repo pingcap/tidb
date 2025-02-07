@@ -453,6 +453,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
 
 	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t charset gb18030", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
 
 	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;", errno.ErrUnknownCollation)

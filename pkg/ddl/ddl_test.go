@@ -151,6 +151,13 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
+		{"int", "varchar(10) character set gb18030", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gb18030")},
+		{"varchar(10) character set gb18030", "int", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gb18030 to binary")},
+		{"varchar(10) character set gb18030", "varchar(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gb18030 to utf8")},
+		{"varchar(10) character set gb18030", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gb18030 to utf8")},
+		{"varchar(10) character set utf8", "char(10) character set gb18030", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gb18030")},
+		{"varchar(10) character set utf8", "varchar(10) character set gb18030", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gb18030")},
+		{"varchar(10) character set gb18030", "varchar(255) character set gb18030", nil},
 	}
 	for _, tt := range tests {
 		ftA := colDefStrToFieldType(t, tt.origin, ctx)

@@ -571,7 +571,7 @@ func isUnicodeCollation(ch string) bool {
 func isBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationGBKBin
+		collate == charset.CollationGBKBin || collate == charset.CollationGB18030Bin
 }
 
 // getBinCollation get binary collation by charset
@@ -583,6 +583,8 @@ func getBinCollation(cs string) string {
 		return charset.CollationUTF8MB4
 	case charset.CharsetGBK:
 		return charset.CollationGBKBin
+	case charset.CharsetGB18030:
+		return charset.CollationGB18030Bin
 	}
 
 	logutil.BgLogger().Error("unexpected charset " + cs)
