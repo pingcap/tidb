@@ -38,27 +38,13 @@ const (
 	resetTSMaxWaitIntervalExt = 300 * time.Second
 
 	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
-<<<<<<< HEAD
 	flashbackRetryTime       = 3
 	flashbackWaitInterval    = 3000 * time.Millisecond
 	flashbackMaxWaitInterval = 15 * time.Second
-=======
-	FlashbackRetryTime       = 3
-	FlashbackWaitInterval    = 3 * time.Second
-	FlashbackMaxWaitInterval = 15 * time.Second
-
-	ChecksumRetryTime       = 8
-	ChecksumWaitInterval    = 1 * time.Second
-	ChecksumMaxWaitInterval = 30 * time.Second
-
-	recoveryMaxAttempts  = 16
-	recoveryDelayTime    = 30 * time.Second
-	recoveryMaxDelayTime = 4 * time.Minute
 
 	rawClientMaxAttempts  = 5
 	rawClientDelayTime    = 500 * time.Millisecond
 	rawClientMaxDelayTime = 5 * time.Second
->>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
 )
 
 // ConstantBackoff is a backoffer that retry forever until success.
@@ -169,121 +155,8 @@ func NewDownloadSSTBackoffer() Backoffer {
 	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
 }
 
-<<<<<<< HEAD
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
-=======
-func NewBackupSSTBackoffStrategy() BackoffStrategy {
-	errContext := NewErrorContext("backup sst", 3)
-	return NewTiKVStoreBackoffStrategy(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
-}
-
-func NewPDBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Duration) BackoffStrategy {
-	retryErrs := map[error]struct{}{
-		berrors.ErrRestoreTotalKVMismatch: {},
-		io.EOF:                            {},
-	}
-	grpcRetryCodes := map[codes.Code]struct{}{
-		codes.Canceled:          {},
-		codes.DeadlineExceeded:  {},
-		codes.NotFound:          {},
-		codes.AlreadyExists:     {},
-		codes.PermissionDenied:  {},
-		codes.ResourceExhausted: {},
-		codes.Aborted:           {},
-		codes.OutOfRange:        {},
-		codes.Unavailable:       {},
-		codes.DataLoss:          {},
-		codes.Unknown:           {},
-	}
-	nonRetryErrs := map[error]struct{}{
-		context.Canceled:         {},
-		context.DeadlineExceeded: {},
-		sql.ErrNoRows:            {},
-	}
-
-	isRetryErrFunc := buildIsRetryErrFunc(retryErrs, grpcRetryCodes)
-	isNonRetryErrFunc := buildIsNonRetryErrFunc(nonRetryErrs)
-
-	return NewBackoffStrategy(
-		WithRemainingAttempts(maxRetry),
-		WithDelayTime(delayTime),
-		WithMaxDelayTime(maxDelayTime),
-		WithErrorContext(NewZeroRetryContext("connect PD")),
-		WithRetryErrorFunc(isRetryErrFunc),
-		WithNonRetryErrorFunc(isNonRetryErrFunc),
-	)
-}
-
-func NewAggressivePDBackoffStrategy() BackoffStrategy {
-	return NewPDBackoffStrategy(resetTSRetryTime, resetTSWaitInterval, resetTSMaxWaitInterval)
-}
-
-func NewConservativePDBackoffStrategy() BackoffStrategy {
-	return NewPDBackoffStrategy(resetTSRetryTimeExt, resetTSWaitIntervalExt, resetTSMaxWaitIntervalExt)
-}
-
-func NewDiskCheckBackoffStrategy() BackoffStrategy {
-	retryErrs := map[error]struct{}{
-		berrors.ErrPDInvalidResponse: {},
-		berrors.ErrKVDiskFull:        {},
-	}
-	grpcRetryCodes := map[codes.Code]struct{}{}
-
-	isRetryErrFunc := buildIsRetryErrFunc(retryErrs, grpcRetryCodes)
-
-	return NewBackoffStrategy(
-		WithRemainingAttempts(resetTSRetryTime),
-		WithDelayTime(resetTSWaitInterval),
-		WithErrorContext(NewZeroRetryContext("disk check")),
-		WithRetryErrorFunc(isRetryErrFunc),
-		WithNonRetryErrorFunc(alwaysFalseFunc()),
-	)
-}
-
-func NewRecoveryBackoffStrategy(isRetryErrFunc func(error) bool) BackoffStrategy {
-	return NewBackoffStrategy(
-		WithRemainingAttempts(recoveryMaxAttempts),
-		WithDelayTime(recoveryDelayTime),
-		WithErrorContext(NewZeroRetryContext("recovery")),
-		WithRetryErrorFunc(isRetryErrFunc),
-		WithNonRetryErrorFunc(alwaysFalseFunc()),
-	)
-}
-
-func NewFlashBackBackoffStrategy() BackoffStrategy {
-	return NewBackoffStrategy(
-		WithRemainingAttempts(FlashbackRetryTime),
-		WithDelayTime(FlashbackWaitInterval),
-		WithErrorContext(NewZeroRetryContext("flashback")),
-		WithRetryErrorFunc(alwaysTrueFunc()),
-		WithNonRetryErrorFunc(alwaysFalseFunc()),
-	)
-}
-
-func NewChecksumBackoffStrategy() BackoffStrategy {
-	return NewBackoffStrategy(
-		WithRemainingAttempts(ChecksumRetryTime),
-		WithDelayTime(ChecksumWaitInterval),
-		WithErrorContext(NewZeroRetryContext("checksum")),
-		WithRetryErrorFunc(alwaysTrueFunc()),
-		WithNonRetryErrorFunc(alwaysFalseFunc()),
-	)
-}
-
-func NewRawClientBackoffStrategy() BackoffStrategy {
-	return NewBackoffStrategy(
-		WithRemainingAttempts(rawClientMaxAttempts),
-		WithDelayTime(rawClientDelayTime),
-		WithMaxDelayTime(rawClientMaxDelayTime),
-		WithErrorContext(NewZeroRetryContext("raw client")),
-		WithRetryErrorFunc(alwaysTrueFunc()),
-		WithNonRetryErrorFunc(alwaysFalseFunc()),
-	)
-}
-
-func (bo *backoffStrategyImpl) NextBackoff(err error) time.Duration {
->>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
 	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
@@ -419,4 +292,36 @@ func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
 
 func (bo *flashbackBackoffer) Attempt() int {
 	return bo.attempt
+}
+
+type RawClientBackoffStrategy struct {
+	Attempts    int
+	BaseBackoff time.Duration
+	MaxBackoff  time.Duration
+}
+
+func NewRawClientBackoffStrategy() Backoffer {
+	return &RawClientBackoffStrategy{
+		Attempts:    rawClientMaxAttempts,
+		BaseBackoff: rawClientDelayTime,
+		MaxBackoff:  rawClientMaxDelayTime,
+	}
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *RawClientBackoffStrategy) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > b.MaxBackoff {
+		b.BaseBackoff = b.MaxBackoff
+	}
+	return bo
+}
+
+func (b *RawClientBackoffStrategy) Attempt() int {
+	return b.Attempts
 }
