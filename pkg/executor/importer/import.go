@@ -52,6 +52,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -753,7 +754,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ForceMergeStep = true
 	}
 
-	if sv, ok := seCtx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
 		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
 			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
