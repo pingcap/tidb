@@ -369,7 +369,7 @@ func ConvertAndGetBinCollator(collate string) Collator {
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin || collate == charset.CollationGB18030Bin || collate == "utf8mb4_0900_bin"
+		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
 	// TODO: define a constant to reference collations
 }
 
