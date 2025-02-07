@@ -4,6 +4,7 @@ go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
+        "expression_util.go",
         "hash64_equals_generated.go",
         "logical_aggregation.go",
         "logical_apply.go",
