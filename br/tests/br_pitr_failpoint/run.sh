@@ -122,43 +122,7 @@ check_contains "Column_name: y"
 check_contains "Column_name: z"
 
 # wait checkpoint advance
-<<<<<<< HEAD
-echo "wait checkpoint advance"
-sleep 10
-current_ts=$(echo $(($(date +%s%3N) << 18)))
-echo "current ts: $current_ts"
-i=0
-while true; do
-    # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
-    log_backup_status=$(unset BR_LOG_TO_TERM && run_br --pd $PD_ADDR log status --task-name integration_test --json 2>/dev/null)
-    echo "log backup status: $log_backup_status"
-    checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end')
-    echo "checkpoint ts: $checkpoint_ts"
-
-    # check whether the checkpoint ts is a number
-    if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
-        # check whether the checkpoint has advanced
-        if [ $checkpoint_ts -gt $current_ts ]; then
-            echo "the checkpoint has advanced"
-            break
-        fi
-        # the checkpoint hasn't advanced
-        echo "the checkpoint hasn't advanced"
-        i=$((i+1))
-        if [ "$i" -gt 50 ]; then
-            echo 'the checkpoint lag is too large'
-            exit 1
-        fi
-        sleep 10
-    else
-        # unknown status, maybe somewhere is wrong
-        echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
-        exit 1
-    fi
-done
-=======
 . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
->>>>>>> 9cc4a200d0d (br: refactor test to use wait checkpoint method (#57612))
 
 # start a new cluster
 restart_services
