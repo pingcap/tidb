@@ -22,7 +22,7 @@ import (
 // Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
 func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
 	for _, cond := range conds {
-		if expression.IsConstFalse(cond) {
+		if expression.IsConstNull(cond) {
 			if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), conds) {
 				return nil
 			}

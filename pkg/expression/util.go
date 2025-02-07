@@ -2163,8 +2163,11 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
 
-// IsConstFalse is used to check whether the expression is a constant false expression.
-func IsConstFalse(expr Expression) bool {
+// IsConstNull is used to check whether the expression is a constant null expression.
+// For example, `1 > NULL` is a constant null expression.
+// Now we just assume that the first argrument is a column,
+// the second argument is a constant null.
+func IsConstNull(expr Expression) bool {
 	if e, ok := expr.(*ScalarFunction); ok {
 		switch e.FuncName.L {
 		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
