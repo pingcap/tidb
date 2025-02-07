@@ -57,18 +57,6 @@ func (t *PiTRIdTracker) AddDB(dbID int64) {
 	}
 }
 
-// Remove removes a table ID from the filter for the given database ID.
-// Returns true if the table was found and removed, false otherwise.
-func (t *PiTRIdTracker) Remove(dbID, physicalId int64) bool {
-	if tables, ok := t.DBIdToTableId[dbID]; ok {
-		if _, exists := tables[physicalId]; exists {
-			delete(tables, physicalId)
-			return true
-		}
-	}
-	return false
-}
-
 // ContainsTableId checks if the given database ID and table ID combination exists in the filter
 func (t *PiTRIdTracker) ContainsTableId(dbID, tableID int64) bool {
 	if tables, ok := t.DBIdToTableId[dbID]; ok {

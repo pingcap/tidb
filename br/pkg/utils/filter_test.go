@@ -36,18 +36,4 @@ func TestPiTRTableTracker(t *testing.T) {
 		require.True(t, tracker.ContainsDB(3))
 		require.True(t, tracker.ContainsTableId(3, 300))
 	})
-
-	t.Run("test remove table", func(t *testing.T) {
-		tracker := NewPiTRIdTracker()
-
-		tracker.TrackTableId(1, 100)
-		tracker.TrackTableId(1, 101)
-
-		require.True(t, tracker.Remove(1, 100))
-		require.False(t, tracker.ContainsTableId(1, 100))
-		require.True(t, tracker.ContainsTableId(1, 101))
-
-		require.False(t, tracker.Remove(1, 102))
-		require.False(t, tracker.Remove(2, 100))
-	})
 }

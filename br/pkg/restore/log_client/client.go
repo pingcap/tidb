@@ -2023,13 +2023,3 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 	}
 	return nil
 }
-
-// DropTable drops a table with the given database and table name
-func (rc *LogClient) DropTable(ctx context.Context, dbName, tableName string) error {
-	dropSQL := "DROP TABLE IF EXISTS %n.%n"
-	if err := rc.unsafeSession.ExecuteInternal(ctx, dropSQL, dbName, tableName); err != nil {
-		return errors.Annotatef(err, "failed to drop table %s.%s", dbName, tableName)
-	}
-	log.Info("dropped table", zap.String("db", dbName), zap.String("table", tableName))
-	return nil
-}
