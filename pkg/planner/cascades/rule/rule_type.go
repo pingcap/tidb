@@ -41,6 +41,10 @@ const (
 	XFPullCorrPredFromAgg1
 	// XFPullCorrPredFromAgg2 try to pull correlated expression from agg<selection> from inner child of an apply.
 	XFPullCorrPredFromAgg2
+
+	// XFMergeAdjacentProjection try to merge adjacent projection together to avoid executor open cost.
+	XFMergeAdjacentProjection
+
 	// XFMaximumRuleLength is the maximum rule length.
 	XFMaximumRuleLength
 )

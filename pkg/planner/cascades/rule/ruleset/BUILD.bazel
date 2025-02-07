@@ -10,6 +10,7 @@ go_library(
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/rule",
         "//pkg/planner/cascades/rule/apply/decorrelate_apply",
+        "//pkg/planner/cascades/rule/projection",
         "//pkg/planner/core/operator/logicalop",
         "@com_github_bits_and_blooms_bitset//:bitset",
     ],

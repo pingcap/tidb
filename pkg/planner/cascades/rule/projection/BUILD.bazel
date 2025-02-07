@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "projection",
+    srcs = ["xf_merge_adjacent_projection.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/projection",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/planner/cascades/pattern",
+        "//pkg/planner/cascades/rule",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/rule/util",
+    ],
+)

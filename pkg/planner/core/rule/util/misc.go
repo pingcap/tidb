@@ -42,5 +42,21 @@ func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 	}
 }
 
+// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
+func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expression, schema *expression.Schema) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		idx := schema.ColumnIndex(v)
+		if idx != -1 && idx < len(exprs) {
+			return exprs[idx]
+		}
+	case *expression.ScalarFunction:
+		for i := range v.GetArgs() {
+			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], exprs, schema)
+		}
+	}
+	return expr
+}
+
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64

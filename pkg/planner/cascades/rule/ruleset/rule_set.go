@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/projection"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
@@ -30,11 +31,14 @@ const (
 	DefaultNone SetType = iota
 	// XFSetDeCorrelateApply indicates a set of sub-rules related to de-correlate an apply.
 	XFSetDeCorrelateApply
+	// XFSetProjectionUtil indicates a set of sub-rules related to projection optimization.
+	XFSetProjectionUtil
 )
 
 // DefaultRuleSets indicates the all rule set.
 var DefaultRuleSets = map[pattern.Operand]*OperandRules{
-	pattern.OperandApply: OperandApplyRules,
+	pattern.OperandApply:      OperandApplyRules,
+	pattern.OperandProjection: OperandProjectionRules,
 }
 
 // OperandRules wrapper all the rules rooted from one specified operator.
@@ -49,7 +53,7 @@ type ListRules []rule.Rule
 func (l ListRules) Filter(mask *bitset.BitSet) ListRules {
 	res := make([]rule.Rule, 0, len(l))
 	for _, one := range l {
-		if mask.Test(one.ID()) {
+		if !mask.Test(one.ID()) {
 			res = append(res, one)
 		}
 	}
@@ -69,14 +73,29 @@ func (ors *OperandRules) Filter(ge *memo.GroupExpression) ListRules {
 // OperandApplyRules is the rules rooted from an apply operand.
 var OperandApplyRules = &OperandRules{OperandApplyRulesMap, OperandApplyRulesList}
 
-// OperandApplyRulesMap OperandApplyRules is the rules rooted from an apply operand, organized as map, key is sub-set type.
+// OperandApplyRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
 var OperandApplyRulesMap = map[SetType][]rule.Rule{
 	XFSetDeCorrelateApply: {
 		decorrelate_apply.NewXFDeCorrelateSimpleApply(),
 	},
 }
 
-// OperandApplyRulesList OperandApplyRules is the rules rooted from an apply operand, organized as list.
+// OperandApplyRulesList is the rules rooted from an apply operand, organized as list.
 var OperandApplyRulesList = []rule.Rule{
 	decorrelate_apply.NewXFDeCorrelateSimpleApply(),
+}
+
+// OperandProjectionRules is the rules rooted from a projection operand.
+var OperandProjectionRules = &OperandRules{OperandProjectionRulesMap, OperandProjectionRulesList}
+
+// OperandProjectionRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
+var OperandProjectionRulesMap = map[SetType][]rule.Rule{
+	XFSetProjectionUtil: {
+		projection.NewXFMergeAdjacentProjection(),
+	},
+}
+
+// OperandProjectionRulesList is the rules rooted from an apply operand, organized as list.
+var OperandProjectionRulesList = []rule.Rule{
+	projection.NewXFMergeAdjacentProjection(),
 }
