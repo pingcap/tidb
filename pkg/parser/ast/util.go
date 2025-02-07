@@ -32,12 +32,7 @@ func IsReadOnly(node Node) bool {
 			}
 		}
 
-		checker := readOnlyChecker{
-			readOnly: true,
-		}
-
-		node.Accept(&checker)
-		return checker.readOnly
+		return true
 	case *ExplainStmt:
 		return !st.Analyze || IsReadOnly(st.Stmt)
 	case *DoStmt, *ShowStmt:
@@ -68,29 +63,4 @@ func IsReadOnly(node Node) bool {
 	default:
 		return false
 	}
-}
-
-// readOnlyChecker checks whether a query's ast is readonly, if it satisfied
-// 1. selectstmt;
-// 2. need not to set var;
-// it is readonly statement.
-type readOnlyChecker struct {
-	readOnly bool
-}
-
-// Enter implements Visitor interface.
-func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
-	if node, ok := in.(*VariableExpr); ok {
-		// like func rewriteVariable(), this stands for SetVar.
-		if !node.IsSystem && node.Value != nil {
-			checker.readOnly = false
-			return in, true
-		}
-	}
-	return in, false
-}
-
-// Leave implements Visitor interface.
-func (checker *readOnlyChecker) Leave(in Node) (out Node, ok bool) {
-	return in, checker.readOnly
 }
