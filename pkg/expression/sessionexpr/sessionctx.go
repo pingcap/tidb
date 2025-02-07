@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -74,7 +75,7 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
-	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
 	return blockMode
 }
 
@@ -262,7 +263,7 @@ func (ctx *EvalContext) GetTiDBRedactLog() string {
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *EvalContext) GetDefaultWeekFormatMode() string {
-	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(vardef.DefaultWeekFormat)
 	if !ok || mode == "" {
 		return "0"
 	}

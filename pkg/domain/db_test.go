@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -187,7 +187,7 @@ func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 		dbName := fmt.Sprintf("test_%d", i)
 		tk.MustExec("create database " + dbName)
 	}
-	variable.SchemaCacheSize.Store(1000000)
+	vardef.SchemaCacheSize.Store(1000000)
 
 	dbs, err = domain.FetchAllSchemasWithTables(m)
 	require.NoError(t, err)

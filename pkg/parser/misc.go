@@ -365,6 +365,7 @@ var tokenMap = map[string]int{
 	"ENFORCED":                 enforced,
 	"ENGINE":                   engine,
 	"ENGINES":                  engines,
+	"ENGINE_ATTRIBUTE":         engine_attribute,
 	"ENUM":                     enum,
 	"ERROR":                    errorKwd,
 	"ERRORS":                   identSQLErrors,

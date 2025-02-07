@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -310,7 +311,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
-	enableV2 := variable.SchemaCacheSize.Load() > 0
+	enableV2 := vardef.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
 	oldInfoSchema := do.infoCache.GetLatest()
 	if oldInfoSchema != nil {
@@ -503,7 +504,7 @@ const fetchSchemaConcurrency = 1
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+	if vardef.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
 		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupCnt = 8
 	}
@@ -532,7 +533,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if vardef.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
@@ -746,7 +747,7 @@ func (do *Domain) Store() kv.Storage {
 }
 
 // GetScope gets the status variables scope.
-func (*Domain) GetScope(string) variable.ScopeFlag {
+func (*Domain) GetScope(string) vardef.ScopeFlag {
 	// Now domain status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
 }
@@ -1056,7 +1057,7 @@ func (do *Domain) mdlCheckLoop() {
 			return
 		}
 
-		if !variable.EnableMDL.Load() {
+		if !vardef.EnableMDL.Load() {
 			continue
 		}
 
@@ -1357,7 +1358,7 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
@@ -1628,7 +1629,7 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 // - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
 func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
 	do.sysVarCache.RLock()
-	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
+	replicaRead := do.sysVarCache.global[vardef.TiDBReplicaRead]
 	do.sysVarCache.RUnlock()
 
 	if !strings.EqualFold(replicaRead, "closest-adaptive") {
@@ -2422,40 +2423,31 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
 	if do.statsLease <= 0 {
-		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
+		// For statsLease > 0, `gcStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
 		return nil
 	}
+	waitStartTask := func(do *Domain, fn func()) {
+		select {
+		case <-do.StatsHandle().InitStatsDone:
+		case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+			return
+		}
+		fn()
+	}
 	do.SetStatsUpdating(true)
+	// The asyncLoadHistogram/dumpColStatsUsageWorker/deltaUpdateTickerWorker doesn't require the stats initialization to be completed.
+	// This is because thos workers' primary responsibilities are to update the change delta and handle DDL operations.
+	// These tasks need to be in work mod as soon as possible to avoid the problem.
 	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
-	// The stats updated worker doesn't require the stats initialization to be completed.
-	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
-	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
+	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
+	do.wg.Run(do.dumpColStatsUsageWorker, "dumpColStatsUsageWorker")
+	do.wg.Run(func() { waitStartTask(do, do.gcStatsWorker) }, "gcStatsWorker")
+
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.autoAnalyzeWorker()
-		},
-		"autoAnalyzeWorker",
-	)
-	do.wg.Run(
-		func() {
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			do.analyzeJobsCleanupWorker()
-		},
-		"analyzeJobsCleanupWorker",
-	)
+	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
 	do.wg.Run(
 		func() {
 			// The initStatsCtx is used to store the internal session for initializing stats,
@@ -2637,60 +2629,66 @@ func (do *Domain) indexUsageWorker() {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
+func (do *Domain) gcStatsWorkerExitPreprocessing() {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
-		statsHandle.FlushStats()
-		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		logutil.BgLogger().Info("gcStatsWorker ready to release owner")
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
 	select {
 	case <-ch:
-		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
 		return
 	case <-timeout.Done():
-		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		logutil.BgLogger().Warn("gcStatsWorker exit preprocessing timeout, force exiting")
 		return
 	}
 }
 
-func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
-	logutil.BgLogger().Info("updateStatsWorker started.")
+func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("deltaUpdateTicker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("deltaUpdateTicker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("deltaUpdateTicker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (do *Domain) gcStatsWorker() {
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+	logutil.BgLogger().Info("gcStatsWorker started.")
 	lease := do.statsLease
-	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
-	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	updateStatsHealthyTicker := time.NewTicker(20 * lease)
 	readMemTicker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
-		dumpColStatsUsageTicker.Stop()
 		gcStatsTicker.Stop()
-		deltaUpdateTicker.Stop()
 		readMemTicker.Stop()
 		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
-		logutil.BgLogger().Info("updateStatsWorker exited.")
+		logutil.BgLogger().Info("gcStatsWorker exited.")
 	}()
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
 
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle)
+			do.gcStatsWorkerExitPreprocessing()
 			return
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
-			if err != nil {
-				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
-			}
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
 				continue
@@ -2700,16 +2698,57 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
 			do.CheckAutoAnalyzeWindows()
-		case <-dumpColStatsUsageTicker.C:
-			err := statsHandle.DumpColStatsUsageToKV()
-			if err != nil {
-				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
-			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
 			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) dumpColStatsUsageWorker() {
+	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
+	lease := do.statsLease
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	statsHandle := do.StatsHandle()
+	defer func() {
+		dumpColStatsUsageTicker.Stop()
+		logutil.BgLogger().Info("dumpColStatsUsageWorker exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "dumpColStatsUsageWorker", nil, false)
+
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-dumpColStatsUsageTicker.C:
+			err := statsHandle.DumpColStatsUsageToKV()
+			if err != nil {
+				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorker() {
+	defer util.Recover(metrics.LabelDomain, "deltaUpdateTickerWorker", nil, false)
+	logutil.BgLogger().Info("deltaUpdateTickerWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
+			}
 		}
 	}
 }
@@ -2741,7 +2780,7 @@ func (do *Domain) autoAnalyzeWorker() {
 			// the probability of this happening is very high that the ticker condition and exist condition will be met
 			// at the same time.
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
-			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
+			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
 		case <-do.exit:
@@ -3273,8 +3312,8 @@ func (do *Domain) StopAutoAnalyze() {
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
 func (do *Domain) InitInstancePlanCache() {
-	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-	softLimit := float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load())
+	hardLimit := vardef.InstancePlanCacheMaxMemSize.Load()
+	softLimit := float64(hardLimit) * (1 - vardef.InstancePlanCacheReservedPercentage.Load())
 	do.instancePlanCache = NewInstancePlanCache(int64(softLimit), hardLimit)
 	// use a separate goroutine to avoid the eviction blocking other operations.
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
@@ -3299,8 +3338,8 @@ func (do *Domain) planCacheMetricsAndVars() {
 		select {
 		case <-ticker.C:
 			// update limits
-			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-			softLimit := int64(float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load()))
+			hardLimit := vardef.InstancePlanCacheMaxMemSize.Load()
+			softLimit := int64(float64(hardLimit) * (1 - vardef.InstancePlanCacheReservedPercentage.Load()))
 			curSoft, curHard := do.instancePlanCache.GetLimits()
 			if curSoft != softLimit || curHard != hardLimit {
 				do.instancePlanCache.SetLimits(softLimit, hardLimit)
@@ -3331,7 +3370,7 @@ func (do *Domain) planCacheEvictTrigger() {
 		case <-ticker.C:
 			// trigger the eviction
 			begin := time.Now()
-			enabled := variable.EnableInstancePlanCache.Load()
+			enabled := vardef.EnableInstancePlanCache.Load()
 			detailInfo, numEvicted := do.instancePlanCache.Evict(!enabled) // evict all if the plan cache is disabled
 			metrics2.GetPlanCacheInstanceEvict().Set(float64(numEvicted))
 			if numEvicted > 0 {
@@ -3363,7 +3402,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
-	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
+	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
 	defer func() {
 		readTableCostTicker.Stop()
 		logutil.BgLogger().Info("readTableCostWorker exited.")
@@ -3371,7 +3410,7 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Ha
 	for {
 		select {
 		case <-readTableCostTicker.C:
-			if variable.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
+			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
 				wbLearningHandle.HandleReadTableCost()
 			}
 		case <-do.exit:

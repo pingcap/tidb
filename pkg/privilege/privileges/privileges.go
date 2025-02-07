@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -451,7 +452,7 @@ func checkAuthTokenClaims(claims map[string]any, record *UserRecord, tokenLife t
 
 // CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
-	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
+	isSandBoxModeEnabled := vardef.IsSandBoxModeEnabled.Load()
 	if record.PasswordExpired {
 		if isSandBoxModeEnabled {
 			return true, nil
@@ -461,7 +462,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 	if record.PasswordLifeTime != 0 {
 		lifeTime := record.PasswordLifeTime
 		if lifeTime == -1 {
-			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultPasswordLifetime)
 			if err != nil {
 				return false, err
 			}

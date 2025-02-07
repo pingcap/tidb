@@ -87,7 +87,7 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (_ *property.StatsInfo, err error) {
+func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ []bool) (_ *property.StatsInfo, _ bool, err error) {
 	return utilfuncp.DeriveStats4LogicalTableScan(ts)
 }
 
@@ -97,8 +97,8 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
-		for i := 0; i < ts.HandleCols.NumCols(); i++ {
-			cols[i] = ts.HandleCols.GetCol(i)
+		for i, c := range ts.HandleCols.IterColumns2() {
+			cols[i] = c
 		}
 		return [][]*expression.Column{cols}
 	}

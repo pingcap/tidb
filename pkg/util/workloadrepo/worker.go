@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -138,21 +139,21 @@ func init() {
 	executor.TakeSnapshot = takeSnapshot
 
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope: variable.ScopeGlobal,
+		Scope: vardef.ScopeGlobal,
 		Name:  repositoryDest,
-		Type:  variable.TypeStr,
+		Type:  vardef.TypeStr,
 		Value: "",
 		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.setRepositoryDest(ctx, val)
 		},
-		Validation: func(_ *variable.SessionVars, norm, _ string, _ variable.ScopeFlag) (string, error) {
+		Validation: func(_ *variable.SessionVars, norm, _ string, _ vardef.ScopeFlag) (string, error) {
 			return validateDest(norm)
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositoryRetentionDays,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defRententionDays),
 		MinValue: 0,
 		MaxValue: 365,
@@ -161,9 +162,9 @@ func init() {
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositorySamplingInterval,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defSamplingInterval),
 		MinValue: 0,
 		MaxValue: 600,
@@ -172,9 +173,9 @@ func init() {
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositorySnapshotInterval,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defSnapshotInterval),
 		MinValue: 900,
 		MaxValue: 7200,

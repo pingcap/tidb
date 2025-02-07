@@ -363,10 +363,39 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 		"test t global b 0 2 4",
 	))
 	testKit.MustExec("explain select * from t where a > 0 and b > 0")
-	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
+	testKit.MustQuery("show stats_topn where table_name = 't'").Sort().Check(testkit.Rows(
+		"test t global a 0 1 6",
+		"test t global b 0 2 4",
+		"test t p0 a 0 0 4",
+		"test t p0 b 0 3 3",
+		"test t p1 a 0 1 6",
+		"test t p1 b 0 2 3",
+		"test t p2 a 0 2 2",
+		"test t p2 b 0 1 2",
+	))
+	// column a is trival.
+	// column b:
+	//   TopN:
+	//   p0: b=3, occurs 3 times
+	//   p1: b=2, occurs 3 times
+	//   p2: b=1, occurs 2 times
+	//   Histogram:
+	//   p0: hist of b: [2, 2] count=repeat=2
+	//   p1: hist of b: [1, 3] count=2, repeat=3. [4, 4] count==repeat=1
+	// After merging global TopN, it should be 2 with 4 as the repeat.(constructed by p1's TopN and p0's histogram)
+	// Kicking it out, the remained buckets for b are:(consider TopN as a bucket whose lower bound is the same as upper bound and count is the same as repeat)
+	// [3, 3] count=repeat=4
+	// [1, 1] count=repeat=2
+	// [1, 3] count=1, repeat=0(merged into TopN)
+	// [4, 4] count=repeat=1
+	// Finally, get one global bucket [1, 4] count=8, repeat=1
+	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
 		"test t global a 0 0 4 4 0 0 0",
 		"test t global a 0 1 6 2 2 2 0",
-		"test t global b 0 0 10 1 1 4 0",
+		"test t global b 0 0 8 1 1 4 0",
+		"test t p0 b 0 0 1 1 2 2 0",
+		"test t p1 b 0 0 2 1 1 3 0",
+		"test t p1 b 0 1 3 1 4 4 0",
 	))
 }
 
