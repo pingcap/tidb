@@ -406,11 +406,6 @@ func (s *FDSet) AddEquivalence(from, to intset.FastIntSet) {
 	s.addEquivalence(from.Union(to))
 }
 
-// AddEquivalenceUnion exported for special case.
-func (s *FDSet) AddEquivalenceUnion(union intset.FastIntSet) {
-	s.addEquivalence(union)
-}
-
 // AddConstants adds a strict FD to the source which indicates that each of the given column
 // have the same constant value for all rows, or same null value for all rows if it's nullable.
 //
@@ -538,11 +533,6 @@ func (s *FDSet) AreColsEquiv(col1, col2 int) bool {
 		}
 	}
 	return false
-}
-
-// EquivalentClosure is used to check whether two col set are equivalent.
-func (s *FDSet) EquivalentClosure(from intset.FastIntSet) intset.FastIntSet {
-	return s.closureOfEquivalence(from)
 }
 
 // MakeNotNull modify the FD set based the listed column with NOT NULL flags.
