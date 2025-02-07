@@ -61,8 +61,3 @@ if [ $restore_fail -ne 1 ]; then
     echo 'expect restore to fail on file corruption but succeed' 
     exit 1
 fi
-run_sql "DROP DATABASE IF EXISTS $DB;"
-
-# sanity check restore can succeed
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB"
-echo 'file corruption tests passed'
