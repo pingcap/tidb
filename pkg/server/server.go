@@ -127,9 +127,8 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
-	userResLock            sync.RWMutex // userResLock used to protect userResource
-	userResource           map[string]*userResourceLimits
-	ConnNumByResourceGroup map[string]int
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
 
 	capability uint32
 	dom        *domain.Domain
