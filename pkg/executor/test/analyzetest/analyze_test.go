@@ -1444,9 +1444,9 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t global a 0 0 5 2 1 4 0",
-					"test t global a 0 1 12 2 17 17 0",
+					"test t global a 0 1 12 2 11 17 0",
 					"test t global c 0 0 6 1 2 6 0",
-					"test t global c 0 1 14 2 13 13 0",
+					"test t global c 0 1 14 2 7 13 0",
 					"test t p0 a 0 0 2 1 1 2 0",
 					"test t p0 a 0 1 3 1 3 3 0",
 					"test t p0 c 0 0 3 1 3 5 0",
@@ -1459,7 +1459,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t global idx 1 0 6 1 2 6 0",
-					"test t global idx 1 1 14 2 13 13 0",
+					"test t global idx 1 1 14 2 7 13 0",
 					"test t p0 idx 1 0 3 1 3 5 0",
 					"test t p0 idx 1 1 4 1 6 6 0",
 					"test t p1 idx 1 0 4 1 7 10 0",
@@ -2608,7 +2608,7 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
-	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
