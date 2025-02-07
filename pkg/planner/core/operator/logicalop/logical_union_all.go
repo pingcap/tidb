@@ -213,7 +213,7 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 	res.MakeNotNull(notNullCols)
 	// check the equivalency between children.
 	for i := 0; i < p.Schema().Len(); i++ {
-		for j := 1 + 1; j < p.Schema().Len(); j++ {
+		for j := i + 1; j < p.Schema().Len(); j++ {
 			// detect the equivalency between the i-th and j-th column.
 			flag := true
 			iID := int(p.schema.Columns[i].UniqueID)
@@ -238,6 +238,7 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 			}
 		}
 	}
+	p.fdSet = res
 	return res
 }
 
