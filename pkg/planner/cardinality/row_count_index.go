@@ -513,7 +513,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		l = 0
 	})
 	if l == 1 {
-		return singleColumnEstResults[0], 0, true, nil
+		return singleColumnEstResults[0], singleColumnEstResults[0], true, nil
 	} else if l == 0 {
 		return 0, 0, false, nil
 	}
