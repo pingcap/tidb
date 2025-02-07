@@ -97,7 +97,7 @@ func tryConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 	failpoint.Inject("MustMySQLPassword", func(val failpoint.Value) {
 		pwd := val.(string)
 		if cfg.Passwd != pwd {
-			failpoint.Return(nil, &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"})
+			failpoint.Return(nil, &mysql.MySQLError{Number: errno.ErrAccessDenied, Message: "access denied"})
 		}
 		failpoint.Return(nil, nil)
 	})
@@ -122,7 +122,7 @@ func ConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
 		return db, nil
 	}
 	// If access is denied and password is encoded by base64, try the decoded string as well.
-	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == errno.ErrAccessDenied {
 		// If password is encoded by base64, try the decoded string as well.
 		password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd)
 		if decodeErr == nil && string(password) != cfg.Passwd {

@@ -17,7 +17,7 @@ package plannererrors
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
@@ -86,6 +86,6 @@ func TestError(t *testing.T) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.Truef(t, code != mysql.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
+		require.Truef(t, code != errno.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
 	}
 }

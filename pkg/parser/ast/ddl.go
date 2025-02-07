@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/tidb"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -4005,21 +4005,21 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 var (
-	ErrNoParts                              = terror.ClassDDL.NewStd(mysql.ErrNoParts)
-	ErrPartitionColumnList                  = terror.ClassDDL.NewStd(mysql.ErrPartitionColumnList)
-	ErrPartitionRequiresValues              = terror.ClassDDL.NewStd(mysql.ErrPartitionRequiresValues)
-	ErrPartitionsMustBeDefined              = terror.ClassDDL.NewStd(mysql.ErrPartitionsMustBeDefined)
-	ErrPartitionWrongNoPart                 = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongNoPart)
-	ErrPartitionWrongNoSubpart              = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongNoSubpart)
-	ErrPartitionWrongValues                 = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongValues)
-	ErrRowSinglePartitionField              = terror.ClassDDL.NewStd(mysql.ErrRowSinglePartitionField)
-	ErrSubpartition                         = terror.ClassDDL.NewStd(mysql.ErrSubpartition)
-	ErrSystemVersioningWrongPartitions      = terror.ClassDDL.NewStd(mysql.ErrSystemVersioningWrongPartitions)
-	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
-	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
-	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
-	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(mysql.ErrCoalescePartitionNoPartition)
-	ErrWrongUsage                           = terror.ClassDDL.NewStd(mysql.ErrWrongUsage)
+	ErrNoParts                              = terror.ClassDDL.NewStd(errno.ErrNoParts)
+	ErrPartitionColumnList                  = terror.ClassDDL.NewStd(errno.ErrPartitionColumnList)
+	ErrPartitionRequiresValues              = terror.ClassDDL.NewStd(errno.ErrPartitionRequiresValues)
+	ErrPartitionsMustBeDefined              = terror.ClassDDL.NewStd(errno.ErrPartitionsMustBeDefined)
+	ErrPartitionWrongNoPart                 = terror.ClassDDL.NewStd(errno.ErrPartitionWrongNoPart)
+	ErrPartitionWrongNoSubpart              = terror.ClassDDL.NewStd(errno.ErrPartitionWrongNoSubpart)
+	ErrPartitionWrongValues                 = terror.ClassDDL.NewStd(errno.ErrPartitionWrongValues)
+	ErrRowSinglePartitionField              = terror.ClassDDL.NewStd(errno.ErrRowSinglePartitionField)
+	ErrSubpartition                         = terror.ClassDDL.NewStd(errno.ErrSubpartition)
+	ErrSystemVersioningWrongPartitions      = terror.ClassDDL.NewStd(errno.ErrSystemVersioningWrongPartitions)
+	ErrTooManyValues                        = terror.ClassDDL.NewStd(errno.ErrTooManyValues)
+	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(errno.ErrWrongPartitionTypeExpectedSystemTime)
+	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(errno.ErrUnknownCharacterSet)
+	ErrCoalescePartitionNoPartition         = terror.ClassDDL.NewStd(errno.ErrCoalescePartitionNoPartition)
+	ErrWrongUsage                           = terror.ClassDDL.NewStd(errno.ErrWrongUsage)
 )
 
 type SubPartitionDefinition struct {

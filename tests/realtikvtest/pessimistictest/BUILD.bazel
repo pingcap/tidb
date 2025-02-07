@@ -17,7 +17,6 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
-        "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/session",
         "//pkg/sessionctx/vardef",

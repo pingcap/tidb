@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -31,35 +32,35 @@ import (
 
 var (
 	// ErrSyntax returns for sql syntax error.
-	ErrSyntax = terror.ClassParser.NewStd(mysql.ErrSyntax)
+	ErrSyntax = terror.ClassParser.NewStd(errno.ErrSyntax)
 	// ErrParse returns for sql parse error.
-	ErrParse = terror.ClassParser.NewStd(mysql.ErrParse)
+	ErrParse = terror.ClassParser.NewStd(errno.ErrParse)
 	// ErrUnknownCharacterSet returns for no character set found error.
-	ErrUnknownCharacterSet = terror.ClassParser.NewStd(mysql.ErrUnknownCharacterSet)
+	ErrUnknownCharacterSet = terror.ClassParser.NewStd(errno.ErrUnknownCharacterSet)
 	// ErrInvalidYearColumnLength returns for illegal column length for year type.
-	ErrInvalidYearColumnLength = terror.ClassParser.NewStd(mysql.ErrInvalidYearColumnLength)
+	ErrInvalidYearColumnLength = terror.ClassParser.NewStd(errno.ErrInvalidYearColumnLength)
 	// ErrWrongArguments returns for illegal argument.
-	ErrWrongArguments = terror.ClassParser.NewStd(mysql.ErrWrongArguments)
+	ErrWrongArguments = terror.ClassParser.NewStd(errno.ErrWrongArguments)
 	// ErrWrongFieldTerminators returns for illegal field terminators.
-	ErrWrongFieldTerminators = terror.ClassParser.NewStd(mysql.ErrWrongFieldTerminators)
+	ErrWrongFieldTerminators = terror.ClassParser.NewStd(errno.ErrWrongFieldTerminators)
 	// ErrTooBigDisplayWidth returns for data display width exceed limit .
-	ErrTooBigDisplayWidth = terror.ClassParser.NewStd(mysql.ErrTooBigDisplaywidth)
+	ErrTooBigDisplayWidth = terror.ClassParser.NewStd(errno.ErrTooBigDisplaywidth)
 	// ErrTooBigPrecision returns for data precision exceed limit.
-	ErrTooBigPrecision = terror.ClassParser.NewStd(mysql.ErrTooBigPrecision)
+	ErrTooBigPrecision = terror.ClassParser.NewStd(errno.ErrTooBigPrecision)
 	// ErrUnknownAlterLock returns for no alter lock type found error.
-	ErrUnknownAlterLock = terror.ClassParser.NewStd(mysql.ErrUnknownAlterLock)
+	ErrUnknownAlterLock = terror.ClassParser.NewStd(errno.ErrUnknownAlterLock)
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
-	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)
+	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(errno.ErrUnknownAlterAlgorithm)
 	// ErrWrongValue returns for wrong value
-	ErrWrongValue = terror.ClassParser.NewStd(mysql.ErrWrongValue)
+	ErrWrongValue = terror.ClassParser.NewStd(errno.ErrWrongValue)
 	// ErrWarnDeprecatedSyntax return when the syntax was deprecated
-	ErrWarnDeprecatedSyntax = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntax)
+	ErrWarnDeprecatedSyntax = terror.ClassParser.NewStd(errno.ErrWarnDeprecatedSyntax)
 	// ErrWarnDeprecatedSyntaxNoReplacement return when the syntax was deprecated and there is no replacement.
-	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
+	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(errno.ErrWarnDeprecatedSyntaxNoReplacement)
 	// ErrWrongUsage returns for incorrect usages.
-	ErrWrongUsage = terror.ClassParser.NewStd(mysql.ErrWrongUsage)
+	ErrWrongUsage = terror.ClassParser.NewStd(errno.ErrWrongUsage)
 	// ErrWrongDBName returns for incorrect DB name.
-	ErrWrongDBName = terror.ClassParser.NewStd(mysql.ErrWrongDBName)
+	ErrWrongDBName = terror.ClassParser.NewStd(errno.ErrWrongDBName)
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
