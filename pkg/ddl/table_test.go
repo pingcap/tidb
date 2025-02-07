@@ -827,12 +827,12 @@ func TestIssue59238(t *testing.T) {
 		" PARTITION p2 VALUES LESS THAN (20000)," +
 		" PARTITION p3 VALUES LESS THAN (MAXVALUE))")
 
-	rs := tk.MustQuery("select create_time from information_schema.partitions where table_name = 't' limit 1").String()
+	rs := tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").String()
 
 	tk.MustExec("alter table t truncate partition p1")
-	require.True(t, tk.MustQuery("select create_time from information_schema.partitions where table_name = 't' limit 1").Equal(testkit.Rows(rs)))
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
 
 	tk.MustExec("create table t1 (a int, b int, index idx(b))")
 	tk.MustExec("alter table t exchange partition p1 with table t1")
-	require.True(t, tk.MustQuery("select create_time from information_schema.partitions where table_name = 't' limit 1").Equal(testkit.Rows(rs)))
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
 }
