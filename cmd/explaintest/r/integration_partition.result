@@ -1,0 +1,19 @@
+drop table if exists t;
+CREATE TABLE `t` (`tenant_id` bigint(20) NOT NULL DEFAULT '0',`order_id` bigint(20) NOT NULL DEFAULT '0',UNIQUE KEY `uk_ten_ord` (`order_id`, `tenant_id`))  PARTITION BY HASH(`tenant_id`) PARTITIONS 32;
+INSERT INTO t(tenant_id, order_id) VALUES (123, 456);
+select * from t where (tenant_id, order_id) in (('123','456'));
+tenant_id	order_id
+123	456
+select * from t where (tenant_id, order_id) in (('0123','456'));
+tenant_id	order_id
+123	456
+drop table t;
+CREATE TABLE `t` (`tenant_id` bigint(20) NOT NULL DEFAULT '0',`order_id` bigint(20) NOT NULL DEFAULT '0',UNIQUE KEY `uk_ten_ord` (`order_id`, `tenant_id`));
+INSERT INTO t(tenant_id, order_id) VALUES (123, 456);
+select * from t where (tenant_id, order_id) in (('123','456'));
+tenant_id	order_id
+123	456
+select * from t where (tenant_id, order_id) in (('0123','456'));
+tenant_id	order_id
+123	456
+drop table t;
