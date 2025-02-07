@@ -810,7 +810,7 @@ analyze table t partition p1 index idxb;
 analyze table t partition p2 index idxc;
 SHOW WARNINGS WHERE Level IN ('Warning', 'Error');
 analyze table t partition p0;
-show warnings;
+SHOW WARNINGS WHERE Level IN ('Warning', 'Error');
 set tidb_partition_prune_mode=default;
 
 
