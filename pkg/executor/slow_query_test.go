@@ -263,6 +263,7 @@ select * from t;
 	slowLog = bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # DB: a: b
+# Index_names: [t:i: a]
 # Succ: true
 select * from t;
 `)
@@ -272,6 +273,8 @@ select * from t;
 	require.Len(t, rows, 1)
 	value, _ := rows[0][41].ToString()
 	require.Equal(t, value, "a: b")
+	value, _ = rows[0][42].ToString()
+	require.Equal(t, value, "[t:i: a]")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
