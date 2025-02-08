@@ -258,6 +258,20 @@ select * from t;
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.Equal(t, warnings[0].Err.Error(), "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
+
+	// issue 39940
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# DB: a: b
+# Succ: true
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	value, _ := rows[0][41].ToString()
+	require.Equal(t, value, "a: b")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
