@@ -312,7 +312,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					}
 				}))
 			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
-				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func() { cancel() }))
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(*model.DDLReorgMeta) { cancel() }))
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}

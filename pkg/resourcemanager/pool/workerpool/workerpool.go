@@ -163,9 +163,11 @@ func (p *WorkerPool[T, R]) runAWorker() {
 					return
 				}
 				p.handleTaskWithRecover(w, task)
-			case cfg := <-p.quitChan:
+			case cfg, ok := <-p.quitChan:
 				w.Close()
-				cfg.wg.Done()
+				if ok {
+					cfg.wg.Done()
+				}
 				return
 			case <-p.ctx.Done():
 				w.Close()
@@ -190,6 +192,7 @@ func (p *WorkerPool[T, R]) GetResultChan() <-chan R {
 
 // Tune tunes the pool to the specified number of workers.
 // wait: whether to wait for all workers to close when reducing workers count.
+// this method can only be called after Start.
 func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	if numWorkers <= 0 {
 		numWorkers = 1

@@ -208,7 +208,8 @@ func (r *readIndexExecutor) ResourceModified(ctx context.Context, newResource *p
 		return goerrors.New("not support modify resource for global sort")
 	}
 	pipe := r.currPipe.Load()
-	if pipe == nil {
+	// Tune of work pool can only be called after start.
+	if pipe == nil || !pipe.IsStarted() {
 		// let framework retry
 		return goerrors.New("no subtask running")
 	}
@@ -227,7 +228,7 @@ func (r *readIndexExecutor) ResourceModified(ctx context.Context, newResource *p
 }
 
 func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
-	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
 	}
