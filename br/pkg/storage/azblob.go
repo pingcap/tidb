@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -22,6 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -39,9 +41,11 @@ const (
 	azblobSASToken         = "azblob.sas-token"
 	azblobEncryptionScope  = "azblob.encryption-scope"
 	azblobEncryptionKey    = "azblob.encryption-key"
-)
 
-const azblobRetryTimes int32 = 5
+	azblobRetryTimes int32 = 5
+
+	azblobSASURLTTL = time.Minute
+)
 
 func getDefaultClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
@@ -364,9 +368,10 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 			"AzureBlobStorage.CopyFrom supports *AzureBlobStorage only, got %T", e)
 	}
 
-	url, err := urlOfObjectByEndpoint(es.resolvedServiceEndpoint, es.options.Bucket, es.withPrefix(spec.From))
+	url, err := es.containerClient.NewBlobClient(es.withPrefix(spec.From)).
+		GetSASURL(sas.BlobPermissions{Read: true}, time.Now().Add(azblobSASURLTTL), &blob.GetSASURLOptions{})
 	if err != nil {
-		return errors.Annotatef(err, "failed to get url of object %s", spec.From)
+		return errors.Annotatef(err, "failed to get SAS url of bucket %s", es.options.Bucket)
 	}
 	dstBlob := s.containerClient.NewBlobClient(s.withPrefix(spec.To))
 
