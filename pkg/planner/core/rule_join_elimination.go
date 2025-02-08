@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // OuterJoinEliminator is used to eliminate outer join.
@@ -52,9 +53,9 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
-	outerUniqueIDs := set.NewInt64Set()
+	outerUniqueIDs := intset.NewFastIntSet()
 	for _, outerCol := range outerPlan.Schema().Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
+		outerUniqueIDs.Insert(int(outerCol.UniqueID))
 	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
@@ -62,14 +63,14 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	// In fact, we only care about whether there is any column from inner
 	// table, if there is none, we are good.
 	if len(parentCols) > 0 {
-		matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
+		matched := ruleutil.IsColsAllFromOuterTable(parentCols, &outerUniqueIDs)
 		if !matched {
 			return p, false, nil
 		}
 	}
 
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched := IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
+	matched := ruleutil.IsColsAllFromOuterTable(aggCols, &outerUniqueIDs)
 	if matched {
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil
@@ -103,22 +104,6 @@ func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, in
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
 	}
 	return expression.NewSchema(joinKeys...)
-}
-
-// IsColsAllFromOuterTable check whether the cols all from outer plan
-func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
-	// There are two cases "return false" here:
-	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
-	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
-	if len(cols) == 0 {
-		return false
-	}
-	for _, col := range cols {
-		if !outerUniqueIDs.Exist(col.UniqueID) {
-			return false
-		}
-	}
-	return true
 }
 
 // check whether one of unique keys sets is contained by inner join keys
