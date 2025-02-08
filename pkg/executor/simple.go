@@ -1974,6 +1974,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if userResource.maxUserConnections >= 0 {
+			// need `CREATE USER` privilege for the operation of modifying max_user_connections.
+			if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
 			fields = append(fields, alterField{"max_user_connections=%?", userResource.maxUserConnections})
 		}
 
