@@ -1131,6 +1131,22 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
+	// Fill memory usage info
+	if sourceType == mydump.SourceTypeParquet {
+		_, memoryUsage, _, err := mydump.SampleParquetFileProperty(ctx, *dataFiles[0], e.dataStore)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, dataFile := range dataFiles {
+			// To reduce the memory usage, we only use streaming mode to read file.
+			dataFile.ParquetMeta = mydump.ParquetFileMeta{
+				MemoryUsage:        memoryUsage,
+				UseStreaming:       true,
+				UseSampleAllocator: false,
+			}
+		}
+	}
+
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
@@ -1225,11 +1241,12 @@ func (e *LoadDataController) GetParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = mydump.NewParquetParserWithMeta(
 			ctx,
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {

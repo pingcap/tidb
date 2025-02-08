@@ -15,6 +15,7 @@
 package mydump
 
 import (
+	"math"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -23,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -40,6 +42,9 @@ var (
 	maxArenaCount    = 0         // maximum arena count
 	defaultArenaSize = 256 << 20 // size of each arena
 
+	memLimit   int             // memory limit for parquet reader
+	memLimiter *membuf.Limiter // memory limiter for parquet reader
+
 	// AllocSize returns actual allocated size in arena
 	AllocSize func(int) int
 
@@ -47,9 +52,32 @@ var (
 	GetArena func(int) arena
 )
 
+// SetMemoryLimitForParquet set the memory limit for parquet reader and create a global memory pool if necessary.
+func SetMemoryLimitForParquet(percent int, useGlobal bool) {
+	memTotal, err := tidbmemory.MemTotal()
+	if err != nil {
+		// Set limit to int max, which means no limiter
+		memTotal = math.MaxInt32
+	}
+	memLimit = int(memTotal) * min(percent, 90) / 100
+	memLimiter = membuf.NewLimiter(memLimit)
+	if useGlobal {
+		InitializeGlobalArena(memLimit)
+	}
+
+	log.L().Info("set memory limit",
+		zap.Int("total memory", int(memTotal)),
+		zap.Int("memory limit", int(memLimit)),
+	)
+}
+
 func init() {
 	AllocSize = simpleGetAllocationSize
 	GetArena = getSimpleAllocator
+
+	// This is used for `IMPORT INTO``.
+	// We set the default memory usage to 40% and don't use a global arena pool.
+	SetMemoryLimitForParquet(40, false)
 }
 
 // Get the address of a buffer, return 0 if the buffer is nil
@@ -59,11 +87,6 @@ func addressOf(buf []byte) uintptr {
 	}
 	buf = buf[:1]
 	return uintptr(unsafe.Pointer(&buf[0]))
-}
-
-// GetArenaSize return the default arena size
-func GetArenaSize() int {
-	return defaultArenaSize
 }
 
 // arena is the interface of single allocator

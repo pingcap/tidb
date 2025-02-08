@@ -31,9 +31,11 @@ import (
 	"github.com/joechenrh/arrow-go/v18/parquet/file"
 	"github.com/joechenrh/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
+	"go.uber.org/zap"
 )
 
 const (
@@ -391,13 +393,16 @@ type ParquetParser struct {
 	curRowGroup   int
 	totalRowGroup int
 
-	curRowInGroup    int
-	totalRowsInGroup int
-	curRows          int
-	totalRows        int
+	curRowInGroup    int // number of rows read in current group
+	totalRowsInGroup int // total rows in current group
+	curRows          int // number of rows read in total
+	totalRows        int // total rows in this file
 
 	lastRow Row
 	logger  log.Logger
+
+	memoryUsage int
+	memLimiter  *membuf.Limiter
 }
 
 // GetMemoryUsage estimate the memory usage for this file.
@@ -799,6 +804,7 @@ func (pp *ParquetParser) Close() error {
 	if a, ok := pp.alloc.(interface{ Close() }); ok {
 		a.Close()
 	}
+	pp.memLimiter.Release(pp.memoryUsage)
 	return nil
 }
 
@@ -1034,6 +1040,27 @@ func NewParquetParserWithMeta(
 	path string,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
+	// Acquire memory limiter first
+	var memoryUsage int
+	if meta.UseSampleAllocator {
+		memoryUsage = 0
+		meta.UseStreaming = true
+	} else if meta.MemoryUsageFull < defaultArenaSize {
+		memoryUsage = meta.MemoryUsageFull
+		meta.UseStreaming = false
+	} else {
+		memoryUsage = meta.MemoryUsage
+		meta.UseStreaming = true
+	}
+	memoryUsage = min(memoryUsage, memLimit)
+	memLimiter.Acquire(memoryUsage)
+	log.FromContext(ctx).Info("Get memory usage of parquet reader",
+		zap.String("file", path),
+		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+		zap.Bool("streaming mode", meta.UseStreaming),
+		zap.Bool("use sample allocator", meta.UseSampleAllocator),
+	)
+
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
 		wrapper = &parquetFileWrapper{
@@ -1083,6 +1110,7 @@ func NewParquetParserWithMeta(
 	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
 		var newWrapper parquet.ReaderAtSeeker
+		// If use streaming mode, we will open file for each column.
 		if meta.UseStreaming {
 			newWrapper, err = wrapper.Open("")
 			if err != nil {
@@ -1104,6 +1132,8 @@ func NewParquetParserWithMeta(
 		columnNames: columnNames,
 		alloc:       allocator,
 		logger:      log.FromContext(ctx),
+		memoryUsage: memoryUsage,
+		memLimiter:  memLimiter,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)

@@ -546,7 +546,7 @@ func (rc *Controller) Close() {
 func (rc *Controller) Run(ctx context.Context) error {
 	failpoint.Inject("beforeRun", func() {})
 
-	setMemoryLimitForParquet(rc.cfg.App.MaxMemoryUsage)
+	mydump.SetMemoryLimitForParquet(rc.cfg.App.MaxMemoryUsage, true)
 
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
