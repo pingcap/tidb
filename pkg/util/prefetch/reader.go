@@ -54,6 +54,7 @@ func (r *Reader) run() {
 	for {
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
+		// TODO: should use ReadFull
 		n, err := r.r.Read(buf)
 		buf = buf[:n]
 		select {

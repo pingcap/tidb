@@ -114,6 +114,9 @@ type ReaderOption struct {
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int
+	// RecreateWhenSlow will recreate the reader when we suspect the reader's
+	// connection is stuck. Currently only used in S3.
+	RecreateWhenSlow bool
 }
 
 type Copier interface {

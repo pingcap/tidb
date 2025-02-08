@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -1392,7 +1393,7 @@ func TestS3StorageBucketRegion(t *testing.T) {
 
 func TestRetryError(t *testing.T) {
 	var count int32 = 0
-	var errString string = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
+	var errString = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
 	var lock sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PUT" {
@@ -1498,4 +1499,81 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	// other function will throw error
 	require.ErrorContains(t, err, "ContentRange is empty")
 	require.Nil(t, reader)
+}
+
+type slowReader struct {
+	ctx   context.Context
+	sleep time.Duration
+	data  []byte
+}
+
+func (r *slowReader) Read(p []byte) (n int, err error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	case <-time.After(r.sleep):
+	}
+	n = copy(p, r.data)
+	return
+}
+
+func TestS3SlowConnRecreateReader(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := context.Background()
+
+	slowDuration := time.Second
+
+	// check not enable RecreateWhenSlow
+	s.s3.EXPECT().
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ *s3.GetObjectInput, _ ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentLength: aws.Int64(4),
+				Body: io.NopCloser(&slowReader{
+					ctx:   ctx,
+					sleep: slowDuration,
+					data:  []byte("test"),
+				}),
+			}, nil
+		})
+
+	reader, err := s.storage.Open(ctx, "test", nil)
+	require.NoError(t, err)
+	now := time.Now()
+	buf := make([]byte, 4)
+	_, err = reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, "test", string(buf))
+	require.GreaterOrEqual(t, time.Since(now), slowDuration)
+
+	// check enable RecreateWhenSlow
+	s.s3.EXPECT().
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ *s3.GetObjectInput, _ ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentLength: aws.Int64(4),
+				Body: io.NopCloser(&slowReader{
+					ctx:   ctx,
+					sleep: slowDuration,
+					data:  []byte("test"),
+				}),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentLength: aws.Int64(4),
+				Body:          io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+
+	reader, err = s.storage.Open(ctx, "test", &ReaderOption{RecreateWhenSlow: true})
+	require.NoError(t, err)
+	now = time.Now()
+	buf = make([]byte, 4)
+	_, err = reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, "test", string(buf))
+	require.Less(t, time.Since(now), slowDuration)
 }
