@@ -2434,7 +2434,7 @@ func (ds *datumsSorter) Swap(i, j int) {
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
 	builder := &strings.Builder{}
- builder.Grow(8 * n)
+	builder.Grow(8 * n)
 	if n > 1 {
 		builder.WriteString("(")
 	}
