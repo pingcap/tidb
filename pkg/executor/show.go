@@ -372,7 +372,9 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';",
+			bindinfo.StatusEnabled, bindinfo.StatusUsing))
 	if err != nil {
 		return errors.Trace(err)
 	}
