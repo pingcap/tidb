@@ -786,7 +786,7 @@ func (b *Backend) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig,
 	if err != nil {
 		return nil, err
 	}
-	cache, err := newChunkCache(engine.loadDataTaskID, writerID, b.chunkCacheDir, b.chunkCacheInMem)
+	cache, err := newChunksCache(engine.loadDataTaskID, writerID, b.chunkCacheDir, b.chunkCacheInMem)
 	if err != nil {
 		return nil, err
 	}

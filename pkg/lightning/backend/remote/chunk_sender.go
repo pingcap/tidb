@@ -85,7 +85,7 @@ type chunkSender struct {
 
 	e           *engine
 	httpClient  *http.Client
-	chunksCache *chunkCache
+	chunksCache *chunksCache
 	logger      log.Logger
 
 	// state is used to record the state of the chunks in remote worker.
@@ -102,7 +102,7 @@ type chunkSender struct {
 	err error
 }
 
-func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache *chunkCache) *chunkSender {
+func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache *chunksCache) *chunkSender {
 	ctx, cancel := context.WithCancel(ctx)
 	c := &chunkSender{
 		id: id,
@@ -239,7 +239,6 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 }
 
 func (c *chunkSender) putEmptyChunk(ctx context.Context) error {
-	// Using an empty chunk to get the chunk state from the remote worker.
 	chunk := &chunk{id: c.getLastChunkID(), data: nil}
 	return c.putChunkToRemote(ctx, chunk)
 }
@@ -273,6 +272,10 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 	return nil
 }
 
+// handlePutChunkResult handles the result of put chunk request.
+// Chunks are sent to remote workers in sequence according to chunk id. If the remote worker restarts,
+// the chunk id handled by the remote worker may be less than the expected chunk id, and remote worker will reject the chunk.
+// In this case, we need to retry sending chunks from the handled chunk id to the expected chunk id.
 func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
 		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
@@ -378,8 +381,8 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			return nil
 		}
 
-		// The remote don't flush all chunks, we need to put chunk again.
-		// Here, we put an empty chunk to get the `PutChunkResult` to start the put chunk process.
+		// The remote worker missed some chunks, we need to retry putting chunks.
+		// We put an empty chunk to get the `PutChunkResult` to start the put chunk process.
 		// Then we flush again.
 		err = c.putEmptyChunk(ctx)
 		if err != nil {

@@ -25,24 +25,29 @@ import (
 	"github.com/pingcap/errors"
 )
 
-type chunkMeta struct {
-	// if usingMem is true, chunkData will be used.
+type cacheData struct {
+	// If `usingMem`` is true, chunkData will be used, and the chunk data will be stored in memory.
+	// Otherwise, the chunk data will be stored in a file.
+	//
+	// The default value of `usingMem` is false.
+	// We found when the concurrency is high(means that there are many `chunk_sender`), writing to the file system is slow.
+	// So we add a new parameter `usingMem` to control whether to store the chunk data in memory.
 	chunkData []byte
 	size      int
 	checksum  uint32
 }
 
-// chunkCache is a simple cache for chunks.
-type chunkCache struct {
-	chunks   map[uint64]chunkMeta // chunkID -> chunkMeta
+// chunksCache is a simple cache for chunks.
+type chunksCache struct {
+	chunks   map[uint64]cacheData // chunkID -> cacheData
 	baseDir  string
 	usingMem bool
 }
 
-func newChunkCache(loadDataTaskID string, writerID uint64, basePath string, usingMem bool) (*chunkCache, error) {
+func newChunksCache(loadDataTaskID string, writerID uint64, basePath string, usingMem bool) (*chunksCache, error) {
 	if usingMem {
-		return &chunkCache{
-			chunks:   map[uint64]chunkMeta{},
+		return &chunksCache{
+			chunks:   map[uint64]cacheData{},
 			usingMem: true,
 		}, nil
 	}
@@ -60,13 +65,13 @@ func newChunkCache(loadDataTaskID string, writerID uint64, basePath string, usin
 	if err != nil {
 		return nil, err
 	}
-	return &chunkCache{
-		chunks:  map[uint64]chunkMeta{},
+	return &chunksCache{
+		chunks:  map[uint64]cacheData{},
 		baseDir: baseDir,
 	}, nil
 }
 
-func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
+func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 	meta, ok := c.chunks[chunkID]
 	if !ok {
 		return nil, errors.Errorf("chunk-%d not found", chunkID)
@@ -97,9 +102,9 @@ func (c *chunkCache) get(chunkID uint64) ([]byte, error) {
 	return buf, file.Close()
 }
 
-func (c *chunkCache) put(chunkID uint64, buf []byte) error {
+func (c *chunksCache) put(chunkID uint64, buf []byte) error {
 	if c.usingMem {
-		c.chunks[chunkID] = chunkMeta{chunkData: buf}
+		c.chunks[chunkID] = cacheData{chunkData: buf}
 		return nil
 	}
 
@@ -123,11 +128,11 @@ func (c *chunkCache) put(chunkID uint64, buf []byte) error {
 		buf = buf[n:]
 	}
 
-	c.chunks[chunkID] = chunkMeta{size: len(buf), checksum: checksum}
+	c.chunks[chunkID] = cacheData{size: len(buf), checksum: checksum}
 	return file.Close()
 }
 
-func (c *chunkCache) clean(chunkID uint64) error {
+func (c *chunksCache) clean(chunkID uint64) error {
 	delete(c.chunks, chunkID)
 	if c.usingMem {
 		return nil
@@ -137,7 +142,7 @@ func (c *chunkCache) clean(chunkID uint64) error {
 	return os.Remove(fileName)
 }
 
-func (c *chunkCache) close() error {
+func (c *chunksCache) close() error {
 	c.chunks = nil
 	if c.usingMem {
 		return nil
@@ -146,7 +151,7 @@ func (c *chunkCache) close() error {
 	return os.RemoveAll(c.baseDir)
 }
 
-func (c *chunkCache) getChunkFilePath(chunkID uint64) string {
+func (c *chunksCache) getChunkFilePath(chunkID uint64) string {
 	return filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
 }
 
