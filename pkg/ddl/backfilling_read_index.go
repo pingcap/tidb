@@ -181,7 +181,7 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+func (r *readIndexExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
 	if r.isGlobalSort() {
 		return goerrors.New("not support modify task meta for global sort")
 	}
@@ -203,7 +203,7 @@ func (r *readIndexExecutor) TaskMetaModified(ctx context.Context, newMeta []byte
 	return nil
 }
 
-func (r *readIndexExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+func (r *readIndexExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
 	if r.isGlobalSort() {
 		return goerrors.New("not support modify resource for global sort")
 	}
