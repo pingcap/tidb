@@ -25,17 +25,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
-func writeBytesStatsToString(buf *bytes.Buffer, convertedBytes []int64) string {
+func writeBytesStatsToString(buf *bytes.Buffer, convertedBytes []int64) {
 	buf.WriteString("[")
 	for i, byte := range convertedBytes {
 		if i == 0 {
-			buf.WriteString(fmt.Sprintf("%.2f", util.ByteToGiB(float64(byte))))
+			fmt.Fprintf(buf, "%.2f", util.ByteToGiB(float64(byte)))
 		} else {
-			buf.WriteString(fmt.Sprintf(" %.2f", util.ByteToGiB(float64(byte))))
+			fmt.Fprintf(buf, " %.2f", util.ByteToGiB(float64(byte)))
 		}
 	}
 	buf.WriteString("]")
-	return buf.String()
 }
 
 type hashJoinRuntimeStats struct {
