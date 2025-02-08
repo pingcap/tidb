@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "remote",
     srcs = [
-        "chunk.go",
+        "cache.go",
         "chunk_sender.go",
         "remote.go",
         "util.go",
@@ -42,8 +42,8 @@ go_test(
     name = "remote_test",
     timeout = "short",
     srcs = [
+        "cache_test.go",
         "chunk_sender_test.go",
-        "chunk_test.go",
     ],
     embed = [":remote"],
     flaky = True,
