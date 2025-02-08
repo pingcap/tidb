@@ -238,6 +238,10 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 	}
 }
 
+// putEmptyChunk sends an empty chunk to remote worker to get remote worker's state.
+//
+// The remote worker will not accept the empty chunk and just return the latest handled chunk id and flushed chunk id.
+// If the remote worker restarts, the remote worker may not have the latest flushed chunk id, so we can retry sending chunks.
 func (c *chunkSender) putEmptyChunk(ctx context.Context) error {
 	chunk := &chunk{id: c.getLastChunkID(), data: nil}
 	return c.putChunkToRemote(ctx, chunk)
@@ -246,6 +250,7 @@ func (c *chunkSender) putEmptyChunk(ctx context.Context) error {
 func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error {
 	if len(chunk.data) != 0 {
 		// Cache the chunk data to avoid the data being lost when the remote worker restarts.
+		// If the remote worker restarts, we can retry sending chunks from cache.
 		err := c.chunksCache.put(chunk.id, chunk.data)
 		if err != nil {
 			return errors.Trace(err)
@@ -273,6 +278,7 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 }
 
 // handlePutChunkResult handles the result of put chunk request.
+//
 // Chunks are sent to remote workers in sequence according to chunk id. If the remote worker restarts,
 // the chunk id handled by the remote worker may be less than the expected chunk id, and remote worker will reject the chunk.
 // In this case, we need to retry sending chunks from the handled chunk id to the expected chunk id.
@@ -317,6 +323,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 	}
 
 	state := c.state.Load()
+	// We can clean the cache of chunks that the remote worker has handled.
 	lastFlushedChunkID := state.FlushedChunkID + 1
 	for lastFlushedChunkID <= result.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
