@@ -133,9 +133,7 @@ func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result := FlushResult{
-			FlushedChunkIDs: map[uint64]uint64{
-				uint64(writerID): h.flushedChunkID,
-			},
+			FlushedChunkID: h.flushedChunkID,
 		}
 		bytes, err := json.Marshal(result)
 		if err != nil {
