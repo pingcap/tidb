@@ -65,6 +65,36 @@ func (c *mockClient) Notify(_ context.Context, typ string, data string) error {
 	for _, ch := range c.notificationWatchers[typ] {
 		ch <- clientv3.WatchResponse{}
 	}
+<<<<<<< HEAD:ttl/client/notification.go
+=======
+
+	var unsent []chan clientv3.WatchResponse
+loop:
+	for i, ch := range watchers {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ch <- clientv3.WatchResponse{}:
+		default:
+			unsent = make([]chan clientv3.WatchResponse, len(watchers))
+			copy(unsent, watchers[i:])
+			break loop
+		}
+	}
+
+	if len(unsent) > 0 {
+		go func() {
+			for _, ch := range unsent {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- clientv3.WatchResponse{}:
+				}
+			}
+		}()
+	}
+
+>>>>>>> b7aafa67ec2 (ttl: fix the issue that the TTL jobs are skipped or handled multiple times in one iteration (#59348)):pkg/ttl/client/notification.go
 	return nil
 }
 
