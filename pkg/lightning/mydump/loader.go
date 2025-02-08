@@ -18,8 +18,11 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -259,6 +262,12 @@ type mdLoaderSetup struct {
 	sampledParquetRowSizes        map[string]float64
 	sampledParquetMemoryUsage     map[string]int // sampled memory usage for streaming parquet read
 	sampledParquetMemoryUsageFull map[string]int // sampled memory usage for non-streaming parquet read
+
+	allFiles        []string
+	dbSchemasMap    sync.Map
+	tableSchemasMap sync.Map
+	viewSchemasMap  sync.Map
+	tableDatasMap   sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -400,6 +409,7 @@ type ExtendColumnData struct {
 // at the latest, which to avoid large table take a long time to import and block
 // small table to release index worker.
 func (s *mdLoaderSetup) setup(ctx context.Context) error {
+	startTime := time.Now()
 	/*
 		Mydumper file names format
 			db    —— {db}-schema-create.sql
@@ -411,12 +421,44 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if fileIter == nil {
 		return errors.New("file iterator is not defined")
 	}
-	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
+	if err := fileIter.IterateFiles(ctx, s.collectFiles); err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
 	}
+
+	parallelCount := runtime.NumCPU() * 2
+	var wg sync.WaitGroup
+	errChan := make(chan error, parallelCount)
+
+	fileChan := make(chan string, len(s.allFiles))
+	for _, file := range s.allFiles {
+		fileChan <- file
+	}
+	close(fileChan)
+
+	for i := 0; i < parallelCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range fileChan {
+				if err := s.constructFileInfo(ctx, path, 0); err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	close(errChan)
+	if len(errChan) > 0 {
+		return <-errChan
+	}
+
+	log.FromContext(ctx).Info("setup completed", zap.Duration("duration", time.Since(startTime)))
+
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
 	}
@@ -510,6 +552,11 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	return errors.Trace(err)
 }
 
+func (s *mdLoaderSetup) collectFiles(ctx context.Context, path string, _ int64) error {
+	s.allFiles = append(s.allFiles, path)
+	return nil
+}
+
 func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size int64) error {
 	logger := log.FromContext(ctx).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
@@ -534,11 +581,11 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 
 	switch res.Type {
 	case SourceTypeSchemaSchema:
-		s.dbSchemas = append(s.dbSchemas, info)
+		s.dbSchemasMap.Store(path, info)
 	case SourceTypeTableSchema:
-		s.tableSchemas = append(s.tableSchemas, info)
+		s.tableSchemasMap.Store(path, info)
 	case SourceTypeViewSchema:
-		s.viewSchemas = append(s.viewSchemas, info)
+		s.viewSchemasMap.Store(path, info)
 	case SourceTypeSQL, SourceTypeCSV:
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
@@ -550,40 +597,41 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
 			}
 		}
-		s.tableDatas = append(s.tableDatas, info)
+		s.tableDatasMap.Store(path, info)
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
-		if s.sampledParquetRowSizes[tableName] == 0 {
-			s.sampledParquetRowSizes[tableName],
-				s.sampledParquetMemoryUsage[tableName],
-				s.sampledParquetMemoryUsageFull[tableName],
-				err = SampleParquetFileProperty(ctx, info.FileMeta, s.loader.GetStore())
-			if err != nil {
-				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err))
-				return errors.Trace(err)
-			}
+		// if s.sampledParquetRowSizes[tableName] == 0 {
+		// 	s.sampledParquetRowSizes[tableName],
+		// 		s.sampledParquetMemoryUsage[tableName],
+		// 		s.sampledParquetMemoryUsageFull[tableName],
+		// 		err = SampleParquetFileProperty(ctx, info.FileMeta, s.loader.GetStore())
+		// 	if err != nil {
+		// 		logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
+		// 			zap.String("schema", res.Schema), zap.String("table", res.Name),
+		// 			zap.Stringer("type", res.Type), zap.Error(err))
+		// 		return errors.Trace(err)
+		// 	}
+		// }
+		// if s.sampledParquetRowSizes[tableName] != 0 {
+		totalRowCount, err := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
+		if err != nil {
+			logger.Error("fail to get file total row count", zap.String("category", "loader"),
+				zap.String("schema", res.Schema), zap.String("table", res.Name),
+				zap.Stringer("type", res.Type), zap.Error(err))
+			return errors.Trace(err)
 		}
-		if s.sampledParquetRowSizes[tableName] != 0 {
-			totalRowCount, err := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
-			if err != nil {
-				logger.Error("fail to get file total row count", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err))
-				return errors.Trace(err)
-			}
-			info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
-			info.FileMeta.ParquetMeta.Rows = totalRowCount
-			if m, ok := metric.FromContext(ctx); ok {
-				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
-			}
-			info.FileMeta.ParquetMeta.MemoryUsage = s.sampledParquetMemoryUsage[tableName]
-			info.FileMeta.ParquetMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
-			info.FileMeta.ParquetMeta.UseStreaming = true
-			info.FileMeta.ParquetMeta.UseSampleAllocator = false
+		// info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
+		info.FileMeta.ParquetMeta.Rows = totalRowCount
+		if m, ok := metric.FromContext(ctx); ok {
+			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 		}
-		s.tableDatas = append(s.tableDatas, info)
+		info.FileMeta.ParquetMeta.MemoryUsage = s.sampledParquetMemoryUsage[tableName]
+		info.FileMeta.ParquetMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
+		info.FileMeta.ParquetMeta.UseStreaming = true
+		info.FileMeta.ParquetMeta.UseSampleAllocator = false
+		// }
+		s.tableDatasMap.Store(path, info)
+		log.FromContext(ctx).Info("read parquet done", zap.String("path", path), zap.Int("row count", int(totalRowCount)))
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
