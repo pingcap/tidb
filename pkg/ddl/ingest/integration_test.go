@@ -129,7 +129,7 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	t.Run("Mock panic on scan record operator", func(t *testing.T) {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(*model.DDLReorgMeta) {
 			panic("mock panic")
 		})
 		tk.MustExec("drop table if exists t;")
@@ -162,7 +162,7 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
 		expectInternalTS = append(expectInternalTS, startTS)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(*model.DDLReorgMeta) {
 		mgr := tk.Session().GetSessionManager()
 		actualInternalTS = mgr.GetInternalSessionStartTSList()
 	})

@@ -566,7 +566,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
 		})
-		failpoint.InjectCall("scanRecordExec")
+		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err

@@ -877,7 +877,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	}
 
 	err = pipe.Close()
-	failpoint.InjectCall("afterPipeLineClose")
+	failpoint.InjectCall("afterPipeLineClose", pipe)
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
