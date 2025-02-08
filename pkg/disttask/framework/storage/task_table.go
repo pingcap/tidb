@@ -85,7 +85,7 @@ type TaskExecInfo struct {
 	// also update subtask concurrency.
 	// TODO: we might need create one task executor for each step in this case, to alloc
 	// TODO: minimal resource
-	SubtaskConcurrency int
+	subtaskConcurrency int
 }
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -274,9 +274,8 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 		// states, so their steps will be their current step of corresponding task,
 		// so we don't need to query by step here.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
-			where st.exec_id = %? and st.state in (%?, %?)
-			group by st.task_key`,
+			`select distinct st.task_key from mysql.tidb_background_subtask st
+			where st.exec_id = %? and st.state in (%?, %?)`,
 			execID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			return err
@@ -284,7 +283,6 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 		if len(rs) == 0 {
 			return nil
 		}
-		maxSubtaskCon := make(map[int64]int, len(rs))
 		var taskIDsBuf strings.Builder
 		for i, r := range rs {
 			taskIDStr := r.GetString(0)
@@ -292,7 +290,6 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
-			maxSubtaskCon[taskID] = int(r.GetInt64(1))
 			if i > 0 {
 				taskIDsBuf.WriteString(",")
 			}
@@ -310,8 +307,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 		for _, r := range rs {
 			taskBase := row2TaskBasic(r)
 			res = append(res, &TaskExecInfo{
-				TaskBase:           taskBase,
-				SubtaskConcurrency: maxSubtaskCon[taskBase.ID],
+				TaskBase: taskBase,
 			})
 		}
 		return nil
