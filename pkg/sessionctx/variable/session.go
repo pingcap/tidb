@@ -3153,6 +3153,7 @@ type BatchSize struct {
 	MaxPagingSize int
 }
 
+// PipelinedDMLConfig defines the configuration for pipelined DML.
 type PipelinedDMLConfig struct {
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
