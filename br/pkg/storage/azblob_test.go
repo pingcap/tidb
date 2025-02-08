@@ -27,11 +27,6 @@ import (
 type sharedKeyAzuriteClientBuilder struct {
 }
 
-// GetServiceURL implements ClientBuilder.
-func (b *sharedKeyAzuriteClientBuilder) GetServiceURL() string {
-	return "http://127.0.0.1:10000/devstoreaccount1"
-}
-
 func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
 	return azblob.NewClientFromConnectionString(connStr, nil)
@@ -347,11 +342,6 @@ func TestNewAzblobStorage(t *testing.T) {
 
 type fakeClientBuilder struct {
 	Endpoint string
-}
-
-// GetServiceURL implements ClientBuilder.
-func (b *fakeClientBuilder) GetServiceURL() string {
-	return b.Endpoint
 }
 
 func (b *fakeClientBuilder) GetServiceClient() (*azblob.Client, error) {
