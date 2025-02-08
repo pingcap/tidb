@@ -246,7 +246,14 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
 		} else {
-			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			accessSelectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+			countAfterAccess := path.CountAfterAccess
+			if selectivity < accessSelectivity {
+				countAfterAccess = math.Sqrt(accessSelectivity) * float64(ds.StatisticTable.RealtimeCount)
+			} else {
+				selectivity = math.Sqrt(selectivity)
+			}
+			path.CountAfterIndex = math.Max(countAfterAccess*selectivity, ds.StatsInfo().RowCount)
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess
