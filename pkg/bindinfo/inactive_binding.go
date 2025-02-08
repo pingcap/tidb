@@ -8,7 +8,7 @@ import (
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
-	execCountThreshold := 100
+	execCountThreshold := 1
 	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint
 				from information_schema.statements_summary
 				where stmt_type='Select' and exec_count > ?`
