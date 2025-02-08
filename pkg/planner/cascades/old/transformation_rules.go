@@ -15,7 +15,6 @@
 package old
 
 import (
-	"github.com/pingcap/tidb/pkg/util/intset"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
