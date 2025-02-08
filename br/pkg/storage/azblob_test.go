@@ -410,7 +410,7 @@ func TestCopyObject(t *testing.T) {
 		builder := &sharedKeyAzuriteClientBuilder{}
 		skip, err := createContainer(ctx, builder, options.Bucket)
 		if skip || err != nil {
-			t.Skip(fmt.Sprintf("azurite is not running, skip test (err = %s)", err))
+			t.Skipf("azurite is not running, skip test (err = %s)", err)
 			panic("just a note, should never reach here")
 		}
 		require.NoError(t, err)
