@@ -8,13 +8,12 @@ import (
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
-	execCountThreshold := 1
 	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint
 				from information_schema.statements_summary
-				where stmt_type='Select' and exec_count > ?`
+				where stmt_type='Select' and exec_count > 0 and plan_hint != ""`
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
-		rows, _, err = execRows(sctx, stmtQuery, execCountThreshold)
+		rows, _, err = execRows(sctx, stmtQuery)
 		return err
 	})
 	if err != nil {
@@ -27,7 +26,7 @@ func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
 		charset := row.GetString(2)
 		collation := row.GetString(3)
 		hint := row.GetString(4)
-		fmt.Println(digest, sql, charset, collation, hint)
+		fmt.Println(">>>>>>>>>>>>", digest, sql, charset, collation, hint)
 	}
 
 	return nil

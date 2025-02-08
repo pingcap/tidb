@@ -2,6 +2,7 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 )
-
 
 func setupStmtSummary() {
 	stmtsummaryv2.Setup(&stmtsummaryv2.Config{
@@ -58,8 +58,8 @@ func TestXXX(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int)`)
 	tk.MustExec(`select a from t where a=1`)
-	rs := tk.MustQuery(`select * from information_schema.statements_summary`).Rows()
-	fmt.Println("===========================================")
-	fmt.Println(rs)
-	fmt.Println("===========================================")
+
+	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+	err := bindHandle.RecordInactiveBindings()
+	fmt.Println("????????? ", err)
 }
