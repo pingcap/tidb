@@ -20,44 +20,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChunkCache(t *testing.T) {
-	testChunkCache(t, false)
-	testChunkCache(t, true)
+func TestChunksCache(t *testing.T) {
+	testChunksCache(t, false)
+	testChunksCache(t, true)
 }
 
-func testChunkCache(t *testing.T, usingMem bool) {
+func testChunksCache(t *testing.T, usingMem bool) {
 	// Create a new cache
 	taskID := "test-task"
-	chunkCache, err := newChunkCache(taskID, 1, "", usingMem)
+	chunksCache, err := newChunksCache(taskID, 1, "", usingMem)
 	require.NoError(t, err)
 
 	chunk0 := []byte("chunk0")
-	chunkCache.put(0, chunk0)
+	chunksCache.put(0, chunk0)
 
 	chunk1 := []byte("chunk1")
-	chunkCache.put(1, chunk1)
+	chunksCache.put(1, chunk1)
 
 	// Get the chunks
-	chunk0Got, err := chunkCache.get(0)
+	chunk0Got, err := chunksCache.get(0)
 	require.NoError(t, err)
 	require.Equal(t, chunk0, chunk0Got)
 
-	chunk1Got, err := chunkCache.get(1)
+	chunk1Got, err := chunksCache.get(1)
 	require.NoError(t, err)
 	require.Equal(t, chunk1, chunk1Got)
 
 	// Clean the chunks
-	err = chunkCache.clean(0)
+	err = chunksCache.clean(0)
 	require.NoError(t, err)
-	_, err = chunkCache.get(0)
+	_, err = chunksCache.get(0)
 	require.Error(t, err)
 
-	err = chunkCache.clean(1)
+	err = chunksCache.clean(1)
 	require.NoError(t, err)
-	_, err = chunkCache.get(1)
+	_, err = chunksCache.get(1)
 	require.Error(t, err)
 
 	// Close the cache
-	err = chunkCache.close()
+	err = chunksCache.close()
 	require.NoError(t, err)
 }
