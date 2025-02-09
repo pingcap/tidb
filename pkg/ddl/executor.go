@@ -1060,13 +1060,16 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			// If table exists, changing from Normal/Import to Restore is not allowed.
+			// If table exists:
+			// and if target TableMode is ModeRestore, we check if the existing table is consistent
 			if tbInfo.TableMode == model.TableModeRestore {
 				oldTableMode := oldTable.Meta().TableMode
 				if oldTableMode != model.TableModeRestore {
+					// Indeed this is not a conversion problem but an inconsistency problem.
 					return nil, infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(oldTableMode, tbInfo.TableMode)
 				}
 			}
+			// target TableMode will not be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
