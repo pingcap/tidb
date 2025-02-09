@@ -935,7 +935,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 				zap.Uint64("txnLastCommitTS", s.txn.lastCommitTS),
 				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
 			)
-			return kv.ErrAssertionFailed
+			return fmt.Errorf("txn commit_ts:%d is before session last_commit_ts:%d",
+				s.txn.lastCommitTS, s.sessionVars.LastCommitTS)
 		}
 		s.sessionVars.LastCommitTS = s.txn.lastCommitTS
 	}

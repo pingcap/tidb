@@ -428,7 +428,7 @@ func TestCommitTSOrderCheck(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockFutureCommitTS", fmt.Sprintf("return(%d)", ts)))
 	tk.MustExec("insert into t values(123)")
 	_, err := tk.Exec("select * from t")
-	require.True(t, kv.ErrAssertionFailed.Equal(err))
+	require.Regexp(t, fmt.Sprintf(`start_ts:\d+ is before session last_commit_ts:%d`, ts), err.Error())
 }
 
 func TestMemBufferSnapshotRead(t *testing.T) {

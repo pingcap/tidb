@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -319,7 +320,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
 			zap.String("sql", redact.String(sessVars.EnableRedactLog, sessVars.StmtCtx.OriginalSQL)),
 		)
-		return nil, kv.ErrAssertionFailed
+		return nil, fmt.Errorf("txn start_ts:%d is before session last_commit_ts:%d",
+			sessVars.TxnCtx.StartTS, sessVars.LastCommitTS)
 	}
 
 	txn.SetVars(sessVars.KVVars)
