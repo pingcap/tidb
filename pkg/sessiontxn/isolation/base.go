@@ -273,6 +273,8 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 	return txn.StartTS(), nil
 }
 
+// TODO: replace usePresetStartTS with a new method StartTSFromPD to make it clear that
+// the timestamp is not allocated by TSO.
 func (p *baseTxnContextProvider) usePresetStartTS() bool {
 	return p.constStartTS != 0 || p.sctx.GetSessionVars().SnapshotTS != 0
 }
