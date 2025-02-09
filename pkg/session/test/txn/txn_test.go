@@ -424,10 +424,12 @@ func TestCommitTSOrderCheck(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
-	ts := oracle.GoTimeToTS(time.Now().Add(time.Minute))
+	currentTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoError(t, err)
+	ts := oracle.GoTimeToTS(oracle.GetTimeFromTS(currentTS).Add(time.Minute))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockFutureCommitTS", fmt.Sprintf("return(%d)", ts)))
 	tk.MustExec("insert into t values(123)")
-	_, err := tk.Exec("select * from t")
+	_, err = tk.Exec("select * from t")
 	require.Regexp(t, fmt.Sprintf(`start_ts:\d+ is before session last_commit_ts:%d`, ts), err.Error())
 }
 
