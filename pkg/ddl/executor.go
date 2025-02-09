@@ -5663,7 +5663,7 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
 	}
 
-	t, ok := is.TableByID(e.ctx, args.TableID)
+	_, ok = is.TableByID(e.ctx, args.TableID)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
 	}
@@ -5675,13 +5675,6 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		// TODO(xiaoyuan): when is this information needed?
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: schema.Name.L,
-				Table:    t.Meta().Name.L,
-			},
-		},
 	}
 	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
