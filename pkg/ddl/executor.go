@@ -5660,12 +5660,12 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 
 	schema, ok := is.SchemaByID(args.SchemaID)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs()
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
 	}
 
 	t, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
 	}
 
 	job := &model.Job{
