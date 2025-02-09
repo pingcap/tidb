@@ -108,11 +108,8 @@ var (
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
-	// TODO(xiaoyuan): what is the proper mysql error I should use for TableMode?
-	// ErrTableModeImport returns for accessing table in import mode.
-	ErrTableModeImport = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
-	// ErrTableModeRestore returns for accessing table in restore mode.
-	ErrTableModeRestore = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
-	// ErrTableModeInvalidTransition returns for invalid TableMode transition.
-	ErrTableModeInvalidTransition = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
+	// ErrProtectedTableMode returns for accessing table in import/restore mode.
+	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
+	// ErrInvalidTableModeConversion returns for invalid TableMode conversion.
+	ErrInvalidTableModeConversion = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeConversion)
 )

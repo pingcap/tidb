@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"fmt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
@@ -43,9 +42,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		}
 	default:
 		job.State = model.JobStateCancelled
-		err = infoschema.ErrTableModeInvalidTransition.GenWithStackByArgs(
-			fmt.Sprintf("invalid transition from '%s' to '%s'", tbInfo.TableMode, args.TableMode),
-		)
+		err = infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
 	}
 
 	return ver, err
@@ -57,9 +54,7 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 	if args.TableMode == model.TableModeImport {
 		// only transition from ModeNormal to ModeImport is allowed
 		if tbInfo.TableMode != model.TableModeNormal {
-			return infoschema.ErrTableModeInvalidTransition.GenWithStackByArgs(
-				fmt.Sprintf("invalid transition from '%s' to '%s'", tbInfo.TableMode, args.TableMode),
-			)
+			return infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
 		}
 	}
 	tbInfo.TableMode = args.TableMode

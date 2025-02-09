@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -103,18 +104,18 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeRestore)
 
 	// For testing select is not allowed when table is in ModeImport
-	// TODO(xiaoyuan): currently the error is very ugly like:
-	// [schema:8020]Table 't1_restore' was locked in %!s(MISSING) by %!v(MISSING)
-	// this is because infoschema.ErrTableModeRestore is based on mysql.ErrTableLocked,
-	// how to make it look nice? or shoule I define a new mysql error?
-	tk.MustGetErrCode("select * from t1_restore", 8020)
+	tk.MustGetErrCode("select * from t1_restore", errno.ErrProtectedTableMode)
 
 	// For testing insert is not allowed when table is in ModeImport
-	tk.MustGetErrCode("insert into t1_restore values(1)", 8020)
+	tk.MustGetErrCode("insert into t1_restore values(1)", errno.ErrProtectedTableMode)
+
+	// For testing accessing table metadata is allowed when table is in ModeRestore
+	tk.MustExec("show create table t1_restore")
+	tk.MustExec("describe t1_restore")
 
 	// For testing AlterTable ModeRestore -> ModeImport is not allowed
 	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeImport)
-	checkErrorCode(t, err, 8020)
+	checkErrorCode(t, err, errno.ErrInvalidTableModeConversion)
 
 	// For testing AlterTableMode ModeRestore -> ModeNormal
 	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeNormal)

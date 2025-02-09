@@ -1064,9 +1064,7 @@ func (e *executor) createTableWithInfoJob(
 			if tbInfo.TableMode == model.TableModeRestore {
 				oldTableMode := oldTable.Meta().TableMode
 				if oldTableMode != model.TableModeRestore {
-					return nil, infoschema.ErrTableModeInvalidTransition.GenWithStackByArgs(
-						fmt.Sprintf("invalid transition from '%s' to '%s'", oldTableMode, tbInfo.TableMode),
-					)
+					return nil, infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(oldTableMode, tbInfo.TableMode)
 				}
 			}
 			return nil, nil

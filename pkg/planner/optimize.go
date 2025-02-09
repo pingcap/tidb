@@ -474,7 +474,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return nil, nil, 0, err
 	}
 
-	if err := core.CheckTableMode(is, builder.GetVisitInfo()); err != nil {
+	if err := core.CheckTableMode(is, node.Node, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
 	}
 
