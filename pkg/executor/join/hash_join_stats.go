@@ -25,6 +25,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
+func writeSpilledPartitionNumStatsToString(buf *bytes.Buffer, partitionNum int, spilledPartitionNumPerRound []int) {
+	buf.WriteString("[")
+	fmt.Fprintf(buf, "%d/%d", spilledPartitionNumPerRound[0], partitionNum)
+	for i := 1; i < len(spilledPartitionNumPerRound); i++ {
+		fmt.Fprintf(buf, " %d/%d", spilledPartitionNumPerRound[i], spilledPartitionNumPerRound[i-1]*partitionNum)
+	}
+	buf.WriteString("]")
+}
+
 func writeBytesStatsToString(buf *bytes.Buffer, convertedBytes []int64) {
 	buf.WriteString("[")
 	for i, byte := range convertedBytes {
@@ -121,10 +130,12 @@ func (s *hashStatistic) String() string {
 }
 
 type spillStats struct {
-	round                   int
-	totalSpillBytesPerRound []int64
-	partitionNumPerRound    []int
-	spillBuildBytesPerRound []int64
+	round                       int
+	totalSpillBytesPerRound     []int64
+	spilledPartitionNumPerRound []int
+	spillBuildBytesPerRound     []int64
+
+	partitionNum int
 }
 
 type hashJoinRuntimeStatsV2 struct {
@@ -227,8 +238,8 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 	if e.spill.round > 0 {
 		buf.WriteString(", spill:{round:")
 		buf.WriteString(strconv.Itoa(e.spill.round))
-		buf.WriteString(", partition_num_per_round:")
-		fmt.Fprintf(buf, "%v", e.spill.partitionNumPerRound)
+		buf.WriteString(", spilled_partition_num_per_round:")
+		writeSpilledPartitionNumStatsToString(buf, e.spill.partitionNum, e.spill.spilledPartitionNumPerRound)
 		buf.WriteString(", total_spill_GiB_per_round:")
 		writeBytesStatsToString(buf, e.spill.totalSpillBytesPerRound)
 		buf.WriteString(", build_spill_GiB_per_round:")

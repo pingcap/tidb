@@ -70,6 +70,7 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 
 	validJoinKeysBuffer [][]byte
+	spilledValidRowNum  uint64
 
 	// This variable will be set to false before restoring
 	spillTriggered bool
@@ -98,6 +99,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
+	helper.spilledValidRowNum = 0
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 
@@ -292,7 +294,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
 	for i := 0; i < rowLen; i++ {
@@ -301,6 +303,8 @@ func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, va
 	for _, pos := range seg.validJoinKeyPos {
 		validJoinKeys[pos] = byte(1)
 	}
+
+	h.spilledValidRowNum += uint64(len(seg.validJoinKeyPos))
 	return validJoinKeys
 }
 
@@ -524,6 +528,7 @@ func (h *hashJoinSpillHelper) reset() {
 		h.spilledPartitions[i] = false
 	}
 
+	h.spilledValidRowNum = 0
 	h.spillTriggered = false
 }
 

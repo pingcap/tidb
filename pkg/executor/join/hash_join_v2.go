@@ -179,7 +179,7 @@ func (*hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (i
 	totalMemoryUsage := int64(0)
 	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
-		hashTableLength := getHashTableLength(table)
+		hashTableLength := getHashTableLengthByRowTable(table)
 		memoryUsage := getHashTableMemoryUsage(hashTableLength)
 		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
 		totalMemoryUsage += memoryUsage
@@ -747,6 +747,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 	if e.stats != nil {
 		e.stats.reset()
+		e.stats.spill.partitionNum = int(e.partitionNumber)
 	}
 	return nil
 }
@@ -1053,19 +1054,19 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 	}
 
 	round := e.spillHelper.round
- 	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
+	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
 		e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, 0)
 		e.stats.spill.spillBuildBytesPerRound = append(e.stats.spill.spillBuildBytesPerRound, 0)
-		e.stats.spill.partitionNumPerRound = append(e.stats.spill.partitionNumPerRound, 0)
+		e.stats.spill.spilledPartitionNumPerRound = append(e.stats.spill.spilledPartitionNumPerRound, 0)
 	}
 
-	buildSpillBytes := e.spillHelper.getBuildSpillBytes()
+	buildSpillBytes := e.spillHelper.getBuildSpillBytes() + getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
 	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
 	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
 
 	e.stats.spill.spillBuildBytesPerRound[round] += buildSpillBytes
 	e.stats.spill.totalSpillBytesPerRound[round] += buildSpillBytes + probeSpillBytes
-	e.stats.spill.partitionNumPerRound[round] = spilledPartitionNum
+	e.stats.spill.spilledPartitionNumPerRound[round] += spilledPartitionNum
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
