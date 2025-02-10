@@ -299,7 +299,7 @@ func planPreSequences(p base.Plan) *UnityPreSequence {
 		}
 	}
 
-	sort.Strings(tables)
+	//sort.Strings(tables)
 	sort.Strings(predCols)
 	sort.Strings(joinCols)
 	return &UnityPreSequence{
