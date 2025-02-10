@@ -1852,6 +1852,21 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDatetime),
 			args:         []Expression{stringColumn, NewStrConst("%h%y")},
 		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("Second"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("DAY"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("year"), datetimeColumn, datetimeColumn},
+		},
 	}
 
 	ctx = mock.NewContext()

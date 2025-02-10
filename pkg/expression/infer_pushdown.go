@@ -210,7 +210,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
 		ast.FromDays, /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd*/, ast.FromUnixTime,
+		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
 		ast.Sysdate, ast.StrToDate,
 
