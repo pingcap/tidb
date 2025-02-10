@@ -376,7 +376,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		}
 	case ast.Truncate:
 		switch function.Function.PbCode() {
-			case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
 			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
 			return true
 		}
