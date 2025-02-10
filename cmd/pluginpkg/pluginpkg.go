@@ -30,8 +30,9 @@ import (
 )
 
 var (
-	pkgDir string
-	outDir string
+	pkgDir  string
+	outDir  string
+	pgoFile string
 )
 
 const codeTemplate = `
@@ -74,6 +75,7 @@ func PluginManifest() *plugin.Manifest {
 func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
+	flag.StringVar(&pgoFile, "pgo-file", "", "go profile-guided optimization(pgo) file path")
 	flag.Usage = usage
 }
 
@@ -97,6 +99,13 @@ func main() {
 	if err != nil {
 		log.Printf("unable to resolve absolute representation of output path , %+v\n", err)
 		flag.Usage()
+	}
+	if pgoFile != "" {
+		pgoFile, err = filepath.Abs(pgoFile)
+		if err != nil {
+			log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
+			flag.Usage()
+		}
 	}
 
 	var manifest map[string]any
@@ -141,10 +150,16 @@ func main() {
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
-	buildCmd := exec.CommandContext(ctx, "go", "build",
+	flags := make([]string, 0, 4)
+	flags = append(flags, "build")
+	if pgoFile != "" {
+		flags = append(flags, "-pgo="+pgoFile)
+	}
+	flags = append(flags,
 		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
+	buildCmd := exec.CommandContext(ctx, "go", flags...)
 	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout

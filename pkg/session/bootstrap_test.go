@@ -614,19 +614,19 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
 	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
 	row = req.GetRow(1)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
 	row = req.GetRow(2)
 	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
 
 	require.NoError(t, r.Close())
@@ -2355,13 +2355,13 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
-	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
+	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", false) })
 	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
 }
 
 func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 	t.Run("test dist task running", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", false)
 	})
 	t.Run("test dist task succeed", func(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
@@ -2373,10 +2373,10 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
 	})
 	t.Run("test dist task paused", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", false)
 	})
 	t.Run("test dist task other", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", false)
 	})
 }
 

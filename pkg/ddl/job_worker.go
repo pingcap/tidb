@@ -854,6 +854,7 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
+						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
 						if err == systable.ErrNotFound {
 							logutil.DDLLogger().Info(
