@@ -1256,7 +1256,8 @@ func FindCommonEquivClasses(fdSets []*FDSet) []intset.FastIntSet {
 				intersection.IntersectionWith(edge.from)
 				// * if the intersection has changed and not empty. (become a subset)
 				// * if the intersection is still the same (it means two equivalence classes are the same)
-				if !intersection.IsEmpty() {
+				// * intersection with the single point is meaningless in bi-relation of equivalence.
+				if intersection.Len() > 1 {
 					// put the intersection one as the new result into the newResult.
 					newResult = append(newResult, intersection)
 					continue
