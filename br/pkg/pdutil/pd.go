@@ -633,6 +633,11 @@ func (p *PdController) RemoveSchedulersConfig(
 	return originCfg, removedCfg, nil
 }
 
+func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, originCfg, removedCfg *ClusterConfig) (err error) {
+
+	return nil
+}
+
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig
 func (p *PdController) RemoveSchedulersWithCfg(ctx context.Context, removeCfg ClusterConfig) error {
 	_, err := p.doRemoveSchedulersWith(ctx, removeCfg.Schedulers, removeCfg.ScheduleCfg)

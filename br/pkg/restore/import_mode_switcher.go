@@ -222,15 +222,17 @@ func FineGrainedRestorePreWork(
 	}
 
 	// handle config
-	mgr.RemoveSchedulersConfig(ctx)
+	originCfg, removedCfg, err := mgr.RemoveSchedulersConfig(ctx)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
 
 	// handle scheduler
-	
+	mgr.RemoveSchedulersOnRegion(ctx, &originCfg, &removedCfg)
 
 	// handle undo
-
-
-	return func(context.Context) error { return nil }, nil, nil
+	undo := mgr.MakeUndoFunctionByConfig(pdutil.ClusterConfig{Schedulers: originCfg.Schedulers, ScheduleCfg: originCfg.ScheduleCfg})
+	return undo, &originCfg, errors.Trace(err)
 }
 
 // RestorePostWork executes some post work after restore.
