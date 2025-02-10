@@ -221,7 +221,16 @@ func FineGrainedRestorePreWork(
 		}
 	}
 
-	return mgr.RemoveSchedulersWithConfig(ctx)
+	// handle config
+	mgr.RemoveSchedulersConfig(ctx)
+
+	// handle scheduler
+	
+
+	// handle undo
+
+
+	return func(context.Context) error { return nil }, nil, nil
 }
 
 // RestorePostWork executes some post work after restore.

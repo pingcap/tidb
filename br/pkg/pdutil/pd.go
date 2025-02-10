@@ -568,6 +568,7 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 
 	log.Debug("saved PD config", zap.Any("config", scheduleCfg))
 
+	//TODO: (ris) delete here
 	// Remove default PD scheduler that may affect restore process.
 	existSchedulers, err := p.ListSchedulers(ctx)
 	if err != nil {
@@ -580,6 +581,7 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 		}
 	}
 
+	//TODO: (ris)use region scheduler
 	removedSchedulers, err := p.doRemoveSchedulersWith(ctx, needRemoveSchedulers, disablePDCfg)
 	if err != nil {
 		return originCfg, removedCfg, errors.Trace(err)
@@ -587,6 +589,46 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 
 	originCfg.Schedulers = removedSchedulers
 	removedCfg.Schedulers = removedSchedulers
+
+	return originCfg, removedCfg, nil
+}
+
+func (p *PdController) RemoveSchedulersConfig(
+	ctx context.Context,
+) (origin ClusterConfig, modified ClusterConfig, err error) {
+	pdConfigGenerators := expectPDCfgGenerators
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
+			opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	originCfg := ClusterConfig{}
+	removedCfg := ClusterConfig{}
+	stores, err := p.pdClient.GetAllStores(ctx)
+	if err != nil {
+		return originCfg, removedCfg, errors.Trace(err)
+	}
+	scheduleCfg, err := p.GetPDScheduleConfig(ctx)
+	if err != nil {
+		return originCfg, removedCfg, errors.Trace(err)
+	}
+	disablePDCfg := make(map[string]any, len(pdConfigGenerators))
+	originPDCfg := make(map[string]any, len(pdConfigGenerators))
+	for cfgKey, cfgValFunc := range pdConfigGenerators {
+		value, ok := scheduleCfg[cfgKey]
+		if !ok {
+			// Ignore non-exist config.
+			continue
+		}
+		disablePDCfg[cfgKey] = cfgValFunc(len(stores), value)
+		originPDCfg[cfgKey] = value
+	}
+	originCfg.ScheduleCfg = originPDCfg
+	removedCfg.ScheduleCfg = disablePDCfg
+
+	log.Debug("saved PD config", zap.Any("config", scheduleCfg))
 
 	return originCfg, removedCfg, nil
 }
