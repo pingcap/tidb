@@ -274,7 +274,7 @@ func TestBalanceOneTask(t *testing.T) {
 				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil)
 			}
 			mockScheduler := mock.NewMockScheduler(ctrl)
-			mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}, MaxNodeCount: c.maxNodeCount}).Times(2)
+			mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1, MaxNodeCount: c.maxNodeCount}}).Times(2)
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 			slotMgr := newSlotManager()
