@@ -275,8 +275,6 @@ func checkData(t *testing.T, path string, client *testServerClient) {
 	require.Equal(t, int64(4), count)
 	require.NoError(t, rows.Close())
 }
-<<<<<<< HEAD:server/statistics_handler_test.go
-=======
 
 func TestStatsPriorityQueueAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -390,4 +388,3 @@ func TestLoadNullStatsFile(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
 }
->>>>>>> 64dd762fde7 (planner: Fix load stats failure when stats file contains with `null` (#57818)):pkg/server/handler/optimizor/statistics_handler_test.go
