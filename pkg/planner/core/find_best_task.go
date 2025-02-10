@@ -2554,28 +2554,28 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
-		// ********************************** future deprecated start **************************/
-		var hasVirtualColumn bool
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				hasVirtualColumn = true
-				break
-			}
-		}
-		// in general, since MPP has supported the Gather operator to fill the virtual column, we should full lift restrictions here.
-		// we left them here, because cases like:
-		// parent-----+
-		//            V  (when parent require a root task type here, we need convert mpp task to root task)
-		//    projection [mpp task] [a]
-		//      table-scan [mpp task] [a(virtual col as: b+1), b]
-		// in the process of converting mpp task to root task, the encapsulated table reader will use its first children schema [a]
-		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
-		//
-		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
-			return base.InvalidTask, nil
-		}
-		// ********************************** future deprecated end **************************/
+		// // ********************************** future deprecated start **************************/
+		// var hasVirtualColumn bool
+		// for _, col := range ts.schema.Columns {
+		// 	if col.VirtualExpr != nil {
+		// 		ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+		// 		hasVirtualColumn = true
+		// 		break
+		// 	}
+		// }
+		// // in general, since MPP has supported the Gather operator to fill the virtual column, we should full lift restrictions here.
+		// // we left them here, because cases like:
+		// // parent-----+
+		// //            V  (when parent require a root task type here, we need convert mpp task to root task)
+		// //    projection [mpp task] [a]
+		// //      table-scan [mpp task] [a(virtual col as: b+1), b]
+		// // in the process of converting mpp task to root task, the encapsulated table reader will use its first children schema [a]
+		// // as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
+		// //
+		// if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
+		// 	return base.InvalidTask, nil
+		// }
+		// // ********************************** future deprecated end **************************/
 		mppTask := &MppTask{
 			p:           ts,
 			partTp:      property.AnyType,
