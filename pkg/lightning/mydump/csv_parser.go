@@ -663,9 +663,9 @@ func (parser *CSVParser) ReadRow() error {
 	} else {
 		row.Row = make([]types.Datum, len(fields))
 	}
-	for i, record := range fields {
-		row.Length += len(record.content)
-		unescaped, isNull, err := parser.unescapeString(record)
+	for i, f := range fields {
+		row.Length += len(f.content)
+		unescaped, isNull, err := parser.unescapeString(f)
 		if err != nil {
 			return errors.Trace(err)
 		}
