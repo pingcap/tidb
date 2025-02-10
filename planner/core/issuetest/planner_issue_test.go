@@ -313,4 +313,3 @@ func TestIssue53766(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1(c0 int);")
 	tk.MustQuery("SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));").Check(testkit.Rows())
 }
-
