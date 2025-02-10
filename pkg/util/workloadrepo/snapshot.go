@@ -130,6 +130,8 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	return nil
 }
 
+// takeSnapshot increments the value of snapIDKey, which triggers the tidb
+// nodes to run the snapshot process.  See the code in startSnapshot().
 func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
@@ -189,6 +191,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 			case <-ctx.Done():
 				return
 			case resp := <-snapIDCh:
+				// This case is triggered by both by w.snapshotInterval and the SQL command, which calls w.takeSnapshot() directly.
 				if len(resp.Events) < 1 {
 					// since there is no event, we don't know the latest snapid either
 					// really should not happen except creation
