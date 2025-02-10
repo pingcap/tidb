@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -1876,7 +1876,7 @@ func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExpr
 type outerJoinEliminator struct {
 }
 
-func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs set.Int64Set) {
+func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs intset.FastIntSet) {
 	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	switch join.JoinType {
@@ -1891,9 +1891,9 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 	outerGroup = joinExpr.Children[1^innerChildIdx]
 	innerGroup = joinExpr.Children[innerChildIdx]
 
-	outerUniqueIDs = set.NewInt64Set()
+	outerUniqueIDs = intset.NewFastIntSet()
 	for _, outerCol := range outerGroup.Prop.Schema.Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
+		outerUniqueIDs.Insert(int(outerCol.UniqueID))
 	}
 
 	ok = true
@@ -1956,7 +1956,7 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 
 	// only when agg only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(agg.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
@@ -2018,7 +2018,7 @@ func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (new
 	}
 
 	// only when proj only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(proj.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(proj.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 

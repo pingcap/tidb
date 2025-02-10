@@ -806,9 +806,9 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Pla
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
-		p.Details[0].NewStatus = bindinfo.Enabled
+		p.Details[0].NewStatus = bindinfo.StatusEnabled
 	case ast.BindingStatusTypeDisabled:
-		p.Details[0].NewStatus = bindinfo.Disabled
+		p.Details[0].NewStatus = bindinfo.StatusDisabled
 	}
 	if v.HintedNode != nil {
 		p.Details[0].BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
@@ -948,7 +948,7 @@ func constructSQLBindOPFromPlanDigest(
 		Db:           db,
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
-		Source:       bindinfo.History,
+		Source:       bindinfo.SourceHistory,
 		SQLDigest:    sqlDigestWithDBStr,
 		PlanDigest:   planDigest,
 	}
@@ -1014,7 +1014,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 			Db:           db,
 			Charset:      charSet,
 			Collation:    collation,
-			Source:       bindinfo.Manual,
+			Source:       bindinfo.SourceManual,
 			SQLDigest:    sqlDigestWithDB.String(),
 		}},
 	}
