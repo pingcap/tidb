@@ -35,15 +35,11 @@ const (
 	defSnapshotInterval = 3600
 	defRententionDays   = 7
 
-	// WorkloadSchema is the name of database for workloadrepo worker.
-	WorkloadSchema = "WORKLOAD_SCHEMA"
-	// WorkloadSchemaL is the name of database in lower case.
-	WorkloadSchemaL    = "workload_schema"
 	histSnapshotsTable = "HIST_SNAPSHOTS"
 )
 
 var (
-	workloadSchemaCIStr = ast.NewCIStr(WorkloadSchema)
+	workloadSchemaCIStr = ast.NewCIStr(mysql.WorkloadSchema)
 	zeroTime            = time.Time{}
 
 	errWrongValueForVar        = dbterror.ClassUtil.NewStd(errno.ErrWrongValueForVar)

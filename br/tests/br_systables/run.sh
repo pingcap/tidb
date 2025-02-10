@@ -60,7 +60,7 @@ rollback_modify() {
     # run_sql "DROP USER 'Alyssa P. Hacker';"
     run_sql "DROP TABLE mysql.usertable;"
 
-    run_sql "DROP DATABASE workload_schema;"
+    run_sql "DROP DATABASE IF EXISTS workload_schema;"
 }
 
 check() {
