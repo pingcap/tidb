@@ -5518,3 +5518,18 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }
+
+func TestCastBitAsString(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test(a bit(24))")
+	tk.MustExec("insert into test values('中')")
+	tk.MustQuery("select a from test where '中' like convert(a, char)").Check(testkit.Rows("中"))
+	tk.MustQuery("select a from test where false not like convert(a, char)").Check(testkit.Rows("中"))
+	tk.MustQuery("select a from test where false like convert(a, char)").Check(testkit.Rows())
+	tk.MustExec("truncate table test")
+	tk.MustExec("insert into test values(0xffffff)")
+	err := tk.QueryToErr("select a from test where false not like convert(a, char)")
+	require.EqualError(t, err, "[tikv:3854]Cannot convert string '\\xFF\\xFF\\xFF' from binary to utf8mb4")
+}
