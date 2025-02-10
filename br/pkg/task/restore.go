@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -1046,7 +1047,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	//TODO: (ris) should mod this
-	restoreSchedulers, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	var undoRemoveScheduler pdutil.UndoFunc
+	var schedulersConfig *pdutil.ClusterConfig
+	if isFullRestore(cmdName) {
+		undoRemoveScheduler, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	} else {
+		undoRemoveScheduler, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	}
+	
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1061,7 +1069,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to remove the pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
+		restore.RestorePostWork(ctx, importModeSwitcher, undoRemoveScheduler, cfg.Online)
 		log.Info("finish removing pd scheduler")
 	}()
 
@@ -1079,7 +1087,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 		if restoreSchedulersConfigFromCheckpoint != nil {
-			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+			undoRemoveScheduler = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
 		}
 		checkpointSetWithTableID = sets
 

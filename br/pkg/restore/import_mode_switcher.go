@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -182,6 +183,29 @@ func RestorePreWork(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	switcher *ImportModeSwitcher,
+	isOnline bool,
+	switchToImport bool,
+) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
+	if isOnline {
+		return pdutil.Nop, nil, nil
+	}
+
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		err := switcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return pdutil.Nop, nil, err
+		}
+	}
+
+	return mgr.RemoveSchedulersWithConfig(ctx)
+}
+
+func FineGrainedRestorePreWork(
+	ctx context.Context,
+	mgr *conn.Mgr,
+	switcher *ImportModeSwitcher,
+	rewriteRule *utils.RewriteRules,
 	isOnline bool,
 	switchToImport bool,
 ) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
