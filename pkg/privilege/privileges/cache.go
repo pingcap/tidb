@@ -805,7 +805,7 @@ func compareHost(x, y string) int {
 }
 
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
-func (p MySQLPrivilege) SortUserTable() {
+func (p *MySQLPrivilege) SortUserTable() {
 	p.user.Ascend(func(itm itemUser) bool {
 		slices.SortFunc(itm.data, compareUserRecord)
 		return true
