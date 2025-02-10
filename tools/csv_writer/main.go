@@ -245,6 +245,9 @@ func writeToGCSConcurrently(data [][]string, baseFileName string) {
 	if err != nil {
 		panic(err)
 	}
+	for i := 0; i < concurrency; i++ {
+		deleteFile(store, fmt.Sprintf("%s.%d.sql", baseFileName, i))
+	}
 
 	startTime := time.Now()
 
@@ -286,6 +289,10 @@ func writeToGCSConcurrently(data [][]string, baseFileName string) {
 	wg.Wait() // 等待所有协程完成
 	endTime := time.Now()
 	log.Printf("GCS 并发写入完成，耗时: %v", endTime.Sub(startTime))
+	showFiles(store)
+	for i := 0; i < concurrency; i++ {
+		deleteFile(store, fmt.Sprintf("%s.%d.sql", baseFileName, i))
+	}
 }
 
 // 主函数
