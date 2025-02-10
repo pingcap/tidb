@@ -130,10 +130,11 @@ func (s *hashStatistic) String() string {
 }
 
 type spillStats struct {
-	round                       int
-	totalSpillBytesPerRound     []int64
-	spilledPartitionNumPerRound []int
-	spillBuildBytesPerRound     []int64
+	round                            int
+	totalSpillBytesPerRound          []int64
+	spilledPartitionNumPerRound      []int
+	spillBuildRowTableBytesPerRound  []int64
+	spillBuildHashTableBytesPerRound []int64
 
 	partitionNum int
 }
@@ -242,8 +243,10 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		writeSpilledPartitionNumStatsToString(buf, e.spill.partitionNum, e.spill.spilledPartitionNumPerRound)
 		buf.WriteString(", total_spill_GiB_per_round:")
 		writeBytesStatsToString(buf, e.spill.totalSpillBytesPerRound)
-		buf.WriteString(", build_spill_GiB_per_round:")
-		writeBytesStatsToString(buf, e.spill.spillBuildBytesPerRound)
+		buf.WriteString(", build_spill_row_table_GiB_per_round:")
+		writeBytesStatsToString(buf, e.spill.spillBuildRowTableBytesPerRound)
+		buf.WriteString(", build_spill_hash_table_per_round:")
+		writeBytesStatsToString(buf, e.spill.spillBuildHashTableBytesPerRound)
 		buf.WriteString("}")
 	}
 	return buf.String()

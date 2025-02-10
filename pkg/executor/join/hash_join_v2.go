@@ -1056,16 +1056,19 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 	round := e.spillHelper.round
 	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
 		e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, 0)
-		e.stats.spill.spillBuildBytesPerRound = append(e.stats.spill.spillBuildBytesPerRound, 0)
+		e.stats.spill.spillBuildRowTableBytesPerRound = append(e.stats.spill.spillBuildRowTableBytesPerRound, 0)
+		e.stats.spill.spillBuildHashTableBytesPerRound = append(e.stats.spill.spillBuildHashTableBytesPerRound, 0)
 		e.stats.spill.spilledPartitionNumPerRound = append(e.stats.spill.spilledPartitionNumPerRound, 0)
 	}
 
-	buildSpillBytes := e.spillHelper.getBuildSpillBytes() + getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
+	buildRowTableSpillBytes := e.spillHelper.getBuildSpillBytes()
+	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
 	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
 	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
 
-	e.stats.spill.spillBuildBytesPerRound[round] += buildSpillBytes
-	e.stats.spill.totalSpillBytesPerRound[round] += buildSpillBytes + probeSpillBytes
+	e.stats.spill.spillBuildRowTableBytesPerRound[round] += buildRowTableSpillBytes
+	e.stats.spill.spillBuildHashTableBytesPerRound[round] += buildHashTableSpillBytes
+	e.stats.spill.totalSpillBytesPerRound[round] += buildRowTableSpillBytes + probeSpillBytes
 	e.stats.spill.spilledPartitionNumPerRound[round] += spilledPartitionNum
 }
 
