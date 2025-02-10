@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type ddlHandlerImpl struct {
@@ -48,7 +50,9 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
-	return h.sub.handle(ctx, sctx, s)
+	err := h.sub.handle(ctx, sctx, s)
+	intest.Assert(err == nil, fmt.Sprintf("handle ddl event failed, err: %v", err))
+	return err
 }
 
 // DDLEventCh returns ddl events channel in handle.
