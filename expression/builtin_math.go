@@ -1818,7 +1818,7 @@ func (b *builtinRadiansSig) evalReal(row chunk.Row) (float64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return x * math.Pi / 180, false, nil
+	return x * (math.Pi / 180), false, nil
 }
 
 type sinFunctionClass struct {

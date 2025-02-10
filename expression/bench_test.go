@@ -1452,7 +1452,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		case types.ETJson:
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else if funcName == ast.GetVar {

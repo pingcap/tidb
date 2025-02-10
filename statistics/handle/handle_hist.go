@@ -38,7 +38,7 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 3
+const RetryCount = 2
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
@@ -95,8 +95,12 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 			select {
 			case h.StatsLoad.NeededItemsCh <- task:
-				result := <-task.ResultCh
-				return result, nil
+				select {
+				case <-timer.C:
+					return nil, errors.New("sync load took too long to return")
+				case result := <-task.ResultCh:
+					return result, nil
+				}
 			case <-timer.C:
 				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
 			}

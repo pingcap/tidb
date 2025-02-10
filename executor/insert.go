@@ -204,6 +204,7 @@ func (e *InsertExec) updateDupRow(
 	row toBeCheckedRow,
 	handle kv.Handle,
 	_ []*expression.Assignment,
+	autoColIdx int,
 ) error {
 	oldRow, err := getOldRow(ctx, e.ctx, txn, row.t, handle, e.GenExprs)
 	if err != nil {
@@ -215,7 +216,7 @@ func (e *InsertExec) updateDupRow(
 		extraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, autoColIdx)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
@@ -253,6 +254,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	_, autoColIdx, found := findAutoIncrementColumn(e.Table)
+	if !found {
+		autoColIdx = -1
+	}
+
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -260,7 +266,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, autoColIdx)
 			if err == nil {
 				continue
 			}
@@ -277,7 +283,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if handle == nil {
 				continue
 			}
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, autoColIdx)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -403,6 +409,7 @@ func (e *InsertExec) doDupRowUpdate(
 	oldRow, newRow, extraCols []types.Datum,
 	assigns []*expression.Assignment,
 	idxInBatch int,
+	autoColIdx int,
 ) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -482,6 +489,17 @@ func (e *InsertExec) doDupRowUpdate(
 
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if autoColIdx >= 0 {
+		if e.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
+			// auto increment value should be set correctly for mysql_insert_id()
+			// See https://github.com/pingcap/tidb/issues/55965
+			e.ctx.GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+		} else {
+			e.ctx.GetSessionVars().StmtCtx.InsertID = 0
+		}
 	}
 	return nil
 }
