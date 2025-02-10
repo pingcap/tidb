@@ -286,7 +286,7 @@ func (p *PdController) doPauseSchedulers(
 	return removedSchedulers, nil
 }
 
-//TODO: Ris core func
+//TODO: (ris) core func
 func (p *PdController) pauseSchedulersAndConfigWith(
 	ctx context.Context, schedulers []string,
 	schedulerCfg map[string]any,
