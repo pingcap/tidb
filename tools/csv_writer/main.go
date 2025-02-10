@@ -245,9 +245,6 @@ func writeToGCSConcurrently(data [][]string, baseFileName string) {
 	if err != nil {
 		panic(err)
 	}
-	for i := 0; i < concurrency; i++ {
-		deleteFile(store, fmt.Sprintf("%s.%d.sql", baseFileName, i))
-	}
 
 	startTime := time.Now()
 
