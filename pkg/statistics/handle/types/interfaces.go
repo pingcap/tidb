@@ -353,13 +353,6 @@ type StatsReadWriter interface {
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
-	// InsertColStats2KV inserts columns stats to kv.
-	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
-
-	// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
-	// new columns and indices which belong to this table.
-	InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error)
-
 	// UpdateStatsVersion will set statistics version to the newest TS,
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
