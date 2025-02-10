@@ -155,6 +155,7 @@ type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
 	GetServiceClient() (*azblob.Client, error)
 	GetAccountName() string
+	GetServiceURL() string
 }
 
 func urlOfObjectByEndpoint(endpoint, container, object string) (string, error) {
@@ -175,6 +176,11 @@ type sharedKeyClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyClientBuilder) GetServiceURL() string {
+	return b.serviceURL
+}
+
 func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	return azblob.NewClientWithSharedKeyCredential(b.serviceURL, b.cred, b.clientOptions)
 }
@@ -192,6 +198,11 @@ type sasClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *sasClientBuilder) GetServiceURL() string {
+	return b.serviceURL
+}
+
 func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
 }
@@ -207,6 +218,11 @@ type tokenClientBuilder struct {
 	serviceURL  string
 
 	clientOptions *azblob.ClientOptions
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *tokenClientBuilder) GetServiceURL() string {
+	return b.serviceURL
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -340,7 +356,8 @@ type AzureBlobStorage struct {
 	cpkInfo  *blob.CPKInfo
 
 	// resolvedAccountName is the final account name we are going to use.
-	resolvedAccountName string
+	resolvedAccountName     string
+	resolvedServiceEndpoint string
 }
 
 // CopyFrom implements Copier.
@@ -440,6 +457,7 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		cpkScope,
 		cpkInfo,
 		clientBuilder.GetAccountName(),
+		clientBuilder.GetServiceURL(),
 	}, nil
 }
 
