@@ -15,11 +15,22 @@ go_library(
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/version/build",
+<<<<<<< HEAD:br/pkg/lightning/config/BUILD.bazel
         "//config",
         "//parser/mysql",
         "//util",
         "//util/table-filter",
         "//util/table-router",
+=======
+        "//pkg/config",
+        "//pkg/lightning/common",
+        "//pkg/lightning/log",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/util",
+        "//pkg/util/table-filter",
+        "//pkg/util/table-router",
+>>>>>>> a83ed8f7dd1 (lightning: redact external storage url (#59256)):pkg/lightning/config/BUILD.bazel
         "@com_github_burntsushi_toml//:toml",
         "@com_github_carlmjohnson_flagext//:flagext",
         "@com_github_docker_go_units//:go-units",
