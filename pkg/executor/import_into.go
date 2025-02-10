@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -53,10 +54,11 @@ const unknownImportedRowCount = -1
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	exec.BaseExecutor
-	selectExec exec.Executor
-	userSctx   sessionctx.Context
-	controller *importer.LoadDataController
-	stmt       string
+	selectExec       exec.Executor
+	userSctx         sessionctx.Context
+	controller       *importer.LoadDataController
+	stmt             string
+	prevGCPercentage int
 
 	plan       *plannercore.ImportInto
 	tbl        table.Table
@@ -109,6 +111,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
+	}
+
+	// Set GCPercentage to 50 for parquet format to prevent OOM.
+	if e.controller.Format == importer.DataFormatParquet {
+		e.prevGCPercentage = debug.SetGCPercent(50)
 	}
 
 	// must use a new session to pre-check, else the stmt in show processlist will be changed.
@@ -328,6 +335,13 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	// TODO: change it after spec is ready.
 	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
 	return nil
+}
+
+func (e *ImportIntoExec) Close() error {
+	if e.prevGCPercentage > 0 {
+		debug.SetGCPercent(e.prevGCPercentage)
+	}
+	return e.BaseExecutor.Close()
 }
 
 // ImportIntoActionExec represents a import into action executor.

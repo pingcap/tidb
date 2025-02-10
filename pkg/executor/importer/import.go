@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -538,6 +539,9 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
+	}
+	if p.Format == DataFormatParquet {
+		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.25))
 	}
 
 	p.Checksum = config.OpLevelRequired
@@ -1144,6 +1148,16 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				UseStreaming:       true,
 				UseSampleAllocator: false,
 			}
+		}
+
+		// Adjust thread count for parquet
+		memTotal, err := memory.MemTotal()
+		if err == nil {
+			limit := min(int(memTotal)*50/100/int(e.dataFiles[0].ParquetMeta.MemoryUsage), e.Plan.ThreadCnt)
+			limit = max(limit, 1)
+			log.L().Info("adjust IMPORT INTO thread count for parquet",
+				zap.Int("thread count", e.Plan.ThreadCnt), zap.Int("after", limit))
+			e.Plan.ThreadCnt = limit
 		}
 	}
 
