@@ -205,7 +205,7 @@ func FineGrainedRestorePreWork(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	switcher *ImportModeSwitcher,
-	rewriteRule *utils.RewriteRules,
+	rewriteRule []*utils.RewriteRules,
 	isOnline bool,
 	switchToImport bool,
 ) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
