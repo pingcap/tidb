@@ -230,6 +230,67 @@ func TestRole(t *testing.T) {
 	tk.MustExec("SET ROLE NONE")
 }
 
+func TestMaxUserConnections(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// test global variables max_user_connections.
+	result := tk.MustQuery(`show variables like 'max_user_connections'`)
+	result.Check(testkit.Rows("max_user_connections 0"))
+	tk.MustExec(`set global max_user_connections = 3;`)
+	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 3"))
+	// if the value < 0, set 0 to max_user_connections.
+	tk.MustExec(`set global max_user_connections = -1;`)
+	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
+	// if the value > 100000, set 100000 to max_user_connections.
+	tk.MustExec(`set global max_user_connections = 100001;`)
+	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 100000"))
+	tk.MustExec(`set global max_user_connections = 0;`)
+	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
+
+	// create user with the default max_user_connections 0
+	createUserSQL := `CREATE USER 'test'@'localhost';`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user`)
+	result.Check(testkit.Rows("root 0", "test 0"))
+
+	// create user with max_user_connections 3
+	createUserSQL = `CREATE USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 3;`
+	tk.MustExec(createUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 3"))
+
+	// test alter user with MAX_USER_CONNECTIONS
+	alterUserSQL := `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 4;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 4"))
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS -2;`
+	_, err := tk.Exec(alterUserSQL)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 58 near \"-2;\" ")
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 0;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 0"))
+
+	// grant the privilege of 'create user' to 'test1'@'localhost'
+	tkTest1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tkTest1.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil, nil))
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	tk.MustExec(`GRANT CREATE USER ON *.* TO 'test1'@'localhost'`)
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Nil(t, err)
+
+	// revert the privilege of 'create user' for 'test1'@'localhost'
+	tk.MustExec(`REVOKE CREATE USER ON *.* FROM 'test1'@'localhost'`)
+	_, err = tkTest1.Exec(`ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+}
+
 func TestUser(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -336,29 +397,6 @@ func TestUser(t *testing.T) {
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
-
-	// Test alter user WITH MAX_USER_CONNECTIONS
-	createUserSQL = `CREATE USER 'test1'@'localhost';`
-	tk.MustExec(createUserSQL)
-	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 4;`
-	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
-	result.Check(testkit.Rows("test1 4"))
-	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2;`
-	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
-	result.Check(testkit.Rows("test1 2"))
-	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS -2;`
-	_, err = tk.Exec(alterUserSQL)
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 58 near \"-2;\" ")
-
-	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 0;`
-	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
-	result.Check(testkit.Rows("test1 0"))
-	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost';`
-	tk.MustExec(dropUserSQL)
 
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
