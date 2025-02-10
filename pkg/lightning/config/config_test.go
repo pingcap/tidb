@@ -100,7 +100,7 @@ func TestStrictFormat(t *testing.T) {
 	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
 	t.Log(err.Error())
 
-	cfg.Mydumper.CSV.Terminator = "\r\n"
+	cfg.Mydumper.CSV.LinesTerminatedBy = "\r\n"
 	err = cfg.Adjust(context.Background())
 	require.NoError(t, err)
 }
