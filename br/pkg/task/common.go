@@ -321,12 +321,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-<<<<<<< HEAD
-	_ = flags.MarkHidden(flagChecksum)
-=======
 	_ = flags.MarkHidden(FlagChecksum)
-	_ = flags.MarkHidden(flagLoadStats)
->>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -512,15 +507,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.NoCreds, err = flags.GetBool(flagNoCreds); err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
 	if cfg.Concurrency, err = flags.GetUint32(flagConcurrency); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
-=======
-
 	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
->>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -633,59 +623,11 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.normalizePDURLs()
 }
 
-<<<<<<< HEAD
-=======
-func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pflag.FlagSet) error {
-	masterKeyString, err := flags.GetString(flagMasterKeyConfig)
-	if err != nil {
-		return errors.Errorf("master key flag '%s' is not defined: %v", flagMasterKeyConfig, err)
-	}
-
-	if masterKeyString == "" {
-		return nil
-	}
-
-	if hasPlaintextKey {
-		return errors.Errorf("invalid argument: both plaintext data key encryption and master key based encryption are set at the same time")
-	}
-
-	encryptionMethodString, err := flags.GetString(flagMasterKeyCipherType)
-	if err != nil {
-		return errors.Errorf("encryption method flag '%s' is not defined: %v", flagMasterKeyCipherType, err)
-	}
-
-	encryptionMethod, err := parseCipherType(encryptionMethodString)
-	if err != nil {
-		return errors.Errorf("failed to parse encryption method: %v", err)
-	}
-
-	if !utils.IsEffectiveEncryptionMethod(encryptionMethod) {
-		return errors.Errorf("invalid encryption method: %s", encryptionMethodString)
-	}
-
-	masterKeyStrings := strings.Split(masterKeyString, masterKeysDelimiter)
-	cfg.MasterKeyConfig = backuppb.MasterKeyConfig{
-		EncryptionType: encryptionMethod,
-		MasterKeys:     make([]*encryptionpb.MasterKey, 0, len(masterKeyStrings)),
-	}
-
-	for _, keyString := range masterKeyStrings {
-		masterKey, err := validateAndParseMasterKeyString(strings.TrimSpace(keyString))
-		if err != nil {
-			return errors.Wrapf(err, "invalid master key configuration: %s", keyString)
-		}
-		cfg.MasterKeyConfig.MasterKeys = append(cfg.MasterKeyConfig.MasterKeys, &masterKey)
-	}
-
-	return nil
-}
-
 // OverrideDefaultForBackup override common config for backup tasks
 func (cfg *Config) OverrideDefaultForBackup() {
 	cfg.Checksum = false
 }
 
->>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
 	g glue.Glue, pds []string,

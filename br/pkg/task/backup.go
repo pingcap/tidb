@@ -37,11 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
-<<<<<<< HEAD
-	"go.uber.org/multierr"
-=======
-	kvutil "github.com/tikv/client-go/v2/util"
->>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
 	"go.uber.org/zap"
 )
 

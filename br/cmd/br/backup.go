@@ -166,23 +166,6 @@ func newRawBackupCommand() *cobra.Command {
 	task.DefineRawBackupFlags(command)
 	return command
 }
-<<<<<<< HEAD
-=======
-
-// newTxnBackupCommand return a txn kv range backup subcommand.
-func newTxnBackupCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "txn",
-		Short: "(experimental) backup a txn kv range from TiKV cluster",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupTxnCommand(command, task.TxnBackupCmd)
-		},
-	}
-
-	task.DefineTxnBackupFlags(command)
-	return command
-}
 
 func overrideDefaultBackupConfigIfNeeded(config *task.BackupConfig, cmd *cobra.Command) {
 	// override only if flag not set by user
@@ -190,4 +173,3 @@ func overrideDefaultBackupConfigIfNeeded(config *task.BackupConfig, cmd *cobra.C
 		config.Checksum = false
 	}
 }
->>>>>>> 4f047be191b (br: restore checksum shouldn't rely on backup checksum (#56712))
