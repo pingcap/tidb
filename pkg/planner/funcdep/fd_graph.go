@@ -1241,7 +1241,7 @@ func FindCommonEquivClasses(fdSets []*FDSet) []intset.FastIntSet {
 	}
 	// iterate intersection with later all fdSets.
 	for i := 1; i < len(fdSets); i++ {
-		var newResult []intset.FastIntSet
+		newResult := make([]intset.FastIntSet, 0, len(result))
 		currFDSet := fdSets[i]
 		// iterate all equivalence classes in the current fdSet.
 		for _, equivClass := range result {
