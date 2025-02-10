@@ -271,7 +271,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	var res []*TaskExecInfo
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		// as the task will not go into next step when there are subtasks in those
-		// states, so their steps will be their current step of corresponding task,
+		// states, so their steps will be current step of their corresponding task,
 		// so we don't need to query by step here.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
@@ -296,7 +296,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 			if i > 0 {
 				taskIDsBuf.WriteString(",")
 			}
-			taskIDsBuf.WriteString(strconv.FormatInt(taskID, 10))
+			taskIDsBuf.WriteString(taskIDStr)
 		}
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+basicTaskColumns+` from mysql.tidb_global_task t
