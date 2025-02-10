@@ -748,7 +748,7 @@ func TestOpenSeek(t *testing.T) {
 	rnd.Read(someRandomBytes)
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
-	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 998000, 990100}, func(data []byte, offset int) io.ReadCloser {
+	s.expectedCalls(t, someRandomBytes, []int{0, 998000, 990100}, func(data []byte, offset int) io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(data[offset:]))
 	})
 
@@ -824,12 +824,12 @@ func (r *limitedBytesReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, startOffsets []int, newReader func(data []byte, offset int) io.ReadCloser) {
+func (s *s3Suite) expectedCalls(t *testing.T, data []byte, startOffsets []int, newReader func(data []byte, offset int) io.ReadCloser) {
 	var lastCall *gomock.Call
 	for _, offset := range startOffsets {
 		thisOffset := offset
 		thisCall := s.s3.EXPECT().
-			GetObjectWithContext(ctx, gomock.Any()).
+			GetObjectWithContext(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 				if thisOffset > 0 {
 					require.Equal(t, fmt.Sprintf("bytes=%d-", thisOffset), aws.StringValue(input.Range))
@@ -867,7 +867,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
-	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 20, 50, 75}, func(data []byte, offset int) io.ReadCloser {
+	s.expectedCalls(t, someRandomBytes, []int{0, 20, 50, 75}, func(data []byte, offset int) io.ReadCloser {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
@@ -920,7 +920,7 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
-	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 0, 0, 0}, func(data []byte, offset int) io.ReadCloser {
+	s.expectedCalls(t, someRandomBytes, []int{0, 0, 0, 0}, func(data []byte, offset int) io.ReadCloser {
 		return io.NopCloser(alwaysFailReader{})
 	})
 
@@ -961,7 +961,6 @@ func TestS3ReaderResetRetry(t *testing.T) {
 
 	mockReader := &failEvenReadReader{r: bytes.NewReader(someRandomBytes)}
 	s.expectedCalls(
-		ctx,
 		t,
 		someRandomBytes,
 		[]int{0, 0, 20, 40, 60, 80},

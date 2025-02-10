@@ -984,8 +984,12 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 func (r *s3ObjectReader) readSlowConn(p []byte) (n int, err error) {
 	// sometimes reading S3 will become very slow when the S3 connection has
 	// no progress for a long time.
-	expectedBytesPerMilliSec := 200 // ~200 kB/s
+
+	// ~1 MB/s. Even a cold object can provide the throughput of ~18MB/s. Here 1MB/s
+	// threshold is very conservative.
+	expectedBytesPerMilliSec := 1000
 	expectedDuration := time.Duration(len(p)/expectedBytesPerMilliSec) * time.Millisecond
+	// leave some room for RTT. And in the loop, we will double the expectedDuration.
 	expectedDuration = max(expectedDuration, 10*time.Millisecond)
 	for {
 		done := make(chan struct{})
