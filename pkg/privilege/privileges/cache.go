@@ -327,6 +327,18 @@ func compareItemDynamicPriv(a, b itemDynamicPriv) bool {
 	return a.username < b.username
 }
 
+type bTree[T any] struct {
+	*btree.BTreeG[T]
+	sync.Mutex
+}
+
+// Clone provides the concurrent-safe operation by wraping the original Clone.
+func (bt *bTree[T]) Clone() *btree.BTreeG[T] {
+	bt.Lock()
+	defer bt.Unlock()
+	return bt.BTreeG.Clone()
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	globalVars variable.GlobalVarAccessor
@@ -341,26 +353,26 @@ type MySQLPrivilege struct {
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
 
-	user         *btree.BTreeG[itemUser]
-	db           *btree.BTreeG[itemDB]
-	tablesPriv   *btree.BTreeG[itemTablesPriv]
-	columnsPriv  *btree.BTreeG[itemColumnsPriv]
-	defaultRoles *btree.BTreeG[itemDefaultRole]
+	user         bTree[itemUser]
+	db           bTree[itemDB]
+	tablesPriv   bTree[itemTablesPriv]
+	columnsPriv  bTree[itemColumnsPriv]
+	defaultRoles bTree[itemDefaultRole]
 
-	globalPriv  *btree.BTreeG[itemGlobalPriv]
-	dynamicPriv *btree.BTreeG[itemDynamicPriv]
+	globalPriv  bTree[itemGlobalPriv]
+	dynamicPriv bTree[itemDynamicPriv]
 	roleGraph   map[string]roleGraphEdgesTable
 }
 
 func newMySQLPrivilege() *MySQLPrivilege {
 	var p MySQLPrivilege
-	p.user = btree.NewG(8, compareItemUser)
-	p.db = btree.NewG(8, compareItemDB)
-	p.tablesPriv = btree.NewG(8, compareItemTablesPriv)
-	p.columnsPriv = btree.NewG(8, compareItemColumnsPriv)
-	p.defaultRoles = btree.NewG(8, compareItemDefaultRole)
-	p.globalPriv = btree.NewG(8, compareItemGlobalPriv)
-	p.dynamicPriv = btree.NewG(8, compareItemDynamicPriv)
+	p.user = bTree[itemUser]{BTreeG: btree.NewG(8, compareItemUser)}
+	p.db = bTree[itemDB]{BTreeG: btree.NewG(8, compareItemDB)}
+	p.tablesPriv = bTree[itemTablesPriv]{BTreeG: btree.NewG(8, compareItemTablesPriv)}
+	p.columnsPriv = bTree[itemColumnsPriv]{BTreeG: btree.NewG(8, compareItemColumnsPriv)}
+	p.defaultRoles = bTree[itemDefaultRole]{BTreeG: btree.NewG(8, compareItemDefaultRole)}
+	p.globalPriv = bTree[itemGlobalPriv]{BTreeG: btree.NewG(8, compareItemGlobalPriv)}
+	p.dynamicPriv = bTree[itemDynamicPriv]{BTreeG: btree.NewG(8, compareItemDynamicPriv)}
 	return &p
 }
 
@@ -583,7 +595,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		user.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.user = user
+	ret.user.BTreeG = user
 
 	db := p.db.Clone()
 	for _, u := range userList {
@@ -594,7 +606,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		db.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.db = db
+	ret.db.BTreeG = db
 
 	tablesPriv := p.tablesPriv.Clone()
 	for _, u := range userList {
@@ -605,7 +617,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		tablesPriv.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.tablesPriv = tablesPriv
+	ret.tablesPriv.BTreeG = tablesPriv
 
 	columnsPriv := p.columnsPriv.Clone()
 	for _, u := range userList {
@@ -616,7 +628,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		columnsPriv.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.columnsPriv = columnsPriv
+	ret.columnsPriv.BTreeG = columnsPriv
 
 	defaultRoles := p.defaultRoles.Clone()
 	for _, u := range userList {
@@ -627,7 +639,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		defaultRoles.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.defaultRoles = defaultRoles
+	ret.defaultRoles.BTreeG = defaultRoles
 
 	dynamicPriv := p.dynamicPriv.Clone()
 	for _, u := range userList {
@@ -638,7 +650,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		dynamicPriv.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.dynamicPriv = dynamicPriv
+	ret.dynamicPriv.BTreeG = dynamicPriv
 
 	globalPriv := p.globalPriv.Clone()
 	for _, u := range userList {
@@ -649,7 +661,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 		globalPriv.ReplaceOrInsert(itm)
 		return true
 	})
-	ret.globalPriv = globalPriv
+	ret.globalPriv.BTreeG = globalPriv
 
 	ret.roleGraph = diff.roleGraph
 	return ret
