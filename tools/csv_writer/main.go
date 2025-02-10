@@ -366,10 +366,7 @@ func main() {
 	columns := parseSQLSchema(sqlSchema)
 
 	// 生成数据
-	startTime := time.Now()
 	data := generateDataConcurrently(columns, rowCount)
-	endTime := time.Now()
-	log.Printf("生成随机数据，耗时: %v", endTime.Sub(startTime))
 
 	// write to local disk
 	//filename := "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer/users.csv"
