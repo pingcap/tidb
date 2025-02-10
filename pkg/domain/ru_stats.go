@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -187,7 +188,7 @@ func (r *RUStatsWriter) fetchResourceGroupStats(ctx context.Context) ([]meta.Gro
 	infos := r.InfoCache.GetLatest()
 	res := make([]meta.GroupRUStats, 0, len(groups))
 	for _, g := range groups {
-		groupInfo, exists := infos.ResourceGroupByName(model.NewCIStr(g.Name))
+		groupInfo, exists := infos.ResourceGroupByName(ast.NewCIStr(g.Name))
 		if !exists {
 			continue
 		}
@@ -202,21 +203,21 @@ func (r *RUStatsWriter) fetchResourceGroupStats(ctx context.Context) ([]meta.Gro
 
 func (r *RUStatsWriter) loadLatestRUStats() (*meta.RUStats, error) {
 	snapshot := r.store.GetSnapshot(kv.MaxVersion)
-	metaStore := meta.NewSnapshotMeta(snapshot)
+	metaStore := meta.NewReader(snapshot)
 	return metaStore.GetRUStats()
 }
 
 func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	return kv.RunInNewTxn(ctx, r.store, true, func(_ context.Context, txn kv.Transaction) error {
-		return meta.NewMeta(txn).SetRUStats(stats)
+		return meta.NewMutator(txn).SetRUStats(stats)
 	})
 }
 
 func (r *RUStatsWriter) isLatestDataInserted(lastEndTime time.Time) (bool, error) {
 	end := lastEndTime.Format(time.DateTime)
 	start := lastEndTime.Add(-ruStatsInterval).Format(time.DateTime)
-	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
+	rows, sqlErr := runaway.ExecRCRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
 	if sqlErr != nil {
 		return false, errors.Trace(sqlErr)
 	}
@@ -229,7 +230,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 		return nil
 	}
 
-	_, err := execRestrictedSQL(r.sessPool, sql, nil)
+	_, err := runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 	return err
 }
 
@@ -237,7 +238,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	gcEndDate := lastEndTime.Add(-ruStatsGCDuration).Format(time.DateTime)
 	countSQL := fmt.Sprintf("SELECT count(*) FROM mysql.request_unit_by_group where end_time <= '%s'", gcEndDate)
-	rows, err := execRestrictedSQL(r.sessPool, countSQL, nil)
+	rows, err := runaway.ExecRCRestrictedSQL(r.sessPool, countSQL, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -246,7 +247,7 @@ func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	loopCount := (totalCount + gcBatchSize - 1) / gcBatchSize
 	for i := int64(0); i < loopCount; i++ {
 		sql := fmt.Sprintf("DELETE FROM mysql.request_unit_by_group where end_time <= '%s' order by end_time limit %d", gcEndDate, gcBatchSize)
-		_, err = execRestrictedSQL(r.sessPool, sql, nil)
+		_, err = runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -21,21 +21,44 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
+
+func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
+	physicalTables := make([]*PhysicalTable, 0, len(createdTables))
+	for _, createdTable := range createdTables {
+		physicalTables = append(physicalTables, &PhysicalTable{
+			NewPhysicalID: createdTable.Table.ID,
+			OldPhysicalID: createdTable.OldTable.Info.ID,
+			RewriteRules:  createdTable.RewriteRule,
+		})
+
+		partitionIDMap := restoreutils.GetPartitionIDMap(createdTable.Table, createdTable.OldTable.Info)
+		for oldID, newID := range partitionIDMap {
+			physicalTables = append(physicalTables, &PhysicalTable{
+				NewPhysicalID: newID,
+				OldPhysicalID: oldID,
+				RewriteRules:  createdTable.RewriteRule,
+			})
+		}
+	}
+	// sort the physical table by downstream stream physical id
+	sort.Slice(physicalTables, func(a, b int) bool {
+		return physicalTables[a].NewPhysicalID < physicalTables[b].NewPhysicalID
+	})
+	return physicalTables
+}
 
 // mapTableToFiles makes a map that mapping table ID to its backup files.
 // aware that one file can and only can hold one table.
@@ -66,49 +89,86 @@ func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
 	return result, maxSplitKeyCount
 }
 
+// filterOutFiles filters out files that exist in the checkpoint set.
+func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File) []*backuppb.File {
+	progress := int64(0)
+	totalKVs := uint64(0)
+	totalBytes := uint64(0)
+	newFiles := make([]*backuppb.File, 0, len(files))
+	for _, file := range files {
+		rangeKey := getFileRangeKey(file.Name)
+		if _, exists := checkpointSet[rangeKey]; exists {
+			// the range has been import done, so skip it and
+			// update the summary information
+			progress += 1
+			totalKVs += file.TotalKvs
+			totalBytes += file.TotalBytes
+		} else {
+			newFiles = append(newFiles, file)
+		}
+	}
+	if progress > 0 {
+		summary.CollectSuccessUnit(summary.TotalKV, 1, totalKVs)
+		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, 1, totalKVs)
+		summary.CollectSuccessUnit(summary.TotalBytes, 1, totalBytes)
+		summary.CollectSuccessUnit(summary.SkippedBytesByCheckpoint, 1, totalBytes)
+	}
+	return newFiles
+}
+
+// If there are many tables with only a few rows, the number of merged SSTs will be too large.
+// So set a threshold to avoid it.
+const MergedRangeCountThreshold = 1536
+
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
+	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
-) ([][]byte, []TableWithRange, error) {
-	// sort the created table by downstream stream table id
-	sort.Slice(createdTables, func(a, b int) bool {
-		return createdTables[a].Table.ID < createdTables[b].Table.ID
-	})
+	splitOnTable bool,
+) ([][]byte, []restore.BatchBackupFileSet, error) {
+	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
 	// mapping table ID to its backup files
 	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
 	var (
 		// to generate region split keys, merge the small ranges over the adjacent tables
-		sortedSplitKeys = make([][]byte, 0, hintSplitKeyCount)
+		sortedSplitKeys        = make([][]byte, 0, hintSplitKeyCount)
+		groupSize              = uint64(0)
+		groupCount             = uint64(0)
+		lastKey         []byte = nil
 
-		tableWithRanges = make([]TableWithRange, 0, len(createdTables))
+		// group the files by the generated split keys
+		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0, hintSplitKeyCount)
+		lastFilesGroup        restore.BatchBackupFileSet = nil
+
+		// statistic
+		mergedRangeCount       = 0
+		totalWriteCFFile   int = 0
+		totalDefaultCFFile int = 0
 	)
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
-	for _, table := range createdTables {
-		files := fileOfTable[table.OldTable.Info.ID]
-		if partitions := table.OldTable.Info.Partition; partitions != nil {
-			for _, partition := range partitions.Definitions {
-				files = append(files, fileOfTable[partition.ID]...)
-			}
-		}
+	for _, table := range sortedPhysicalTables {
+		files := fileOfTable[table.OldPhysicalID]
 		for _, file := range files {
-			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRule); err != nil {
+			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRules); err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 		// Merge small ranges to reduce split and scatter regions.
 		// Notice that the files having the same start key and end key are in the same range.
 		sortedRanges, stat, err := restoreutils.MergeAndRewriteFileRanges(
-			files, table.RewriteRule, splitSizeBytes, splitKeyCount)
+			files, table.RewriteRules, splitSizeBytes, splitKeyCount)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		totalDefaultCFFile += stat.TotalDefaultCFFile
+		totalWriteCFFile += stat.TotalWriteCFFile
 		log.Info("merge and validate file",
-			zap.Stringer("database", table.OldTable.DB.Name),
-			zap.Stringer("table", table.Table.Name),
+			zap.Int64("new physical ID", table.NewPhysicalID),
+			zap.Int64("old physical ID", table.OldPhysicalID),
 			zap.Int("Files(total)", stat.TotalFiles),
 			zap.Int("File(write)", stat.TotalWriteCFFile),
 			zap.Int("File(default)", stat.TotalDefaultCFFile),
@@ -119,28 +179,131 @@ func SortAndValidateFileRanges(
 			zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
 			zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
 
+		// skip some ranges if recorded by checkpoint
+		// Notice that skip ranges after select split keys in order to make the split keys
+		// always the same.
+		checkpointSet := checkpointSetWithTableID[table.NewPhysicalID]
+
+		// Generate the split keys, and notice that the way to generate split keys must be deterministic
+		// and regardless of the current cluster region distribution. Therefore, when restore fails, the
+		// generated split keys keep the same as before the next time we retry to restore.
+		//
+		// Here suppose that all the ranges is in the one region at beginning.
+		// In general, the ids of tables, which are created in the previous stage, are continuously because:
+		//
+		// 1. Before create tables, the cluster global id is allocated to ${GLOBAL_ID};
+		// 2. Suppose the ids of tables to be created are {t_i}, which t_i < t_j if i < j.
+		// 3. BR preallocate the global id from ${GLOBAL_ID} to t_max, so the table ids, which are larger
+		//  than ${GLOBAL_ID}, has the same downstream ids.
+		// 4. Then BR creates tables, and the table ids, which are less than or equal to ${GLOBAL_ID}, are
+		//  allocated to [t_max + 1, ...) in the downstream cluster.
+		// 5. Therefore, the BR-created tables are usually continuously.
+		//
+		// Besides, the prefix of the existing region's start key and end key should not be `t{restored_table_id}`.
 		for _, rg := range sortedRanges {
-			sortedSplitKeys = append(sortedSplitKeys, rg.EndKey)
+			// split key generation
+			afterMergedGroupSize := groupSize + rg.Size
+			afterMergedGroupCount := groupCount + rg.Count
+			if afterMergedGroupSize > splitSizeBytes || afterMergedGroupCount > splitKeyCount || mergedRangeCount > MergedRangeCountThreshold {
+				log.Info("merge ranges across tables due to kv size/count or merged count threshold exceeded",
+					zap.Uint64("merged kv size", groupSize),
+					zap.Uint64("merged kv count", groupCount),
+					zap.Int("merged range count", mergedRangeCount))
+				groupSize, groupCount = rg.Size, rg.Count
+				mergedRangeCount = 0
+				// can not merge files anymore, so generate a new split key
+				if lastKey != nil {
+					sortedSplitKeys = append(sortedSplitKeys, lastKey)
+				}
+				// then generate a new files group
+				if lastFilesGroup != nil {
+					tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+					// reset the lastFiltesGroup immediately because it is not always updated in each loop cycle.
+					lastFilesGroup = nil
+				}
+			} else {
+				groupSize, groupCount = afterMergedGroupSize, afterMergedGroupCount
+			}
+			// override the previous key, which may not become a split key.
+			lastKey = rg.EndKey
+			// mergedRangeCount increment by the number of files before filtered by checkpoint in order to make split keys
+			// always the same as that from before execution.
+			mergedRangeCount += len(rg.Files)
+			// checkpoint filter out the import done files in the previous restore executions.
+			// Notice that skip ranges after select split keys in order to make the split keys
+			// always the same.
+			newFiles := filterOutFiles(checkpointSet, rg.Files)
+			// append the new files into the group
+			if len(newFiles) > 0 {
+				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
+					lastFilesGroup = append(lastFilesGroup, restore.BackupFileSet{
+						TableID:      table.NewPhysicalID,
+						SSTFiles:     nil,
+						RewriteRules: table.RewriteRules,
+					})
+				}
+				lastFilesGroup[len(lastFilesGroup)-1].SSTFiles = append(lastFilesGroup[len(lastFilesGroup)-1].SSTFiles, newFiles...)
+			}
 		}
 
-		tableWithRanges = append(tableWithRanges, TableWithRange{
-			CreatedTable: *table,
-			Range:        sortedRanges,
-		})
+		// If the config split-table/split-region-on-table is on, it skip merging ranges over tables.
+		if splitOnTable {
+			log.Info("merge ranges across tables due to split on table",
+				zap.Uint64("merged kv size", groupSize),
+				zap.Uint64("merged kv count", groupCount),
+				zap.Int("merged range count", mergedRangeCount))
+			groupSize, groupCount = 0, 0
+			mergedRangeCount = 0
+			// Besides, ignore the table's last key that might be chosen as a split key, because there
+			// is already a table split key.
+			lastKey = nil
+			if lastFilesGroup != nil {
+				tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+				lastFilesGroup = nil
+			}
+		}
 	}
-	return sortedSplitKeys, tableWithRanges, nil
+	// append the key of the last range anyway
+	if lastKey != nil {
+		sortedSplitKeys = append(sortedSplitKeys, lastKey)
+	}
+	// append the last files group anyway
+	if lastFilesGroup != nil {
+		log.Info("merge ranges across tables due to the last group",
+			zap.Uint64("merged kv size", groupSize),
+			zap.Uint64("merged kv count", groupCount),
+			zap.Int("merged range count", mergedRangeCount))
+		tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+	}
+	summary.CollectInt("default CF files", totalDefaultCFFile)
+	summary.CollectInt("write CF files", totalWriteCFFile)
+	log.Info("range and file prepared", zap.Int("default file count", totalDefaultCFFile), zap.Int("write file count", totalWriteCFFile))
+	return sortedSplitKeys, tableIDWithFilesGroup, nil
 }
 
-func (rc *SnapClient) RestoreTables(
-	ctx context.Context,
-	placementRuleManager PlacementRuleManager,
-	createdTables []*CreatedTable,
-	allFiles []*backuppb.File,
-	checkpointSetWithTableID map[int64]map[string]struct{},
-	splitSizeBytes, splitKeyCount uint64,
-	updateCh glue.Progress,
-) error {
-	if err := placementRuleManager.SetPlacementRule(ctx, createdTables); err != nil {
+type RestoreTablesContext struct {
+	// configuration
+	LogProgress    bool
+	SplitSizeBytes uint64
+	SplitKeyCount  uint64
+	SplitOnTable   bool
+	Online         bool
+
+	// data
+	CreatedTables            []*CreatedTable
+	AllFiles                 []*backuppb.File
+	CheckpointSetWithTableID map[int64]map[string]struct{}
+
+	// tool client
+	Glue glue.Glue
+}
+
+func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesContext) error {
+	placementRuleManager, err := NewPlacementRuleManager(ctx, rc.pdClient, rc.pdHTTPClient, rc.tlsConf, rtCtx.Online)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := placementRuleManager.SetPlacementRule(ctx, rtCtx.CreatedTables); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
@@ -151,27 +314,27 @@ func (rc *SnapClient) RestoreTables(
 	}()
 
 	start := time.Now()
-	sortedSplitKeys, tableWithRanges, err := SortAndValidateFileRanges(createdTables, allFiles, splitSizeBytes, splitKeyCount)
+	sortedSplitKeys, tableIDWithFilesGroup, err :=
+		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.AllFiles, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	drainResult := drainRanges(tableWithRanges, checkpointSetWithTableID, updateCh)
-	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
-
-	start = time.Now()
-	if err = rc.SplitPoints(ctx, sortedSplitKeys, updateCh, false); err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("Split regions", zap.Duration("take", time.Since(start)))
-
-	start = time.Now()
-	if err = rc.RestoreSSTFiles(ctx, drainResult.Files(), updateCh); err != nil {
-		return errors.Trace(err)
-	}
 	elapsed := time.Since(start)
-	log.Info("Retore files", zap.Duration("take", elapsed))
+	summary.CollectDuration("merge ranges", elapsed)
+	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", elapsed))
 
-	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
+	if err := glue.WithProgress(ctx, rtCtx.Glue, "Split&Scatter Regions", int64(len(sortedSplitKeys)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
+		return rc.SplitPoints(ctx, sortedSplitKeys, updateCh.IncBy, false)
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := glue.WithProgress(ctx, rtCtx.Glue, "Download&Ingest SST", int64(len(tableIDWithFilesGroup)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
+		return rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh.IncBy)
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -180,20 +343,29 @@ func (rc *SnapClient) RestoreTables(
 func (rc *SnapClient) SplitPoints(
 	ctx context.Context,
 	sortedSplitKeys [][]byte,
-	updateCh glue.Progress,
+	onProgress func(int64),
 	isRawKv bool,
-) error {
+) (err error) {
+	start := time.Now()
+	defer func() {
+		if err == nil {
+			elapsed := time.Since(start)
+			log.Info("Restore Stage Duration", zap.String("stage", "split regions"), zap.Duration("take", elapsed))
+			summary.CollectDuration("split regions", elapsed)
+			summary.CollectInt("split keys", len(sortedSplitKeys))
+		}
+	}()
+
 	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
 	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
+		onProgress(int64(len(keys)))
 	}))
+	// TODO seems duplicate with metaClient.
 	if isRawKv {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := snapsplit.NewRegionSplitter(split.NewClient(
+	splitter := split.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
@@ -202,7 +374,7 @@ func (rc *SnapClient) SplitPoints(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
+	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {
@@ -216,113 +388,34 @@ func getFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
-	return getFileRangeKey(f1) == getFileRangeKey(f2)
-}
-
-func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	idx := 1
-	for idx < len(files) {
-		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-			break
-		}
-		idx++
-	}
-
-	return files[:idx], files[idx:]
-}
-
-// RestoreSSTFiles tries to restore the files.
+// RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,
-	tableIDWithFiles []TableIDWithFiles,
-	updateCh glue.Progress,
-) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx, rc.rateLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var rangeFiles []*backuppb.File
-	var leftFiles []*backuppb.File
-LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
-		rules := tableIDWithFile.RewriteRules
-		fileCount += len(files)
-		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-			if ectx.Err() != nil {
-				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-					zap.Int("remained", len(leftFiles)),
-					logutil.ShortError(ectx.Err()))
-				// We will fetch the error from the errgroup then (If there were).
-				// Also note if the parent context has been canceled or something,
-				// breaking here directly is also a reasonable behavior.
-				break LOOPFORTABLE
+	tableIDWithFilesGroup []restore.BatchBackupFileSet,
+	onProgress func(int64),
+) (retErr error) {
+	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+		if cmd, ok := v.(string); ok {
+			switch cmd {
+			case "corrupt-last-table-files": // skip some files and eventually return an error to make the restore fail
+				tableIDWithFilesGroup = tableIDWithFilesGroup[:len(tableIDWithFilesGroup)-1]
+				defer func() { retErr = errors.Errorf("skip the last table files") }()
+			case "only-last-table-files": // check whether all the files, except last table files, are skipped by checkpoint
+				for _, tableIDWithFiless := range tableIDWithFilesGroup[:len(tableIDWithFilesGroup)-1] {
+					for _, tableIDWithFiles := range tableIDWithFiless {
+						if len(tableIDWithFiles.SSTFiles) > 0 {
+							log.Panic("has files but not the last table files")
+						}
+					}
+				}
 			}
-			filesReplica := rangeFiles
-			rc.fileImporter.WaitUntilUnblock()
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import files done", logutil.Files(filesReplica),
-							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
-					}
-				}()
-				if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-					return errors.Trace(importErr)
-				}
-
-				// the data of this range has been import done
-				if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-					rangeKey := getFileRangeKey(filesReplica[0].Name)
-					// The checkpoint range shows this ranges of kvs has been restored into
-					// the table corresponding to the table-id.
-					if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, tableID, rangeKey); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				return nil
-			})
 		}
-	}
+	})
 
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
+	r := rc.GetRestorer(rc.checkpointRunner)
+	retErr = r.GoRestore(onProgress, tableIDWithFilesGroup...)
+	if retErr != nil {
+		return retErr
 	}
-	// Once the parent context canceled and there is no task running in the errgroup,
-	// we may break the for loop without error in the errgroup. (Will this happen?)
-	// At that time, return the error in the context here.
-	return ctx.Err()
+	return r.WaitUntilFinish()
 }

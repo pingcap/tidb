@@ -19,8 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -31,10 +32,10 @@ import (
 )
 
 // PlanContext is the context for building plan.
-type PlanContext = context.PlanContext
+type PlanContext = planctx.PlanContext
 
 // BuildPBContext is the context for building `*tipb.Executor`.
-type BuildPBContext = context.BuildPBContext
+type BuildPBContext = planctx.BuildPBContext
 
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
@@ -192,6 +193,7 @@ func (c *PlanCounterTp) IsForce() bool {
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
 	Plan
+	base.HashEquals
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
@@ -238,12 +240,12 @@ type LogicalPlan interface {
 	PullUpConstantPredicates() []expression.Expression
 
 	// RecursiveDeriveStats derives statistic info between plans.
-	RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
+	RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, bool, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
 	// We need selfSchema, childSchema here because it makes this method can be used in
 	// cascades planner, where LogicalPlan might not record its children or schema.
-	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error)
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error)
 
 	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
 	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain
@@ -291,4 +293,14 @@ type LogicalPlan interface {
 
 	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
 	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
+
+	// SetPlanIDsHash set sub operator tree's ids hash64
+	SetPlanIDsHash(uint64)
+
+	// GetPlanIDsHash set sub operator tree's ids hash64
+	GetPlanIDsHash() uint64
+
+	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
+	// For logicalPlan implementation, it just returns itself as well.
+	GetWrappedLogicalPlan() LogicalPlan
 }

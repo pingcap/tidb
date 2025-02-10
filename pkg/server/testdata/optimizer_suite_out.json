@@ -95,9 +95,9 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
+                            "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).fillIndexPath": {
+                                "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
@@ -120,7 +120,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
@@ -187,12 +187,12 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
+                                "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
                                   {
-                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
                                   },
                                   {
-                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveIndexPathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
                                   }
                                 ]
                               },
@@ -331,9 +331,9 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
+                        "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                            "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
                               "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                 {
                                   "Input Expressions": [
@@ -398,8 +398,8 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": {
-                              "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
+                            "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": {
+                              "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
                             }
                           },
                           {
@@ -519,9 +519,9 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
+                            "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).fillIndexPath": {
+                                "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
@@ -546,7 +546,7 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
@@ -615,12 +615,12 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
+                                "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
                                   {
-                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
                                   },
                                   {
-                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveIndexPathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
                                   }
                                 ]
                               },

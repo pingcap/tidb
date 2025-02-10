@@ -20,17 +20,17 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/phayes/freeport"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func init() {
@@ -85,7 +86,10 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -94,7 +98,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -111,24 +115,24 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(sb.String())
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
 
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 }
 
@@ -183,7 +187,6 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		{"ingest_dist_gs_backfill", "1", "1", cloudStorageURI},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
@@ -241,9 +244,9 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobType, rowCnt := rows[0][3].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"))
-	require.False(t, strings.Contains(jobType, "cloud"))
+	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
+	require.True(t, strings.Contains(jobType, "ingest"), jobType)
+	require.False(t, strings.Contains(jobType, "cloud"), jobType)
 	require.Equal(t, rowCnt, "3")
 }
 
@@ -269,7 +272,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -295,7 +298,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
@@ -319,7 +322,11 @@ func TestIngestUseGivenTS(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	})
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", `return(123456789)`)
+
+	presetTS := oracle.GoTimeToTS(time.Now())
+	failpointTerm := fmt.Sprintf(`return(%d)`, presetTS)
+
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", failpointTerm)
 	require.NoError(t, err)
 
 	tk.MustExec("create table t (a int);")
@@ -335,10 +342,10 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 123456789)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, presetTS)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
-	require.Equal(t, uint64(123456789), mvccResp.Info.Writes[0].CommitTs)
+	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }

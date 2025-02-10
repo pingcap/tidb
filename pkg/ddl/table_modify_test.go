@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -128,16 +128,17 @@ func TestConcurrentLockTables(t *testing.T) {
 
 func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1, se2 sessiontypes.Session, f func(t *testing.T, err1, err2 error)) {
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	ctx := context.Background()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -147,7 +148,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1,
 		}
 		times++
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	var wg util.WaitGroupWrapper
 	var err1 error
@@ -158,9 +159,9 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1,
 		var qLen int
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/url"
@@ -39,17 +40,17 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -325,7 +326,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	if charset == nil {
 		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
 		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-			context.Background(), variable.CharsetDatabase)
+			context.Background(), vardef.CharsetDatabase)
 		if err2 != nil {
 			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
 		} else {
@@ -547,7 +548,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = variable.CloudStorageURI.Load()
+	p.CloudStorageURI = vardef.CloudStorageURI.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -810,13 +811,14 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
-	var evalCtx expression.EvalContext
-	if plan.SCtx() != nil {
-		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
-	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
+			// The option attached to the import statement here are all
+			// parameters entered by the user. TiDB will process the
+			// parameters entered by the user as constant. so we can
+			// directly convert it to constant.
+			cons := opt.Value.(*expression.Constant)
+			val := fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1292,7 +1294,11 @@ func (p *Plan) IsGlobalSort() bool {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) ([]expression.Expression, []contextutil.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+	_ []expression.Expression,
+	_ []contextutil.SQLWarn,
+	retErr error,
+) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
@@ -1303,6 +1309,33 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 		// so we save it and clear it here.
 		allWarnings = append(allWarnings, planCtx.GetSessionVars().StmtCtx.GetWarnings()...)
 		planCtx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		res = append(res, newExpr)
+	}
+	return res, allWarnings, nil
+}
+
+// CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
+// This method does not support:
+//   - Subquery
+//   - System Variables (e.g. `@@tidb_enable_async_commit`)
+//   - Window functions
+//   - Aggregate functions
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
+func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	e.colAssignMu.Lock()
+	defer e.colAssignMu.Unlock()
+	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	var allWarnings []contextutil.SQLWarn
+	for _, assign := range e.ColumnAssignments {
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		if ctx.GetEvalCtx().WarningCount() > 0 {
+			allWarnings = append(allWarnings, ctx.GetEvalCtx().TruncateWarnings(0)...)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1362,9 +1395,8 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Affected   uint64
-	Warnings   []contextutil.SQLWarn
-	ColSizeMap variable.DeltaColsMap
+	Affected uint64
+	Warnings []contextutil.SQLWarn
 }
 
 // GetMsgFromBRError get msg from BR error.
@@ -1401,7 +1433,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 
 	serverDiskImport := storage.IsLocal(u)
-	if serverDiskImport || !variable.EnableDistTask.Load() {
+	if serverDiskImport || !vardef.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
 	return handle.GetCPUCountOfNode(ctx)

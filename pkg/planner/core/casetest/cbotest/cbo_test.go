@@ -24,13 +24,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -63,8 +66,11 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 	testKit.MustExec("create table t1 (a int)")
 	testKit.MustExec("create table t2 (a int)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -93,7 +99,8 @@ func TestStraightJoin(t *testing.T) {
 	h := dom.StatsHandle()
 	for _, tblName := range []string{"t1", "t2", "t3", "t4"} {
 		testKit.MustExec(fmt.Sprintf("create table %s (a int)", tblName))
-		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 	}
 	var input []string
 	var output [][]string
@@ -115,8 +122,8 @@ func TestTableDual(t *testing.T) {
 	h := dom.StatsHandle()
 	testKit.MustExec(`create table t(a int)`)
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
@@ -148,7 +155,8 @@ func TestEstimation(t *testing.T) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t all columns")
 	for i := 1; i <= 8; i++ {
@@ -212,9 +220,10 @@ func TestIndexRead(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -243,9 +252,10 @@ func TestEmptyTable(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -310,9 +320,10 @@ func TestAnalyze(t *testing.T) {
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -331,7 +342,8 @@ func TestOutdatedAnalyze(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t all columns")
 	testKit.MustExec("insert into t select * from t")
@@ -554,7 +566,7 @@ func TestTiFlashCostModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -584,7 +596,7 @@ func TestIndexEqualUnknown(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	require.NoError(t, loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom))
 	var input []string

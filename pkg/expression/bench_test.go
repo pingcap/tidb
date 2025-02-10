@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -385,6 +385,29 @@ func (g *jsonStringGener) gen() any {
 		panic(err)
 	}
 	return j.String()
+}
+
+type vectorFloat32RandGener struct {
+	dimension int
+	randGen   *defaultRandGen
+}
+
+// create a vectorfloat32 randomly with dimension. if dimension = -1, return nil vectorfloat32
+func newVectorFloat32RandGener(dimension int) *vectorFloat32RandGener {
+	return &vectorFloat32RandGener{dimension, newDefaultRandGen()}
+}
+
+func (g *vectorFloat32RandGener) gen() any {
+	if g.dimension == -1 {
+		return nil
+	}
+	var values []float32
+	for i := 0; i < g.dimension; i++ {
+		values = append(values, g.randGen.Float32())
+	}
+	vec := types.InitVectorFloat32(g.dimension)
+	copy(vec.Elements(), values)
+	return vec
 }
 
 type decimalStringGener struct {
@@ -1224,6 +1247,8 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 			col.AppendJSON(v.(types.BinaryJSON))
 		case types.ETString:
 			col.AppendString(v.(string))
+		case types.ETVectorFloat32:
+			col.AppendVectorFloat32(v.(types.VectorFloat32))
 		}
 	}
 }
@@ -1260,6 +1285,8 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 		return types.NewFieldType(mysql.TypeJSON)
 	case types.ETString:
 		return types.NewFieldType(mysql.TypeVarString)
+	case types.ETVectorFloat32:
+		return types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 	default:
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
@@ -1449,7 +1476,7 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		case types.ETJson:
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else if funcName == ast.GetVar {
@@ -1514,7 +1541,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1669,6 +1696,21 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					}
 					i++
 				}
+			case types.ETVectorFloat32:
+				err := baseFunc.vecEvalVectorFloat32(ctx, input, output)
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
+				// do not forget to call ResizeXXX/ReserveXXX
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				for row := it.Begin(); row != it.End(); row = it.Next() {
+					val, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
+					if !isNull {
+						require.Equal(t, output.GetVectorFloat32(i).Compare(val), 0, commentf(i))
+					}
+					i++
+				}
 			default:
 				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
@@ -1740,7 +1782,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, testCase.aesModes)
 			if err != nil {
 				panic(err)
 			}
@@ -1820,6 +1862,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
 						if err := baseFunc.vecEvalString(ctx, input, output); err != nil {
+							b.Fatal(err)
+						}
+					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						if err := baseFunc.vecEvalVectorFloat32(ctx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -1933,6 +1981,21 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 								output.AppendNull()
 							} else {
 								output.AppendString(v)
+							}
+						}
+					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						output.Reset(testCase.retEvalType)
+						for row := it.Begin(); row != it.End(); row = it.Next() {
+							v, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+							if err != nil {
+								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendVectorFloat32(v)
 							}
 						}
 					}

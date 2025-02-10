@@ -50,12 +50,16 @@ var (
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = ClassDDL.NewStd(mysql.ErrRepairTable)
 
+	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
+	ErrUnsupportedAddVectorIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add vector index: %s"), nil))
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
 	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
 	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
 	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
+	// ErrUnsupportedEngineAttribute means engine attribute option is unsupported
+	ErrUnsupportedEngineAttribute = ClassDDL.NewStd(mysql.ErrEngineAttributeNotSupported)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -168,8 +172,6 @@ var (
 	ErrFunctionalIndexRowValueIsNotAllowed = ClassDDL.NewStd(mysql.ErrFunctionalIndexRowValueIsNotAllowed)
 	// ErrUnsupportedCreatePartition returns for does not support create partitions.
 	ErrUnsupportedCreatePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil))
-	// ErrTablePartitionDisabled returns for table partition is disabled.
-	ErrTablePartitionDisabled = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil))
 	// ErrUnsupportedIndexType returns for unsupported index type.
 	ErrUnsupportedIndexType = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
 	// ErrWindowInvalidWindowFuncUse returns for invalid window function use.
@@ -180,7 +182,7 @@ var (
 	// ErrFkDupName returns for duplicated FK name.
 	ErrFkDupName = ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
-	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
+	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw, nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
 	ErrUnsupportedModifyPrimaryKey = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
@@ -229,6 +231,8 @@ var (
 	ErrErrorOnRename = ClassDDL.NewStd(mysql.ErrErrorOnRename)
 	// ErrViewSelectClause returns error for create view with select into clause
 	ErrViewSelectClause = ClassDDL.NewStd(mysql.ErrViewSelectClause)
+	// ErrViewSelectVariable returns error for create view with select into clause
+	ErrViewSelectVariable = ClassDDL.NewStd(mysql.ErrViewSelectVariable)
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)
@@ -418,12 +422,13 @@ var (
 
 	// ErrAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null or tiflash_replica_count = 0
 	ErrAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(0, parser_mysql.Message("TiFlash mode will take effect after at least one TiFlash replica is set for the table", nil))
-
 	// ErrUnsupportedTiFlashOperationForSysOrMemTable means we don't support the alter tiflash related action(e.g. set tiflash mode, set tiflash replica) for system table.
-	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for system table and memory table"), nil))
-
+	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for system table and memory table"), nil))
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
-	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains %s charset"), nil))
+	// ErrTiFlashBackfillIndex is the error that tiflash backfill the index failed.
+	ErrTiFlashBackfillIndex = ClassDDL.NewStdErr(mysql.ErrTiFlashBackfillIndex,
+		parser_mysql.Message(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, nil))
 
 	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
 	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)
@@ -497,9 +502,17 @@ var (
 			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 	// ErrGlobalIndexNotExplicitlySet is for Global index when not explicitly said GLOBAL, including UPDATE INDEXES
 	ErrGlobalIndexNotExplicitlySet = ClassDDL.NewStd(mysql.ErrGlobalIndexNotExplicitlySet)
+	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
+	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
+	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+
+	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
+	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
+	// ErrStorageClassInvalidSpec is reserved for future use.
+	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
 )
 
-// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+// ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
 var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrPDServerTimeout:           {},
 	mysql.ErrTiKVServerTimeout:         {},
@@ -521,4 +534,10 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
+}
+
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
 }

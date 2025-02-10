@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
@@ -261,7 +261,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time desc limit 1").Check(testkit.Rows("25.571605962 40507 alias123"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
+	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953", "16 2021-09-08 14:39:54.506967"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 	require.NotNil(t, re)
@@ -327,7 +327,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(
-		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil>", "")))
+		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
@@ -911,7 +911,8 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
-func TestMDLViewPrivilege(t *testing.T) {
+func TestMDLViewWithNoPrivilege(t *testing.T) {
+	// It's with TestMDLViewWithPrivilege. Split to two tests just because it runs too much time.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -920,9 +921,14 @@ func TestMDLViewPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
 	require.ErrorContains(t, err, "view lack rights")
+}
 
+func TestMDLViewWithPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// grant all privileges to test user.
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("create user 'test'@'%' identified by '';")
 	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
 	tk.MustExec("flush privileges;")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
@@ -1048,7 +1054,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` ), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 
@@ -1107,13 +1113,13 @@ func TestQuickBinding(t *testing.T) {
 	}
 
 	// test general queries and prepared / execute statements
-	for _, tc := range testCases {
+	for i, tc := range testCases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
 		firstSQL := fillValues(tc.template)
 		tk.MustExec(firstSQL)
 		result := tk.MustQuery(`select plan_hint, digest, plan_digest from information_schema.statements_summary`).Rows()
 		planHint, sqlDigest, planDigest := result[0][0].(string), result[0][1].(string), result[0][2].(string)
-		require.Equal(t, tc.expectedHint, planHint)
+		require.Equal(t, tc.expectedHint, planHint, "Failed at case #%d, template: %s", i, tc.template)
 		tk.MustExec(fmt.Sprintf(`create session binding from history using plan digest '%v'`, planDigest))
 
 		// normal test
@@ -1895,7 +1901,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
@@ -1906,7 +1912,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)
@@ -1965,4 +1971,55 @@ func TestMDLViewIDConflict(t *testing.T) {
 	txnTK1.MustExec("COMMIT")
 	txnTK2.MustExec("COMMIT")
 	wg.Wait()
+}
+
+func TestPlanCacheView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select a from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
+
+	tk.MustExec("use test")
+	tk.MustExec(`prepare st from 'select a from t where a in (?)'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache order by executions`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2",
+			":10080 select a from t where a in (?) 3")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
 }

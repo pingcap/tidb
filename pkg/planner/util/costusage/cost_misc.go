@@ -59,7 +59,7 @@ type CostVer2 struct {
 
 // GetCost returns the cost value of the costVer2
 func (c *CostVer2) GetCost() float64 {
-	return c.cost
+	return max(c.cost, 0)
 }
 
 // GetTrace returns the trace of current costVer2

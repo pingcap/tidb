@@ -141,7 +141,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	plans = append(plans, &sort.BasePhysicalPlan)
 	plans = append(plans, &recv.BasePhysicalPlan)
 	plans = append(plans, &hashSender.BasePhysicalPlan)
-	clear := func(plans []*physicalop.BasePhysicalPlan) {
+	clearFunc := func(plans []*physicalop.BasePhysicalPlan) {
 		for _, p := range plans {
 			p.SetChildren(nil)
 			p.TiFlashFineGrainedShuffleStreamCount = 0
@@ -172,7 +172,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start := func(p base.PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
 		handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
-		clear(plans)
+		clearFunc(plans)
 	}
 
 	// Window <- Sort <- ExchangeReceiver <- ExchangeSender
@@ -364,7 +364,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	require.Equal(t, uint64(16), hashSender1.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), recv.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), hashSender.TiFlashFineGrainedShuffleStreamCount)
-	clear(plans)
+	clearFunc(plans)
 
 	require.NoError(t, failpoint.Disable(fpName2))
 	require.NoError(t, failpoint.Enable(fpName2, `return("8000")`))

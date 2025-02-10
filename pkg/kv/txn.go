@@ -212,10 +212,8 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
-		panic("unexpected no source type context, if you see this error, " +
-			"the `RequestSourceTypeKey` is missing in your context")
-	}
+	intest.Assert(true, "unexpected no source type context, if you see this error, "+
+		"the `RequestSourceTypeKey` is missing in your context")
 	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
 		"the `RequestSourceTypeKey` is missing in the context")
 }

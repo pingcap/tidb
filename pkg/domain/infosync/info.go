@@ -37,16 +37,15 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -127,6 +126,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	infoCache             infoschemaMinTS
 }
 
 // ServerInfo is server static information.
@@ -138,7 +138,6 @@ type ServerInfo struct {
 	Port           uint              `json:"listening_port"`
 	StatusPort     uint              `json:"status_port"`
 	Lease          string            `json:"lease"`
-	BinlogStatus   string            `json:"binlog_status"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
@@ -193,6 +192,21 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 	globalInfoSyncer.Store(is)
 }
 
+// SetPDHttpCliForTest sets the pdhttp.Client for testing.
+// Please do not use it in the production environment.
+func SetPDHttpCliForTest(cli pdhttp.Client) func() {
+	syncer := globalInfoSyncer.Load()
+	originalCli := syncer.pdHTTPCli
+	syncer.pdHTTPCli = cli
+	return func() {
+		syncer.pdHTTPCli = originalCli
+	}
+}
+
+type infoschemaMinTS interface {
+	GetAndResetRecentInfoSchemaTS(now uint64) uint64
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -202,6 +216,7 @@ func GlobalInfoSyncerInit(
 	pdCli pd.Client, pdHTTPCli pdhttp.Client,
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
+	infoCache infoschemaMinTS,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -215,6 +230,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		infoCache:         infoCache,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -314,7 +330,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -537,6 +553,7 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
+// an "empty" bundle means delete bundle if a bundle with such ID exists.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
 	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
 		var err error
@@ -763,7 +780,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, vardef.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
@@ -788,6 +805,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
+		}
+	}
+
+	if is.infoCache != nil {
+		schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
+		if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
+			minStartTS = schemaTS
 		}
 	}
 
@@ -858,11 +883,6 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.info.BinlogStatus = status.String()
-		err := is.StoreServerInfo(ctx)
-		return errors.Trace(err)
-	})
 	return is.StoreServerInfo(ctx)
 }
 
@@ -890,6 +910,22 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
+}
+
+// RemoveTopologyInfo remove self server topology information from etcd.
+func (is *InfoSyncer) RemoveTopologyInfo() {
+	if is.etcdCli == nil {
+		return
+	}
+	prefix := fmt.Sprintf(
+		"%s/%s",
+		TopologyInformationPath,
+		net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))),
+	)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
+	}
 }
 
 // GetPrometheusAddr gets prometheus Address
@@ -999,9 +1035,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{
-				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
-			}
+			info := &ServerInfo{}
 			err = info.Unmarshal(kv.Value)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -1024,7 +1058,6 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 		Port:           cfg.Port,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
-		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
 		ServerIDGetter: serverIDGetter,
@@ -1104,6 +1137,25 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
+}
+
+// SyncTiFlashTableSchema syncs TiFlash table schema.
+func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvStats, err := is.tiflashReplicaManager.GetStoresStat(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashStores = append(tiflashStores, store)
+		}
+	}
+	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tiflashStores)
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress

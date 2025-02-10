@@ -1,5 +1,3 @@
-set tidb_enable_global_index=true;
-
 drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
@@ -16,6 +14,3 @@ select key_name, is_global from information_schema.tidb_indexes where table_name
 
 select partition_name, data_length, index_length from information_schema.PARTITIONS where table_name='t' and table_schema='globalindex__information_schema' order by partition_name;
 select table_name, data_length, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
-
-set tidb_enable_global_index=default;
-

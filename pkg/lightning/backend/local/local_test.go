@@ -60,9 +60,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -353,6 +356,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -443,20 +447,6 @@ func TestEngineLocalWriter(t *testing.T) {
 
 	// test local writer with ingest unsort
 	testLocalWriter(t, true, true)
-}
-
-type mockSplitClient struct {
-	split.SplitClient
-}
-
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	return &split.RegionInfo{
-		Leader: &metapb.Peer{Id: 1},
-		Region: &metapb.Region{
-			Id:       1,
-			StartKey: key,
-		},
-	}, nil
 }
 
 type testIngester struct{}
@@ -601,6 +591,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -676,14 +667,14 @@ func TestMergeSSTsDuplicated(t *testing.T) {
 type mockPdClient struct {
 	pd.Client
 	stores  []*metapb.Store
-	regions []*pd.Region
+	regions []*router.Region
 }
 
-func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, nil
 }
 
-func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
 	return c.regions, nil
 }
 
@@ -811,7 +802,7 @@ type mockImportClientFactory struct {
 	apiInvokeRecorder map[string][]uint64
 }
 
-func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	for _, store := range f.stores {
 		if store.Id == storeID {
 			return f.createClientFn(store), nil
@@ -820,7 +811,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
-func (f *mockImportClientFactory) Close() {}
+func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
@@ -1106,7 +1097,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobCh := make(chan *regionJob, 1)
 	jobCh <- &regionJob{}
 	jobOutCh := make(chan *regionJob, 1)
-	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil)
+	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil, nil)
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
@@ -1190,7 +1181,7 @@ func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
 
-func (m mockIngestData) GetTS() uint64 { return 0 }
+func (m mockIngestData) GetTS() uint64 { return oracle.GoTimeToTS(time.Now()) }
 
 func (m mockIngestData) IncRef() {}
 
@@ -1237,7 +1228,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1307,7 +1298,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, nil)
 		require.NoError(t, err)
 	}()
 
@@ -1331,6 +1322,7 @@ func TestCheckPeersBusy(t *testing.T) {
 }
 
 func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	log.InitLogger(&log.Config{Level: "debug"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1360,7 +1352,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1377,7 +1369,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	staleJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("")},
+		keyRange: common.Range{Start: []byte("a"), End: []byte("b")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1413,7 +1405,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -1459,7 +1451,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1513,7 +1505,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -1555,7 +1547,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1578,6 +1570,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err = db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -1633,7 +1626,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -1711,14 +1704,17 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	ctx := context.Background()
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		UUID:         engineUUID,
-		sstDir:       tmpPath,
-		ctx:          engineCtx,
-		cancel:       cancel,
-		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   common.NoopKeyAdapter{},
-		logger:       log.L(),
+		UUID:                 engineUUID,
+		sstDir:               tmpPath,
+		ctx:                  engineCtx,
+		cancel:               cancel,
+		sstMetasChan:         make(chan metaOrFlush, 64),
+		keyAdapter:           common.NoopKeyAdapter{},
+		logger:               log.L(),
+		regionSplitKeysCache: [][]byte{{1}, {11}},
+		regionSplitSize:      1 << 30,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
@@ -1728,13 +1724,11 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
 	jobCh := make(chan *regionJob, 10)
 	jobWg := sync.WaitGroup{}
 	err := local.generateAndSendJob(
 		ctx,
 		f,
-		bigRegionRange,
 		10*units.GB,
 		1<<30,
 		jobCh,
@@ -1742,24 +1736,23 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
 		jobWg.Done()
 	}
+	// the end key of the last job is different, it's the nextKey of the last key
+	job := <-jobCh
+	require.Equal(t, []byte{10}, job.keyRange.Start)
+	require.Equal(t, []byte{10, 1, 0}, job.keyRange.End)
+	jobWg.Done()
+
 	jobWg.Wait()
 	require.NoError(t, f.Close())
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
-	t.Skip("skip due to the delay of dynamic region feature, and external engine changed its behaviour")
-	backup := external.LargeRegionSplitDataThreshold
-	external.LargeRegionSplitDataThreshold = 1
-	t.Cleanup(func() {
-		external.LargeRegionSplitDataThreshold = backup
-	})
-
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1768,7 +1761,6 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		),
 	}
 	local.BackendConfig.WorkerConcurrency = 1
-	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
 
 	keys := make([][]byte, 0, 10)
 	value := make([][]byte, 0, 10)
@@ -1787,8 +1779,8 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		statFiles,
 		[]byte{1},
 		[]byte{10},
+		keys,
 		[][]byte{{1}, {11}},
-		1<<30,
 		common.NoopKeyAdapter{},
 		false,
 		nil,
@@ -1800,24 +1792,23 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		true,
 	)
 
-	jobCh := make(chan *regionJob, 10)
+	jobCh := make(chan *regionJob, 9)
 	jobWg := sync.WaitGroup{}
 	err = local.generateAndSendJob(
 		ctx,
 		extEngine,
-		bigRegionRange,
 		10*units.GB,
 		1<<30,
 		jobCh,
 		&jobWg,
 	)
 	require.NoError(t, err)
-	require.Len(t, jobCh, 10)
-	for i := 0; i < 10; i++ {
+	require.Len(t, jobCh, 9)
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
-		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 		require.NoError(t, err)
 		require.Equal(t, []byte{byte(i + 1)}, firstKey)
 		require.Equal(t, []byte{byte(i + 1)}, lastKey)
@@ -1879,11 +1870,7 @@ func TestDoImport(t *testing.T) {
 	// - one job need rescan when ingest
 	// - one job need retry when write
 
-	initRanges := []common.Range{
-		{Start: []byte{'a'}, End: []byte{'b'}},
-		{Start: []byte{'b'}, End: []byte{'c'}},
-		{Start: []byte{'c'}, End: []byte{'d'}},
-	}
+	initRegionKeys := [][]byte{{'a'}, {'b'}, {'c'}, {'d'}}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -1978,8 +1965,8 @@ func TestDoImport(t *testing.T) {
 			WorkerConcurrency: 2,
 		},
 	}
-	e := &Engine{}
-	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2006,7 +1993,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
-	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "meet error when generateJobForRange")
 
 	// test second call to generateJobForRange (needRescan) meet error
@@ -2051,7 +2038,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
-	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
@@ -2066,7 +2053,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -2076,7 +2063,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 1,
+					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
 				},
 			},
@@ -2086,7 +2073,7 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
-					retryCount: maxWriteAndIngestRetryTimes - 2,
+					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
@@ -2099,13 +2086,8 @@ func TestDoImport(t *testing.T) {
 			},
 		},
 	}
-	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
-	for _, v := range fakeRegionJobs {
-		for _, job := range v.jobs {
-			require.Len(t, job.injected, 0)
-		}
-	}
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
@@ -2124,9 +2106,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 
 	// test that job need rescan when ingest
 
-	initRanges := []common.Range{
-		{Start: []byte{'c'}, End: []byte{'d'}},
-	}
+	initRegionKeys := [][]byte{{'c'}, {'d'}}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -2137,13 +2117,31 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 1, StoreId: 1},
+								{Id: 2, StoreId: 2},
+								{Id: 3, StoreId: 3},
+							},
+						},
+					},
 				},
 				{
 					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-					retryCount: maxWriteAndIngestRetryTimes,
+					retryCount: MaxWriteAndIngestRetryTimes,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 4, StoreId: 4},
+								{Id: 5, StoreId: 5},
+								{Id: 6, StoreId: 6},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -2153,6 +2151,15 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 7, StoreId: 7},
+								{Id: 8, StoreId: 8},
+								{Id: 9, StoreId: 9},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -2164,8 +2171,8 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 			WorkerConcurrency: 2,
 		},
 	}
-	e := &Engine{}
-	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2192,10 +2199,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
 	})
 
-	initRanges := []common.Range{
-		{Start: []byte{'c'}, End: []byte{'d'}},
-		{Start: []byte{'d'}, End: []byte{'e'}},
-	}
+	initRegionKeys := [][]byte{{'c'}, {'d'}, {'e'}}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -2226,8 +2230,8 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 			WorkerConcurrency: 1,
 		},
 	}
-	e := &Engine{}
-	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2249,9 +2253,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
 	})
 
-	initRanges := []common.Range{
-		{Start: []byte{'c'}, End: []byte{'d'}},
-	}
+	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
 	ctx := context.Background()
 	l := &Backend{
@@ -2263,9 +2265,30 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 			panicSplitRegionClient{},
 		),
 	}
-	e := &Engine{}
-	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+type recordScanRegionsHook struct {
+	beforeScanRegions [][2][]byte
+}
+
+func (r *recordScanRegionsHook) BeforeSplitRegion(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, [][]byte) {
+	return regionInfo, keys
+}
+
+func (r *recordScanRegionsHook) AfterSplitRegion(ctx context.Context, info *split.RegionInfo, i [][]byte, infos []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	return infos, err
+}
+
+func (r *recordScanRegionsHook) BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int) {
+	r.beforeScanRegions = append(r.beforeScanRegions, [2][]byte{key, endKey})
+	return key, endKey, limit
+}
+
+func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	return infos, err
 }
 
 func TestExternalEngine(t *testing.T) {
@@ -2305,11 +2328,13 @@ func TestExternalEngine(t *testing.T) {
 		StatFiles:     statFiles,
 		StartKey:      keys[0],
 		EndKey:        endKey,
-		SplitKeys:     [][]byte{keys[20], keys[30], keys[50], keys[60], keys[80], keys[90]},
+		JobKeys:       [][]byte{keys[0], keys[20], keys[30], keys[50], keys[60], keys[80], keys[90], endKey},
+		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 	}
 	engineUUID := uuid.New()
+	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
@@ -2317,7 +2342,7 @@ func TestExternalEngine(t *testing.T) {
 		},
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
-		}, nil),
+		}, hook),
 		pdCli: &mockPdClient{},
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
@@ -2329,7 +2354,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 7; i++ {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2355,10 +2380,12 @@ func TestExternalEngine(t *testing.T) {
 		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
 	})
 	expectedKeyRanges := []common.Range{
-		{Start: keys[0], End: keys[30]},
+		{Start: keys[0], End: keys[20]},
+		{Start: keys[20], End: keys[30]},
 		{Start: keys[30], End: keys[50]},
 		{Start: keys[50], End: keys[60]},
-		{Start: keys[60], End: keys[90]},
+		{Start: keys[60], End: keys[80]},
+		{Start: keys[80], End: keys[90]},
 		{Start: keys[90], End: endKey},
 	}
 	kvIdx := 0
@@ -2374,6 +2401,13 @@ func TestExternalEngine(t *testing.T) {
 		require.NoError(t, iter.Close())
 	}
 	require.Equal(t, 100, kvIdx)
+
+	require.Equal(t, [][2][]byte{
+		{codec.EncodeBytes(nil, keys[0]), codec.EncodeBytes(nil, nextKey(keys[29]))},
+		{codec.EncodeBytes(nil, keys[30]), codec.EncodeBytes(nil, nextKey(keys[59]))},
+		{codec.EncodeBytes(nil, keys[60]), codec.EncodeBytes(nil, nextKey(keys[89]))},
+		{codec.EncodeBytes(nil, keys[90]), codec.EncodeBytes(nil, nextKey(keys[99]))},
+	}, hook.beforeScanRegions)
 }
 
 func TestCheckDiskAvail(t *testing.T) {

@@ -121,12 +121,12 @@ func (rs *ResultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Colum
 			// some Projection Operator might be inlined, so check the column again here
 			return handleCol
 		}
-	case *DataSource:
+	case *logicalop.DataSource:
 		if x.TableInfo.IsCommonHandle {
 			// Currently we deliberately don't support common handle case for simplicity.
 			return nil
 		}
-		handleCol := x.getPKIsHandleCol()
+		handleCol := x.GetPKIsHandleCol()
 		if handleCol != nil {
 			return handleCol
 		}

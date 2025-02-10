@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -34,23 +35,23 @@ import (
 func TestCheckSysTableCompatibility(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(model.NewCIStr(mysql.SystemDB))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr(mysql.SystemDB))
 	require.True(t, isExist)
 	tmpSysDB := dbSchema.Clone()
 	tmpSysDB.Name = utils.TemporaryDBName(mysql.SystemDB)
-	sysDB := model.NewCIStr(mysql.SystemDB)
-	userTI, err := restore.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
+	sysDB := ast.NewCIStr(mysql.SystemDB)
+	userTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("user"))
 	require.NoError(t, err)
 
 	// user table in cluster have more columns(success)
 	mockedUserTI := userTI.Clone()
-	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
 	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
@@ -60,7 +61,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 
 	// user table in cluster have less columns(failed)
 	mockedUserTI = userTI.Clone()
-	mockedUserTI.Columns = append(mockedUserTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	mockedUserTI.Columns = append(mockedUserTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
 	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
@@ -94,12 +95,12 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	// use the mysql.db table to test for column count mismatch.
-	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("db"))
+	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("db"))
 	require.NoError(t, err)
 
 	// other system tables in cluster have more columns(failed)
 	mockedDBTI := dbTI.Clone()
-	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
 	err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedDBTI,
@@ -115,5 +116,5 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(211), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(241), session.CurrentBootstrapVersion)
 }

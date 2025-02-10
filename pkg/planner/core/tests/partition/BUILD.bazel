@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "partition_test",
+    timeout = "short",
+    srcs = ["bench_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/autoid_service",
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/store/mockstore",
+        "//pkg/util/benchdaily",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -116,7 +116,7 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if dagReq.DivPrecisionIncrement != nil {
 		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
 	} else {
-		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+		sctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	}
 
 	ctx := &dagContext{
@@ -470,7 +470,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 
 // flagsAndTzToSessionContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc

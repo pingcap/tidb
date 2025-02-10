@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -51,7 +51,7 @@ func TestIndexChange(t *testing.T) {
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex || job.TableName != "t" {
 			return
 		}
@@ -59,7 +59,7 @@ func TestIndexChange(t *testing.T) {
 			return
 		}
 		jobID.Store(job.ID)
-		ctx1 := testNewContext(store)
+		ctx1 := testNewContext(t, store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -96,7 +96,7 @@ func TestIndexChange(t *testing.T) {
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID.Store(job.ID)
 		if job.SchemaState == prevState {
 			return
@@ -106,7 +106,7 @@ func TestIndexChange(t *testing.T) {
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
-		ctx1 := testNewContext(store)
+		ctx1 := testNewContext(t, store)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
@@ -231,7 +231,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
 	}
@@ -254,14 +254,14 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
 	}
 	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
 	} else {
 		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
@@ -295,7 +295,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if variable.EnableFastReorg.Load() {
+		if vardef.EnableFastReorg.Load() {
 			// Need check temp index also.
 			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
 		}

@@ -17,6 +17,7 @@ package ingest_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -25,10 +26,9 @@ import (
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +37,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	assertLastNDDLUseIngest := func(n int) {
 		tk.MustExec("admin check table t;")
@@ -45,7 +45,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		require.Len(t, rows, n)
 		for i := 0; i < n; i++ {
 			//nolint: forcetypeassert
-			jobTp := rows[i][3].(string)
+			jobTp := rows[i][12].(string)
 			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 		}
 	}
@@ -85,7 +85,7 @@ func TestIngestError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_dist_task = 0")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -100,7 +100,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 
 	tk.MustExec("drop table t;")
@@ -116,15 +116,15 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp = rows[0][3].(string)
+	jobTp = rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
@@ -147,16 +147,42 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	})
 }
 
-func TestAddIndexIngestCancel(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+func TestAddIndexSetInternalSessions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	expectInternalTS := []uint64{}
+	actualInternalTS := []uint64{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
+		expectInternalTS = append(expectInternalTS, startTS)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+		mgr := tk.Session().GetSessionManager()
+		actualInternalTS = mgr.GetInternalSessionStartTSList()
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	require.Len(t, expectInternalTS, 1)
+	for _, ts := range expectInternalTS {
+		require.Contains(t, actualInternalTS, ts)
+	}
+}
+
+func TestAddIndexIngestCancel(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
 	cancelled := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if cancelled {
 			return
 		}
@@ -176,17 +202,16 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	})
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
-	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-	require.NoError(t, err)
-	require.True(t, ok)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt)
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
 		primary key (a) clustered) partition by range (a) (
@@ -207,7 +232,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("CREATE TABLE t1 (f1 json);")
 	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
@@ -218,14 +243,14 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
 	tk.MustExec("insert into t values(1, 1, 1);")
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateNone && first {
 			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			assert.NoError(t, err)
@@ -233,16 +258,15 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 		}
 	})
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
-	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-	require.NoError(t, err)
-	require.True(t, available)
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt)
 }
 
 func TestAddIndexIngestTimezone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("SET time_zone = '-06:00';")
 	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
@@ -264,7 +288,7 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values(1, 1), (2, 2);")
@@ -295,7 +319,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustExec("insert into t values (1, 1, 1);")
@@ -303,28 +327,23 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	var runDML bool
 	var errDML error
-
-	ingest.MockExecAfterWriteRow = func() {
-		if runDML {
-			return
-		}
-		_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
-		runDML = true
-	}
-
+	var once sync.Once
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+		once.Do(func() {
+			_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
+		})
+	})
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 
 	require.NoError(t, errDML)
-	require.True(t, runDML)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
 }
 
 func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -356,7 +375,7 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 
 func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -389,7 +408,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 
 func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_dist_task = off;")
@@ -404,20 +423,105 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 		jobID = job.ID
 	})
 	rowCnt := atomic.Int32{}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
-		rowCnt.Add(1)
-		if rowCnt.Load() == 10 {
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use test")
-			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", jobID)
-			tk2.MustExec(updateSQL)
-			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", jobID)
-			tk2.MustExec(updateSQL)
-		}
-	})
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow",
+		func() {
+			rowCnt.Add(1)
+			if rowCnt.Load() == 10 {
+				tk2 := testkit.NewTestKit(t, store)
+				tk2.MustExec("use test")
+				updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", jobID)
+				tk2.MustExec(updateSQL)
+				updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", jobID)
+				tk2.MustExec(updateSQL)
+			}
+		})
 
 	tk.MustExec("alter table t add index idx(b);")
 	// It should resume to correct partition.
 	require.Equal(t, 20, int(rowCnt.Load()))
 	tk.MustExec("admin check table t;")
+}
+
+func TestAddGlobalIndexInIngest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec", func(bool) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+	})
+	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global")
+	rsGlobalIndex := tk.MustQuery("select * from t use index(idx_2)").Sort()
+	rsTable := tk.MustQuery("select * from t use index()").Sort()
+	rsNormalIndex := tk.MustQuery("select * from t use index(idx_1)").Sort()
+	num := len(rsGlobalIndex.Rows())
+	require.Greater(t, num, 3)
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
+
+	// for indexes have different columns
+	tk.MustExec("alter table t add index idx_3(a), add unique index idx_4(b) global")
+	rsGlobalIndex = tk.MustQuery("select * from t use index(idx_4)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsNormalIndex = tk.MustQuery("select * from t use index(idx_3)").Sort()
+	require.Greater(t, len(rsGlobalIndex.Rows()), num)
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
+
+	// for all global indexes
+	tk.MustExec("alter table t add unique index idx_5(b) global, add unique index idx_6(b) global")
+	rsGlobalIndex1 := tk.MustQuery("select * from t use index(idx_6)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsGlobalIndex2 := tk.MustQuery("select * from t use index(idx_5)").Sort()
+	require.Greater(t, len(rsGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
+	require.Equal(t, rsGlobalIndex1.String(), rsTable.String())
+	require.Equal(t, rsGlobalIndex1.String(), rsGlobalIndex2.String())
+
+	// for non-unique global idnexes
+	tk.MustExec("alter table t add index idx_7(b) global, add index idx_8(b) global")
+	rsNonUniqueGlobalIndex1 := tk.MustQuery("select * from t use index(idx_7)").Sort()
+	rsTable = tk.MustQuery("select * from t use index()").Sort()
+	rsNonUniqueGlobalIndex2 := tk.MustQuery("select * from t use index(idx_8)").Sort()
+	require.Greater(t, len(rsNonUniqueGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
+	require.Equal(t, rsNonUniqueGlobalIndex1.String(), rsTable.String())
+	require.Equal(t, rsNonUniqueGlobalIndex1.String(), rsNonUniqueGlobalIndex2.String())
+}
+
+func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+
+		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+		assert.Nil(t, err)
+	})
+	tk.MustExec("alter table t add unique index idx(b) global")
+	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
+	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
 }

@@ -21,8 +21,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -53,10 +53,10 @@ func TestMPPJoin(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "fact_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d1_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d2_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d3_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "fact_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d1_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d2_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d3_t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -89,7 +89,7 @@ func TestMPPLeftSemiJoin(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -138,8 +138,8 @@ func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 	tk.MustExec("analyze table b all columns")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+	testkit.SetTiFlashReplica(t, dom, "test", "a")
+	testkit.SetTiFlashReplica(t, dom, "test", "b")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
@@ -177,8 +177,8 @@ func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 	tk.MustExec("analyze table b")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+	testkit.SetTiFlashReplica(t, dom, "test", "a")
+	testkit.SetTiFlashReplica(t, dom, "test", "b")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
@@ -215,8 +215,8 @@ func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 	tk.MustExec("analyze table b all columns")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+	testkit.SetTiFlashReplica(t, dom, "test", "a")
+	testkit.SetTiFlashReplica(t, dom, "test", "b")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
@@ -269,10 +269,10 @@ func TestMPPShuffledJoin(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "fact_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d1_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d2_t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "d3_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "fact_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d1_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d2_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d3_t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -312,9 +312,9 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 	tk.MustExec("analyze table t3 all columns")
 
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
@@ -354,8 +354,8 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_2")
+	testkit.SetTiFlashReplica(t, dom, "test", "table_1")
+	testkit.SetTiFlashReplica(t, dom, "test", "table_2")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -390,7 +390,7 @@ func TestMPPWithBroadcastExchangeUnderNewCollation(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
+	testkit.SetTiFlashReplica(t, dom, "test", "table_1")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -422,7 +422,7 @@ func TestMPPAvgRewrite(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
+	testkit.SetTiFlashReplica(t, dom, "test", "table_1")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -455,8 +455,8 @@ func TestMppUnionAll(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 
 	var input []string
 	var output []struct {
@@ -489,8 +489,8 @@ func TestMppJoinDecimal(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
@@ -526,8 +526,8 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
@@ -576,8 +576,8 @@ func TestMppFineGrainedJoinAndAgg(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
@@ -613,7 +613,7 @@ func TestMppAggTopNWithJoin(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -651,7 +651,7 @@ func TestRejectSortForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -689,7 +689,7 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -728,7 +728,7 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -766,7 +766,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -803,7 +803,7 @@ func TestMppVersion(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -854,9 +854,9 @@ func TestIssue52828(t *testing.T) {
 	tk.MustExec("analyze table dd")
 
 	// Create virtual tiflash replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "c")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "dd")
+	testkit.SetTiFlashReplica(t, dom, "test", "b")
+	testkit.SetTiFlashReplica(t, dom, "test", "c")
+	testkit.SetTiFlashReplica(t, dom, "test", "dd")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")

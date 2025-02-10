@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -146,4 +147,41 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 	for i := range exprs {
 		require.True(t, exprs[i].Equal(ctx, funcs[i]))
 	}
+}
+
+func TestScalarFunctionHash64Equals(t *testing.T) {
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	sf0, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	sf0.Hash64(hasher1)
+	sf1.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, sf0.Equals(sf1))
+
+	// change the func name
+	sf2, _ := newFunctionWithMockCtx(ast.GT, a, NewZero()).(*ScalarFunction)
+	hasher2.Reset()
+	sf2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf2))
+
+	// change the args
+	sf3, _ := newFunctionWithMockCtx(ast.LT, a, NewOne()).(*ScalarFunction)
+	hasher2.Reset()
+	sf3.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf3))
+
+	// change the ret type
+	sf4, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf4.RetType = types.NewFieldType(mysql.TypeLong)
+	hasher2.Reset()
+	sf4.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, sf0.Equals(sf4))
 }

@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,7 @@ const (
 func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState,
 	rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
 	return &model.Job{
+		Version:    model.JobVersion1,
 		SchemaName: SchemaName,
 		TableName:  TableName,
 		TableID:    TableID,
@@ -60,7 +62,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	columns := make([]*model.IndexColumn, 0, len(columnsName))
 	for _, columnName := range columnsName {
 		columns = append(columns, &model.IndexColumn{
-			Name: model.CIStr{
+			Name: ast.CIStr{
 				O: columnName,
 				L: columnName,
 			},
@@ -68,7 +70,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	}
 	return &model.IndexInfo{
 		ID: id,
-		Name: model.CIStr{
+		Name: ast.CIStr{
 			O: columnsName[0],
 			L: columnsName[0], // noused
 		},
@@ -98,11 +100,11 @@ func hasOneItem(idxID int64, columnList string, columnArgs []any) (iterateFunc, 
 	}, &count
 }
 
-func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Meta)) {
+func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Mutator)) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	fn(meta.NewMeta(txn))
+	fn(meta.NewMutator(txn))
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -115,25 +117,25 @@ func TestAddIngestRecorder(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  model.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: model.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:   model.NewCIStr("y"),
+					Name:   ast.NewCIStr("y"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -141,22 +143,22 @@ func TestAddIngestRecorder(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  model.NewCIStr("x"),
-					Table: model.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   model.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   model.NewCIStr("y"),
+							Name:   ast.NewCIStr("y"),
 							Offset: 1,
 							Length: -1,
 						},
 					},
 					Comment: "123",
-					Tp:      model.IndexTypeBtree,
+					Tp:      ast.IndexTypeBtree,
 					State:   model.StatePublic,
 				},
 			},
@@ -232,7 +234,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -254,7 +256,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -275,7 +277,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), true)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -298,31 +300,31 @@ func TestIndexesKind(t *testing.T) {
 	require.NoError(t, err)
 	_, err := se.ExecuteInternal(ctx)
 	*/
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  model.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: model.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:                model.NewCIStr("_V$_x_0"),
+					Name:                ast.NewCIStr("_V$_x_0"),
 					Hidden:              true,
 					GeneratedExprString: "`x` * 2",
 					State:               model.StatePublic,
 				},
 				{
-					Name:   model.NewCIStr("z"),
+					Name:   ast.NewCIStr("z"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -330,27 +332,27 @@ func TestIndexesKind(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  model.NewCIStr("x"),
-					Table: model.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   model.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   model.NewCIStr("_V$_x_0"),
+							Name:   ast.NewCIStr("_V$_x_0"),
 							Offset: 1,
 							Length: -1,
 						},
 						{
-							Name:   model.NewCIStr("z"),
+							Name:   ast.NewCIStr("z"),
 							Offset: 2,
 							Length: 4,
 						},
 					},
 					Comment:   "123",
-					Tp:        model.IndexTypeHash,
+					Tp:        ast.IndexTypeHash,
 					Invisible: true,
 					State:     model.StatePublic,
 				},
@@ -373,7 +375,7 @@ func TestIndexesKind(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)
@@ -394,7 +396,7 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
-	require.Equal(t, model.NewCIStr(SchemaName), info.SchemaName)
+	require.Equal(t, ast.NewCIStr(SchemaName), info.SchemaName)
 	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
 	require.Equal(t, []any{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
@@ -407,25 +409,25 @@ func TestRewriteTableID(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	createMeta(t, store, func(m *meta.Meta) {
+	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  model.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: model.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:   model.NewCIStr("y"),
+					Name:   ast.NewCIStr("y"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -433,22 +435,22 @@ func TestRewriteTableID(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  model.NewCIStr("x"),
-					Table: model.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   model.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   model.NewCIStr("y"),
+							Name:   ast.NewCIStr("y"),
 							Offset: 1,
 							Length: -1,
 						},
 					},
 					Comment: "123",
-					Tp:      model.IndexTypeBtree,
+					Tp:      ast.IndexTypeBtree,
 					State:   model.StatePublic,
 				},
 			},
@@ -470,7 +472,7 @@ func TestRewriteTableID(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x", "y"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)

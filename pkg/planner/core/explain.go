@@ -27,10 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -270,6 +271,30 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetDistanceMetric().String())
+		buffer.WriteString("(")
+		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetColumnName())
+		buffer.WriteString("..")
+		if normalized {
+			buffer.WriteString("[?]")
+		} else {
+			v, _, err := types.ZeroCopyDeserializeVectorFloat32(p.AnnIndexExtra.PushDownQueryInfo.RefVecF32)
+			if err != nil {
+				buffer.WriteString("[?]")
+			} else {
+				buffer.WriteString(v.TruncatedString())
+			}
+		}
+		buffer.WriteString(", limit:")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
+		}
+		buffer.WriteString(")")
+	}
 	return buffer.String()
 }
 
@@ -379,7 +404,7 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	if variable.IgnoreInlistPlanDigest.Load() {
+	if vardef.IgnoreInlistPlanDigest.Load() {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
@@ -424,7 +449,7 @@ func (p *PhysicalExpand) explainInfoV2() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	if variable.IgnoreInlistPlanDigest.Load() {
+	if vardef.IgnoreInlistPlanDigest.Load() {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
@@ -548,13 +573,15 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 
 	exprCtx := p.SCtx().GetExprCtx()
 	evalCtx := exprCtx.GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(strings.Builder)
+	buffer.WriteString(p.JoinType.String())
 	buffer.WriteString(", inner:")
 	if normalized {
 		buffer.WriteString(p.Children()[p.InnerChildIdx].TP())
 	} else {
 		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
 	}
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(", outer key:")
 		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
@@ -630,7 +657,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
@@ -702,6 +729,17 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
+func explainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized bool, leftSide base.PhysicalPlan) {
+	if !isInnerJoin {
+		buffer.WriteString(", left side:")
+		if normalized {
+			buffer.WriteString(leftSide.TP())
+		} else {
+			buffer.WriteString(leftSide.ExplainID().String())
+		}
+	}
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return p.explainInfo(false)
@@ -716,7 +754,9 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	}
 
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(strings.Builder)
+	buffer.WriteString(p.JoinType.String())
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
@@ -911,7 +951,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
 	}
-	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+	if p.CompressionMode != vardef.ExchangeCompressionModeNONE {
 		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if p.ExchangeType == tipb.ExchangeType_Hash {

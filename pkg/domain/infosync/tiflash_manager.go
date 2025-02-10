@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -74,6 +75,8 @@ type TiFlashReplicaManager interface {
 	DeleteTiFlashProgressFromCache(tableID int64)
 	// CleanTiFlashProgressCache clean progress cache
 	CleanTiFlashProgressCache()
+	// SyncTiFlashTableSchema syncs the table's schema to TiFlash.
+	SyncTiFlashTableSchema(tableID int64, storesStat []pd.StoreInfo) error
 	// Close is to close TiFlashReplicaManager
 	Close(ctx context.Context)
 }
@@ -167,6 +170,20 @@ func encodeRuleID(c tikv.Codec, ruleID string) string {
 // CalculateTiFlashProgress calculates TiFlash replica progress.
 func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
 	return calculateTiFlashProgress(m.codec.GetKeyspaceID(), tableID, replicaCount, tiFlashStores)
+}
+
+// SyncTiFlashTableSchema syncs the table's schema to TiFlash.
+func (m *TiFlashReplicaManagerCtx) SyncTiFlashTableSchema(tableID int64, tiFlashStores []pd.StoreInfo) error {
+	for _, store := range tiFlashStores {
+		err := helper.SyncTableSchemaToTiFlash(store.Store.StatusAddress, m.codec.GetKeyspaceID(), tableID)
+		if err != nil {
+			logutil.BgLogger().Error("Fail to sync peer schema to TiFlash",
+				zap.Int64("storeID", store.Store.ID),
+				zap.Int64("tableID", tableID))
+			return err
+		}
+	}
+	return nil
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
@@ -278,7 +295,7 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateScheduleBatch(ctx context.Conte
 	if len(tableIDs) == 0 {
 		return nil
 	}
-	input := make([]*pd.KeyRange, 0, len(tableIDs))
+	input := make([]*router.KeyRange, 0, len(tableIDs))
 	for _, tableID := range tableIDs {
 		startKey := tablecodec.GenTableRecordPrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -736,6 +753,11 @@ func (tiflash *MockTiFlash) SetNetworkError(e bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	tiflash.NetworkError = e
+}
+
+// SyncTiFlashTableSchema syncs the table's schema to TiFlash.
+func (*mockTiFlashReplicaManagerCtx) SyncTiFlashTableSchema(_ int64, _ []pd.StoreInfo) error {
+	return nil
 }
 
 // CalculateTiFlashProgress return truncated string to avoid float64 comparison.

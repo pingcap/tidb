@@ -63,7 +63,7 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	for _, child := range lp.Children() {
 		collectGenerateColumn(child, exprToColumn)
 	}
-	ds, ok := lp.(*DataSource)
+	ds, ok := lp.(*logicalop.DataSource)
 	if !ok {
 		return
 	}

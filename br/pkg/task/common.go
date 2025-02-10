@@ -28,8 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -65,7 +64,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	flagChecksum            = "checksum"
+	FlagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -91,9 +90,13 @@ const (
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 	defaultCloudAPIConcurrency  = 8
 
-	flagCipherType    = "crypter.method"
-	flagCipherKey     = "crypter.key"
-	flagCipherKeyFile = "crypter.key-file"
+	flagFullBackupCipherType    = "crypter.method"
+	flagFullBackupCipherKey     = "crypter.key"
+	flagFullBackupCipherKeyFile = "crypter.key-file"
+
+	flagLogBackupCipherType    = "log.crypter.method"
+	flagLogBackupCipherKey     = "log.crypter.key"
+	flagLogBackupCipherKeyFile = "log.crypter.key-file"
 
 	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
 	defaultMetadataDownloadBatchSize = 128
@@ -104,12 +107,14 @@ const (
 	crypterAES256KeyLen = 32
 
 	flagFullBackupType = "type"
+
+	masterKeysDelimiter     = ","
+	flagMasterKeyConfig     = "master-key"
+	flagMasterKeyCipherType = "master-key-crypter-method"
 )
 
 const (
-	// Once TableInfoVersion updated. BR need to check compatibility with
-	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
-	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
+	cipherKeyNonHexErrorMsg = "cipher key must be a valid hexadecimal string"
 )
 
 // FullBackupType type when doing full backup or restore
@@ -260,7 +265,16 @@ type Config struct {
 	// GrpcKeepaliveTimeout is the max time a grpc conn can keep idel before killed.
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
+	// Plaintext data key mainly used for full/snapshot backup and restore.
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// Could be used in log backup and restore but not recommended in a serious environment since data key is stored
+	// in PD in plaintext.
+	LogBackupCipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// Master key based encryption for log restore.
+	// More than one can be specified for log restore if master key rotated during log backup.
+	MasterKeyConfig backuppb.MasterKeyConfig `json:"master-key-config" toml:"master-key-config"`
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
@@ -280,10 +294,10 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
+	flags.Uint(flagChecksumConcurrency, vardef.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(flagChecksum, true, "Run checksum at end of task")
+	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -310,17 +324,34 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
-	flags.String(flagCipherType, "plaintext", "Encrypt/decrypt method, "+
+	flags.String(flagFullBackupCipherType, "plaintext", "Encrypt/decrypt method, "+
 		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
 		"\"plaintext\" represents no encrypt/decrypt")
-	flags.String(flagCipherKey, "",
+	flags.String(flagFullBackupCipherKey, "",
 		"aes-crypter key, used to encrypt/decrypt the data "+
 			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
-	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
+	flags.String(flagFullBackupCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
 
 	flags.Uint(flagMetadataDownloadBatchSize, defaultMetadataDownloadBatchSize,
 		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
 
+	// log backup plaintext key flags
+	flags.String(flagLogBackupCipherType, "plaintext", "Encrypt/decrypt method, "+
+		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
+		"\"plaintext\" represents no encrypt/decrypt")
+	flags.String(flagLogBackupCipherKey, "",
+		"aes-crypter key, used to encrypt/decrypt the data "+
+			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
+	flags.String(flagLogBackupCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
+
+	// master key config
+	flags.String(flagMasterKeyCipherType, "plaintext", "Encrypt/decrypt method, "+
+		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
+		"\"plaintext\" represents no encrypt/decrypt")
+	flags.String(flagMasterKeyConfig, "", "Master key config for point in time restore "+
+		"examples: \"local:///path/to/master/key/file,"+
+		"aws-kms:///{key-id}?AWS_ACCESS_KEY_ID={access-key}&AWS_SECRET_ACCESS_KEY={secret-key}&REGION={region},"+
+		"gcp-kms:///projects/{project-id}/locations/{location}/keyRings/{keyring}/cryptoKeys/{key-name}?AUTH=specified&CREDENTIALS={credentials}\"")
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
 	storage.DefineFlags(flags)
@@ -328,16 +359,21 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(FlagChecksum)
 	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
 	_ = flags.MarkHidden(flagRateLimitUnit)
 	_ = flags.MarkHidden(flagRemoveTiFlash)
-	_ = flags.MarkHidden(flagCipherType)
-	_ = flags.MarkHidden(flagCipherKey)
-	_ = flags.MarkHidden(flagCipherKeyFile)
+	_ = flags.MarkHidden(flagFullBackupCipherType)
+	_ = flags.MarkHidden(flagFullBackupCipherKey)
+	_ = flags.MarkHidden(flagFullBackupCipherKeyFile)
+	_ = flags.MarkHidden(flagLogBackupCipherType)
+	_ = flags.MarkHidden(flagLogBackupCipherKey)
+	_ = flags.MarkHidden(flagLogBackupCipherKeyFile)
 	_ = flags.MarkHidden(flagSwitchModeInterval)
+	_ = flags.MarkHidden(flagMasterKeyConfig)
+	_ = flags.MarkHidden(flagMasterKeyCipherType)
 
 	storage.HiddenFlagsForStream(flags)
 }
@@ -425,38 +461,56 @@ func GetCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// if cipher-key is valid, convert the hexadecimal string to bytes
+	var hexString string
+
+	// Check if cipher-key is provided directly
 	if len(cipherKey) > 0 {
-		return hex.DecodeString(cipherKey)
+		hexString = cipherKey
+	} else {
+		// Read content from cipher-file
+		content, err := os.ReadFile(cipherKeyFile)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to read cipher file")
+		}
+		hexString = string(bytes.TrimSuffix(content, []byte("\n")))
 	}
 
-	// convert the content(as hexadecimal string) from cipher-file to bytes
-	content, err := os.ReadFile(cipherKeyFile)
+	// Attempt to decode the hex string
+	decodedKey, err := hex.DecodeString(hexString)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to read cipher file")
+		return nil, errors.Annotate(berrors.ErrInvalidArgument, cipherKeyNonHexErrorMsg)
 	}
 
-	content = bytes.TrimSuffix(content, []byte("\n"))
-	return hex.DecodeString(string(content))
+	return decodedKey, nil
 }
 
-func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
+func checkCipherKeyMatch(cipher *backuppb.CipherInfo) error {
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return true
+		return nil
 	case encryptionpb.EncryptionMethod_AES128_CTR:
-		return len(cipher.CipherKey) == crypterAES128KeyLen
+		if len(cipher.CipherKey) != crypterAES128KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-128 key length mismatch: expected %d, got %d",
+				crypterAES128KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES192_CTR:
-		return len(cipher.CipherKey) == crypterAES192KeyLen
+		if len(cipher.CipherKey) != crypterAES192KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-192 key length mismatch: expected %d, got %d",
+				crypterAES192KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES256_CTR:
-		return len(cipher.CipherKey) == crypterAES256KeyLen
+		if len(cipher.CipherKey) != crypterAES256KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-256 key length mismatch: expected %d, got %d",
+				crypterAES256KeyLen, len(cipher.CipherKey))
+		}
 	default:
-		return false
+		return errors.Errorf("Unknown encryption method: %v", cipher.CipherType)
 	}
+	return nil
 }
 
 func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
-	crypterStr, err := flags.GetString(flagCipherType)
+	crypterStr, err := flags.GetString(flagFullBackupCipherType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -470,12 +524,12 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return nil
 	}
 
-	key, err := flags.GetString(flagCipherKey)
+	key, err := flags.GetString(flagFullBackupCipherKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	keyFilePath, err := flags.GetString(flagCipherKeyFile)
+	keyFilePath, err := flags.GetString(flagFullBackupCipherKeyFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -485,11 +539,50 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
+}
+
+func (cfg *Config) parseLogBackupCipherInfo(flags *pflag.FlagSet) (bool, error) {
+	crypterStr, err := flags.GetString(flagLogBackupCipherType)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	cfg.LogBackupCipherInfo.CipherType, err = parseCipherType(crypterStr)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	if !utils.IsEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
+		return false, nil
+	}
+
+	key, err := flags.GetString(flagLogBackupCipherKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	keyFilePath, err := flags.GetString(flagLogBackupCipherKeyFile)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	cfg.LogBackupCipherInfo.CipherKey, err = GetCipherKeyContent(key, keyFilePath)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	return true, nil
 }
 
 func (cfg *Config) normalizePDURLs() error {
@@ -501,6 +594,10 @@ func (cfg *Config) normalizePDURLs() error {
 		}
 	}
 	return nil
+}
+
+func (cfg *Config) UserFiltered() bool {
+	return len(cfg.Schemas) != 0 || len(cfg.Tables) != 0 || len(cfg.FilterStr) != 0
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -516,7 +613,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -618,7 +715,17 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
 	}
 
-	if err = cfg.parseCipherInfo(flags); err != nil {
+	err = cfg.parseCipherInfo(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	hasLogBackupPlaintextKey, err := cfg.parseLogBackupCipherInfo(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = cfg.parseAndValidateMasterKeyInfo(hasLogBackupPlaintextKey, flags); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -627,6 +734,56 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return cfg.normalizePDURLs()
+}
+
+func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pflag.FlagSet) error {
+	masterKeyString, err := flags.GetString(flagMasterKeyConfig)
+	if err != nil {
+		return errors.Errorf("master key flag '%s' is not defined: %v", flagMasterKeyConfig, err)
+	}
+
+	if masterKeyString == "" {
+		return nil
+	}
+
+	if hasPlaintextKey {
+		return errors.Errorf("invalid argument: both plaintext data key encryption and master key based encryption are set at the same time")
+	}
+
+	encryptionMethodString, err := flags.GetString(flagMasterKeyCipherType)
+	if err != nil {
+		return errors.Errorf("encryption method flag '%s' is not defined: %v", flagMasterKeyCipherType, err)
+	}
+
+	encryptionMethod, err := parseCipherType(encryptionMethodString)
+	if err != nil {
+		return errors.Errorf("failed to parse encryption method: %v", err)
+	}
+
+	if !utils.IsEffectiveEncryptionMethod(encryptionMethod) {
+		return errors.Errorf("invalid encryption method: %s", encryptionMethodString)
+	}
+
+	masterKeyStrings := strings.Split(masterKeyString, masterKeysDelimiter)
+	cfg.MasterKeyConfig = backuppb.MasterKeyConfig{
+		EncryptionType: encryptionMethod,
+		MasterKeys:     make([]*encryptionpb.MasterKey, 0, len(masterKeyStrings)),
+	}
+
+	for _, keyString := range masterKeyStrings {
+		masterKey, err := validateAndParseMasterKeyString(strings.TrimSpace(keyString))
+		if err != nil {
+			return errors.Wrapf(err, "invalid master key configuration: %s", keyString)
+		}
+		cfg.MasterKeyConfig.MasterKeys = append(cfg.MasterKeyConfig.MasterKeys, &masterKey)
+	}
+
+	return nil
+}
+
+// OverrideDefaultForBackup override common config for backup tasks
+func (cfg *Config) OverrideDefaultForBackup() {
+	cfg.Checksum = false
 }
 
 // NewMgr creates a new mgr at the given PD address.
@@ -726,7 +883,7 @@ func ReadBackupMeta(
 	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
 		iv = metaData[:metautil.CrypterIvLen]
 	}
-	decryptBackupMeta, err := metautil.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
 	if err != nil {
 		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}
@@ -742,7 +899,8 @@ func ReadBackupMeta(
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
-	if f.Name == flagStorage {
+	switch f.Name {
+	case flagStorage, FlagStreamFullBackupStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
@@ -750,8 +908,14 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+		return zap.String(f.Name, "<redacted>")
+	case flagMasterKeyConfig:
+		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+		return zap.String(f.Name, "<redacted>")
+	default:
+		return zap.Stringer(f.Name, f.Value)
 	}
-	return zap.Stringer(f.Name, f.Value)
 }
 
 // LogArguments prints origin command arguments.
@@ -783,7 +947,7 @@ func (cfg *Config) adjust() {
 		cfg.GRPCKeepaliveTimeout = defaultGRPCKeepaliveTimeout
 	}
 	if cfg.ChecksumConcurrency == 0 {
-		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+		cfg.ChecksumConcurrency = vardef.DefChecksumTableConcurrency
 	}
 	if cfg.MetadataDownloadBatchSize == 0 {
 		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize

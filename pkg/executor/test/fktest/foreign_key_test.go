@@ -26,11 +26,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -1220,8 +1220,8 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
 	cols := []*model.ColumnInfo{
-		{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		{ID: 2, Name: model.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: ast.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 	}
 	restoreFn := func(stmt ast.StmtNode) string {
 		var sb strings.Builder
@@ -1237,29 +1237,29 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))
 	}
 	var stmt ast.StmtNode
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
 		OldValuesList: fkValues,
 	}
-	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, couple)
 	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, couple)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
 	// Test for 1 fk column.
 	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
-	cols = []*model.ColumnInfo{{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	cols = []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
@@ -1679,7 +1679,7 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 			tk.MustExec("update t1 set a=101 where id = 1")
 			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 			tk.MustExec("update t1 set b=102 where id = 2")
-			tk.MustQuery("select * from t1").Check(testkit.Rows("1 101 1", "2 1 102"))
+			tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1 101 1", "2 1 102"))
 			tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 1 102 a"))
 			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			require.Error(t, err)
@@ -2087,8 +2087,8 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		{
 			sql: "explain analyze insert ignore into t6 values (1,1,10)",
 			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5 total:0s, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:0s, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
 		},
 		{
@@ -2492,4 +2492,76 @@ func TestFKBuild(t *testing.T) {
 	tk.MustExec("insert into test.t2 values (1)")
 	tk.MustExec("delete from test.t3")
 	tk.MustQuery("select * from test.t2").Check(testkit.Rows())
+}
+
+func TestLockKeysInDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
+
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t2 VALUES (1)")
+	var wg sync.WaitGroup
+	var tk2CommitTime time.Time
+	tk2StartTime := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("BEGIN")
+		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
+		tk2.MustExec("COMMIT")
+		tk2CommitTime = time.Now()
+	}()
+	sleepDuration := 500 * time.Millisecond
+	time.Sleep(sleepDuration)
+	tk.MustExec("COMMIT")
+	wg.Wait()
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestLockKeysInInsertIgnore(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
+	tk.MustExec("insert into t1 values (1)")
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1)")
+
+	var wg sync.WaitGroup
+	var tk2CommitTime time.Time
+	tk2StartTime := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		tk2 := testkit.NewTestKit(t, store)
+		// unistore has a bug to handle the fair locking mechanism. We need to disable it to pass this test.
+		// Ref: https://github.com/pingcap/tidb/issues/56663
+		tk2.MustExec("set tidb_pessimistic_txn_fair_locking = 'OFF'")
+		tk2.MustExec("use test")
+		tk2.MustExec("BEGIN")
+		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
+		tk2.MustExec("COMMIT")
+		tk2CommitTime = time.Now()
+	}()
+
+	sleepDuration := 500 * time.Millisecond
+	time.Sleep(sleepDuration)
+	tk.MustExec("COMMIT")
+	wg.Wait()
+
+	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
+	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
 }

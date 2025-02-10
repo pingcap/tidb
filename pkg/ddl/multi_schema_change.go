@@ -16,15 +16,17 @@ package ddl
 
 import (
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	metaMut := jobCtx.metaMut
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
 		if job.IsRollingback() {
@@ -35,7 +37,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -58,7 +60,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -66,7 +68,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, err = t.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
 		if err != nil {
 			return ver, err
 		}
@@ -84,7 +86,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(jobCtx, t, &proxyJob)
+			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob, nil)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -104,7 +106,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 				// if we fail on "add column c int", the allocator is rebased to 100
 				// which cannot be rollback, but it's table-info.AutoIncID is rollback by below call.
 				// TODO we should also change schema diff of 'ver' if len(actionTypes) > 1.
-				return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+				return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			}
 			actionTypes = append(actionTypes, sub.Type)
 		}
@@ -113,7 +115,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 			// job except AddForeignKey which is handled separately in the first loop.
 			// so this diff is enough, but it wound be better to accumulate all the diffs,
 			// and then merge them into a single diff.
-			if err = t.SetSchemaDiff(&model.SchemaDiff{
+			if err = metaMut.SetSchemaDiff(&model.SchemaDiff{
 				Version:        ver,
 				Type:           job.Type,
 				TableID:        job.TableID,
@@ -133,11 +135,11 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
+		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
-	return finishMultiSchemaJob(job, t)
+	return finishMultiSchemaJob(job, metaMut)
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
@@ -173,70 +175,68 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 	return nil
 }
 
-func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
-	err := fillMultiSchemaInfo(m, job)
+func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
+	err := fillMultiSchemaInfo(m, jobW)
 	if err != nil {
 		return err
 	}
 	var reorgTp model.ReorgType
-	if job.ReorgMeta != nil {
-		reorgTp = job.ReorgMeta.ReorgTp
+	if jobW.ReorgMeta != nil {
+		reorgTp = jobW.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Type:        job.Type,
-		Args:        job.Args,
-		RawArgs:     job.RawArgs,
-		SchemaState: job.SchemaState,
-		SnapshotVer: job.SnapshotVer,
+		Type:        jobW.Type,
+		JobArgs:     jobW.JobArgs,
+		RawArgs:     jobW.RawArgs,
+		SchemaState: jobW.SchemaState,
+		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     job.CtxVars,
+		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
-		UseCloud:    false,
 	})
 	return nil
 }
 
-func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
+func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	switch job.Type {
 	case model.ActionAddColumn:
-		col := job.Args[0].(*table.Column)
-		pos := job.Args[1].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.TableColumnArgs)
+		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
-			info.RelativeColumns = append(info.RelativeColumns, model.CIStr{L: colName, O: colName})
+			info.RelativeColumns = append(info.RelativeColumns, ast.CIStr{L: colName, O: colName})
 		}
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		colName := job.Args[0].(model.CIStr)
+		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		indexName := job.Args[0].(model.CIStr)
-		info.DropIndexes = append(info.DropIndexes, indexName)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		indexName := job.Args[1].(model.CIStr)
-		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
-		info.AddIndexes = append(info.AddIndexes, indexName)
-		for _, indexPartSpecification := range indexPartSpecifications {
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		// This job has not been merged, len(args) should be one.
+		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
+		indexArg := args.IndexArgs[0]
+		info.AddIndexes = append(info.AddIndexes, indexArg.IndexName)
+		for _, indexPartSpecification := range indexArg.IndexPartSpecifications {
 			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
 		}
-		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
-			for _, c := range hiddenCols {
-				for depColName := range c.Dependences {
-					info.RelativeColumns = append(info.RelativeColumns, model.NewCIStr(depColName))
-				}
+		for _, c := range indexArg.HiddenCols {
+			for depColName := range c.Dependences {
+				info.RelativeColumns = append(info.RelativeColumns, ast.NewCIStr(depColName))
 			}
 		}
 	case model.ActionRenameIndex:
-		from := job.Args[0].(model.CIStr)
-		to := job.Args[1].(model.CIStr)
-		info.AddIndexes = append(info.AddIndexes, to)
-		info.DropIndexes = append(info.DropIndexes, from)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		from, to := args.GetRenameIndexes()
+		info.AddIndexes = append(info.AddIndexes, from)
+		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
-		newCol := *job.Args[0].(**model.ColumnInfo)
-		oldColName := job.Args[1].(model.CIStr)
-		pos := job.Args[2].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.ModifyColumnArgs)
+		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
 		if newCol.Name.L != oldColName.L {
 			info.AddColumns = append(info.AddColumns, newCol.Name)
 			info.DropColumns = append(info.DropColumns, oldColName)
@@ -247,18 +247,21 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionSetDefaultValue:
-		col := job.Args[0].(*table.Column)
+		args := job.JobArgs.(*model.SetDefaultValueArgs)
+		col := args.Col
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	case model.ActionAlterIndexVisibility:
-		idxName := job.Args[0].(model.CIStr)
+		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
-		fkInfo := job.Args[0].(*model.FKInfo)
+		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
 		})
+	case model.ActionDropForeignKey:
+		// there is nothing to verify for `DROP FOREIGN KEY`
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
@@ -269,7 +272,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
-	checkColumns := func(colNames []model.CIStr, addToModifyCols bool) error {
+	checkColumns := func(colNames []ast.CIStr, addToModifyCols bool) error {
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {
@@ -282,7 +285,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 		return nil
 	}
 
-	checkIndexes := func(idxNames []model.CIStr, addToModifyIdx bool) error {
+	checkIndexes := func(idxNames []ast.CIStr, addToModifyIdx bool) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {
@@ -331,40 +334,31 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		if subJob.Type == model.ActionAddIndex {
 			mergeCnt++
 			if mergedSubJob == nil {
-				clonedSubJob := *subJob
-				mergedSubJob = &clonedSubJob
-				mergedSubJob.Args = nil
+				mergedSubJob = subJob.Clone()
 				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
 
 	if mergeCnt <= 1 {
-		// no add index job in this multi-schema change.
+		// No multiple add index jobs in this multi-schema change.
 		return
 	}
 
-	var unique []bool
-	var indexNames []model.CIStr
-	var indexPartSpecifications [][]*ast.IndexPartSpecification
-	var indexOption []*ast.IndexOption
-	var hiddenCols [][]*model.ColumnInfo
-
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	newAddIndexesArgs := &model.ModifyIndexArgs{OpType: model.OpAddIndex}
+
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			unique = append(unique, subJob.Args[0].(bool))
-			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
-			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
-			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
-			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 
-	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols}
 	// place the merged add index job at the end of the sub-jobs.
+	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }
@@ -447,7 +441,7 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	return dbterror.ErrCancelledDDLJob
 }
 
-func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
+func finishMultiSchemaJob(job *model.Job, t *meta.Mutator) (ver int64, err error) {
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		if ver < sub.SchemaVer {
 			ver = sub.SchemaVer

@@ -24,7 +24,7 @@ import (
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -126,7 +126,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 		stmtKit.MustExec(prepareStmt)
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 	isPaused.Store(false)
 	isCancelled.Store(false)
@@ -146,7 +146,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 	}
 
 	// Release the hook, so that we could run the `rollbackStmts` successfully.
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob")
 
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
@@ -190,7 +190,11 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)

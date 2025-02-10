@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -562,7 +562,7 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
-	rows, err := dataForAnalyzeStatusHelper(ctx, e.BaseExecutor.Ctx())
+	rows, err := dataForAnalyzeStatusHelper(ctx, nil, e.BaseExecutor.Ctx())
 	if err != nil {
 		return err
 	}

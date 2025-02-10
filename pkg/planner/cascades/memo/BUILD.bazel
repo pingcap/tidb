@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memo",
+    srcs = [
+        "group.go",
+        "group_expr.go",
+        "group_id_generator.go",
+        "memo.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/pattern",
+        "//pkg/planner/cascades/util",
+        "//pkg/planner/core/base",
+        "//pkg/planner/property",
+        "//pkg/util/intest",
+        "@com_github_bits_and_blooms_bitset//:bitset",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_zyedidia_generic//hashmap",
+    ],
+)
+
+go_test(
+    name = "memo_test",
+    timeout = "short",
+    srcs = [
+        "group_and_expr_test.go",
+        "group_id_generator_test.go",
+        "main_test.go",
+        "memo_test.go",
+    ],
+    embed = [":memo"],
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_zyedidia_generic//hashmap",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

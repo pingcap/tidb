@@ -22,10 +22,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -33,21 +34,24 @@ import (
 	"golang.org/x/time/rate"
 )
 
+func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) *ttlDeleteTask {
+	task := &ttlDeleteTask{
+		tbl:        tbl,
+		expire:     expire,
+		rows:       rows,
+		statistics: &ttlStatistics{},
+	}
+	task.statistics.IncTotalRows(len(rows))
+	return task
+}
+
 func TestTTLDelRetryBuffer(t *testing.T) {
 	createTask := func(name string) (*ttlDeleteTask, [][]types.Datum, *ttlStatistics) {
-		rows := make([][]types.Datum, 10)
-		statistics := &ttlStatistics{}
-		statistics.IncTotalRows(10)
-		task := &ttlDeleteTask{
-			tbl:        newMockTTLTbl(t, name),
-			expire:     time.UnixMilli(0),
-			rows:       rows,
-			statistics: statistics,
-		}
-		return task, rows, statistics
+		task := newMockDeleteTask(newMockTTLTbl(t, name), make([][]types.Datum, 10), time.UnixMilli(0))
+		return task, task.rows, task.statistics
 	}
 
-	shouldNotDoRetry := func(task *ttlDeleteTask) [][]types.Datum {
+	shouldNotDoRetry := func(*ttlDelRetryItem) [][]types.Datum {
 		require.FailNow(t, "should not do retry")
 		return nil
 	}
@@ -107,7 +111,8 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	// poll up-to-date tasks
 	tm = tm.Add(10*time.Second - time.Millisecond)
 	tasks := make([]*ttlDeleteTask, 0)
-	doRetrySuccess := func(task *ttlDeleteTask) [][]types.Datum {
+	doRetrySuccess := func(item *ttlDelRetryItem) [][]types.Datum {
+		task := item.task
 		task.statistics.IncSuccessRows(len(task.rows))
 		tasks = append(tasks, task)
 		return nil
@@ -144,7 +149,8 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 
 	// test retry max count
 	retryCnt := 0
-	doRetryFail := func(task *ttlDeleteTask) [][]types.Datum {
+	doRetryFail := func(item *ttlDelRetryItem) [][]types.Datum {
+		task := item.task
 		retryCnt++
 		task.statistics.SuccessRows.Add(1)
 		return task.rows[1:]
@@ -179,13 +185,37 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	require.Equal(t, 0, buffer.Len())
 	require.Equal(t, uint64(0), statics6.SuccessRows.Load())
 	require.Equal(t, uint64(7), statics6.ErrorRows.Load())
+
+	// test should only retry at most once for one item in a DoRetry call.
+	buffer2 := newTTLDelRetryBuffer()
+	buffer2.SetRetryInterval(0)
+	buffer2.maxRetry = math.MaxInt
+	task7, rows7, statics7 := createTask("t7")
+	buffer2.RecordTaskResult(task7, rows7[:8])
+	require.Equal(t, 1, buffer2.Len())
+	currentRetryFn := doRetryFail
+	buffer2.DoRetry(func(item *ttlDelRetryItem) [][]types.Datum {
+		fn := currentRetryFn
+		currentRetryFn = shouldNotDoRetry
+		return fn(item)
+	})
+	require.Equal(t, uint64(1), statics7.SuccessRows.Load())
+	require.Equal(t, uint64(0), statics7.ErrorRows.Load())
+}
+
+type mockDelRateLimiter struct {
+	waitFn func(context.Context) error
+}
+
+func (m *mockDelRateLimiter) WaitDelToken(ctx context.Context) error {
+	return m.waitFn(ctx)
 }
 
 func TestTTLDeleteTaskDoDelete(t *testing.T) {
-	origBatchSize := variable.TTLDeleteBatchSize.Load()
+	origBatchSize := vardef.TTLDeleteBatchSize.Load()
 	delBatch := 3
-	variable.TTLDeleteBatchSize.Store(int64(delBatch))
-	defer variable.TTLDeleteBatchSize.Store(origBatchSize)
+	vardef.TTLDeleteBatchSize.Store(int64(delBatch))
+	defer vardef.TTLDeleteBatchSize.Store(origBatchSize)
 
 	t1 := newMockTTLTbl(t, "t1")
 	s := newMockSession(t)
@@ -231,22 +261,16 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 	}
 
 	delTask := func(batchCnt int) *ttlDeleteTask {
-		task := &ttlDeleteTask{
-			tbl:        t1,
-			expire:     time.UnixMilli(0),
-			rows:       nRows(batchCnt * delBatch),
-			statistics: &ttlStatistics{},
-		}
-		task.statistics.TotalRows.Add(uint64(batchCnt * delBatch))
-		return task
+		return newMockDeleteTask(t1, nRows(batchCnt*delBatch), time.UnixMilli(0))
 	}
 
 	cases := []struct {
-		batchCnt          int
-		retryErrBatches   []int
-		noRetryErrBatches []int
-		cancelCtx         bool
-		cancelCtxBatch    int
+		batchCnt              int
+		retryErrBatches       []int
+		noRetryErrBatches     []int
+		cancelCtx             bool
+		cancelCtxBatch        int
+		cancelCtxErrInLimiter bool
 	}{
 		{
 			// all success
@@ -269,25 +293,53 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 			retryErrBatches:   []int{1, 2, 4},
 		},
 		{
-			// some retries and some not
+			// some retries and some not and some are executed when ctx canceled
 			batchCnt:          10,
 			noRetryErrBatches: []int{3, 8, 9},
 			retryErrBatches:   []int{1, 2, 4},
 			cancelCtx:         true,
 			cancelCtxBatch:    6,
 		},
+		{
+			// some executed when rate limiter returns error
+			batchCnt:              10,
+			cancelCtx:             true,
+			cancelCtxBatch:        3,
+			cancelCtxErrInLimiter: true,
+		},
 	}
 
+	errLimiter := &mockDelRateLimiter{
+		waitFn: func(ctx context.Context) error {
+			return errors.New("mock rate limiter error")
+		},
+	}
+
+	origGlobalDelRateLimiter := globalDelRateLimiter
+	defer func() {
+		globalDelRateLimiter = origGlobalDelRateLimiter
+	}()
+
 	for _, c := range cases {
-		ctx, cancel := context.WithCancel(context.Background())
+		globalDelRateLimiter = origGlobalDelRateLimiter
+		require.True(t, c.cancelCtxBatch >= 0 && c.cancelCtxBatch < c.batchCnt)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		if c.cancelCtx && c.cancelCtxBatch == 0 {
-			cancel()
+			if c.cancelCtxErrInLimiter {
+				globalDelRateLimiter = errLimiter
+			} else {
+				cancel()
+			}
 		}
 
 		afterExecuteSQL = func() {
 			if c.cancelCtx {
 				if len(sqls) == c.cancelCtxBatch {
-					cancel()
+					if c.cancelCtxErrInLimiter {
+						globalDelRateLimiter = errLimiter
+					} else {
+						cancel()
+					}
 				}
 			}
 		}
@@ -298,16 +350,14 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 		retryErrBatches = c.retryErrBatches
 		nonRetryBatches = c.noRetryErrBatches
 		retryRows := task.doDelete(ctx, s)
-		realBatchCnt := c.batchCnt
-		if c.cancelCtx {
-			realBatchCnt = c.cancelCtxBatch
-		}
-		require.LessOrEqual(t, realBatchCnt, c.batchCnt)
 
 		// check SQLs
-		require.Equal(t, realBatchCnt, len(sqls))
 		expectedSQLs := make([]string, 0, len(sqls))
-		for i := 0; i < realBatchCnt; i++ {
+		for i := 0; i < c.batchCnt; i++ {
+			if c.cancelCtx && i >= c.cancelCtxBatch {
+				break
+			}
+
 			batch := task.rows[i*delBatch : (i+1)*delBatch]
 			idList := make([]string, 0, delBatch)
 			for _, row := range batch {
@@ -324,8 +374,8 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check retry rows
 		var expectedRetryRows [][]types.Datum
-		for i := 0; i < realBatchCnt; i++ {
-			if slices.Contains(c.retryErrBatches, i) {
+		for i := 0; i < c.batchCnt; i++ {
+			if slices.Contains(c.retryErrBatches, i) || (c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedRetryRows = append(expectedRetryRows, task.rows[i*delBatch:(i+1)*delBatch]...)
 			}
 		}
@@ -334,7 +384,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 		// check statistics
 		var expectedErrRows uint64
 		for i := 0; i < c.batchCnt; i++ {
-			if i >= realBatchCnt || slices.Contains(c.noRetryErrBatches, i) {
+			if slices.Contains(c.noRetryErrBatches, i) && !(c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedErrRows += uint64(delBatch)
 			}
 		}
@@ -345,10 +395,21 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 }
 
 func TestTTLDeleteRateLimiter(t *testing.T) {
-	origDeleteLimit := variable.TTLDeleteRateLimit.Load()
+	origGlobalDelRateLimiter := globalDelRateLimiter
 	defer func() {
-		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
+		globalDelRateLimiter = origGlobalDelRateLimiter
+		vardef.TTLDeleteRateLimit.Store(vardef.DefTiDBTTLDeleteRateLimit)
 	}()
+
+	// The global inner limiter should have a default config
+	require.Equal(t, 0, vardef.DefTiDBTTLDeleteRateLimit)
+	require.Equal(t, int64(0), vardef.TTLDeleteRateLimit.Load())
+	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	// The newDelRateLimiter() should return a default config
+	globalDelRateLimiter = newDelRateLimiter()
+	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer func() {
@@ -357,42 +418,47 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 		}
 	}()
 
-	variable.TTLDeleteRateLimit.Store(100000)
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
-	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.limiter.Limit())
-	require.Equal(t, int64(100000), globalDelRateLimiter.limit.Load())
+	vardef.TTLDeleteRateLimit.Store(100000)
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
+	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	require.Equal(t, int64(100000), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
 
-	variable.TTLDeleteRateLimit.Store(0)
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
-	require.Equal(t, rate.Limit(0), globalDelRateLimiter.limiter.Limit())
-	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
+	vardef.TTLDeleteRateLimit.Store(0)
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
 
 	// 0 stands for no limit
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
 	// cancel ctx returns an error
 	cancel()
 	cancel = nil
-	require.EqualError(t, globalDelRateLimiter.Wait(ctx), "context canceled")
+	require.EqualError(t, globalDelRateLimiter.WaitDelToken(ctx), "context canceled")
 }
 
 func TestTTLDeleteTaskWorker(t *testing.T) {
-	origBatchSize := variable.TTLDeleteBatchSize.Load()
-	variable.TTLDeleteBatchSize.Store(3)
-	defer variable.TTLDeleteBatchSize.Store(origBatchSize)
+	origBatchSize := vardef.TTLDeleteBatchSize.Load()
+	vardef.TTLDeleteBatchSize.Store(3)
+	defer vardef.TTLDeleteBatchSize.Store(origBatchSize)
 
 	t1 := newMockTTLTbl(t, "t1")
 	t2 := newMockTTLTbl(t, "t2")
 	t3 := newMockTTLTbl(t, "t3")
 	t4 := newMockTTLTbl(t, "t4")
+	t5 := newMockTTLTbl(t, "t5")
 	s := newMockSession(t)
 	pool := newMockSessionPool(t)
 	pool.se = s
+	defer pool.AssertNoSessionInUse()
 
 	sqlMap := make(map[string]int)
 	t3Retried := make(chan struct{})
 	t4Retried := make(chan struct{})
+	t5Executed := make(chan struct{})
 	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
+		pool.lastSession.sessionInfoSchema = newMockInfoSchema(
+			t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo, t5.TableInfo,
+		)
 		if strings.Contains(sql, "`t1`") {
 			// success
 			return nil, nil
@@ -418,12 +484,26 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 			// error and retry still error
 			// this is to test the retry buffer should be drained after the delete worker stopped
 			i := sqlMap[sql]
-			if i >= 2 {
-				// i >= 2 means t4 has retried once and records in retry buffer
+			if i == 2 {
+				// i == 2 means t4 has retried once and records in retry buffer
 				close(t4Retried)
 			}
 			sqlMap[sql] = i + 1
 			return nil, errors.New("mockErr")
+		}
+
+		if strings.Contains(sql, "`t5`") {
+			// error when the worker is running,
+			// success when flushing retry buffer while the worker stopping.
+			i := sqlMap[sql]
+			sqlMap[sql] = i + 1
+			if ctx.Value("delWorker") != nil {
+				if i == 1 {
+					close(t5Executed)
+				}
+				return nil, errors.New("mockErr")
+			}
+			return nil, nil
 		}
 
 		require.FailNow(t, "")
@@ -432,6 +512,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 
 	delCh := make(chan *ttlDeleteTask)
 	w := newDeleteWorker(delCh, pool)
+	w.ctx = context.WithValue(w.ctx, "delWorker", struct{}{})
 	w.retryBuffer.retryInterval = time.Millisecond
 	w.retryBuffer.maxRetry = math.MaxInt
 	require.Equal(t, workerStatusCreated, w.Status())
@@ -443,18 +524,12 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	}()
 
 	tasks := make([]*ttlDeleteTask, 0)
-	for _, tbl := range []*cache.PhysicalTable{t1, t2, t3, t4} {
-		task := &ttlDeleteTask{
-			tbl:    tbl,
-			expire: time.UnixMilli(0),
-			rows: [][]types.Datum{
-				{types.NewIntDatum(1)},
-				{types.NewIntDatum(2)},
-				{types.NewIntDatum(3)},
-			},
-			statistics: &ttlStatistics{},
-		}
-		task.statistics.TotalRows.Add(3)
+	for _, tbl := range []*cache.PhysicalTable{t1, t2, t3, t4, t5} {
+		task := newMockDeleteTask(tbl, [][]types.Datum{
+			{types.NewIntDatum(1)},
+			{types.NewIntDatum(2)},
+			{types.NewIntDatum(3)},
+		}, time.UnixMilli(0))
 		tasks = append(tasks, task)
 		select {
 		case delCh <- task:
@@ -475,8 +550,17 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 		require.FailNow(t, "")
 	}
 
-	// before stop, t4 should always retry without any error rows
+	select {
+	case <-t5Executed:
+	case <-time.After(time.Second):
+		require.FailNow(t, "")
+	}
+
+	// before stop, t4, t5 should always retry without any error rows
+	require.Equal(t, uint64(0), tasks[3].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(0), tasks[3].statistics.ErrorRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.SuccessRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.ErrorRows.Load())
 	w.Stop()
 	require.NoError(t, w.WaitStopped(context.Background(), 10*time.Second))
 
@@ -489,6 +573,70 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	require.Equal(t, uint64(0), tasks[2].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(3), tasks[2].statistics.ErrorRows.Load())
 
+	// t4 should be error because the buffer flush error while the worker stopping.
 	require.Equal(t, uint64(0), tasks[3].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(3), tasks[3].statistics.ErrorRows.Load())
+
+	// t5 should be success because the buffer flush success while the worker stopping.
+	require.Equal(t, uint64(3), tasks[4].statistics.SuccessRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.ErrorRows.Load())
+}
+
+// TestDelRateLimiterConcurrency is used to test some concurrency cases of delRateLimiter.
+// See issue: https://github.com/pingcap/tidb/issues/58484
+// It tests the below case:
+//  1. The `tidb_ttl_delete_rate_limit` set to some non-zero value such as 128.
+//  2. Some delWorker delete rows concurrency and try to wait for the inner `rate.Limiter`.
+//  3. Before internal `l.limiter.Wait` is called, the `tidb_ttl_delete_rate_limit` is set to 0.
+//     It resets the internal `rate.Limiter` (in the bug codes, its rate is set to 0).
+//  4. The delWorkers in step 2 continue to call l.limiter.Wait.
+//     In the bug codes, some of them are blocked forever because the rate is set to 0.
+func TestDelRateLimiterConcurrency(t *testing.T) {
+	origGlobalDelRateLimiter := globalDelRateLimiter
+	defer func() {
+		globalDelRateLimiter = origGlobalDelRateLimiter
+		vardef.TTLDeleteRateLimit.Store(vardef.DefTiDBTTLDeleteRateLimit)
+	}()
+
+	globalDelRateLimiter = newDelRateLimiter()
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(context.Background()))
+
+	vardef.TTLDeleteRateLimit.Store(128)
+	var waiting atomic.Int64
+	continue1 := make(chan struct{})
+	continue2 := make(chan struct{})
+	continue3 := make(chan struct{})
+	cnt := 4
+	for i := 0; i < cnt; i++ {
+		go func() {
+			ctx := context.WithValue(context.Background(), beforeWaitLimiterForTest, func() {
+				if waiting.Add(1) == int64(cnt) {
+					close(continue1)
+				}
+				<-continue2
+			})
+			require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
+			if waiting.Add(-1) == 0 {
+				close(continue3)
+			}
+		}()
+	}
+
+	timeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	select {
+	case <-continue1:
+		vardef.TTLDeleteRateLimit.Store(0)
+		require.NoError(t, globalDelRateLimiter.WaitDelToken(timeCtx))
+		close(continue2)
+	case <-timeCtx.Done():
+		require.FailNow(t, "timeout")
+	}
+
+	select {
+	case <-continue3:
+	case <-timeCtx.Done():
+		require.FailNow(t, "timeout")
+	}
 }

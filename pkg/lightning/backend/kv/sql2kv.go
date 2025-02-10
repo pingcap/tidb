@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -80,11 +80,6 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	if !hasGenCol {
 		return nil, nil
 	}
-
-	// the expression rewriter requires a non-nil TxnCtx.
-	// TODO: remove it after code refactoring.
-	deferFn := se.SetTxnCtxNotNil()
-	defer deferFn()
 
 	// not using TableInfo2SchemaAndNames to avoid parsing all virtual generated columns again.
 	exprColumns := make([]*expression.Column, 0, len(cols))

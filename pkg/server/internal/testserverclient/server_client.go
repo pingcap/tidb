@@ -41,8 +41,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -630,7 +630,6 @@ func (cli *TestServerClient) RunTestLoadDataForListPartition(t *testing.T) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -684,7 +683,6 @@ func (cli *TestServerClient) RunTestLoadDataForListPartition2(t *testing.T) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
 		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
     	partition p0 values in (3,5,6,9,17),
@@ -739,7 +737,6 @@ func (cli *TestServerClient) RunTestLoadDataForListColumnPartition(t *testing.T)
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -794,7 +791,6 @@ func (cli *TestServerClient) RunTestLoadDataForListColumnPartition2(t *testing.T
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
     	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
@@ -1249,7 +1245,7 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 
 	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit.Load()
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit.Store(10240)
+	kv.TxnTotalSizeLimit.Store(12000)
 	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability
@@ -3075,11 +3071,11 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc1)
-		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc1)
-		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 	MustExec(ctx, t, conn, dropColumnSQL)
 	require.NoError(t, checkErr)

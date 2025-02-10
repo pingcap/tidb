@@ -24,13 +24,14 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -200,7 +201,7 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
-	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt}
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
 // GetCreateIdxOpt creates a CreateIdxOpt.
@@ -211,6 +212,60 @@ func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
 // UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.
 type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
+}
+
+// RemoveRecordOpt contains the options will be used when removing a record.
+type RemoveRecordOpt struct {
+	indexesLayoutOffset IndexesLayout
+}
+
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+// GetIndexesLayout returns the IndexesLayout of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetIndexesLayout() IndexesLayout {
+	return opt.indexesLayoutOffset
+}
+
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+// GetIndexLayout returns the layout of the specified index.
+func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
+	if idx == nil {
+		return nil
+	}
+	return idx[idxID]
+}
+
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
@@ -354,10 +409,10 @@ type columnAPI interface {
 }
 
 // MutateContext is used to when mutating a table.
-type MutateContext = tbctx.MutateContext
+type MutateContext = tblctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext = tbctx.AllocatorContext
+type AllocatorContext = tblctx.AllocatorContext
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -366,6 +421,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// WritableConstraint returns constraints of the table in writable states.
 	WritableConstraint() []*Constraint
@@ -382,7 +438,7 @@ type Table interface {
 	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators
@@ -415,11 +471,11 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	defer r.End()
 	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
+	_, maxv, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
-	return max, err
+	return maxv, err
 }
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
@@ -427,13 +483,13 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
+	minv, maxv, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
-		return min, max, err
+		return minv, maxv, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(minv), uint64(increment1), uint64(offset)))
 	return nr, int64(increment1), nil
 }
 
@@ -454,7 +510,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []model.CIStr
+	GetPartitionColumnNames() []ast.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 

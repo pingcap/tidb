@@ -21,16 +21,23 @@ CUR=$(cd `dirname $0`; pwd)
 # const value
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+TASK_NAME="br_pitr"
+
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
 
 # start a new cluster
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
 run_sql_file $CUR/prepare_data/ingest_repair.sql
-# ...
+run_sql_file $CUR/prepare_data/key_types.sql
 
 # check something after prepare the data
 prepare_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range;" | tail -n 1 | awk '{print $2}')
@@ -38,7 +45,7 @@ echo "prepare_delete_range_count: $prepare_delete_range_count"
 
 # start the log backup task
 echo "start log task"
-run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
+run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$PREFIX/log"
 
 # run snapshot backup
 echo "run snapshot backup"
@@ -58,7 +65,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/inc" --lastbackup
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
 run_sql_file $CUR/incremental_data/ingest_repair.sql
-# ...
+run_sql_file $CUR/incremental_data/key_types.sql
 
 # run incremental snapshot backup, but this incremental backup will fail to restore. due to limitation of ddl.
 echo "run incremental backup with special ddl jobs, modify column e.g."
@@ -70,39 +77,8 @@ incremental_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from 
 echo "incremental_delete_range_count: $incremental_delete_range_count"
 
 # wait checkpoint advance
-echo "wait checkpoint advance"
-sleep 10
-current_ts=$(echo $(($(date +%s%3N) << 18)))
-echo "current ts: $current_ts"
-i=0
-while true; do
-    # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
-    log_backup_status=$(unset BR_LOG_TO_TERM && run_br --skip-goleak --pd $PD_ADDR log status --task-name integration_test --json 2>br.log)
-    echo "log backup status: $log_backup_status"
-    checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end')
-    echo "checkpoint ts: $checkpoint_ts"
-
-    # check whether the checkpoint ts is a number
-    if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
-        # check whether the checkpoint has advanced
-        if [ $checkpoint_ts -gt $current_ts ]; then
-            echo "the checkpoint has advanced"
-            break
-        fi
-        # the checkpoint hasn't advanced
-        echo "the checkpoint hasn't advanced"
-        i=$((i+1))
-        if [ "$i" -gt 50 ]; then
-            echo 'the checkpoint lag is too large'
-            exit 1
-        fi
-        sleep 10
-    else
-        # unknown status, maybe somewhere is wrong
-        echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
-        exit 1
-    fi
-done
+current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+. "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
 
 # dump some info from upstream cluster
 # ...
@@ -119,21 +95,32 @@ check_result() {
     check_contains "DELETE_RANGE_CNT: $expect_delete_range"
     ## check feature compatibility between PITR and accelerate indexing
     bash $CUR/check/check_ingest_repair.sh
+    # check key types are restored correctly
+    bash $CUR/check/check_key_types.sh
 }
 
 # start a new cluster
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
+
+# non-compliant operation
+echo "non compliant operation"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on non compliant operation'
+    exit 1
+fi
 
 # PITR restore
 echo "run pitr"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint;"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint;"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
 check_result
 
 # start a new cluster for incremental + log
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#2"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -144,8 +131,8 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 check_result
 
 # start a new cluster for incremental + log
-echo "restart a services"
-restart_services
+echo "restart services"
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#3"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -154,6 +141,57 @@ echo "run incremental restore but failed"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
-    echo 'pitr success' 
+    echo 'pitr success on incremental restore'
     exit 1
 fi
+
+# start a new cluster for corruption
+restart_services_allowing_huge_index
+
+file_corruption() {
+    echo "corrupt the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "corrupt the log file $filename"
+        filename_temp=$filename"_temp"
+        echo "corruption" > $filename_temp
+        cat $filename >> $filename_temp
+        mv $filename_temp $filename
+        truncate -s -11 $filename
+    done
+}
+
+# file corruption
+file_corruption
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file corruption'
+    exit 1
+fi
+
+# start a new cluster for corruption
+restart_services_allowing_huge_index
+
+file_lost() {
+    echo "lost the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "lost the log file $filename"
+        filename_temp=$filename"_temp"
+        mv $filename $filename_temp
+    done
+}
+
+# file lost
+file_lost
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file lost'
+    exit 1
+fi
+
+echo "br pitr test passed"

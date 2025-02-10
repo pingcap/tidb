@@ -811,7 +811,7 @@ func (r *builder) newBuildFromPatternLike(
 			// PAD SPACE collations, the trailing spaces are removed in the index key. So we are unable to distinguish
 			// 'xxx' from 'xxx   ' by a single index range scan. If we exclude the start point for PAD SPACE collation,
 			// we will actually miss 'xxx   ', which will cause wrong results.
-			if !isPadSpaceCollation(collation) {
+			if !collate.IsPadSpaceCollation(collation) {
 				exclude = true
 			}
 			isExactMatch = false
@@ -862,7 +862,7 @@ func (r *builder) newBuildFromPatternLike(
 	// Because the trailing spaces are trimmed in the stored index key. For example, for LIKE 'abc  %' on utf8mb4_bin
 	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'. ( ' ' is 32 and '!' is 33
 	// in ASCII)
-	shouldTrimTrailingSpace := isPadSpaceCollation(collation)
+	shouldTrimTrailingSpace := collate.IsPadSpaceCollation(collation)
 	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -890,14 +890,6 @@ func (r *builder) newBuildFromPatternLike(
 		}
 	}
 	return []*point{startPoint, endPoint}
-}
-
-// isPadSpaceCollation returns whether the collation is a PAD SPACE collation.
-// Since all collations, except for binary, implemented in tidb are PAD SPACE collations for now, we use a simple
-// collation != binary check here. We may also move it to collation related packages when NO PAD collations are
-// implemented in the future.
-func isPadSpaceCollation(collation string) bool {
-	return collation != charset.CollationBin
 }
 
 func (r *builder) buildFromNot(

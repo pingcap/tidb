@@ -17,10 +17,11 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -86,7 +87,7 @@ type VerChecker func(store *metapb.Store, ver *semver.Version) error
 
 // CheckClusterVersion check TiKV version.
 func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerChecker) error {
-	stores, err := client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := client.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -163,6 +164,14 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		if tikvVersion.Major == 6 && tikvVersion.Minor <= 1 {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.2.0+, please use the tikv with version v6.2.0+",
 				s.Address, tikvVersion, build.ReleaseVersion)
+		}
+	}
+
+	if BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 4) {
+		if tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 4) {
+			return errors.Annotatef(berrors.ErrVersionMismatch,
+				"TiKV node %s version %s is too old because the PITR id map is written into the cluster system table mysql.tidb_pitr_id_map, please use the tikv with version v8.4.0+",
+				s.Address, tikvVersion)
 		}
 	}
 	return nil

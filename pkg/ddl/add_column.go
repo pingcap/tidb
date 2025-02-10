@@ -25,35 +25,36 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
-func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(jobCtx, t, job)
+		ver, err = onDropColumn(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -67,7 +68,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 		}
 	})
 
-	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(jobCtx.metaMut, job)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
@@ -90,7 +91,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateNone:
 		// none -> delete only
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -98,7 +99,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		columnInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -107,7 +108,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		columnInfo.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -124,19 +125,18 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
+		err = asyncNotifyEvent(jobCtx, addColumnEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addColumnEvent := statsutil.NewAddColumnEvent(
-			job.SchemaID,
-			tblInfo,
-			[]*model.ColumnInfo{columnInfo},
-		)
-		asyncNotifyEvent(jobCtx, addColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -246,17 +246,17 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		}
 	}
 
-	tableCharset, tableCollate, err := ResolveCharsetCollation(ctx.GetSessionVars(),
-		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
-		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-	)
+	tableCharset, tableCollate, err := ResolveCharsetCollation([]ast.CharsetOpt{
+		{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+		{Chs: schema.Charset, Col: schema.Collate},
+	}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Ignore table constraints now, they will be checked later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
 	col, _, err := buildColumnAndConstraint(
-		ctx,
+		NewMetaBuildContextWithSctx(ctx),
 		len(t.Cols()),
 		specNewColumn,
 		nil,
@@ -280,7 +280,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 // outPriKeyConstraint is the primary key constraint out of column definition. For example:
 // `create table t1 (id int , age int, primary key(id));`
 func buildColumnAndConstraint(
-	ctx sessionctx.Context,
+	ctx *metabuild.Context,
 	offset int,
 	colDef *ast.ColumnDef,
 	outPriKeyConstraint *ast.Constraint,
@@ -292,20 +292,20 @@ func buildColumnAndConstraint(
 	}
 
 	// specifiedCollate refers to the last collate specified in colDef.Options.
-	chs, coll, err := getCharsetAndCollateInColumnDef(ctx.GetSessionVars(), colDef)
+	chs, coll, err := getCharsetAndCollateInColumnDef(colDef, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	chs, coll, err = ResolveCharsetCollation(ctx.GetSessionVars(),
-		ast.CharsetOpt{Chs: chs, Col: coll},
-		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
-	)
-	chs, coll = OverwriteCollationWithBinaryFlag(ctx.GetSessionVars(), colDef, chs, coll)
+	chs, coll, err = ResolveCharsetCollation([]ast.CharsetOpt{
+		{Chs: chs, Col: coll},
+		{Chs: tblCharset, Col: tblCollate},
+	}, ctx.GetDefaultCollationForUTF8MB4())
+	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
+	if err := setCharsetCollationFlenDecimal(ctx, colDef.Tp, colDef.Name.Name.O, chs, coll); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	decodeEnumSetBinaryLiteralToUTF8(colDef.Tp, chs)
@@ -318,11 +318,11 @@ func buildColumnAndConstraint(
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
 // of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.ColumnDef) (chs, coll string, err error) {
+func getCharsetAndCollateInColumnDef(def *ast.ColumnDef, defaultUTF8MB4Coll string) (chs, coll string, err error) {
 	chs = def.Tp.GetCharset()
 	coll = def.Tp.GetCollate()
 	if chs != "" && coll == "" {
-		if coll, err = GetDefaultCollation(sessVars, chs); err != nil {
+		if coll, err = GetDefaultCollation(chs, defaultUTF8MB4Coll); err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
@@ -348,14 +348,14 @@ func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.Co
 //	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
 //
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
-func OverwriteCollationWithBinaryFlag(sessVars *variable.SessionVars, colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string, defaultUTF8MB4Coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
 	if ignoreBinFlag {
 		return chs, coll
 	}
 	needOverwriteBinColl := types.IsString(colDef.Tp.GetType()) && mysql.HasBinaryFlag(colDef.Tp.GetFlag())
 	if needOverwriteBinColl {
-		newColl, err := GetDefaultCollation(sessVars, chs)
+		newColl, err := GetDefaultCollation(chs, defaultUTF8MB4Coll)
 		if err != nil {
 			return chs, coll
 		}
@@ -364,7 +364,7 @@ func OverwriteCollationWithBinaryFlag(sessVars *variable.SessionVars, colDef *as
 	return chs, coll
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, colCollate string, sessVars *variable.SessionVars) error {
+func setCharsetCollationFlenDecimal(ctx *metabuild.Context, tp *types.FieldType, colName, colCharset, colCollate string) error {
 	var err error
 	if typesNeedCharset(tp.GetType()) {
 		tp.SetCharset(colCharset)
@@ -392,7 +392,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, co
 			return err
 		}
 	}
-	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
+	return checkTooBigFieldLengthAndTryAutoConvert(ctx, tp, colName)
 }
 
 func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
@@ -425,8 +425,8 @@ func typesNeedCharset(tp byte) bool {
 
 // checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
 // in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
-func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
-	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.GetType() == mysql.TypeVarchar {
+func checkTooBigFieldLengthAndTryAutoConvert(ctx *metabuild.Context, tp *types.FieldType, colName string) error {
+	if !ctx.GetSQLMode().HasStrictMode() && tp.GetType() == mysql.TypeVarchar {
 		err := types.IsVarcharTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
 		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
 			tp.SetType(mysql.TypeBlob)
@@ -434,9 +434,9 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 				return err
 			}
 			if tp.GetCharset() == charset.CharsetBin {
-				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARBINARY", "BLOB"))
+				ctx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARBINARY", "BLOB"))
 			} else {
-				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARCHAR", "TEXT"))
+				ctx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARCHAR", "TEXT"))
 			}
 		}
 	}
@@ -445,7 +445,7 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
-func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
+func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -514,7 +514,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.AddFlag(mysql.UniqueKeyFlag)
 				}
 			case ast.ColumnOptionDefaultValue:
-				hasDefaultValue, err = SetDefaultValue(ctx, col, v)
+				hasDefaultValue, err = SetDefaultValue(ctx.GetExprCtx(), col, v)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -530,7 +530,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.AddFlag(mysql.OnUpdateNowFlag)
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
-				err := setColumnComment(ctx, col, v)
+				err := setColumnComment(ctx.GetExprCtx(), col, v)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -542,7 +542,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames, err := findDependedColumnNames(model.NewCIStr(""), model.NewCIStr(""), colDef)
+				_, dependColNames, err := findDependedColumnNames(ast.NewCIStr(""), ast.NewCIStr(""), colDef)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -552,10 +552,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.FieldType.SetCollate(v.StrValue)
 				}
 			case ast.ColumnOptionFulltext:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
+				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
-				if !variable.EnableCheckConstraint.Load() {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
+				if !vardef.EnableCheckConstraint.Load() {
+					ctx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
 					// Extract column constraint from column option.
@@ -573,7 +573,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		}
 	}
 
-	if err = processAndCheckDefaultValueAndColumn(ctx, col, outPriKeyConstraint, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
+	if err = processAndCheckDefaultValueAndColumn(ctx.GetExprCtx(), col, outPriKeyConstraint, hasDefaultValue, setOnUpdateNow, hasNullFlag); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
@@ -588,11 +588,11 @@ func isExplicitTimeStamp() bool {
 }
 
 // SetDefaultValue sets the default value of the column.
-func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
+func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
 	var value any
 	var isSeqExpr bool
 	value, isSeqExpr, err = getDefaultValue(
-		exprctx.CtxWithHandleTruncateErrLevel(ctx.GetExprCtx(), errctx.LevelError),
+		exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelError),
 		col, option,
 	)
 	if err != nil {
@@ -607,10 +607,10 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
-		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx.GetExprCtx(), col, value); err != nil {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
-		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		value, err = convertTimestampDefaultValToUTC(ctx.GetEvalCtx().TypeCtx(), value, col)
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
@@ -769,6 +769,17 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		col.DefaultIsExpr = true
 		return str, false, nil
 
+	case ast.VecFromText:
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, false, nil
+
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -898,8 +909,8 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 	return nil
 }
 
-func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := expression.EvalSimpleAst(ctx.GetExprCtx(), option.Expr)
+func setColumnComment(ctx expression.BuildContext, col *table.Column, option *ast.ColumnOption) error {
+	value, err := expression.EvalSimpleAst(ctx, option.Expr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -907,12 +918,12 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 		return errors.Trace(err)
 	}
 
-	sessionVars := ctx.GetSessionVars()
-	col.Comment, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
+	evalCtx := ctx.GetEvalCtx()
+	col.Comment, err = validateCommentLength(evalCtx.ErrCtx(), evalCtx.SQLMode(), col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
 	return errors.Trace(err)
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+func processAndCheckDefaultValueAndColumn(ctx expression.BuildContext, col *table.Column,
 	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
@@ -924,7 +935,7 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 	if err = checkColumnValueConstraint(col, col.GetCollate()); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
+	if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkColumnFieldLength(col); err != nil {
@@ -1177,6 +1188,12 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value any) (bool, any, error) {
 	hasDefaultValue := true
+
+	if value != nil && col.GetType() == mysql.TypeTiDBVectorFloat32 {
+		// In any SQL mode we don't allow VECTOR column to have a default value.
+		// Note that expression default is still supported.
+		return hasDefaultValue, value, errors.Errorf("VECTOR column '%-.192s' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))", col.Name.O)
+	}
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||
 		col.GetType() == mysql.TypeLongBlob || col.GetType() == mysql.TypeBlob) {
@@ -1208,6 +1225,21 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 			}
 		}
 	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+	}
 	return hasDefaultValue, value, nil
 }
 
@@ -1218,17 +1250,17 @@ func checkSequenceDefaultValue(col *table.Column) error {
 	return dbterror.ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
 }
 
-func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal any, col *table.Column) (any, error) {
+func convertTimestampDefaultValToUTC(tc types.Context, defaultVal any, col *table.Column) (any, error) {
 	if defaultVal == nil || col.GetType() != mysql.TypeTimestamp {
 		return defaultVal, nil
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), vv, col.GetType(), col.GetDecimal())
+			t, err := types.ParseTime(tc, vv, col.GetType(), col.GetDecimal())
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
-			err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
+			err = t.ConvertTimeZone(tc.Location(), time.UTC)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}

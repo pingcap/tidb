@@ -61,7 +61,6 @@ func run(pass *analysis.Pass) (any, error) {
 	createdPkgs = append(createdPkgs, util.MakeFakeLoaderPackageInfo(pass))
 	allPkgs := make(map[*types.Package]*loader.PackageInfo)
 	for _, pkg := range createdPkgs {
-		pkg := pkg
 		allPkgs[pkg.Pkg] = pkg
 	}
 	prog := &loader.Program{

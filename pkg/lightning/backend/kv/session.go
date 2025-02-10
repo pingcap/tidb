@@ -19,32 +19,20 @@ package kv
 import (
 	"context"
 	"errors"
-	"fmt"
-	"maps"
-	"strconv"
 	"sync"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
 
@@ -285,53 +273,20 @@ func (*transaction) MayFlush() error {
 	return nil
 }
 
-type planCtxImpl struct {
-	*session
-	*planctximpl.PlanCtxExtendedImpl
-}
-
-// session is a trimmed down Session type which only wraps our own trimmed-down
-// transaction type and provides the session variables to the TiDB library
-// optimized for Lightning.
-// The `session` object is private to make sure it is only used by public `Session` struct to provide limited access.
-// TODO: remove `session` and build related context without a mocked `sessionctx.Context` instead.
-type session struct {
-	sessionctx.Context
-	planctx.EmptyPlanContextExtended
+// Session is used to provide context for lightning.
+type Session struct {
 	txn     transaction
-	Vars    *variable.SessionVars
-	exprCtx *exprctximpl.SessionExprContext
-	planctx *planCtxImpl
-	tblctx  *tbctximpl.TableContextImpl
-	// currently, we only set `CommonAddRecordCtx`
-	values map[fmt.Stringer]any
+	exprCtx *litExprContext
+	tblCtx  *litTableMutateContext
 }
 
-// newSession creates a new trimmed down Session matching the options.
-func newSession(options *encode.SessionOptions, logger log.Logger) *session {
-	s := &session{
-		values: make(map[fmt.Stringer]any, 1),
-	}
-	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars(s)
-	vars.SkipUTF8Check = true
-	vars.StmtCtx.InInsertStmt = true
-	vars.SQLMode = sqlMode
-
-	typeFlags := vars.StmtCtx.TypeFlags().
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
-			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
-	vars.StmtCtx.SetTypeFlags(typeFlags)
-
-	errLevels := vars.StmtCtx.ErrLevels()
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
-	errLevels[errctx.ErrGroupDividedByZero] =
-		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
-	vars.StmtCtx.SetErrLevels(errLevels)
-
+// NewSession creates a new Session.
+func NewSession(options *encode.SessionOptions, logger log.Logger) (*Session, error) {
+	sysVars := make(map[string]string, len(options.SysVars))
 	if options.SysVars != nil {
+		// This sessVars is only used to do validations.
+		sessVars := variable.NewSessionVars(nil)
+		// To keep compatible with the old versions, we should to skip errors caused by illegal system variables.
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
 			// lc_time_names is a read-only variable for now, but might be implemented later,
@@ -343,114 +298,52 @@ func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 				logger.Debug("skip read-only variable", zap.String("key", k))
 				continue
 			}
-			if err := vars.SetSystemVar(k, v); err != nil {
+			if err := sessVars.SetSystemVar(k, v); err != nil {
 				logger.DPanic("new session: failed to set system var",
 					log.ShortError(err),
 					zap.String("key", k))
+				continue
 			}
+			sysVars[k] = v
 		}
 	}
-	vars.StmtCtx.SetTimeZone(vars.Location())
-	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
-		logger.Warn("new session: failed to set timestamp",
-			log.ShortError(err))
+
+	exprCtx, err := newLitExprContext(options.SQLMode, sysVars, options.Timestamp)
+	if err != nil {
+		return nil, err
 	}
-	vars.TxnCtx = nil
-	s.Vars = vars
-	s.exprCtx = exprctximpl.NewSessionExprContext(s)
-	s.planctx = &planCtxImpl{
-		session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
+
+	tblCtx, err := newLitTableMutateContext(exprCtx, sysVars)
+	if err != nil {
+		return nil, err
 	}
-	s.tblctx = tbctximpl.NewTableContextImpl(s)
+
+	s := &Session{
+		exprCtx: exprCtx,
+		tblCtx:  tblCtx,
+	}
 	s.txn.kvPairs = &Pairs{}
-
-	return s
-}
-
-// Txn implements the sessionctx.Context interface
-func (se *session) Txn(_ bool) (kv.Transaction, error) {
-	return &se.txn, nil
-}
-
-// GetSessionVars implements the sessionctx.Context interface
-func (se *session) GetSessionVars() *variable.SessionVars {
-	return se.Vars
-}
-
-// GetPlanCtx returns the PlanContext.
-func (se *session) GetPlanCtx() planctx.PlanContext {
-	return se.planctx
-}
-
-// GetExprCtx returns the expression context of the session.
-func (se *session) GetExprCtx() exprctx.ExprContext {
-	return se.exprCtx
-}
-
-// GetTableCtx returns the table.MutateContext
-func (se *session) GetTableCtx() tbctx.MutateContext {
-	return se.tblctx
-}
-
-// SetValue saves a value associated with this context for key.
-func (se *session) SetValue(key fmt.Stringer, value any) {
-	se.values[key] = value
-}
-
-// Value returns the value associated with this context for key.
-func (se *session) Value(key fmt.Stringer) any {
-	return se.values[key]
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (*session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
-
-// GetInfoSchema implements the sessionctx.Context interface.
-func (*session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
-	return nil
-}
-
-// GetStmtStats implements the sessionctx.Context interface.
-func (*session) GetStmtStats() *stmtstats.StatementStats {
-	return nil
-}
-
-// Session is used to provide context for lightning.
-type Session struct {
-	sctx *session
-}
-
-// NewSession creates a new Session.
-func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
-	return &Session{
-		sctx: newSession(options, logger),
-	}
+	return s, nil
 }
 
 // GetExprCtx returns the expression context
-func (s *Session) GetExprCtx() expression.BuildContext {
-	return s.sctx.GetExprCtx()
+func (s *Session) GetExprCtx() exprctx.ExprContext {
+	return s.exprCtx
 }
 
 // Txn returns the internal txn.
 func (s *Session) Txn() kv.Transaction {
-	return &s.sctx.txn
+	return &s.txn
 }
 
 // GetTableCtx returns the table MutateContext.
-func (s *Session) GetTableCtx() tbctx.MutateContext {
-	return s.sctx.tblctx
-}
-
-// GetPlanCtx returns the context for planner.
-func (s *Session) GetPlanCtx() planctx.PlanContext {
-	return s.sctx.planctx
+func (s *Session) GetTableCtx() tblctx.MutateContext {
+	return s.tblCtx
 }
 
 // TakeKvPairs returns the current Pairs and resets the buffer.
 func (s *Session) TakeKvPairs() *Pairs {
-	memBuf := &s.sctx.txn.MemBuf
+	memBuf := &s.txn.MemBuf
 	pairs := memBuf.kvPairs
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
@@ -460,39 +353,19 @@ func (s *Session) TakeKvPairs() *Pairs {
 	return pairs
 }
 
-// SetTxnCtxNotNil sets the internal SessionVars.TxnCtx to a non-nil value to avoid some panics.
-// TODO: remove it after code refactoring.
-func (s *Session) SetTxnCtxNotNil() func() {
-	s.sctx.Vars.TxnCtx = new(variable.TransactionContext)
-	return func() {
-		s.sctx.Vars.TxnCtx = nil
-	}
-}
-
 // SetUserVarVal sets the value of a user variable.
 func (s *Session) SetUserVarVal(name string, dt types.Datum) {
-	s.sctx.Vars.SetUserVarVal(name, dt)
+	s.exprCtx.setUserVarVal(name, dt)
 }
 
 // UnsetUserVar unsets a user variable.
 func (s *Session) UnsetUserVar(varName string) {
-	s.sctx.Vars.UnsetUserVar(varName)
+	s.exprCtx.unsetUserVar(varName)
 }
 
-// GetColumnSize returns the size of each column.
-func (s *Session) GetColumnSize(tblID int64) (ret map[int64]int64) {
-	vars := s.sctx.Vars
-	vars.TxnCtxMu.Lock()
-	defer vars.TxnCtxMu.Unlock()
-	if txnCtx := s.sctx.Vars.TxnCtx; txnCtx != nil {
-		return maps.Clone(txnCtx.TableDeltaMap[tblID].ColSize)
-	}
-	return ret
-}
-
-// Close implements the sessionctx.Context interface
+// Close closes the session
 func (s *Session) Close() {
-	memBuf := &s.sctx.txn.MemBuf
+	memBuf := &s.txn.MemBuf
 	if memBuf.buf != nil {
 		memBuf.buf.destroy()
 		memBuf.buf = nil

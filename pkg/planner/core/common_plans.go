@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -96,7 +97,7 @@ type CheckTable struct {
 type RecoverIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -104,7 +105,7 @@ type RecoverIndex struct {
 type CleanupIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -122,7 +123,7 @@ type CheckIndexRange struct {
 type ChecksumTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
+	Tables []*resolve.TableNameW
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
@@ -144,6 +145,40 @@ type ResumeDDLJobs struct {
 	baseSchemaProducer
 
 	JobIDs []int64
+}
+
+const (
+	// AlterDDLJobThread alter reorg worker count
+	AlterDDLJobThread = "thread"
+	// AlterDDLJobBatchSize alter reorg batch size
+	AlterDDLJobBatchSize = "batch_size"
+	// AlterDDLJobMaxWriteSpeed alter reorg max write speed
+	AlterDDLJobMaxWriteSpeed = "max_write_speed"
+)
+
+var allowedAlterDDLJobParams = map[string]struct{}{
+	AlterDDLJobThread:        {},
+	AlterDDLJobBatchSize:     {},
+	AlterDDLJobMaxWriteSpeed: {},
+}
+
+// AlterDDLJobOpt represents alter ddl job option.
+type AlterDDLJobOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// AlterDDLJob is the plan of admin alter ddl job
+type AlterDDLJob struct {
+	baseSchemaProducer
+
+	JobID   int64
+	Options []*AlterDDLJobOpt
+}
+
+// WorkloadRepoCreate is the plan of admin create workload snapshot.
+type WorkloadRepoCreate struct {
+	baseSchemaProducer
 }
 
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
@@ -237,6 +272,16 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
+// RecommendIndexPlan represents a plan for recommend index stmt.
+type RecommendIndexPlan struct {
+	baseSchemaProducer
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Options  []ast.RecommendIndexOption
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 
@@ -249,8 +294,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
@@ -300,6 +343,8 @@ type Simple struct {
 
 	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
 	StaleTxnStartTS uint64
+
+	ResolveCtx *resolve.Context
 }
 
 // MemoryUsage return the memory usage of Simple
@@ -337,10 +382,9 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
-// Copy clones InsertGeneratedColumns.
-func (i InsertGeneratedColumns) Copy() InsertGeneratedColumns {
+func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
 	return InsertGeneratedColumns{
-		Exprs:        util.CloneExpressions(i.Exprs),
+		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
 		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
 	}
 }
@@ -454,7 +498,7 @@ type Update struct {
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"must-nil"`
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
 
 	// tblID2Table stores related tables' info of this Update statement.
 	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
@@ -503,6 +547,8 @@ type Delete struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	IgnoreErr bool
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -536,7 +582,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
-	ColChoice   model.ColumnChoice
+	ColChoice   ast.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
 }
@@ -546,6 +592,7 @@ type AnalyzeColumnsTask struct {
 	HandleCols       util.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
+	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
 	AnalyzeInfo
@@ -577,7 +624,7 @@ type LoadData struct {
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Format      *string
-	Table       *ast.TableName
+	Table       *resolve.TableNameW
 	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
@@ -602,7 +649,7 @@ type LoadDataOpt struct {
 type ImportInto struct {
 	baseSchemaProducer
 
-	Table              *ast.TableName
+	Table              *resolve.TableNameW
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string
@@ -651,15 +698,12 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
-// IndexAdvise represents a index advise plan.
-type IndexAdvise struct {
+// Traffic represents a traffic plan.
+type Traffic struct {
 	baseSchemaProducer
-
-	IsLocal     bool
-	Path        string
-	MaxMinutes  uint64
-	MaxIndexNum *ast.MaxIndexNumClause
-	LineFieldsInfo
+	OpType  ast.TrafficOpType
+	Options []*ast.TrafficOption
+	Dir     string
 }
 
 // SplitRegion represents a split regions plan.
@@ -667,7 +711,7 @@ type SplitRegion struct {
 	baseSchemaProducer
 
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []ast.CIStr
 	IndexInfo      *model.IndexInfo
 	Lower          []types.Datum
 	Upper          []types.Datum
@@ -689,7 +733,7 @@ type CompactTable struct {
 
 	ReplicaKind    ast.CompactReplicaKind
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []ast.CIStr
 }
 
 // DDL represents a DDL statement plan.
@@ -803,6 +847,9 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 		TargetPlan: plan,
 		Format:     types.ExplainFormatROW,
 		Analyze:    false,
+	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
 	}
 	if err := explain.RenderResult(); err != nil {
 		return rows

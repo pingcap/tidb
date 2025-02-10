@@ -19,14 +19,64 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
 )
 
 var FilterFilesByRegion = filterFilesByRegion
 
+func (metaname *MetaName) Meta() Meta {
+	return metaname.meta
+}
+
+func NewMetaName(meta Meta, name string) *MetaName {
+	return &MetaName{meta: meta, name: name}
+}
+
+func NewMigrationBuilder(shiftStartTS, startTS, restoredTS uint64) *WithMigrationsBuilder {
+	return &WithMigrationsBuilder{
+		shiftStartTS: shiftStartTS,
+		startTS:      startTS,
+		restoredTS:   restoredTS,
+	}
+}
+
+func (m *MetaWithMigrations) StoreId() int64 {
+	return m.meta.StoreId
+}
+
+func (m *MetaWithMigrations) Meta() *backuppb.Metadata {
+	return m.meta
+}
+
+func (m *PhysicalWithMigrations) PhysicalLength() uint64 {
+	return m.physical.Item.Length
+}
+
+func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
+	return m.physical.Item
+}
+
+func (rc *LogClient) TEST_saveIDMap(
+	ctx context.Context,
+	m *stream.TableMappingManager,
+) error {
+	return rc.saveIDMap(ctx, m)
+}
+
+func (rc *LogClient) TEST_initSchemasMap(
+	ctx context.Context,
+	restoreTS uint64,
+) ([]*backuppb.PitrDBMap, error) {
+	return rc.initSchemasMap(ctx, restoreTS)
+}
+
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
+func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
 	metas, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
@@ -36,6 +86,19 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
 		return nil, errors.Trace(r.Err)
 	}
 	return r.Item, nil
+}
+
+func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, dom *domain.Domain, se glue.Session) *LogClient {
+	return &LogClient{
+		dom:               dom,
+		unsafeSession:     se,
+		upstreamClusterID: upstreamClusterID,
+		LogFileManager: &LogFileManager{
+			startTS:   startTS,
+			restoreTS: restoreTS,
+		},
+		clusterID: clusterID,
+	}
 }
 
 func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {
@@ -60,6 +123,23 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	length uint64,
 	compressionType backuppb.CompressionType,
 	storage storage.ExternalStorage,
+	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
+}
+
+func (w *WithMigrations) AddIngestedSSTs(extPath string) {
+	w.fullBackups = append(w.fullBackups, extPath)
+}
+
+func (w *WithMigrations) SetRestoredTS(ts uint64) {
+	w.restoredTS = ts
+}
+
+func (w *WithMigrations) SetStartTS(ts uint64) {
+	w.startTS = ts
+}
+
+func (w *WithMigrations) CompactionDirs() []string {
+	return w.compactionDirs
 }

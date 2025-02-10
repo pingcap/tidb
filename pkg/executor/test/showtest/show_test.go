@@ -25,12 +25,14 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -73,9 +75,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +
@@ -288,7 +287,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
+		tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("show_warnings_expr_pushdown"))
 		require.NoError(t, err)
 		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
@@ -531,7 +530,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -674,7 +673,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("testshow"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -806,7 +805,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
 	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
@@ -997,7 +996,7 @@ func TestShowVar(t *testing.T) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Scope == variable.ScopeSession {
+		if v.Scope == vardef.ScopeSession {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
 			globalVars = append(globalVars, v.Name)
@@ -1028,7 +1027,7 @@ func TestShowVar(t *testing.T) {
 		if strings.HasPrefix(line, "version ") {
 			require.Equal(t, mysql.ServerVersion, line[len("version "):])
 		} else if strings.HasPrefix(line, "version_comment ") {
-			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
+			require.Equal(t, variable.GetSysVar(vardef.VersionComment), line[len("version_comment "):])
 		}
 	}
 
@@ -1057,89 +1056,6 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
-}
-
-func TestShowBindingCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = 1`)
-	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("1"))
-	tk.MustExec("admin reload bindings;")
-	res := tk.MustQuery("show global bindings")
-	require.Equal(t, 0, len(res.Rows()))
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 0, len(res.Rows()))
-
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = default`)
-	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("67108864"))
-	tk.MustExec("admin reload bindings")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 1, len(res.Rows()))
-
-	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 2, len(res.Rows()))
-}
-
-func TestShowBindingCacheStatus(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"0 0 0 Bytes 64 MB"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
-	result := tk.MustQuery("show global bindings")
-	rows := result.Rows()
-	require.Equal(t, len(rows), 0)
-	tk.MustExec("create global binding for select * from t using select * from t")
-
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 159 Bytes 64 MB"))
-
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = 250`)
-	tk.MustQuery(`select @@global.tidb_mem_quota_binding_cache`).Check(testkit.Rows("250"))
-	tk.MustExec("admin reload bindings;")
-	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 2 187 Bytes 250 Bytes"))
-
-	tk.MustExec("drop global binding for select * from t where a > 1")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 0)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"0 1 0 Bytes 250 Bytes"))
-
-	tk.MustExec("admin reload bindings")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 159 Bytes 250 Bytes"))
-
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
-
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 198 Bytes 250 Bytes"))
 }
 
 func TestShowLimitReturnRow(t *testing.T) {
@@ -1195,31 +1111,4 @@ func TestShowLimitReturnRow(t *testing.T) {
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
 	require.Equal(t, rows[0][2], "idx_b")
-}
-
-func TestShowBindingDigestField(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(id int, key(id))")
-	tk.MustExec("create table t2(id int, key(id))")
-	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
-	result := tk.MustQuery("show bindings;")
-	rows := result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
-	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show bindings;")
-	require.Equal(t, len(result.Rows()), 0)
-
-	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show global bindings;")
-	rows = result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
-	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show global bindings;")
-	require.Equal(t, len(result.Rows()), 0)
 }

@@ -1685,9 +1685,9 @@ id	estRows	task	access object	operator info
 Sort	9990.00	root		planner__core__casetest__hint__hint.t.b
 └─Projection	9990.00	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.b, Column#7
   └─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
-    ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#10)->Column#7, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
+    ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#14)->Column#7, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
     │ └─IndexReader	7992.00	root		index:HashAgg
-    │   └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#10
+    │   └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#14
     │     └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.b))

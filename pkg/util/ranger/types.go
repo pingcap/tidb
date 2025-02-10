@@ -17,6 +17,7 @@ package ranger
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -24,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -37,7 +38,7 @@ type MutableRanges interface {
 	// Range returns the underlying range values.
 	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
-	Rebuild(sctx context.PlanContext) error
+	Rebuild(sctx planctx.PlanContext) error
 	// CloneForPlanCache clones the MutableRanges for plan cache.
 	CloneForPlanCache() MutableRanges
 }
@@ -51,7 +52,7 @@ func (rs Ranges) Range() Ranges {
 }
 
 // Rebuild rebuilds this range.
-func (Ranges) Rebuild(context.PlanContext) error {
+func (Ranges) Rebuild(planctx.PlanContext) error {
 	return nil
 }
 
@@ -140,6 +141,18 @@ func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {
 		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
+}
+
+// IsOnlyNull checks if the range has [NULL, NULL] or [NULL NULL, NULL NULL] range.
+func (ran *Range) IsOnlyNull() bool {
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if !(a.IsNull() && b.IsNull()) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsPointNonNullable returns if the range is a point without NULL.
@@ -257,7 +270,7 @@ func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highB
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ran *Range) PrefixEqualLen(tc types.Context) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
-	for i := 0; i < len(ran.LowVal); i++ {
+	for i := range len(ran.LowVal) {
 		cmp, err := ran.LowVal[i].Compare(tc, &ran.HighVal[i], ran.Collators[i])
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -295,7 +308,8 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	case types.KindMaxValue:
 		return "+inf"
 	case types.KindInt64:
-		switch d.GetInt64() {
+		v := d.GetInt64()
+		switch v {
 		case math.MinInt64:
 			if isLeftSide {
 				return "-inf"
@@ -305,10 +319,13 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 				return "+inf"
 			}
 		}
+		return strconv.FormatInt(v, 10)
 	case types.KindUint64:
-		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
+		v := d.GetUint64()
+		if v == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
+		return strconv.FormatUint(v, 10)
 	case types.KindBytes:
 		return fmt.Sprintf("%q", d.GetValue())
 	case types.KindString:
@@ -331,7 +348,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	n2 := len(bound2)
 	n := min(n1, n2)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
 		if err != nil {
 			return 0, err
@@ -388,7 +405,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 // Check if a list of Datum is a prefix of another list of Datum. This is useful for checking if
 // lower/upper bound of a range is a subset of another.
 func prefix(tc types.Context, superValue []types.Datum, supValue []types.Datum, length int, collators []collate.Collator) bool {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		cmp, err := superValue[i].Compare(tc, &supValue[i], collators[i])
 		if (err != nil) || (cmp != 0) {
 			return false
@@ -423,7 +440,7 @@ func (rs Ranges) Subset(tc types.Context, superRanges Ranges) bool {
 			return false
 		}
 	}
-	for i := 0; i < len(superRangesCovered); i++ {
+	for i := range superRangesCovered {
 		if !superRangesCovered[i] {
 			return false
 		}
@@ -437,7 +454,7 @@ func checkCollators(ran1 *Range, ran2 *Range, length int) bool {
 	// The current code path for this function always will have same collation
 	// for ran and superRange. It is added here for future
 	// use of the function.
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if ran1.Collators[i] != ran2.Collators[i] {
 			return false
 		}

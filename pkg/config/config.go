@@ -33,10 +33,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -100,15 +98,11 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
+	UnavailableIP  = "<nil>"
 )
 
 // Valid config maps
 var (
-	ValidStorage = map[string]bool{
-		"mocktikv": true,
-		"tikv":     true,
-		"unistore": true,
-	}
 	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
@@ -174,18 +168,18 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	TempDir          string `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	Host             string    `toml:"host" json:"host"`
+	AdvertiseAddress string    `toml:"advertise-address" json:"advertise-address"`
+	Port             uint      `toml:"port" json:"port"`
+	Cors             string    `toml:"cors" json:"cors"`
+	Store            StoreType `toml:"store" json:"store"`
+	Path             string    `toml:"path" json:"path"`
+	Socket           string    `toml:"socket" json:"socket"`
+	Lease            string    `toml:"lease" json:"lease"`
+	SplitTable       bool      `toml:"split-table" json:"split-table"`
+	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
+	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -205,7 +199,6 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -463,13 +456,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
-}
-
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -552,9 +538,10 @@ type Instance struct {
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
-	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBEnableStatsOwner AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
+	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 }
@@ -813,19 +800,6 @@ type ProxyProtocol struct {
 	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
-// Binlog is the config for binlog.
-type Binlog struct {
-	Enable bool `toml:"enable" json:"enable"`
-	// If IgnoreError is true, when writing binlog meets error, TiDB would
-	// ignore the error.
-	IgnoreError  bool   `toml:"ignore-error" json:"ignore-error"`
-	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
-	Strategy string `toml:"strategy" json:"strategy"`
-}
-
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
@@ -910,7 +884,7 @@ var defaultConf = Config{
 	Port:                         DefPort,
 	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
-	Store:                        "unistore",
+	Store:                        StoreTypeUniStore,
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
@@ -978,6 +952,7 @@ var defaultConf = Config{
 		PluginLoad:                  "",
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBEnableStatsOwner:        *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TiDBServiceScope:            "",
 	},
@@ -1046,10 +1021,6 @@ var defaultConf = Config{
 	},
 	PDClient:   defTiKVCfg.PDClient,
 	TiKVClient: defTiKVCfg.TiKVClient,
-	Binlog: Binlog{
-		WriteTimeout: "15s",
-		Strategy:     "range",
-	},
 	Plugin: Plugin{
 		Dir:  "/data/deploy/plugin",
 		Load: "",
@@ -1072,7 +1043,7 @@ var defaultConf = Config{
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 		DisconnectOnExpiredPassword: true,
 	},
-	DeprecateIntegerDisplayWidth:         false,
+	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,
 	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
@@ -1081,8 +1052,8 @@ var defaultConf = Config{
 	Enable32BitsConnectionID:             true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
-	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
-	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	TiFlashComputeAutoScalerType:         DefASStr,
+	TiFlashComputeAutoScalerAddr:         DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
@@ -1337,16 +1308,10 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if !ValidStorage[c.Store] {
-		nameList := make([]string, 0, len(ValidStorage))
-		for k, v := range ValidStorage {
-			if v {
-				nameList = append(nameList, k)
-			}
-		}
-		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
+	if !c.Store.Valid() {
+		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
-	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
+	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
@@ -1411,9 +1376,9 @@ func (c *Config) Valid() error {
 
 	// Check tiflash_compute topo fetch is valid.
 	if c.DisaggregatedTiFlash && c.UseAutoScaler {
-		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
+		if !IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
 			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
-				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+				MockASStr, AWSASStr, GCPASStr, c.TiFlashComputeAutoScalerType)
 		}
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")

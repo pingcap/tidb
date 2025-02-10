@@ -28,9 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -103,7 +104,7 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 }
 
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
-	tblInfo, err := tracker.TableByName(context.Background(), model.NewCIStr(schema), model.NewCIStr(table))
+	tblInfo, err := tracker.TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
 }
@@ -200,7 +201,7 @@ func TestIndexLength(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 
-	err := tracker.DeleteTable(model.NewCIStr("test"), model.NewCIStr("t"))
+	err := tracker.DeleteTable(ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sql = "create table test.t(a text, b text charset ascii, c blob);"
@@ -214,6 +215,24 @@ func TestIndexLength(t *testing.T) {
 	execAlter(t, tracker, sql)
 
 	tblInfo = mustTableByName(t, tracker, "test", "t")
+	checkShowCreateTable(t, tblInfo, expected)
+}
+
+func TestCreateTableWithIndex(t *testing.T) {
+	// See issue 56045
+	sql := "create table test.t(col_1 json, KEY idx_1 ((cast(col_1 as char(64) array))))"
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, sql)
+
+	sql = "alter table test.t rename index idx_1 to idx_1_1"
+	execAlter(t, tracker, sql)
+
+	tblInfo := mustTableByName(t, tracker, "test", "t")
+	expected := "CREATE TABLE `t` (\n" +
+		"  `col_1` json DEFAULT NULL,\n" +
+		"  KEY `idx_1_1` ((cast(`col_1` as char(64) array)))\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 }
 
@@ -482,11 +501,11 @@ func (m mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql stri
 	return nil, nil
 }
 
-func (m mockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+func (m mockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, nil
 }
 
-func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error) {
+func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, nil
 }
 

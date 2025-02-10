@@ -19,7 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
@@ -29,46 +30,49 @@ import (
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: model.NewCIStr("t1"),
+			ID:    1,
+			Name:  ast.NewCIStr("t1"),
+			State: model.StatePublic,
 		},
 		{
 			ID:   2,
-			Name: model.NewCIStr("t2"),
+			Name: ast.NewCIStr("t2"),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *types.NewFieldType(mysql.TypeLonglong),
 					State:     model.StatePublic,
 				},
 			},
 			Constraints: []*model.ConstraintInfo{
 				{
-					Name:       model.NewCIStr("t2_c1"),
-					Table:      model.NewCIStr("t2"),
+					Name:       ast.NewCIStr("t2_c1"),
+					Table:      ast.NewCIStr("t2"),
 					ExprString: "id<10",
 					State:      model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 		{
 			ID:   3,
-			Name: model.NewCIStr("t3"),
+			Name: ast.NewCIStr("t3"),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *types.NewFieldType(mysql.TypeLonglong),
 					State:     model.StatePublic,
 				},
 			},
 			Constraints: []*model.ConstraintInfo{
 				{
-					Name:       model.NewCIStr("t3_c1"),
-					Table:      model.NewCIStr("t3"),
+					Name:       ast.NewCIStr("t3_c1"),
+					Table:      ast.NewCIStr("t3"),
 					ExprString: "id<10",
 					State:      model.StateDeleteOnly,
 				},
 			},
+			State: model.StatePublic,
 		},
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)
@@ -90,46 +94,49 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	sctx := defaultCtx()
 	tblInfos := []*model.TableInfo{
 		{
-			ID:   1,
-			Name: model.NewCIStr("t1"),
+			ID:    1,
+			Name:  ast.NewCIStr("t1"),
+			State: model.StatePublic,
 		},
 		{
 			ID:   2,
-			Name: model.NewCIStr("t2"),
+			Name: ast.NewCIStr("t2"),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *types.NewFieldType(mysql.TypeLonglong),
 					State:     model.StatePublic,
 				},
 			},
 			Constraints: []*model.ConstraintInfo{
 				{
-					Name:       model.NewCIStr("t2_c1"),
-					Table:      model.NewCIStr("t2"),
+					Name:       ast.NewCIStr("t2_c1"),
+					Table:      ast.NewCIStr("t2"),
 					ExprString: "id<10",
 					State:      model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 		{
 			ID:   3,
-			Name: model.NewCIStr("t3"),
+			Name: ast.NewCIStr("t3"),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *types.NewFieldType(mysql.TypeLonglong),
 					State:     model.StatePublic,
 				},
 			},
 			Constraints: []*model.ConstraintInfo{
 				{
-					Name:       model.NewCIStr("t3_c1"),
-					Table:      model.NewCIStr("t3"),
+					Name:       ast.NewCIStr("t3_c1"),
+					Table:      ast.NewCIStr("t3"),
 					ExprString: "id<10",
 					State:      model.StateDeleteOnly,
 				},
 			},
+			State: model.StatePublic,
 		},
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)

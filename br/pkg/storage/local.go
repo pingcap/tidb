@@ -12,7 +12,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
 )
 
@@ -28,12 +31,30 @@ const (
 // export for using in tests.
 type LocalStorage struct {
 	base string
+	// Whether ignoring ENOINT while deleting.
+	// Don't fail when deleting an unexist file is more like
+	// a normal ExternalStorage implementation does.
+	IgnoreEnoentForDelete bool
+}
+
+// Base returns the base dir used by this local storage.
+func (l *LocalStorage) Base() string {
+	return l.base
 }
 
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
+	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 	path := filepath.Join(l.base, name)
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil &&
+		l.IgnoreEnoentForDelete &&
+		os.IsNotExist(err) {
+		return nil
+	}
+	return errors.Annotatef(err, "failed to delete file %v", name)
 }
 
 // DeleteFiles deletes the files.
@@ -49,6 +70,10 @@ func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
+	failpoint.Inject("local_write_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
+
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()
@@ -100,8 +125,23 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
-			// if path not exists, we should return nil to continue.
-			return nil
+			log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
+			if !opt.IncludeTombstone {
+				// if path not exists and the client doesn't require its tombstone,
+				// we should return nil to continue.
+				return nil
+			}
+			path, err = filepath.Rel(l.base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
+			}
+			if !strings.HasPrefix(path, opt.ObjPrefix) {
+				return nil
+			}
+			// NOTE: This may cause a tombstone of the dir emit to the caller when
+			// call `Walk` in a non-exist dir.
+			return fn(path, TombstoneSize)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -234,6 +274,19 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (*LocalStorage) Close() {}
+
+func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	sl, ok := e.(*LocalStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)
+	}
+	from := filepath.Join(sl.base, spec.From)
+	to := filepath.Join(l.base, spec.To)
+	if err := mkdirAll(filepath.Dir(to)); err != nil {
+		return errors.Trace(err)
+	}
+	return os.Link(from, to)
+}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)

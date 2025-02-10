@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -129,6 +131,21 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	// Test drop table failed and then recover the table should also be failed.
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			jobID = job.ID
+		}
+	})
+	tk.MustExec("drop table t_recover2")
+	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)
@@ -724,7 +741,6 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	var wg sync.WaitGroup
 	dbPerWorker := 10
 	for i := 0; i < 40; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

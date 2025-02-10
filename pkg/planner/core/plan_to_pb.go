@@ -16,12 +16,13 @@ package core
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
@@ -273,6 +274,11 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		tsExec.AnnQuery = &annQueryCopy
+	}
+
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
@@ -312,6 +318,12 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 	ptsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
 
 	ptsExec.Desc = p.Desc
+
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		ptsExec.AnnQuery = &annQueryCopy
+	}
+
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err

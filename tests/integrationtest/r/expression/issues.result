@@ -838,7 +838,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -881,7 +881,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -1378,7 +1378,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -3191,3 +3191,64 @@ Projection	8.00	root		test.ast.i, Column#32
       └─TableReader(Probe)	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		eq("astp2019121731703151", test.acc.m)
           └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+drop table if exists test.t;
+create table test.t (a int);
+insert into test.t values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t;
+date_add(a, interval 12345 DAY_HOUR)
+NULL
+NULL
+NULL
+drop table if exists test.t;
+create table test.t(f1 char(1));
+insert into test.t values ('a'),('b'),('1');
+select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
+(cast(f1 as float) = 1) or (cast(f1 as float) = 2)
+0
+0
+1
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
+(cast(f1 as float) != 1) and (cast(f1 as float) != 2)
+1
+1
+0
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'a'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+Warning	1292	Truncated incorrect DOUBLE value: 'b'
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
+IFNULL(id, 'abcdef')
+1234567890123456
+drop table if exists test.t;
+create table test.t(a double);
+insert into test.t values('20000102030405.0078125');
+select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
+a
+20000102030405.008
+drop table if exists t0;
+create table `t0`
+(
+`vkey` integer,
+`pkey` integer,
+`c0`   integer
+);
+insert into `t0`
+values (1, 2, 3);
+select *
+from `t0`
+where (nullif(
+3 ^ 10 & (abs(-50)) ,
+round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
+)) in (select `vkey` from `t0` where false);
+vkey	pkey	c0

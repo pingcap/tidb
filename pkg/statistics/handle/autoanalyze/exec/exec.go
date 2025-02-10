@@ -21,10 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -50,7 +50,7 @@ func AutoAnalyze(
 	statsVer int,
 	sql string,
 	params ...any,
-) {
+) bool {
 	startTime := time.Now()
 	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
@@ -67,9 +67,10 @@ func AutoAnalyze(
 			zap.Error(err),
 		)
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
-	} else {
-		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+		return false
 	}
+	metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
+	return true
 }
 
 // RunAnalyzeStmt executes the analyze statement.
@@ -80,7 +81,7 @@ func RunAnalyzeStmt(
 	statsVer int,
 	sql string,
 	params ...any,
-) ([]chunk.Row, []*ast.ResultField, error) {
+) ([]chunk.Row, []*resolve.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
@@ -104,7 +105,7 @@ func RunAnalyzeStmt(
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
 func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, vardef.TiDBAutoAnalyzeRatio, vardef.TiDBAutoAnalyzeStartTime, vardef.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -119,7 +120,7 @@ func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 func ParseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
-		return variable.DefAutoAnalyzeRatio
+		return vardef.DefAutoAnalyzeRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
 }
@@ -128,15 +129,15 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 // It parses the times in UTC location.
 func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
 	if start == "" {
-		start = variable.DefAutoAnalyzeStartTime
+		start = vardef.DefAutoAnalyzeStartTime
 	}
 	if end == "" {
-		end = variable.DefAutoAnalyzeEndTime
+		end = vardef.DefAutoAnalyzeEndTime
 	}
-	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
+	s, err := time.ParseInLocation(vardef.FullDayTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)
 	}
-	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
+	e, err := time.ParseInLocation(vardef.FullDayTimeFormat, end, time.UTC)
 	return s, e, err
 }

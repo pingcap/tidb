@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -30,75 +31,140 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-// UpdateStatsVersion will set statistics version to the newest TS,
-// then tidb-server will reload automatic.
-func UpdateStatsVersion(sctx sessionctx.Context) error {
+// UpdateStatsVersion will set statistics version to the newest TS, then
+// tidb-server will reload automatic.
+func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_meta set version = %?", startTS,
+	); err != nil {
 		return err
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_extended set version = %?", startTS,
+	); err != nil {
 		return err
 	}
-	if _, err = statsutil.Exec(sctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
+	if _, err = statsutil.ExecWithCtx(
+		ctx, sctx, "update mysql.stats_histograms set version = %?", startTS,
+	); err != nil {
 		return err
 	}
 	return nil
 }
 
-// UpdateStatsMeta update the stats meta stat for this Table.
-func UpdateStatsMeta(
-	sctx sessionctx.Context,
-	startTS uint64,
-	delta variable.TableDelta,
-	id int64,
-	isLocked bool,
-) (err error) {
-	if isLocked {
-		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
-		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
-		_, err = statsutil.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
-			startTS, id, delta.Count, delta.Delta)
-	} else {
-		if delta.Delta < 0 {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
-				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
-		} else {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
-				id, delta.Count, delta.Delta)
-		}
-		cache.TableRowStatsCache.Invalidate(id)
-	}
-	return err
+// DeltaUpdate is the delta update for stats meta.
+type DeltaUpdate struct {
+	Delta    variable.TableDelta
+	TableID  int64
+	IsLocked bool
 }
 
-// DumpTableStatColSizeToKV dumps the column size stats to storage.
-func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.TableDelta) error {
-	if len(delta.ColSize) == 0 {
+// NewDeltaUpdate creates a new DeltaUpdate.
+func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *DeltaUpdate {
+	return &DeltaUpdate{
+		Delta:    delta,
+		TableID:  tableID,
+		IsLocked: isLocked,
+	}
+}
+
+// UpdateStatsMeta updates the stats meta for multiple tables.
+// It uses the INSERT INTO ... ON DUPLICATE KEY UPDATE syntax to fill the missing records.
+// Note: Make sure call this function in a transaction.
+func UpdateStatsMeta(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	startTS uint64,
+	updates ...*DeltaUpdate,
+) (err error) {
+	if len(updates) == 0 {
 		return nil
 	}
-	values := make([]string, 0, len(delta.ColSize))
-	for histID, deltaColSize := range delta.ColSize {
-		if deltaColSize == 0 {
-			continue
+
+	// Separate locked and unlocked updates
+	// In most cases, the number of locked tables is small.
+	lockedTableIDs := make([]string, 0, 20)
+	lockedValues := make([]string, 0, 20)
+	// In most cases, the number of unlocked tables is large.
+	unlockedTableIDs := make([]string, 0, len(updates))
+	unlockedPosValues := make([]string, 0, max(len(updates)/2, 1))
+	unlockedNegValues := make([]string, 0, max(len(updates)/2, 1))
+	cacheInvalidateIDs := make([]int64, 0, len(updates))
+
+	for _, update := range updates {
+		if update.IsLocked {
+			lockedTableIDs = append(lockedTableIDs, fmt.Sprintf("%d", update.TableID))
+			lockedValues = append(lockedValues, fmt.Sprintf("(%d, %d, %d, %d)",
+				startTS, update.TableID, update.Delta.Count, update.Delta.Delta))
+		} else {
+			unlockedTableIDs = append(unlockedTableIDs, fmt.Sprintf("%d", update.TableID))
+			if update.Delta.Delta < 0 {
+				unlockedNegValues = append(unlockedNegValues, fmt.Sprintf("(%d, %d, %d, %d)",
+					startTS, update.TableID, update.Delta.Count, -update.Delta.Delta))
+			} else {
+				unlockedPosValues = append(unlockedPosValues, fmt.Sprintf("(%d, %d, %d, %d)",
+					startTS, update.TableID, update.Delta.Count, update.Delta.Delta))
+			}
+			cacheInvalidateIDs = append(cacheInvalidateIDs, update.TableID)
 		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
-	if len(values) == 0 {
-		return nil
+
+	// Lock the stats_meta and stats_table_locked tables using SELECT FOR UPDATE to prevent write conflicts.
+	// This ensures that we acquire the necessary locks before attempting to update the tables, reducing the likelihood
+	// of encountering lock conflicts during the update process.
+	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
+	if lockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
+			return err
+		}
 	}
-	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = GREATEST(0, tot_col_size + values(tot_col_size))", strings.Join(values, ","))
-	_, _, err := statsutil.ExecRows(sctx, sql)
-	return errors.Trace(err)
+
+	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
+	if unlockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
+			return err
+		}
+	}
+	// Execute locked updates
+	if len(lockedValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_table_locked (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = count + values(count)", strings.Join(lockedValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	// Execute unlocked updates with positive delta
+	if len(unlockedPosValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = count + values(count)", strings.Join(unlockedPosValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	// Execute unlocked updates with negative delta
+	if len(unlockedNegValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = if(count > values(count), count - values(count), 0)", strings.Join(unlockedNegValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	// Invalidate cache for all unlocked tables
+	for _, id := range cacheInvalidateIDs {
+		cache.TableRowStatsCache.Invalidate(id)
+	}
+
+	return nil
 }
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
@@ -203,5 +269,53 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 	}
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
-	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
+	statsCache.UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{newTbl},
+	})
+}
+
+var changeGlobalStatsTables = []string{
+	"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets",
+	"stats_histograms", "column_stats_usage",
+}
+
+// ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
+func ChangeGlobalStatsID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	from, to int64,
+) error {
+	for _, table := range changeGlobalStatsTables {
+		_, err := statsutil.ExecWithCtx(
+			ctx, sctx,
+			"update mysql."+table+" set table_id = %? where table_id = %?",
+			to, from,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// UpdateStatsMetaVersionForGC updates the version of stats_meta to be deleted
+// soon.
+func UpdateStatsMetaVersionForGC(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := statsutil.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = statsutil.ExecWithCtx(
+		ctx,
+		sctx,
+		"update mysql.stats_meta set version=%? where table_id =%?",
+		startTS, physicalID,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return startTS, nil
 }

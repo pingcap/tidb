@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -70,15 +69,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -91,6 +91,7 @@ import (
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -459,7 +460,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 			return err
 		}
 	}
-	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.DefaultAuthPlugin)
+	defAuthPlugin, err := cc.ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
@@ -506,15 +507,15 @@ func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
-	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(vardef.WaitTimeout)
 	if !exists {
-		return variable.DefWaitTimeout
+		return vardef.DefWaitTimeout
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
 		logutil.Logger(ctx).Warn("get sysval wait_timeout failed, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
-		return variable.DefWaitTimeout
+		return vardef.DefWaitTimeout
 	}
 	return waitTimeout
 }
@@ -848,12 +849,12 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		return nil, err
 	}
 	// Find the identity of the user based on username and peer host.
-	identity, err := cc.ctx.MatchIdentity(cc.user, host)
+	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
 	if err != nil {
 		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	// Get the plugin for the identity.
-	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	userplugin, err := cc.ctx.AuthPluginForUser(ctx, identity)
 	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
@@ -885,15 +886,13 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
-		if resp.AuthPlugin != mysql.AuthNativePassword {
-			if resp.Capability&mysql.ClientPluginAuth > 0 {
-				resp.AuthPlugin = mysql.AuthNativePassword
-				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-				if err != nil {
-					return nil, err
-				}
-				return authData, nil
+		if resp.AuthPlugin != mysql.AuthNativePassword && resp.Capability&mysql.ClientPluginAuth > 0 {
+			resp.AuthPlugin = mysql.AuthNativePassword
+			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+			if err != nil {
+				return nil, err
 			}
+			return authData, nil
 		}
 		return nil, nil
 	}
@@ -935,7 +934,7 @@ func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port stri
 			return cc.peerHost, cc.peerPort, nil
 		}
 	}
-	host = variable.DefHostname
+	host = vardef.DefHostname
 	if cc.isUnixSocket {
 		cc.peerHost = host
 		cc.serverHost = host
@@ -974,7 +973,7 @@ func (cc *clientConn) skipInitConnect() bool {
 
 // initResultEncoder initialize the result encoder for current connection.
 func (cc *clientConn) initResultEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetResults)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetResults)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
@@ -983,7 +982,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
-	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetClient)
+	chs, err := cc.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetClient)
 	if err != nil {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
@@ -994,7 +993,7 @@ func (cc *clientConn) initInputEncoder(ctx context.Context) {
 // initConnect runs the initConnect SQL statement if it has been specified.
 // The semantics are MySQL compatible.
 func (cc *clientConn) initConnect(ctx context.Context) error {
-	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
+	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InitConnect)
 	if err != nil {
 		return err
 	}
@@ -1055,7 +1054,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 	}()
 
 	parentCtx := ctx
-	var traceInfo *model.TraceInfo
+	var traceInfo *tracing.TraceInfo
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -1065,7 +1064,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		sessVars := cc.ctx.GetSessionVars()
 		if alias := sessVars.SessionAlias; traceInfo == nil || traceInfo.SessionAlias != alias {
 			// We should reset the context trace info when traceInfo not inited or session alias changed.
-			traceInfo = &model.TraceInfo{
+			traceInfo = &tracing.TraceInfo{
 				ConnectionID: cc.connectionID,
 				SessionAlias: alias,
 			}
@@ -1257,17 +1256,6 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
-	switch sqlType {
-	case "Insert":
-		server_metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
-	case "Replace":
-		server_metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
-	case "Delete":
-		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
-	case "Update":
-		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
-	}
-
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
@@ -1309,9 +1297,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if topsqlstate.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
+		rawCtx := ctx
+		defer pprof.SetGoroutineLabels(rawCtx)
+		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
+		ctx = topsql.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
-	if variable.EnablePProfSQLCPU.Load() {
+	if vardef.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
@@ -1349,6 +1340,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	vars.SQLKiller.Reset()
+	vars.SQLCPUUsages.ResetCPUTimes()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
@@ -1396,7 +1388,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeStats(ctx)
 	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
-		return cc.writeOK(ctx)
+		if cc.server.health.Load() {
+			return cc.writeOK(ctx)
+		}
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
@@ -1652,31 +1647,6 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 		return nil
 	}
 	return loadStatsInfo.Update(data)
-}
-
-// handleIndexAdvise does the index advise work and returns the advise result for index.
-func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *executor.IndexAdviseInfo) error {
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if indexAdviseInfo == nil {
-		return errors.New("Index Advise: info is empty")
-	}
-
-	data, err := cc.getDataFromPath(ctx, indexAdviseInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return errors.New("Index Advise: infile is empty")
-	}
-
-	if err := indexAdviseInfo.GetIndexAdvice(data); err != nil {
-		return err
-	}
-
-	// TODO: Write the rss []ResultSet. It will be done in another PR.
-	return nil
 }
 
 func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
@@ -1936,11 +1906,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
+		nodeW := resolve.NewNodeW(stmt)
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW); err != nil {
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), nodeW)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -2201,16 +2172,6 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 		//nolint:forcetypeassert
 		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-			return handled, err
-		}
-	}
-
-	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-	if indexAdvise != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
 			return handled, err
 		}
 	}
@@ -2587,7 +2548,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
-	if !cc.ctx.AuthWithoutVerification(user) {
+	if !cc.ctx.AuthWithoutVerification(ctx, user) {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB
@@ -2744,8 +2705,8 @@ func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, erro
 }
 
 // GetScope gets the status variables scope.
-func (*compressionStats) GetScope(_ string) variable.ScopeFlag {
-	return variable.ScopeSession
+func (*compressionStats) GetScope(_ string) vardef.ScopeFlag {
+	return vardef.ScopeSession
 }
 
 func init() {

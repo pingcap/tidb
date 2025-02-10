@@ -61,7 +61,8 @@ func TestTimeEncoding(t *testing.T) {
 
 func TestDateTime(t *testing.T) {
 	var warnings []error
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(l string, err error) {
+		require.Equal(t, contextutil.WarnLevelWarning, l)
 		warnings = append(warnings, err)
 	}))
 	table := []struct {
@@ -1813,7 +1814,8 @@ func TestParseTimeFromFloat64(t *testing.T) {
 		{0.0, mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
 		{20000102030405, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
 		{20000102030405.015625, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
-		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7813, nil},
+		{121212131313.99998, mysql.TypeDatetime, 2012, 12, 12, 13, 13, 13, 999985, nil},
 		{2000, mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
 		{20000000000000, mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
 	}
@@ -2214,7 +2216,7 @@ func TestDurationConvertToYearFromNow(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnAppenderForTest(func(_ error) {
+		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnAppenderForTest(func(_ string, _ error) {
 			require.Fail(t, "shouldn't append warninng")
 		}))
 		now, err := time.Parse(time.RFC3339, c.nowLit)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -129,10 +129,12 @@ func NewTableKVDecoder(
 	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
-	se := NewSession(options, logger)
-	cols := tbl.Cols()
-	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
+	se, err := NewSession(options, logger)
+	if err != nil {
+		return nil, err
+	}
 
+	cols := tbl.Cols()
 	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err

@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -72,11 +73,11 @@ func (d *SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDat
 		}
 	}
 
-	var sessVars *variable.SessionVars
+	utf8MB4DefaultColl := ""
 	if ctx != nil {
-		sessVars = ctx.GetSessionVars()
+		utf8MB4DefaultColl = ctx.GetSessionVars().DefaultCollationForUTF8MB4
 	}
-	chs, coll, err := ddl.ResolveCharsetCollation(sessVars, charsetOpt)
+	chs, coll, err := ddl.ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, utf8MB4DefaultColl)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -92,7 +93,7 @@ func (d *SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDat
 // CreateTestDB creates the `test` database, which is the default behavior of TiDB.
 func (d *SchemaTracker) CreateTestDB(ctx sessionctx.Context) {
 	_ = d.CreateSchema(ctx, &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("test"),
+		Name: ast.NewCIStr("test"),
 	})
 }
 
@@ -151,7 +152,7 @@ func (d *SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatab
 		}
 	}
 	if toCollate == "" {
-		if toCollate, err = ddl.GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
+		if toCollate, err = ddl.GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -181,15 +182,6 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	// suppress ErrTooLongKey
-	ctx.SetValue(ddl.SuppressErrorTooLongKeyKey, true)
-	// support drop PK
-	enableClusteredIndexBackup := ctx.GetSessionVars().EnableClusteredIndex
-	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	defer func() {
-		ctx.ClearValue(ddl.SuppressErrorTooLongKeyKey)
-		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndexBackup
-	}()
 
 	var (
 		referTbl *model.TableInfo
@@ -202,14 +194,21 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 		}
 	}
 
+	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
+		ctx,
+		// suppress ErrTooLongKey
+		metabuild.WithSuppressTooLongIndexErr(true),
+		// support drop PK
+		metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeOff),
+	)
 	// build tableInfo
 	var (
 		tbInfo *model.TableInfo
 	)
 	if s.ReferTable != nil {
-		tbInfo, err = ddl.BuildTableInfoWithLike(ctx, ident, referTbl, s)
+		tbInfo, err = ddl.BuildTableInfoWithLike(ident, referTbl, s)
 	} else {
-		tbInfo, err = ddl.BuildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, nil)
+		tbInfo, err = ddl.BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, nil)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -217,7 +216,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 
 	// TODO: to reuse the constant fold of expression in partition range definition we use CheckTableInfoValidWithStmt,
 	// but it may also introduce unwanted limit check in DM's use case. Should check it later.
-	if err = ddl.CheckTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = ddl.CheckTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
 
@@ -232,7 +231,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
-	dbName model.CIStr,
+	dbName ast.CIStr,
 	info *model.TableInfo,
 	_ []model.InvolvingSchemaInfo,
 	cs ...ddl.CreateTableOption,
@@ -276,7 +275,7 @@ func (d *SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt
 		})
 	}
 
-	tbInfo, err := ddl.BuildTableInfo(ctx, s.ViewName.Name, cols, nil, "", "")
+	tbInfo, err := ddl.BuildTableInfo(ddl.NewMetaBuildContextWithSctx(ctx), s.ViewName.Name, cols, nil, "", "")
 	if err != nil {
 		return err
 	}
@@ -319,7 +318,7 @@ func (d *SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt)
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
+func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *model.RecoverTableInfo) (err error) {
 	return nil
 }
 
@@ -329,7 +328,7 @@ func (*SchemaTracker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err erro
 }
 
 // RecoverSchema implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
+func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *model.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
@@ -365,11 +364,11 @@ func (d *SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) 
 // CreateIndex implements the DDL interface.
 func (d *SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	return d.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
+	return d.createIndex(ctx, ident, stmt.KeyType, ast.NewCIStr(stmt.IndexName),
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
-func (d *SchemaTracker) putTableIfNoError(err error, dbName model.CIStr, tbInfo *model.TableInfo) {
+func (d *SchemaTracker) putTableIfNoError(err error, dbName ast.CIStr, tbInfo *model.TableInfo) {
 	if err != nil {
 		return
 	}
@@ -381,7 +380,7 @@ func (d *SchemaTracker) createIndex(
 	ctx sessionctx.Context,
 	ti ast.Ident,
 	keyType ast.IndexKeyType,
-	indexName model.CIStr,
+	indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	ifNotExists bool,
@@ -398,11 +397,11 @@ func (d *SchemaTracker) createIndex(
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := model.NewCIStr("expression_index")
+		colName := ast.NewCIStr("expression_index")
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = ddl.GetName4AnonymousIndex(t, colName, model.NewCIStr(""))
+		indexName = ddl.GetName4AnonymousIndex(t, colName, ast.NewCIStr(""))
 	}
 
 	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil {
@@ -412,24 +411,21 @@ func (d *SchemaTracker) createIndex(
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
-	hiddenCols, err := ddl.BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
-	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
-	copy(finalColumns, tblInfo.Columns)
-	finalColumns = append(finalColumns, hiddenCols...)
-
 	for _, hiddenCol := range hiddenCols {
 		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
-		ctx,
-		finalColumns,
+		ddl.NewMetaBuildContextWithSctx(ctx),
+		tblInfo,
 		indexName,
 		false,
 		unique,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -448,7 +444,7 @@ func (d *SchemaTracker) createIndex(
 // DropIndex implements the DDL interface.
 func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists)
+	err := d.dropIndex(ctx, ti, ast.NewCIStr(stmt.IndexName), stmt.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -456,7 +452,7 @@ func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStm
 }
 
 // dropIndex is shared by DropIndex and AlterTable.
-func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) (err error) {
+func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName ast.CIStr, ifExists bool) (err error) {
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
@@ -652,7 +648,7 @@ func (d *SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spe
 		}
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
-		_, err := ddl.SetDefaultValue(ctx, oldCol, specNewColumn.Options[0])
+		_, err := ddl.SetDefaultValue(ctx.GetExprCtx(), oldCol, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -694,7 +690,7 @@ func (d *SchemaTracker) handleModifyColumn(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	ident ast.Ident,
-	originalColName model.CIStr,
+	originalColName ast.CIStr,
 	spec *ast.AlterTableSpec,
 ) (err error) {
 	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
@@ -706,7 +702,7 @@ func (d *SchemaTracker) handleModifyColumn(
 
 	schema := d.SchemaByName(ident.Schema)
 	t := tables.MockTableFromMeta(tblInfo)
-	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
+	jobW, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -715,10 +711,10 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := *job.Args[0].(**model.ColumnInfo)
-	updatedAutoRandomBits := job.Args[4].(uint64)
+	args := jobW.JobArgs.(*model.ModifyColumnArgs)
+	newColInfo := args.Column
 
-	tblInfo.AutoRandomBits = updatedAutoRandomBits
+	tblInfo.AutoRandomBits = args.NewShardBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 
 	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx.GetExprCtx(), newColInfo, oldCol)
@@ -838,7 +834,7 @@ func (d *SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Iden
 func (d *SchemaTracker) createPrimaryKey(
 	ctx sessionctx.Context,
 	ti ast.Ident,
-	indexName model.CIStr,
+	indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 ) (err error) {
@@ -849,7 +845,7 @@ func (d *SchemaTracker) createPrimaryKey(
 
 	defer d.putTableIfNoError(err, ti.Schema, tblInfo)
 
-	indexName = model.NewCIStr(mysql.PrimaryKeyName)
+	indexName = ast.NewCIStr(mysql.PrimaryKeyName)
 	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
 		// If the table's PKIsHandle is true, it also means that this table has a primary key.
 		tblInfo.PKIsHandle {
@@ -869,11 +865,12 @@ func (d *SchemaTracker) createPrimaryKey(
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
-		ctx,
-		tblInfo.Columns,
+		ddl.NewMetaBuildContextWithSctx(ctx),
+		tblInfo,
 		indexName,
 		true,
 		true,
+		false,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -925,9 +922,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 		case ast.AlterTableDropColumn:
 			err = d.dropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.renameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -936,13 +933,13 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
-				err = d.createPrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
 				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
@@ -978,7 +975,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					if err != nil {
 						return err
 					}
@@ -1182,7 +1179,7 @@ func (*SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResou
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
-func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
+func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema ast.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	for _, tableInfo := range info {
 		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err

@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -39,7 +39,7 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 
 	first := true
 	stateCnt := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		// It can be other schema states except failed schema state.
 		// This schema state can only appear once.
 		if job.SchemaState == model.StateWriteOnly {

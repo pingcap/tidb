@@ -1237,6 +1237,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
 	topsql.SetupTopSQLForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
@@ -1442,9 +1443,9 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec(multiStatement5)
 	}
 	check = func() {
-		for _, sqlStr := range cases5 {
-			checkFn(sqlStr, ".*TableReader.*")
-		}
+		checkFn(cases5[0], ".*Limit.*IndexReader.*")
+		checkFn(cases5[1], ".*TableReader.*")
+		checkFn(cases5[2], ".*TableReader.*")
 	}
 	ts.TestCase(t, mc, execFn, check)
 
@@ -1996,7 +1997,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 
 	// Test case for multi-statement.
 	cases5 := []string{
-		"delete from t limit 1;",
+		"delete from t use index() limit 1;",
 		"update t set b=1 where b is null limit 1;",
 		"select sum(a+b*2) from t;",
 	}
@@ -2077,7 +2078,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 		"select count(a+b) from stmtstats.t",
 		"select * from stmtstats.t where b is null",
 		"update stmtstats.t set b = 1 limit 10",
-		"delete from stmtstats.t limit 1",
+		"delete from stmtstats.t use index() limit 1",
 	}
 	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2148,7 +2149,7 @@ func TestTopSQLStatementStats4(t *testing.T) {
 		{prepare: "select count(a+b) from stmtstats.t", sql: "select count(a+b) from stmtstats.t"},
 		{prepare: "select * from stmtstats.t where b is null", sql: "select * from stmtstats.t where b is null"},
 		{prepare: "update stmtstats.t set b = ? limit ?", sql: "update stmtstats.t set b = 1 limit 10", args: []any{1, 10}},
-		{prepare: "delete from stmtstats.t limit ?", sql: "delete from stmtstats.t limit 1", args: []any{1}},
+		{prepare: "delete from stmtstats.t use index() limit ?", sql: "delete from stmtstats.t limit 1", args: []any{1}},
 	}
 	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2662,7 +2663,7 @@ func TestSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "create user testuser;")
 	require.NoError(t, err)
-	qctx.Session.GetSessionVars().User = &auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}
+	qctx.Session.Auth(&auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}, nil, nil, nil)
 
 	alterPwdStmts := []string{
 		"set password = '1234';",
@@ -3213,7 +3214,6 @@ func TestConnectionWillNotLeak(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, conn := range conns {
 		wg.Add(1)
-		conn := conn
 		go func() {
 			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
 			require.NoError(t, err)

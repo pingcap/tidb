@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -375,6 +375,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            is.ByItems,
 					pushedLimit:        pushedIndexLimit,
+				}
+				if worker.stats != nil && worker.idxID != 0 {
+					worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
 				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
@@ -890,7 +893,7 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 			defer close(ch)
 		}
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.String("worker", worker))
 			return
 		}
 
@@ -928,12 +931,12 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil {
 		for _, p := range e.partialPlans {
-			is, ok := p[0].(*plannercore.PhysicalIndexScan)
-			if !ok {
-				continue
+			switch p := p[0].(type) {
+			case *plannercore.PhysicalTableScan:
+				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
+			case *plannercore.PhysicalIndexScan:
+				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
 			}
-
-			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
 		}
 	}
 	if e.finished == nil {
@@ -1800,7 +1803,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return nil, nil, err
 		}
 		if w.stats != nil && w.idxID != 0 {
-			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID, false).Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -1913,7 +1916,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r any) {
 	return func(r any) {
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.String("worker", worker))
 			return
 		}
 

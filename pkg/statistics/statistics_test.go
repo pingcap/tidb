@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,17 +48,17 @@ type recordSet struct {
 	data      []types.Datum
 	count     int
 	cursor    int
-	fields    []*ast.ResultField
+	fields    []*resolve.ResultField
 }
 
-func (r *recordSet) Fields() []*ast.ResultField {
+func (r *recordSet) Fields() []*resolve.ResultField {
 	return r.fields
 }
 
 func (r *recordSet) setFields(tps ...uint8) {
-	r.fields = make([]*ast.ResultField, len(tps))
+	r.fields = make([]*resolve.ResultField, len(tps))
 	for i := 0; i < len(tps); i++ {
-		rf := new(ast.ResultField)
+		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *types.NewFieldType(tps[i])
 		r.fields[i] = rf
@@ -226,7 +226,7 @@ func SubTestColumnRange() func(*testing.T) {
 			StatsLoadedStatus: NewStatsFullLoadStatus(),
 		}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{{}},
@@ -295,7 +295,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.Equal(t, int64(100000), rowCount)
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
@@ -388,7 +388,7 @@ func SubTestIndexRanges() func(*testing.T) {
 		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.MinNotNullDatum()},

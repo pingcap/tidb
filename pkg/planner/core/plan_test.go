@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -370,7 +370,7 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -426,7 +426,6 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -450,7 +449,6 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")

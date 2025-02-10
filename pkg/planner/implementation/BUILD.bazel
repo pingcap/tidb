@@ -14,11 +14,12 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/planner/cardinality",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/memo",
         "//pkg/statistics",
     ],

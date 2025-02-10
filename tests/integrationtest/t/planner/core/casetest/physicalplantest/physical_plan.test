@@ -210,6 +210,17 @@ explain format='brief' with cte as (select 1) select /*+ MERGE() */ * from cte u
 explain format='brief' with a as (select 8 as id from dual),maxa as (select max(id) as max_id from a),b as (with recursive temp as (select 1 as lvl from dual union all select lvl+1 from temp, maxa where lvl < max_id)select * from temp) select * from b; -- issue #47711, maxa cannot be inlined because it contains agg and in the recursive part of cte temp;
 explain format='brief' with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select 1 as res from t1 union all select res+1 from tmp,b where res+1 < bb) select * from tmp) select * from c; -- inline a, cannot be inline b because b indirectly contains agg and in the recursive part of cte tmp;
 explain format='brief' with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c;
+create table test(a int);
+explain WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;
+create view test_cte(a) as WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test) , CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;
+explain select * from test_cte;  -- CTE (inside of view) cannot be inlined by default;
+create view test_inline_cte(a) as with CTE (x) as (select distinct a from test) select * from CTE;
+explain select * from  test_inline_cte;  -- CTE (inside of view) cannot be inlined by default;
+create view test_force_inline_cte(a) as with CTE (x) as (select /*+ merge() */ distinct a from test) select * from CTE;
+explain select * from  test_force_inline_cte;  -- CTE (inside of view) can be inlined by force;
+explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain limit and ref by CET1 recursive part cannot be inlined;
+explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain order by and ref by CET1 recursive part cannot be inlined;
+
 
 # TestPushdownDistinctEnableAggPushDownDisable
 drop table if exists t;

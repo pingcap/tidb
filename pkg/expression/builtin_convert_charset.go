@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -81,6 +80,10 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInternalToBinarySig) Clone() builtinFunc {
@@ -169,6 +172,7 @@ type builtinInternalFromBinarySig struct {
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
 
@@ -254,7 +258,7 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncToBinary),
+		FuncName: ast.NewCIStr(InternalFuncToBinary),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
@@ -269,7 +273,7 @@ func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldT
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncFromBinary),
+		FuncName: ast.NewCIStr(InternalFuncFromBinary),
 		RetType:  tp,
 		Function: f,
 	}

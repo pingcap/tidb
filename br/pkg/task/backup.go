@@ -42,7 +42,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -72,7 +71,6 @@ const (
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
 	TxnBackupCmd   = "Txn Backup"
-	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.
@@ -160,7 +158,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
-func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	timeAgo, err := flags.GetDuration(flagBackupTimeago)
 	if err != nil {
 		return errors.Trace(err)
@@ -213,9 +211,13 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.CompressionConfig = *compressionCfg
 
-	if err = cfg.Config.ParseFromFlags(flags); err != nil {
-		return errors.Trace(err)
+	// parse common flags if needed
+	if !skipCommonConfig {
+		if err = cfg.Config.ParseFromFlags(flags); err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
@@ -618,34 +620,34 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	summary.CollectInt("backup total ranges", len(ranges))
-
-	approximateRegions, err := getRegionCountOfRanges(ctx, mgr, ranges)
+	progressTotalCount, progressUnit, err := getProgressCountOfRanges(ctx, mgr, ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := g.StartProgress(
-		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
-	summary.CollectInt("backup total regions", approximateRegions)
+		ctx, cmdName, int64(progressTotalCount), !cfg.LogProgress)
 
 	progressCount := uint64(0)
-	progressCallBack := func() {
-		updateCh.Inc()
-		failpoint.Inject("progress-call-back", func(v failpoint.Value) {
-			log.Info("failpoint progress-call-back injected")
-			atomic.AddUint64(&progressCount, 1)
-			if fileName, ok := v.(string); ok {
-				f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-				if osErr != nil {
-					log.Warn("failed to create file", zap.Error(osErr))
+	progressCallBack := func(callBackUnit backup.ProgressUnit) {
+		if progressUnit == callBackUnit {
+			updateCh.Inc()
+			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
+				log.Info("failpoint progress-call-back injected")
+				atomic.AddUint64(&progressCount, 1)
+				if fileName, ok := v.(string); ok {
+					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+					if osErr != nil {
+						log.Warn("failed to create file", zap.Error(osErr))
+					}
+					msg := []byte(fmt.Sprintf("%s:%d\n", progressUnit, atomic.LoadUint64(&progressCount)))
+					_, err = f.Write(msg)
+					if err != nil {
+						log.Warn("failed to write data to file", zap.Error(err))
+					}
 				}
-				msg := []byte(fmt.Sprintf("region:%d\n", atomic.LoadUint64(&progressCount)))
-				_, err = f.Write(msg)
-				if err != nil {
-					log.Warn("failed to write data to file", zap.Error(err))
-				}
-			}
-		})
+			})
+		}
 	}
 
 	if cfg.UseCheckpoint {
@@ -744,21 +746,30 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
-func getRegionCountOfRanges(
+func getProgressCountOfRanges(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	ranges []rtree.Range,
-) (int, error) {
+) (int, backup.ProgressUnit, error) {
+	if len(ranges) > 1000 {
+		return len(ranges), backup.UnitRange, nil
+	}
+	failpoint.Inject("progress-call-back", func(_ failpoint.Value) {
+		if len(ranges) > 100 {
+			failpoint.Return(len(ranges), backup.UnitRange, nil)
+		}
+	})
 	// The number of regions need to backup
 	approximateRegions := 0
 	for _, r := range ranges {
 		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, backup.UnitRegion, errors.Trace(err)
 		}
 		approximateRegions += regionCount
 	}
-	return approximateRegions, nil
+	summary.CollectInt("backup total regions", approximateRegions)
+	return approximateRegions, backup.UnitRegion, nil
 }
 
 // ParseTSString port from tidb setSnapshotTS.
@@ -789,18 +800,15 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-func DefaultBackupConfig() BackupConfig {
+func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineBackupFlags(fs)
 	cfg := BackupConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible operation failed.", zap.Error(err))
+		log.Panic("failed to parse backup flags to config", zap.Error(err))
 	}
+	cfg.Config = commonConfig
 	return cfg
 }
 

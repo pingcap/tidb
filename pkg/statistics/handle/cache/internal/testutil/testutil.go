@@ -15,7 +15,7 @@
 package testutil
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -24,7 +24,7 @@ import (
 // NewMockStatisticsTable creates a mock statistics table with given columns and indices.
 // each column and index consumes 4 bytes memory
 func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHist bool) *statistics.Table {
-	t := &statistics.Table{HistColl: *statistics.NewHistColl(0, false, 0, 0, 0, 0)}
+	t := &statistics.Table{HistColl: *statistics.NewHistColl(0, 0, 0, 0, 0)}
 	for i := 1; i <= columns; i++ {
 		var (
 			cms  *statistics.CMSketch
@@ -92,14 +92,4 @@ func MockTableAppendIndex(t *statistics.Table) {
 		Info:     &model.IndexInfo{ID: index},
 		CMSketch: statistics.NewCMSketch(1, 1),
 	})
-}
-
-// MockTableRemoveColumn removes the last column of the table.
-func MockTableRemoveColumn(t *statistics.Table) {
-	t.DelCol(int64(t.ColNum()))
-}
-
-// MockTableRemoveIndex removes the last index of the table.
-func MockTableRemoveIndex(t *statistics.Table) {
-	t.DelIdx(int64(t.IdxNum()))
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -35,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -48,6 +49,8 @@ const (
 	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
 	// 10 minutes for every round.
 	MaxResolveLocksbackupOffSleepMs = 600000
+
+	IncompleteRangesUpdateInterval = time.Second * 15
 )
 
 // ClientMgr manages connections needed by backup.
@@ -69,6 +72,13 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+const (
+	// UnitRange represents the progress updated counter when a range finished.
+	UnitRange ProgressUnit = "range"
+	// UnitRegion represents the progress updated counter when a region finished.
+	UnitRegion ProgressUnit = "region"
+)
+
 type MainBackupLoop struct {
 	BackupSender
 
@@ -82,7 +92,7 @@ type MainBackupLoop struct {
 	ReplicaReadLabel   map[string]string
 	StateNotifier      chan BackupRetryPolicy
 
-	ProgressCallBack        func()
+	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
 }
 
@@ -176,6 +186,9 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	round := uint64(0)
 	// reset grpc connection every round except key_locked error.
 	reset := true
+	// update incompleteRanges to advance the progress and the request.
+	incompleteRangesUpdateTicker := time.NewTicker(IncompleteRangesUpdateInterval)
+	defer incompleteRangesUpdateTicker.Stop()
 mainLoop:
 	for {
 		round += 1
@@ -211,8 +224,7 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			iter := loop.GlobalProgressTree.Iter()
-			inCompleteRanges = iter.GetIncompleteRanges()
+			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 			if len(inCompleteRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
@@ -259,6 +271,7 @@ mainLoop:
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
 	handleLoop:
 		for {
 			select {
@@ -266,6 +279,13 @@ mainLoop:
 				handleCancel()
 				mainCancel()
 				return ctx.Err()
+			case <-incompleteRangesUpdateTicker.C:
+				startUpdate := time.Now()
+				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
+				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+				elapsed := time.Since(startUpdate)
+				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
+				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
@@ -357,7 +377,7 @@ mainLoop:
 				if lock != nil {
 					allTxnLocks = append(allTxnLocks, lock)
 				}
-				loop.ProgressCallBack()
+				loop.ProgressCallBack(UnitRegion)
 			}
 		}
 	}
@@ -567,7 +587,7 @@ func (bc *Client) StartCheckpointRunner(
 	backupTS uint64,
 	ranges []rtree.Range,
 	safePointID string,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
 		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
@@ -608,13 +628,12 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
 		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
 		if exists {
-			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
 			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
 			return &rtree.ProgressRange{
-				Res:        rangeTree,
-				Incomplete: incomplete,
-				Origin:     r,
-				GroupKey:   groupKey,
+				Res:      rangeTree,
+				Origin:   r,
+				GroupKey: groupKey,
+				Complete: false,
 			}
 		}
 	}
@@ -622,17 +641,15 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res: rtree.NewRangeTree(),
-		Incomplete: []rtree.Range{
-			r,
-		},
+		Res:      rtree.NewRangeTree(),
 		Origin:   r,
 		GroupKey: groupKey,
+		Complete: false,
 	}
 }
 
 // LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
+func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
 	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
@@ -642,7 +659,7 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 			rangeDataMap[groupKey] = rangeTree
 		}
 		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
-		progressCallBack()
+		progressCallBack(UnitRegion)
 	})
 
 	// we should adjust start-time of the summary to `pastDureTime` earlier
@@ -730,7 +747,7 @@ func BuildBackupRangeAndInitSchema(
 	buildRange bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	var policies []*backuppb.PlacementPolicy
 	if isFullBackup {
@@ -826,7 +843,7 @@ func BuildBackupSchemas(
 	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -941,37 +958,6 @@ func BuildBackupSchemas(
 	return nil
 }
 
-// BuildFullSchema builds a full backup schemas for databases and tables.
-func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo)) error {
-	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
-
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		hasTable := false
-		err = m.IterTables(db.ID, func(table *model.TableInfo) error {
-			// add table
-			fn(db, table)
-			hasTable = true
-			return nil
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// backup this empty db if this schema is empty.
-		if !hasTable {
-			fn(db, nil)
-		}
-	}
-
-	return nil
-}
-
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
 	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
@@ -993,9 +979,9 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
-	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
+	lastSnapMeta := meta.NewReader(lastSnapshot)
 	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
@@ -1038,10 +1024,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return appendJobs, false
 	}
 
-	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	newestMeta := meta.NewReader(store.GetSnapshot(kv.NewVersion(version.Ver)))
 	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
+		allJobs, err = ddl.GetAllDDLJobs(context.Background(), se.GetSessionCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1118,7 +1104,7 @@ func (bc *Client) BackupRanges(
 	concurrency uint,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) error {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1137,6 +1123,7 @@ func (bc *Client) BackupRanges(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	globalProgressTree.SetCallBack(func() { progressCallBack(UnitRange) })
 
 	stateNotifier := make(chan BackupRetryPolicy)
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
@@ -1241,14 +1228,12 @@ func (bc *Client) OnBackupResponse(
 		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
 		case utils.StrategyGiveUp:
-			errMsg := res.Reason
-			if len(errMsg) <= 0 {
-				errMsg = errPb.Msg
-			}
+			logutil.CL(ctx).Error("TiKV encountered an error, interrupting the backup.", zap.String("error message", errPb.Msg))
 			// TODO output a precise store address. @3pointer
-			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
+			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s, %s",
 				storeID,
-				errMsg,
+				res.Reason,
+				errPb.Msg,
 			)
 		}
 	}
@@ -1261,9 +1246,14 @@ func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *m
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)
+			cfCount := make(map[string]int)
 			for _, f := range r.Files {
+				cfCount[f.Cf] += 1
 				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			}
+			for cf, count := range cfCount {
+				summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
 			}
 			// we need keep the files in order after we support multi_ingest sst.
 			// default_sst and write_sst need to be together.

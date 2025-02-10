@@ -21,8 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/circuitbreaker"
 )
 
 // initDomainSysVars() is called when a domain is initialized.
@@ -44,6 +48,8 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 
 	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
+
+	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = changePDMetadataCircuitBreakerErrorRateThresholdPct
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -57,32 +63,50 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 
 func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 	switch name {
-	case variable.TiDBTSOClientBatchMaxWaitTime:
+	case vardef.TiDBTSOClientBatchMaxWaitTime:
 		val, err := strconv.ParseFloat(sVal, 64)
 		if err != nil {
 			return err
 		}
-		err = do.updatePDClient(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
+		err = do.updatePDClient(opt.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
 			return err
 		}
-		variable.MaxTSOBatchWaitInterval.Store(val)
-	case variable.TiDBEnableTSOFollowerProxy:
+		vardef.MaxTSOBatchWaitInterval.Store(val)
+	case vardef.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
-		err := do.updatePDClient(pd.EnableTSOFollowerProxy, val)
+		err := do.updatePDClient(opt.EnableTSOFollowerProxy, val)
 		if err != nil {
 			return err
 		}
-		variable.EnableTSOFollowerProxy.Store(val)
-	case variable.PDEnableFollowerHandleRegion:
+		vardef.EnableTSOFollowerProxy.Store(val)
+	case vardef.PDEnableFollowerHandleRegion:
 		val := variable.TiDBOptOn(sVal)
 		// Note: EnableFollowerHandle is only used for region API now.
 		// If pd support more APIs in follower, the pd option may be changed.
-		err := do.updatePDClient(pd.EnableFollowerHandle, val)
+		err := do.updatePDClient(opt.EnableFollowerHandle, val)
 		if err != nil {
 			return err
 		}
-		variable.EnablePDFollowerHandleRegion.Store(val)
+		vardef.EnablePDFollowerHandleRegion.Store(val)
+	case vardef.TiDBTSOClientRPCMode:
+		var concurrency int
+
+		switch sVal {
+		case vardef.TSOClientRPCModeDefault:
+			concurrency = 1
+		case vardef.TSOClientRPCModeParallel:
+			concurrency = 2
+		case vardef.TSOClientRPCModeParallelFast:
+			concurrency = 4
+		default:
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
+		}
+
+		err := do.updatePDClient(opt.TSOClientRPCConcurrency, concurrency)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -100,7 +124,7 @@ func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) erro
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
+func (do *Domain) updatePDClient(option opt.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil
@@ -122,7 +146,7 @@ func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 
 func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), do.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		return t.SetSchemaCacheSize(size)
 	})
 	if err != nil {
@@ -130,4 +154,10 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	}
 	do.infoCache.Data.SetCacheCapacity(size)
 	return nil
+}
+
+func changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
+	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
+		config.ErrorRateThresholdPct = errorRatePct
+	})
 }

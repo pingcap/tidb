@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -92,11 +93,21 @@ select * from t_slim;
 # KV_total: 86.635049185
 # PD_total: 0.015486658
 # Backoff_total: 100.054
+# Unpacked_bytes_sent_tikv_total: 30000
+# Unpacked_bytes_received_tikv_total: 3000
+# Unpacked_bytes_sent_tikv_cross_zone: 10000
+# Unpacked_bytes_received_tikv_cross_zone: 1000
+# Unpacked_bytes_sent_tiflash_total: 500000
+# Unpacked_bytes_received_tiflash_total: 500005
+# Unpacked_bytes_sent_tiflash_cross_zone: 300000
+# Unpacked_bytes_received_tiflash_cross_zone: 300005
 # Write_sql_response_total: 0
 # Succ: true
 # Resource_group: rg1
 # Request_unit_read: 96.66703066666668
 # Request_unit_write: 3182.424414062492
+# Tidb_cpu_time: 0.01
+# Tikv_cpu_time: 0.021
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())
@@ -140,7 +151,7 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		globalID, err = meta.NewMutator(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
 	return globalID + 100, errors.Trace(err)
@@ -152,7 +163,7 @@ func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
 		ID:    id,
-		Name:  model.NewCIStr(DBName),
+		Name:  ast.NewCIStr(DBName),
 		State: model.StatePublic,
 	}
 	dbInfo.Deprecated.Tables = []*model.TableInfo{}
@@ -165,7 +176,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
-		Name:      model.NewCIStr("a"),
+		Name:      ast.NewCIStr("a"),
 		Offset:    0,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		State:     model.StatePublic,
@@ -176,7 +187,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 
 	return &model.TableInfo{
 		ID:      tblID,
-		Name:    model.NewCIStr(tblName),
+		Name:    ast.NewCIStr(tblName),
 		Columns: []*model.ColumnInfo{colInfo},
 		State:   model.StatePublic,
 	}
@@ -195,7 +206,7 @@ func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *mo
 	require.NoError(t, err)
 	return &model.ResourceGroupInfo{
 		ID:   id,
-		Name: model.NewCIStr(groupName),
+		Name: ast.NewCIStr(groupName),
 	}
 }
 
@@ -205,7 +216,7 @@ func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.Po
 	require.NoError(t, err)
 	return &model.PolicyInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: ast.NewCIStr(policyName),
 	}
 }
 
@@ -215,15 +226,15 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 	require.NoError(t, err)
 	return &model.PolicyRefInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: ast.NewCIStr(policyName),
 	}
 }
 
 // AddTable add mock table for testing.
-func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func AddTable(t testing.TB, store kv.Storage, dbID int64, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err := meta.NewMutator(txn).CreateTableOrView(dbID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -234,7 +245,7 @@ func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *mod
 func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdateTable(dbInfo.ID, tblInfo)
+		err := meta.NewMutator(txn).UpdateTable(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -245,7 +256,7 @@ func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *
 func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, tblID)
+		err := meta.NewMutator(txn).DropTableOrView(dbInfo.ID, tblID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -256,7 +267,7 @@ func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64
 func AddDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -268,7 +279,7 @@ func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID)
+		err := meta.NewMutator(txn).DropDatabase(dbInfo.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -279,7 +290,7 @@ func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 func UpdateDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdateDatabase(dbInfo)
+		err := meta.NewMutator(txn).UpdateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -290,7 +301,7 @@ func UpdateDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 func AddResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).AddResourceGroup(group)
+		err := meta.NewMutator(txn).AddResourceGroup(group)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -301,7 +312,7 @@ func AddResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroup
 func UpdateResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdateResourceGroup(group)
+		err := meta.NewMutator(txn).UpdateResourceGroup(group)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -312,7 +323,7 @@ func UpdateResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGr
 func DropResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropResourceGroup(group.ID)
+		err := meta.NewMutator(txn).DropResourceGroup(group.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -323,7 +334,7 @@ func DropResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGrou
 func CreatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreatePolicy(policy)
+		err := meta.NewMutator(txn).CreatePolicy(policy)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -334,7 +345,7 @@ func CreatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
 func UpdatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).UpdatePolicy(policy)
+		err := meta.NewMutator(txn).UpdatePolicy(policy)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -345,7 +356,7 @@ func UpdatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
 func DropPolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropPolicy(policy.ID)
+		err := meta.NewMutator(txn).DropPolicy(policy.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})

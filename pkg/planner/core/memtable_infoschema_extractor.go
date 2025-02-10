@@ -26,60 +26,85 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
-// columnName is the type for column names used by tables information_schema.
-type columnName string
+// extractableCols records the column names used by tables in information_schema.
 type extractableCols struct {
-	schema      columnName
-	table       columnName
-	tableID     columnName
-	partitionID columnName
+	schema      string
+	table       string
+	tableID     string
+	partitionID string
 
-	partitionName columnName
-	indexName     columnName
-	columnName    columnName
-	constrName    columnName
-	constrSchema  columnName
+	partitionName string
+	indexName     string
+	columnName    string
+	constrName    string
+	constrSchema  string
+}
+
+//revive:disable:exported
+const (
+	TableSchema      = "table_schema"
+	TableName        = "table_name"
+	TidbTableID      = "tidb_table_id"
+	PartitionName    = "partition_name"
+	TidbPartitionID  = "tidb_partition_id"
+	IndexName        = "index_name"
+	SchemaName       = "schema_name"
+	DBName           = "db_name"
+	ConstraintSchema = "constraint_schema"
+	ConstraintName   = "constraint_name"
+	TableID          = "table_id"
+	SequenceSchema   = "sequence_schema"
+	SequenceName     = "sequence_name"
+	ColumnName       = "column_name"
+	DDLStateName     = "state"
+)
+
+//revive:enable:exported
+
+var patternMatchable = map[string]struct{}{
+	TableSchema:      {},
+	TableName:        {},
+	IndexName:        {},
+	SchemaName:       {},
+	ConstraintSchema: {},
+	SequenceSchema:   {},
+	SequenceName:     {},
+	ColumnName:       {},
 }
 
 const (
-	_tableSchema      columnName = "table_schema"
-	_tableName        columnName = "table_name"
-	_tidbTableID      columnName = "tidb_table_id"
-	_partitionName    columnName = "partition_name"
-	_tidbPartitionID  columnName = "tidb_partition_id"
-	_indexName        columnName = "index_name"
-	_schemaName       columnName = "schema_name"
-	_constraintSchema columnName = "constraint_schema"
-	_constraintName   columnName = "constraint_name"
-	_tableID          columnName = "table_id"
-	_sequenceSchema   columnName = "sequence_schema"
-	_sequenceName     columnName = "sequence_name"
-	_columnName       columnName = "column_name"
-)
-
-const (
-	primaryKeyName string = "primary"
+	primaryKeyName = "primary"
 )
 
 // InfoSchemaBaseExtractor is used to extract infoSchema tables related predicates.
 type InfoSchemaBaseExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
-	SkipRequest   bool
+	SkipRequest bool
+	// ColPredicates records the columns that can be extracted from the predicates.
+	// For example, `select * from information_schema.SCHEMATA where schema_name='mysql' or schema_name='INFORMATION_SCHEMA'`
+	// {"schema_name": ["mysql", "INFORMATION_SCHEMA"]}
 	ColPredicates map[string]set.StringSet
+	// all built regexp in predicates
+	colsRegexp map[string][]collate.WildcardPattern
+	// used for EXPLAIN only
+	LikePatterns map[string][]string
 	// columns occurs in predicate will be extracted.
-	colNames []columnName
-
+	colNames           []string
 	extractableColumns extractableCols
 }
 
@@ -88,16 +113,29 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 	return e
 }
 
-// ListSchemas lists related schemas from predicate.
-func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
-	ec := e.extractableColumns
-	schemas := e.getSchemaObjectNames(ec.schema)
-	if len(schemas) == 0 {
+// ListSchemas lists all schemas from predicate. If no schema is specified, it lists
+// all schemas in the storage.
+func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []ast.CIStr {
+	extractedSchemas, unspecified := e.listPredicateSchemas(is)
+	if unspecified {
 		ret := is.AllSchemaNames()
-		slices.SortFunc(ret, func(a, b model.CIStr) int {
+		slices.SortFunc(ret, func(a, b ast.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
-		return ret
+		return filterSchemaObjectByRegexp(e, e.extractableColumns.schema, ret, extractStrCIStr)
+	}
+	return extractedSchemas
+}
+
+// listPredicateSchemas lists all schemas specified in predicates.
+// If no schema is specified in predicates, return `unspecified` as true.
+func (e *InfoSchemaBaseExtractor) listPredicateSchemas(
+	is infoschema.InfoSchema,
+) (schemas []ast.CIStr, unspecified bool) {
+	ec := e.extractableColumns
+	schemas = e.getSchemaObjectNames(ec.schema)
+	if len(schemas) == 0 {
+		return nil, true
 	}
 	ret := schemas[:0]
 	for _, s := range schemas {
@@ -105,7 +143,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 			ret = append(ret, n.Name)
 		}
 	}
-	return ret
+	return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr), false
 }
 
 // ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
@@ -113,20 +151,21 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-) ([]model.CIStr, []*model.TableInfo, error) {
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	ec := e.extractableColumns
-	schemas := e.ListSchemas(is)
-	var tableNames []model.CIStr
+	var tableNames []ast.CIStr
 	if ec.table != "" {
 		tableNames = e.getSchemaObjectNames(ec.table)
 	}
-	var tableIDs []model.CIStr
+	var tableIDs []ast.CIStr
 	if ec.tableID != "" {
 		tableIDs = e.getSchemaObjectNames(ec.tableID)
 		if len(tableIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
 			findTablesByID(is, tableIDs, tableNames, tableMap)
-			return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
+			tableSlice := maps.Values(tableMap)
+			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if ec.partitionID != "" {
@@ -134,13 +173,18 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 		if len(partIDs) > 0 {
 			tableMap := make(map[int64]*model.TableInfo, len(partIDs))
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
-			return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
+			tableSlice := maps.Values(tableMap)
+			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if len(tableNames) > 0 {
+		tableNames = filterSchemaObjectByRegexp(e, ec.table, tableNames, extractStrCIStr)
+		schemas := e.ListSchemas(is)
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
 	}
-	return listTablesForEachSchema(ctx, is, schemas)
+	schemas := e.ListSchemas(is)
+	return listTablesForEachSchema(ctx, e, is, schemas)
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -150,26 +194,40 @@ func (e *InfoSchemaBaseExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	var resultSet, resultSet1 set.StringSet
 	e.ColPredicates = make(map[string]set.StringSet)
+	e.LikePatterns = make(map[string][]string, len(e.colNames))
+	e.colsRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
 	remained = predicates
 	for _, colName := range e.colNames {
-		colName := string(colName)
-		remained, e.SkipRequest, resultSet = e.extractColWithLower(ctx, schema, names, remained, colName)
+		var resultSet set.StringSet
+		remained, e.SkipRequest, resultSet = e.extractCol(ctx, schema, names, remained, colName, true)
 		if e.SkipRequest {
 			break
-		}
-		remained, e.SkipRequest, resultSet1 = e.extractCol(ctx, schema, names, remained, colName, true)
-		if e.SkipRequest {
-			break
-		}
-		for elt := range resultSet1 {
-			resultSet.Insert(elt)
 		}
 		if len(resultSet) == 0 {
 			continue
 		}
 		e.ColPredicates[colName] = resultSet
+	}
+	for _, colName := range e.colNames {
+		if _, ok := patternMatchable[colName]; !ok {
+			continue
+		}
+		var likePatterns []string
+		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
+		if len(likePatterns) == 0 {
+			continue
+		}
+		regexp := make([]collate.WildcardPattern, len(likePatterns))
+		for i, pattern := range likePatterns {
+			// Because @@lower_case_table_names is always 2 in TiDB,
+			// schema object names comparison should be case insensitive.
+			ciCollateID := collate.CollationName2ID(mysql.UTF8MB4GeneralCICollation)
+			regexp[i] = collate.GetCollatorByID(ciCollateID).Pattern()
+			regexp[i].Compile(pattern, byte('\\'))
+		}
+		e.LikePatterns[colName] = likePatterns
+		e.colsRegexp[colName] = regexp
 	}
 	return remained
 }
@@ -184,8 +242,18 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	colNames := maps.Keys(e.ColPredicates)
 	sort.Strings(colNames)
 	for _, colName := range colNames {
-		if len(e.ColPredicates[colName]) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+		preds := e.ColPredicates[colName]
+		if len(preds) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(preds))
+		}
+	}
+
+	colNames = maps.Keys(e.LikePatterns)
+	sort.Strings(colNames)
+	for _, colName := range colNames {
+		patterns := e.LikePatterns[colName]
+		if len(patterns) > 0 {
+			fmt.Fprintf(r, "%s_pattern:[%s], ", colName, extractStringFromStringSlice(patterns))
 		}
 	}
 
@@ -200,22 +268,29 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // Filter use the col predicates to filter records.
 // Return true if the underlying row does not match predicate,
 // then it should be filtered and not shown in the result.
-func (e *InfoSchemaBaseExtractor) filter(colName columnName, val string) bool {
+func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 	if e.SkipRequest {
 		return true
 	}
-	predVals, ok := e.ColPredicates[string(colName)]
+	for _, re := range e.colsRegexp[colName] {
+		if !re.DoMatch(val) {
+			return true
+		}
+	}
+
+	toLower := false
+	if e.extractLowerString != nil {
+		toLower = e.extractLowerString[colName]
+	}
+
+	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
-		lower, ok := e.isLower[string(colName)]
+		if toLower {
+			return !predVals.Exist(strings.ToLower(val))
+		}
+		fn, ok := e.pushedDownFuncs[colName]
 		if ok {
-			var valStr string
-			// only have varchar string type, safe to do that.
-			if lower {
-				valStr = strings.ToLower(val)
-			} else {
-				valStr = strings.ToUpper(val)
-			}
-			return !predVals.Exist(valStr)
+			return !predVals.Exist(fn(val))
 		}
 		return !predVals.Exist(val)
 	}
@@ -232,10 +307,10 @@ type InfoSchemaIndexesExtractor struct {
 func NewInfoSchemaIndexesExtractor() *InfoSchemaIndexesExtractor {
 	e := &InfoSchemaIndexesExtractor{}
 	e.extractableColumns = extractableCols{
-		schema: _tableSchema,
-		table:  _tableName,
+		schema: TableSchema,
+		table:  TableName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName}
+	e.colNames = []string{TableSchema, TableName}
 	return e
 }
 
@@ -248,12 +323,54 @@ type InfoSchemaTablesExtractor struct {
 func NewInfoSchemaTablesExtractor() *InfoSchemaTablesExtractor {
 	e := &InfoSchemaTablesExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:  _tableSchema,
-		table:   _tableName,
-		tableID: _tidbTableID,
+		schema:  TableSchema,
+		table:   TableName,
+		tableID: TidbTableID,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _tidbTableID}
+	e.colNames = []string{TableSchema, TableName, TidbTableID}
 	return e
+}
+
+// HasTableName returns true if table name is specified in predicates.
+func (e *InfoSchemaTablesExtractor) HasTableName(name string) bool {
+	return !e.filter(TableName, name)
+}
+
+// HasTableSchema returns true if table schema is specified in predicates.
+func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
+	return !e.filter(TableSchema, name)
+}
+
+// InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
+type InfoSchemaDDLExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
+func NewInfoSchemaDDLExtractor() *InfoSchemaDDLExtractor {
+	e := &InfoSchemaDDLExtractor{}
+	e.extractableColumns = extractableCols{
+		schema: DBName,
+		table:  TableName,
+	}
+	e.colNames = []string{DBName, TableName, DDLStateName}
+	return e
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+//
+// Different from other extractor, input predicates will not be pruned.
+// For example, we will use state to determine whether to scan history ddl jobs,
+// but we don't not use these predicates to do filtering.
+// So the Selection Operator is still needed.
+func (e *InfoSchemaDDLExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	return predicates
 }
 
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
@@ -265,10 +382,10 @@ type InfoSchemaViewsExtractor struct {
 func NewInfoSchemaViewsExtractor() *InfoSchemaViewsExtractor {
 	e := &InfoSchemaViewsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema: _tableSchema,
-		table:  _tableName,
+		schema: TableSchema,
+		table:  TableName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName}
+	e.colNames = []string{TableSchema, TableName}
 	return e
 }
 
@@ -281,28 +398,28 @@ type InfoSchemaKeyColumnUsageExtractor struct {
 func NewInfoSchemaKeyColumnUsageExtractor() *InfoSchemaKeyColumnUsageExtractor {
 	e := &InfoSchemaKeyColumnUsageExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:       _tableSchema,
-		table:        _tableName,
-		constrName:   _constraintName,
-		constrSchema: _constraintSchema,
+		schema:       TableSchema,
+		table:        TableName,
+		constrName:   ConstraintName,
+		constrSchema: ConstraintSchema,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _constraintName, _constraintSchema}
+	e.colNames = []string{TableSchema, TableName, ConstraintName, ConstraintSchema}
 	return e
 }
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasConstraint(name string) bool {
-	return !e.filter(_constraintName, name)
+	return !e.filter(ConstraintName, name)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasPrimaryKey() bool {
-	return !e.filter(_constraintName, primaryKeyName)
+	return !e.filter(ConstraintName, primaryKeyName)
 }
 
 // HasConstraintSchema returns true if constraint schema is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasConstraintSchema(name string) bool {
-	return !e.filter(_constraintSchema, name)
+	return !e.filter(ConstraintSchema, name)
 }
 
 // InfoSchemaTableConstraintsExtractor is the predicate extractor for information_schema.constraints.
@@ -314,28 +431,28 @@ type InfoSchemaTableConstraintsExtractor struct {
 func NewInfoSchemaTableConstraintsExtractor() *InfoSchemaTableConstraintsExtractor {
 	e := &InfoSchemaTableConstraintsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:       _tableSchema,
-		table:        _tableName,
-		constrName:   _constraintName,
-		constrSchema: _constraintSchema,
+		schema:       TableSchema,
+		table:        TableName,
+		constrName:   ConstraintName,
+		constrSchema: ConstraintSchema,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _constraintName, _constraintSchema}
+	e.colNames = []string{TableSchema, TableName, ConstraintName, ConstraintSchema}
 	return e
 }
 
 // HasConstraintSchema returns true if constraint schema is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasConstraintSchema(name string) bool {
-	return !e.filter(_constraintSchema, name)
+	return !e.filter(ConstraintSchema, name)
 }
 
 // HasConstraint returns true if constraint is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(_constraintName, name)
+	return !e.filter(ConstraintName, name)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasPrimaryKey() bool {
-	return !e.filter(_constraintName, primaryKeyName)
+	return !e.filter(ConstraintName, primaryKeyName)
 }
 
 // InfoSchemaPartitionsExtractor is the predicate extractor for information_schema.partitions.
@@ -347,18 +464,23 @@ type InfoSchemaPartitionsExtractor struct {
 func NewInfoSchemaPartitionsExtractor() *InfoSchemaPartitionsExtractor {
 	e := &InfoSchemaPartitionsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:        _tableSchema,
-		table:         _tableName,
-		partitionID:   _tidbPartitionID,
-		partitionName: _partitionName,
+		schema:        TableSchema,
+		table:         TableName,
+		partitionID:   TidbPartitionID,
+		partitionName: PartitionName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _tidbPartitionID, _partitionName}
+	e.colNames = []string{TableSchema, TableName, TidbPartitionID, PartitionName}
 	return e
 }
 
-// HasPartition returns true if partition name is specified in predicates.
+// HasPartition returns true if partition name matches the one in predicates.
 func (e *InfoSchemaPartitionsExtractor) HasPartition(name string) bool {
-	return !e.filter(_partitionName, name)
+	return !e.filter(PartitionName, name)
+}
+
+// HasPartitionPred returns true if partition name is specified in predicates.
+func (e *InfoSchemaPartitionsExtractor) HasPartitionPred() bool {
+	return len(e.ColPredicates[PartitionName]) > 0
 }
 
 // InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
@@ -370,22 +492,22 @@ type InfoSchemaStatisticsExtractor struct {
 func NewInfoSchemaStatisticsExtractor() *InfoSchemaStatisticsExtractor {
 	e := &InfoSchemaStatisticsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:    _tableSchema,
-		table:     _tableName,
-		indexName: _indexName,
+		schema:    TableSchema,
+		table:     TableName,
+		indexName: IndexName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _indexName}
+	e.colNames = []string{TableSchema, TableName, IndexName}
 	return e
 }
 
 // HasIndex returns true if index name is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasIndex(val string) bool {
-	return !e.filter(_indexName, val)
+	return !e.filter(IndexName, val)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasPrimaryKey() bool {
-	return !e.filter(_indexName, primaryKeyName)
+	return !e.filter(IndexName, primaryKeyName)
 }
 
 // InfoSchemaSchemataExtractor is the predicate extractor for information_schema.schemata.
@@ -397,9 +519,9 @@ type InfoSchemaSchemataExtractor struct {
 func NewInfoSchemaSchemataExtractor() *InfoSchemaSchemataExtractor {
 	e := &InfoSchemaSchemataExtractor{}
 	e.extractableColumns = extractableCols{
-		schema: _schemaName,
+		schema: SchemaName,
 	}
-	e.colNames = []columnName{_schemaName}
+	e.colNames = []string{SchemaName}
 	return e
 }
 
@@ -412,16 +534,16 @@ type InfoSchemaCheckConstraintsExtractor struct {
 func NewInfoSchemaCheckConstraintsExtractor() *InfoSchemaCheckConstraintsExtractor {
 	e := &InfoSchemaCheckConstraintsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:     _constraintSchema,
-		constrName: _constraintName,
+		schema:     ConstraintSchema,
+		constrName: ConstraintName,
 	}
-	e.colNames = []columnName{_constraintSchema, _constraintName}
+	e.colNames = []string{ConstraintSchema, ConstraintName}
 	return e
 }
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaCheckConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(_constraintName, name)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaTiDBCheckConstraintsExtractor is the predicate extractor for information_schema.tidb_check_constraints.
@@ -433,18 +555,18 @@ type InfoSchemaTiDBCheckConstraintsExtractor struct {
 func NewInfoSchemaTiDBCheckConstraintsExtractor() *InfoSchemaTiDBCheckConstraintsExtractor {
 	e := &InfoSchemaTiDBCheckConstraintsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:     _constraintSchema,
-		table:      _tableName,
-		tableID:    _tableID,
-		constrName: _constraintName,
+		schema:     ConstraintSchema,
+		table:      TableName,
+		tableID:    TableID,
+		constrName: ConstraintName,
 	}
-	e.colNames = []columnName{_constraintSchema, _tableName, _tableID, _constraintName}
+	e.colNames = []string{ConstraintSchema, TableName, TableID, ConstraintName}
 	return e
 }
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaTiDBCheckConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(_constraintName, name)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaReferConstExtractor is the predicate extractor for information_schema.referential_constraints.
@@ -456,17 +578,17 @@ type InfoSchemaReferConstExtractor struct {
 func NewInfoSchemaReferConstExtractor() *InfoSchemaReferConstExtractor {
 	e := &InfoSchemaReferConstExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:     _constraintSchema,
-		table:      _tableName,
-		constrName: _constraintName,
+		schema:     ConstraintSchema,
+		table:      TableName,
+		constrName: ConstraintName,
 	}
-	e.colNames = []columnName{_constraintSchema, _tableName, _constraintName}
+	e.colNames = []string{ConstraintSchema, TableName, ConstraintName}
 	return e
 }
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaReferConstExtractor) HasConstraint(name string) bool {
-	return !e.filter(_constraintName, name)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaSequenceExtractor is the predicate extractor for information_schema.sequences.
@@ -478,18 +600,18 @@ type InfoSchemaSequenceExtractor struct {
 func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 	e := &InfoSchemaSequenceExtractor{}
 	e.extractableColumns = extractableCols{
-		schema: _sequenceSchema,
-		table:  _sequenceName,
+		schema: SequenceSchema,
+		table:  SequenceName,
 	}
-	e.colNames = []columnName{_sequenceSchema, _sequenceName}
+	e.colNames = []string{SequenceSchema, SequenceName}
 	return e
 }
 
 // findTablesByID finds tables by table IDs and append them to table map.
 func findTablesByID(
 	is infoschema.InfoSchema,
-	tableIDs []model.CIStr,
-	tableNames []model.CIStr,
+	tableIDs []ast.CIStr,
+	tableNames []ast.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
 	tblNameMap := make(map[string]struct{}, len(tableNames))
@@ -518,8 +640,8 @@ func findTablesByID(
 // findTablesByPartID finds tables by partition IDs and append them to table map.
 func findTablesByPartID(
 	is infoschema.InfoSchema,
-	partIDs []model.CIStr,
-	tableNames []model.CIStr,
+	partIDs []ast.CIStr,
+	tableNames []ast.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
 	tblNameMap := make(map[string]struct{}, len(tableNames))
@@ -545,11 +667,11 @@ func findTablesByPartID(
 func findTableAndSchemaByName(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-	schemas []model.CIStr,
-	tableNames []model.CIStr,
-) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas []ast.CIStr,
+	tableNames []ast.CIStr,
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	type schemaAndTable struct {
-		schema model.CIStr
+		schema ast.CIStr
 		table  *model.TableInfo
 	}
 	tableMap := make(map[int64]schemaAndTable, len(tableNames))
@@ -570,27 +692,42 @@ func findTableAndSchemaByName(
 			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
 		}
 	}
-	schemaSlice := make([]model.CIStr, 0, len(tableMap))
+	schemaSlice := make([]ast.CIStr, 0, len(tableMap))
 	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
 	for _, st := range tableMap {
 		schemaSlice = append(schemaSlice, st.schema)
 		tableSlice = append(tableSlice, st.table)
 	}
+	sort.Slice(schemaSlice, func(i, j int) bool {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && tableSlice[i].Name.L < tableSlice[j].Name.L)
+		if less {
+			tableSlice[i], tableSlice[j] = tableSlice[j], tableSlice[i]
+		}
+		return less
+	})
 	return schemaSlice, tableSlice, nil
 }
 
 func listTablesForEachSchema(
 	ctx context.Context,
+	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
-	schemas []model.CIStr,
-) ([]model.CIStr, []*model.TableInfo, error) {
-	schemaSlice := make([]model.CIStr, 0, 8)
+	schemas []ast.CIStr,
+) ([]ast.CIStr, []*model.TableInfo, error) {
+	ec := e.extractableColumns
+	schemaSlice := make([]ast.CIStr, 0, 8)
 	tableSlice := make([]*model.TableInfo, 0, 8)
 	for _, s := range schemas {
 		tables, err := is.SchemaTableInfos(ctx, s)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		tables = filterSchemaObjectByRegexp(e, ec.table, tables, extractStrTableInfo)
 		for _, t := range tables {
 			schemaSlice = append(schemaSlice, s)
 			tableSlice = append(tableSlice, t)
@@ -599,24 +736,32 @@ func listTablesForEachSchema(
 	return schemaSlice, tableSlice, nil
 }
 
+// findSchemasForTables finds a schema for each tableInfo, and it
+// returns a schema slice and a table slice that has the same length.
+// Note that input arg "tableSlice" will be changed in place.
 func findSchemasForTables(
-	ctx context.Context,
+	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
-	schemas []model.CIStr,
 	tableSlice []*model.TableInfo,
-) ([]model.CIStr, []*model.TableInfo, error) {
-	schemaSlice := make([]model.CIStr, 0, len(tableSlice))
+) ([]ast.CIStr, []*model.TableInfo, error) {
+	schemas, unspecified := e.listPredicateSchemas(is)
+	schemaSlice := make([]ast.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
+		dbInfo, ok := is.SchemaByID(tbl.DBID)
+		intest.Assert(ok)
+		if !ok {
+			logutil.BgLogger().Warn("schema not found for table info",
+				zap.Int64("tableID", tbl.ID), zap.Int64("dbID", tbl.DBID))
+			continue
+		}
+		if unspecified { // all schemas should be included.
+			schemaSlice = append(schemaSlice, dbInfo.Name)
+			continue
+		}
+
 		found := false
 		for _, s := range schemas {
-			isTbl, err := is.TableByName(ctx, s, tbl.Name)
-			if err != nil {
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				return nil, nil, errors.Trace(err)
-			}
-			if isTbl.Meta().ID == tbl.ID {
+			if s.L == dbInfo.Name.L {
 				schemaSlice = append(schemaSlice, s)
 				found = true
 				break
@@ -633,10 +778,19 @@ func findSchemasForTables(
 			remains = append(remains, tbl)
 		}
 	}
+	sort.Slice(schemaSlice, func(i, j int) bool {
+		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
+		less := iSchema < jSchema ||
+			(iSchema == jSchema && remains[i].Name.L < remains[j].Name.L)
+		if less {
+			remains[i], remains[j] = remains[j], remains[i]
+		}
+		return less
+	})
 	return schemaSlice, remains, nil
 }
 
-func parseIDs(ids []model.CIStr) []int64 {
+func parseIDs(ids []ast.CIStr) []int64 {
 	tableIDs := make([]int64, 0, len(ids))
 	for _, s := range ids {
 		v, err := strconv.ParseInt(s.L, 10, 64)
@@ -650,273 +804,111 @@ func parseIDs(ids []model.CIStr) []int64 {
 }
 
 // getSchemaObjectNames gets the schema object names specified in predicate of given column name.
-func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName columnName) []model.CIStr {
-	predVals, ok := e.ColPredicates[string(colName)]
+func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []ast.CIStr {
+	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
-		tableNames := make([]model.CIStr, 0, len(predVals))
+		objNames := make([]ast.CIStr, 0, len(predVals))
 		predVals.IterateWith(func(n string) {
-			tableNames = append(tableNames, model.NewCIStr(n))
+			objNames = append(objNames, ast.NewCIStr(n))
 		})
-		slices.SortFunc(tableNames, func(a, b model.CIStr) int {
+		slices.SortFunc(objNames, func(a, b ast.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
-		return tableNames
+		return objNames
 	}
 	return nil
 }
 
-// InfoSchemaTableNameExtractor is a base struct to list matching schemas and tables in predicates,
-// so there is no need to call `Filter` for returns from `ListSchemas` and `ListTables`.
-// But for other columns, Subclass **must** reimplement `Filter` method to use like operators for filtering.
-// Currently, table_id is not taken into consideration.
-type InfoSchemaTableNameExtractor struct {
-	InfoSchemaBaseExtractor
-
-	listTableFunc func(
-		ctx context.Context,
-		s model.CIStr,
-		is infoschema.InfoSchema,
-	) ([]*model.TableInfo, error)
-
-	// table names from predicate, used by `ListTables`
-	tableNames []model.CIStr
-
-	// all predicates in lower case
-	colsPredLower map[string]set.StringSet
-
-	// all built regexp in predicates
-	colsRegexp map[string][]collate.WildcardPattern
-
-	// used for EXPLAIN only
-	LikePatterns map[string][]string
+func extractStrCIStr(str ast.CIStr) string {
+	return str.O
 }
 
-// Extract all names and like operators in predicates
-func (e *InfoSchemaTableNameExtractor) Extract(
-	ctx base.PlanContext,
-	schema *expression.Schema,
-	names []*types.FieldName,
-	predicates []expression.Expression,
-) []expression.Expression {
-	remained := e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
-	if e.SkipRequest {
-		return remained
-	}
-
-	e.LikePatterns = make(map[string][]string, len(e.colNames))
-	e.colsRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
-	e.colsPredLower = make(map[string]set.StringSet, len(e.colNames))
-	var likePatterns []string
-	for _, colName := range e.colNames {
-		colName := string(colName)
-		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
-		regexp := make([]collate.WildcardPattern, len(likePatterns))
-		predColLower := set.StringSet{}
-		for i, pattern := range likePatterns {
-			regexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			regexp[i].Compile(pattern, byte('\\'))
-		}
-		if vals, ok := e.ColPredicates[colName]; ok {
-			vals.IterateWith(func(n string) {
-				predColLower.Insert(strings.ToLower(n))
-			})
-		}
-		e.colsPredLower[colName] = predColLower
-		e.LikePatterns[colName] = likePatterns
-		e.colsRegexp[colName] = regexp
-	}
-
-	return remained
+func extractStrTableInfo(tblInfo *model.TableInfo) string {
+	return tblInfo.Name.O
 }
 
-// getPredicates gets all names and regexps related to given column names.
-func (e *InfoSchemaTableNameExtractor) getPredicates(colNames ...columnName) (
-	set.StringSet, []collate.WildcardPattern, bool) {
-	filters := set.StringSet{}
-	regexp := []collate.WildcardPattern{}
-	hasPredicates := false
-
-	// Extract all filters and like patterns
-	for _, col := range colNames {
-		if rs, ok := e.colsRegexp[string(col)]; ok && len(rs) > 0 {
-			regexp = append(regexp, rs...)
-		}
-		if f, ok := e.colsPredLower[string(col)]; ok && len(f) > 0 {
-			if !hasPredicates {
-				filters = f
-				hasPredicates = true
-			} else {
-				filters = filters.Intersection(f)
+// filterSchemaObjectByRegexp filter the targets by regexp.
+// Note that targets will be modified.
+func filterSchemaObjectByRegexp[targetTp any](
+	e *InfoSchemaBaseExtractor,
+	colName string,
+	targets []targetTp,
+	strFn func(targetTp) string,
+) []targetTp {
+	regs := e.colsRegexp[colName]
+	if len(regs) == 0 {
+		return targets
+	}
+	filtered := targets[:0]
+	for _, target := range targets {
+		for _, re := range regs {
+			if re.DoMatch(strFn(target)) {
+				filtered = append(filtered, target)
 			}
 		}
 	}
-
-	return filters, regexp, hasPredicates
-}
-
-// Get all predicates related to schema extraction.
-// Add more columns if necessary.
-func (e *InfoSchemaTableNameExtractor) getSchemaNames() (
-	set.StringSet, []collate.WildcardPattern, bool) {
-	return e.getPredicates(_tableSchema, _schemaName, _constraintSchema)
-}
-
-// ListSchemas lists related schemas from predicates.
-// Returned schemas is examined by like operators, so there is no need to call Filter again.
-func (e *InfoSchemaTableNameExtractor) ListSchemas(
-	is infoschema.InfoSchema,
-) []model.CIStr {
-	schemaFilters, schemaRegexp, hasPredicates := e.getSchemaNames()
-
-	// Get all schema names
-	var schemas []model.CIStr
-	if hasPredicates {
-		schemas = make([]model.CIStr, 0, len(schemaFilters))
-		schemaFilters.IterateWith(func(n string) {
-			s := model.CIStr{O: n, L: n}
-			if n, ok := is.SchemaByName(s); ok {
-				schemas = append(schemas, n.Name)
-			}
-		})
-	} else {
-		schemas = is.AllSchemaNames()
-	}
-	slices.SortFunc(schemas, func(a, b model.CIStr) int {
-		return strings.Compare(a.L, b.L)
-	})
-
-	// Filter with regexp
-	filteredSchemas := make([]model.CIStr, 0, len(schemas))
-ForLoop:
-	for _, schema := range schemas {
-		for _, re := range schemaRegexp {
-			if !re.DoMatch(schema.L) {
-				continue ForLoop
-			}
-		}
-		filteredSchemas = append(filteredSchemas, schema)
-	}
-
-	// TODO: add table_id here
-	tableNames := e.getSchemaObjectNames(_tableName)
-	e.tableNames = tableNames
-	if len(tableNames) > 0 {
-		e.listTableFunc = e.listSchemaTablesByName
-	} else {
-		e.listTableFunc = listSchemaTables
-	}
-
-	return filteredSchemas
-}
-
-// ListTables lists related tables for given schema from predicate.
-// If no table found in predicate, it return all tables.
-func (e *InfoSchemaTableNameExtractor) ListTables(
-	ctx context.Context,
-	s model.CIStr,
-	is infoschema.InfoSchema,
-) ([]*model.TableInfo, error) {
-	allTbls, err := e.listTableFunc(ctx, s, is)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if regexp, ok := e.colsRegexp[string(_tableName)]; ok {
-		tbls := make([]*model.TableInfo, 0, len(allTbls))
-	ForLoop:
-		for _, tbl := range allTbls {
-			for _, re := range regexp {
-				if !re.DoMatch(tbl.Name.L) {
-					continue ForLoop
-				}
-			}
-			tbls = append(tbls, tbl)
-		}
-		allTbls = tbls
-	}
-
-	return allTbls, nil
-}
-
-func (e *InfoSchemaTableNameExtractor) listSchemaTablesByName(
-	ctx context.Context,
-	s model.CIStr,
-	is infoschema.InfoSchema,
-) ([]*model.TableInfo, error) {
-	tbls := make([]*model.TableInfo, 0, len(e.tableNames))
-	for _, n := range e.tableNames {
-		tbl, err := is.TableByName(ctx, s, n)
-		if err != nil {
-			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-				continue
-			}
-			return nil, errors.Trace(err)
-		}
-		tbls = append(tbls, tbl.Meta())
-	}
-
-	return tbls, nil
-}
-
-func listSchemaTables(
-	ctx context.Context,
-	s model.CIStr,
-	is infoschema.InfoSchema,
-) ([]*model.TableInfo, error) {
-	return is.SchemaTableInfos(ctx, s)
-}
-
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InfoSchemaTableNameExtractor) ExplainInfo(_ base.PhysicalPlan) string {
-	if e.SkipRequest {
-		return "skip_request:true"
-	}
-
-	r := new(bytes.Buffer)
-
-	for _, colName := range e.colNames {
-		if pred, ok := e.ColPredicates[string(colName)]; ok && len(pred) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(pred))
-		}
-	}
-
-	for _, colName := range e.colNames {
-		if patterns, ok := e.LikePatterns[string(colName)]; ok && len(patterns) > 0 {
-			fmt.Fprintf(r, "%s_pattern:[%s], ", colName, extractStringFromStringSlice(patterns))
-		}
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+	return filtered
 }
 
 // InfoSchemaColumnsExtractor is the predicate extractor for information_schema.columns.
 type InfoSchemaColumnsExtractor struct {
-	InfoSchemaTableNameExtractor
+	InfoSchemaBaseExtractor
+	predColNames       set.StringSet
+	predColNamesInited bool
 }
 
 // NewInfoSchemaColumnsExtractor creates a new InfoSchemaColumnsExtractor.
 func NewInfoSchemaColumnsExtractor() *InfoSchemaColumnsExtractor {
 	e := &InfoSchemaColumnsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:     _tableSchema,
-		table:      _tableName,
-		columnName: _columnName,
+		schema:     TableSchema,
+		table:      TableName,
+		columnName: ColumnName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _columnName}
+	e.colNames = []string{TableSchema, TableName, ColumnName}
 	return e
+}
+
+// ListTables lists related tables for given schema from predicate.
+// If no table found in predicate, it return all tables.
+// TODO(tangenta): remove this after streaming interface is supported.
+func (e *InfoSchemaColumnsExtractor) ListTables(
+	ctx context.Context,
+	s ast.CIStr,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	ec := e.extractableColumns
+	base := e.GetBase()
+	schemas := []ast.CIStr{s}
+	var tableNames []ast.CIStr
+	if ec.table != "" {
+		tableNames = e.getSchemaObjectNames(ec.table)
+	}
+	if len(tableNames) > 0 {
+		tableNames = filterSchemaObjectByRegexp(base, ec.table, tableNames, extractStrCIStr)
+		_, tblInfos, err := findTableAndSchemaByName(ctx, is, schemas, tableNames)
+		return tblInfos, err
+	}
+	_, tblInfos, err := listTablesForEachSchema(ctx, base, is, schemas)
+	return tblInfos, err
 }
 
 // ListColumns lists unhidden columns and corresponding ordinal positions for given table from predicates.
 // If no column found in predicate, it return all visible columns.
-func (e *InfoSchemaTableNameExtractor) ListColumns(
+func (e *InfoSchemaColumnsExtractor) ListColumns(
 	tbl *model.TableInfo,
 ) ([]*model.ColumnInfo, []int) {
-	predCol, regexp, _ := e.getPredicates(_columnName)
+	ec := e.extractableColumns
+	if !e.predColNamesInited {
+		e.predColNames = set.NewStringSet()
+		colNames := e.getSchemaObjectNames(ec.columnName)
+		for _, name := range colNames {
+			e.predColNames.Insert(name.L)
+		}
+		e.predColNamesInited = true
+	}
+	predCol := e.predColNames
+	regexp := e.GetBase().colsRegexp[ec.columnName]
 
 	columns := make([]*model.ColumnInfo, 0, len(predCol))
 	ordinalPos := make([]int, 0, len(predCol))
@@ -944,18 +936,27 @@ ForLoop:
 
 // InfoSchemaTiDBIndexUsageExtractor is the predicate extractor for information_schema.tidb_index_usage.
 type InfoSchemaTiDBIndexUsageExtractor struct {
-	InfoSchemaTableNameExtractor
+	InfoSchemaBaseExtractor
+	predIdxNames       set.StringSet
+	predIdxNamesInited bool
+}
+
+// IndexUsageIndexInfo is the necessary index info for information_schema.tidb_index_usage. It only includes the index name
+// and ID in lower case.
+type IndexUsageIndexInfo struct {
+	Name string
+	ID   int64
 }
 
 // NewInfoSchemaTiDBIndexUsageExtractor creates a new InfoSchemaTiDBIndexUsageExtractor.
 func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 	e := &InfoSchemaTiDBIndexUsageExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:    _tableSchema,
-		table:     _tableName,
-		indexName: _indexName,
+		schema:    TableSchema,
+		table:     TableName,
+		indexName: IndexName,
 	}
-	e.colNames = []columnName{_tableSchema, _tableName, _indexName}
+	e.colNames = []string{TableSchema, TableName, IndexName}
 	return e
 }
 
@@ -963,25 +964,44 @@ func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 // If no index found in predicate, it return all indexes.
 func (e *InfoSchemaTiDBIndexUsageExtractor) ListIndexes(
 	tbl *model.TableInfo,
-) []*model.IndexInfo {
-	predCol, regexp, _ := e.getPredicates(_indexName)
+) []IndexUsageIndexInfo {
+	ec := e.extractableColumns
+	if !e.predIdxNamesInited {
+		e.predIdxNames = set.NewStringSet()
+		colNames := e.getSchemaObjectNames(ec.indexName)
+		for _, name := range colNames {
+			e.predIdxNames.Insert(name.L)
+		}
+		e.predIdxNamesInited = true
+	}
+	predCol := e.predIdxNames
+	regexp := e.GetBase().colsRegexp[ec.indexName]
+
+	indexes := make([]IndexUsageIndexInfo, 0, len(tbl.Indices))
+	// Append the int primary key. The clustered index is already included in the `tbl.Indices`, but the int primary key is not.
+	if tbl.PKIsHandle {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: primaryKeyName, ID: 0})
+	}
+	for _, index := range tbl.Indices {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: index.Name.L, ID: index.ID})
+	}
 	if len(predCol) == 0 && len(regexp) == 0 {
-		return tbl.Indices
+		return indexes
 	}
 
-	indexes := make([]*model.IndexInfo, 0, len(predCol))
+	retIndexes := make([]IndexUsageIndexInfo, 0, len(indexes))
 ForLoop:
-	for _, index := range tbl.Indices {
-		if len(predCol) > 0 && !predCol.Exist(index.Name.L) {
+	for _, index := range indexes {
+		if len(predCol) > 0 && !predCol.Exist(index.Name) {
 			continue
 		}
 		for _, re := range regexp {
-			if !re.DoMatch(index.Name.L) {
+			if !re.DoMatch(index.Name) {
 				continue ForLoop
 			}
 		}
-		indexes = append(indexes, index)
+		retIndexes = append(retIndexes, IndexUsageIndexInfo{Name: index.Name, ID: index.ID})
 	}
 
-	return indexes
+	return retIndexes
 }

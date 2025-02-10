@@ -26,16 +26,18 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -75,7 +77,7 @@ func TestShowCreateTable(t *testing.T) {
 	}
 	prevState := model.StateNone
 	currTestCaseOffset := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -138,7 +140,7 @@ func TestDropNotNullColumn(t *testing.T) {
 
 	var checkErr error
 	sqlNum := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -171,7 +173,7 @@ func TestDropNotNullColumn(t *testing.T) {
 	sqlNum++
 	tk.MustExec("alter table t4 drop column e")
 	require.NoError(t, checkErr)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
@@ -221,7 +223,7 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -794,13 +796,13 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc)
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc)
 	}
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
-	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(t, store)
@@ -833,7 +835,7 @@ func TestShowIndex(t *testing.T) {
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -846,7 +848,7 @@ func TestShowIndex(t *testing.T) {
 			}
 			rows := tk.ResultSetToResult(result, fmt.Sprintf("sql:%s", showIndexSQL))
 			got := fmt.Sprintf("%s", rows.Rows())
-			need := fmt.Sprintf("%s", testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO"))
+			need := fmt.Sprintf("%s", testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
 			if got != need {
 				checkErr = fmt.Errorf("need %v, but got %v", need, got)
 			}
@@ -857,10 +859,10 @@ func TestShowIndex(t *testing.T) {
 	require.NoError(t, checkErr)
 
 	tk.MustQuery(showIndexSQL).Check(testkit.Rows(
-		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
-		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO",
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO NO",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO NO",
 	))
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	tk.MustExec(`create table tr(
 		id int, name varchar(50),
@@ -875,26 +877,26 @@ func TestShowIndex(t *testing.T) {
     	partition p5 values less than (2015)
    	);`)
 	tk.MustExec("create index idx1 on tr (purchased);")
-	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
+	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES NO", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
 
@@ -1157,6 +1159,35 @@ func TestParallelAlterAddIndex(t *testing.T) {
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
+func TestParallelAlterAddVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
+			"ddl/MockCheckVectorIndexProcess"))
+	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	sql1 := "alter table tt add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;"
+	sql2 := "alter table tt add vector index vecIdx1((vec_cosine_distance(c))) USING HNSW;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.EqualError(t, err2,
+			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
+}
+
 func TestParallelAlterAddExpressionIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1292,16 +1323,17 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit, chan struct{}) {
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
+		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1321,11 +1353,12 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
+		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			err := sessiontxn.NewTxn(ctx, sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess)
+			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {
@@ -1391,13 +1424,13 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
 	var wg util.WaitGroupWrapper
 
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	wg.Run(func() {
 		err2 = tk1.ExecToErr(sql)
 	})
@@ -1604,7 +1637,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1670,7 +1703,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1772,7 +1805,7 @@ func TestDropExpressionIndex(t *testing.T) {
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1827,7 +1860,7 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
 			if !firstDDL {
@@ -1936,7 +1969,7 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 
 	var wg sync.WaitGroup
 	skip := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			if skip {

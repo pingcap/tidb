@@ -19,20 +19,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -51,26 +50,132 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+type PhysicalTable struct {
+	NewPhysicalID int64
+	OldPhysicalID int64
+	RewriteRules  *restoreutils.RewriteRules
+}
+
 func defaultOutputTableChan() chan *CreatedTable {
 	return make(chan *CreatedTable, defaultChannelSize)
 }
 
-// TableWithRange is a CreatedTable that has been bind to some of key ranges.
-type TableWithRange struct {
-	CreatedTable
-
-	// Range has been rewrited by rewrite rules.
-	Range []rtree.RangeStats
+// ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
+func ExhaustErrors(ec <-chan error) []error {
+	out := make([]error, 0, len(ec))
+	for {
+		select {
+		case err := <-ec:
+			out = append(out, err)
+		default:
+			// errCh will NEVER be closed(ya see, it has multi sender-part),
+			// so we just consume the current backlog of this channel, then return.
+			return out
+		}
+	}
 }
 
-type TableIDWithFiles struct {
-	TableID int64
+type PipelineContext struct {
+	// pipeline item switch
+	Checksum         bool
+	LoadStats        bool
+	WaitTiflashReady bool
 
-	Files []*backuppb.File
-	// RewriteRules is the rewrite rules for the specify table.
-	// because these rules belongs to the *one table*.
-	// we can hold them here.
-	RewriteRules *restoreutils.RewriteRules
+	// pipeline item configuration
+	LogProgress         bool
+	ChecksumConcurrency uint
+	StatsConcurrency    uint
+
+	// pipeline item tool client
+	KvClient   kv.Client
+	ExtStorage storage.ExternalStorage
+	Glue       glue.Glue
+}
+
+// RestorePipeline does checksum, load stats and wait for tiflash to be ready.
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) (err error) {
+	start := time.Now()
+	defer func() {
+		summary.CollectDuration("restore pipeline", time.Since(start))
+	}()
+	// We make bigger errCh so we won't block on multi-part failed.
+	errCh := make(chan error, 32)
+	postHandleCh := afterTableRestoredCh(ctx, createdTables)
+	progressLen := int64(0)
+	if plCtx.Checksum {
+		progressLen += int64(len(createdTables))
+	}
+	progressLen += int64(len(createdTables)) // for pipeline item - update stats meta
+	if plCtx.WaitTiflashReady {
+		progressLen += int64(len(createdTables))
+	}
+
+	// Redirect to log if there is no log file to avoid unreadable output.
+	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
+	defer updateCh.Close()
+	// pipeline checksum
+	if plCtx.Checksum {
+		postHandleCh = rc.GoValidateChecksum(ctx, postHandleCh, plCtx.KvClient, errCh, updateCh, plCtx.ChecksumConcurrency)
+	}
+
+	// pipeline update meta and load stats
+	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+
+	// pipeline wait Tiflash synced
+	if plCtx.WaitTiflashReady {
+		postHandleCh = rc.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+	}
+
+	finish := dropToBlackhole(ctx, postHandleCh, errCh)
+
+	select {
+	case err = <-errCh:
+		err = multierr.Append(err, multierr.Combine(ExhaustErrors(errCh)...))
+	case <-finish:
+	}
+
+	return errors.Trace(err)
+}
+
+func afterTableRestoredCh(ctx context.Context, createdTables []*CreatedTable) <-chan *CreatedTable {
+	outCh := make(chan *CreatedTable)
+
+	go func() {
+		defer close(outCh)
+
+		for _, createdTable := range createdTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- createdTable
+			}
+		}
+	}()
+	return outCh
+}
+
+// dropToBlackhole drop all incoming tables into black hole,
+// i.e. don't execute checksum, just increase the process anyhow.
+func dropToBlackhole(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) <-chan struct{} {
+	outCh := make(chan struct{}, 1)
+	go func() {
+		defer func() {
+			close(outCh)
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case _, ok := <-inCh:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+	return outCh
 }
 
 func concurrentHandleTablesCh(
@@ -128,12 +233,7 @@ func (rc *SnapClient) GoValidateChecksum(
 	outCh := defaultOutputTableChan()
 	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
-		start := time.Now()
-		defer func() {
-			elapsed := time.Since(start)
-			summary.CollectSuccessUnit("table checksum", 1, elapsed)
-		}()
-		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -150,6 +250,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	s storage.ExternalStorage,
 	inCh <-chan *CreatedTable,
 	errCh chan<- error,
+	updateCh glue.Progress,
 	statsConcurrency uint,
 	loadStats bool,
 ) chan *CreatedTable {
@@ -200,6 +301,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
+		updateCh.Inc()
 		return nil
 	}, func() {
 		log.Info("all stats updated")

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -70,7 +70,7 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	size, isNull, err := m.GetSchemaCacheSize()
 	require.NoError(t, err)
 	require.Equal(t, size, uint64(0))
@@ -84,10 +84,10 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	size, isNull, err = m.GetSchemaCacheSize()
 	require.NoError(t, err)
-	require.Equal(t, size, uint64(variable.DefTiDBSchemaCacheSize))
+	require.Equal(t, size, uint64(vardef.DefTiDBSchemaCacheSize))
 	require.Equal(t, isNull, false)
 	require.NoError(t, txn.Rollback())
 }

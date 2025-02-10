@@ -16,7 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
@@ -26,6 +27,13 @@ import (
 const (
 	sysUserTableName = "user"
 )
+
+var planPeplayerTables = map[string]map[string]struct{}{
+	"mysql": {
+		"plan_replayer_status": {},
+		"plan_replayer_task":   {},
+	},
+}
 
 var statsTables = map[string]map[string]struct{}{
 	"mysql": {
@@ -61,12 +69,59 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
-		// gc info don't need to recover.
-		"gc_delete_range":      {},
-		"gc_delete_range_done": {},
+		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
+		// Therefore actually the table is empty.
+		"advisory_locks": {},
+		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
+		"analyze_jobs": {},
+		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
+		"analyze_options": {},
+		// Distributed eXecution Framework
+		// Records the tidb node information, no need to recovered.
+		"dist_framework_meta":             {},
+		"tidb_global_task":                {},
+		"tidb_global_task_history":        {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
+		// DDL internal system tables.
+		"tidb_ddl_history": {},
+		"tidb_ddl_job":     {},
+		"tidb_ddl_reorg":   {},
+		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
+		"tidb_ddl_notifier": {},
+		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
+		"tidb_import_jobs": {},
 
+		"help_topic": {},
+		// records the RU for each resource group temporary, no need to recovered.
+		"request_unit_by_group": {},
+		// load the table data into the memory.
+		"table_cache_meta": {},
+
+		// TiDB runaway internal information.
+		"tidb_runaway_queries":    {},
+		"tidb_runaway_watch":      {},
+		"tidb_runaway_watch_done": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":  {},
+		"tidb_ttl_table_status": {},
+		"tidb_ttl_task":         {},
+
+		// TiDB internal timers.
+		"tidb_timers": {},
+
+		// gc info don't need to recover.
+		"gc_delete_range":       {},
+		"gc_delete_range_done":  {},
+		"index_advisor_results": {},
+
+		// TiDB internal system table to synchronize metadata locks across nodes.
+		"tidb_mdl_info": {},
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
+
+		"tidb_pitr_id_map": {},
 	},
 	"sys": {
 		// replace into view is not supported now
@@ -85,6 +140,15 @@ func isUnrecoverableTable(schemaName string, tableName string) bool {
 
 func isStatsTable(schemaName string, tableName string) bool {
 	tableMap, ok := statsTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
 	if !ok {
 		return false
 	}
@@ -159,20 +223,20 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 // For fast querying whether a table exists and the temporary database of it.
 type database struct {
 	ExistingTables map[string]*model.TableInfo
-	Name           model.CIStr
-	TemporaryName  model.CIStr
+	Name           ast.CIStr
+	TemporaryName  ast.CIStr
 }
 
 // getSystemDatabaseByName make a record of a system database, such as mysql and sys, from info schema by its name.
 func (rc *SnapClient) getSystemDatabaseByName(ctx context.Context, name string) (*database, bool, error) {
 	infoSchema := rc.dom.InfoSchema()
-	schema, ok := infoSchema.SchemaByName(model.NewCIStr(name))
+	schema, ok := infoSchema.SchemaByName(ast.NewCIStr(name))
 	if !ok {
 		return nil, false, nil
 	}
 	db := &database{
 		ExistingTables: map[string]*model.TableInfo{},
-		Name:           model.NewCIStr(name),
+		Name:           ast.NewCIStr(name),
 		TemporaryName:  utils.TemporaryDBName(name),
 	}
 	// It's OK to get all the tables from system tables.
@@ -196,7 +260,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 	var err error
 	for _, table := range tables {
 		if table == "user" {
-			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
+			if serr := rc.dom.NotifyUpdateAllUsersPrivilege(); serr != nil {
 				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
 				err = multierr.Append(err, berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to flush privileges"))
 			} else {
@@ -247,6 +311,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	//  1.5 ) (Optional) The UPDATE statement sometimes costs, the whole system tables restore step can be place into the restore pipeline.
 	//  2   ) Deprecate the origin interface for backing up statistics.
 	if isStatsTable(dbName, tableName) {
+		return nil
+	}
+
+	if isPlanReplayerTables(dbName, tableName) {
 		return nil
 	}
 
@@ -315,7 +383,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
-	sysDB := model.NewCIStr(mysql.SystemDB)
+	sysDB := ast.NewCIStr(mysql.SystemDB)
 	for _, table := range privilegeTablesInBackup {
 		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
 		if err != nil {

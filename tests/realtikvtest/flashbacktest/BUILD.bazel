@@ -13,7 +13,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/errno",
         "//pkg/meta",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",

@@ -34,19 +34,19 @@ import (
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression
+	Exprs []expression.Expression `hash64-equals:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
-	CalculateNoDelay bool
+	CalculateNoDelay bool `hash64-equals:"true"`
 
 	// Proj4Expand is used for expand to project same column reference, while these
 	// col may be filled with null so we couldn't just eliminate this projection itself.
-	Proj4Expand bool
+	Proj4Expand bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalProjection.
@@ -55,7 +55,7 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of Plan interface **********************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
@@ -71,7 +71,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-// *************************** end implementation of Plan interface ***************************
+// *************************** end implementation of Plan interface ************************************
 
 // *************************** start implementation of logicalPlan interface ***************************
 
@@ -171,9 +171,9 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
 	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
 	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
+	selfSchema.PKOrUK = nil
 	schema := p.buildSchemaByExprs(selfSchema)
-	for _, key := range childSchema[0].Keys {
+	for _, key := range childSchema[0].PKOrUK {
 		indices := schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
@@ -182,7 +182,7 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		for _, i := range indices {
 			newKey = append(newKey, selfSchema.Columns[i])
 		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
+		selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 	}
 }
 
@@ -283,12 +283,16 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		RowCount: childProfile.RowCount,
@@ -298,8 +302,8 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -535,8 +539,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
+	if len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
 	exprCol2ProjCol := make(map[int64]int64)

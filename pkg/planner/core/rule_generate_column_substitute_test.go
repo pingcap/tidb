@@ -20,10 +20,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -211,7 +212,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	tk.MustExec("drop table if exists tai")
 	tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	_, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
+	_, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tai"))
 	require.NoError(b, err)
 	condition := "(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
@@ -265,7 +266,8 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	fmt.Println(sql)
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(b, err, sql)
-	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), stmt, s.GetIS())
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 	require.NoError(b, err)
 	selection := p.(base.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))

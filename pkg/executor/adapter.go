@@ -40,20 +40,22 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -92,7 +94,7 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	executor exec.Executor
 	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
 	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
@@ -103,16 +105,16 @@ type recordSet struct {
 	once       sync.Once
 }
 
-func (a *recordSet) Fields() []*ast.ResultField {
+func (a *recordSet) Fields() []*resolve.ResultField {
 	if len(a.fields) == 0 {
 		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
 
-func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, schema.Len())
-	defaultDBCIStr := model.NewCIStr(defaultDB)
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
+	rfs := make([]*resolve.ResultField, 0, schema.Len())
+	defaultDBCIStr := ast.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
@@ -124,7 +126,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			origColName = names[i].ColName
 			emptyOrgName = true
 		}
-		rf := &ast.ResultField{
+		rf := &resolve.ResultField{
 			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
 			EmptyOrgName: emptyOrgName,
@@ -256,8 +258,6 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
-	// Text represents the origin query text.
-	Text string
 
 	StmtNode ast.StmtNode
 
@@ -296,7 +296,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
 	if r.Span != nil {
-		r.Span.LogKV("sql", a.OriginText())
+		r.Span.LogKV("sql", a.Text())
 	}
 
 	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
@@ -326,7 +326,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan)
+			exec.Recreated(pointGetPlan)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
 		}
@@ -357,7 +357,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
-		sql := a.OriginText()
+		sql := a.Text()
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -376,7 +376,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
-	return a.Text
+	return a.StmtNode.OriginalText()
+}
+
+// Text returns utf8 encoded statement as a string.
+func (a *ExecStmt) Text() string {
+	return a.StmtNode.Text()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -395,7 +400,8 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	nodeW := resolve.NewNodeW(a.StmtNode)
+	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -417,7 +423,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && replicaReadScope == kv.GlobalReplicaScope {
 		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
+	p, names, err := planner.Optimize(ctx, a.Ctx, nodeW, a.InfoSchema)
 	if err != nil {
 		return 0, err
 	}
@@ -504,21 +510,21 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBBuildStatsConcurrency)
 		if !ok {
-			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+			oriStats = strconv.Itoa(vardef.DefBuildStatsConcurrency)
 		}
 		oriScan := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(vardef.TxnIsolation)
 		if !ok {
 			oriIso = "REPEATABLE-READ"
 		}
-		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBAutoBuildStatsConcurrency)
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBAutoBuildStatsConcurrency)
 		terror.Log(err1)
 		if err1 == nil {
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TiDBBuildStatsConcurrency, autoConcurrency))
 		}
-		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBSysProcScanConcurrency)
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBSysProcScanConcurrency)
 		terror.Log(err2)
 		if err2 == nil {
 			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
@@ -527,11 +533,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				sctx.GetSessionVars().SetAnalyzeDistSQLScanConcurrency(int(concurrency))
 			}
 		}
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().SetAnalyzeDistSQLScanConcurrency(oriScan)
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TxnIsolation, oriIso))
 		}()
 	}
 
@@ -541,14 +547,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
-	if rm := domain.GetDomain(sctx).RunawayManager(); variable.EnableResourceControl.Load() && rm != nil {
+	if rm := domain.GetDomain(sctx).RunawayManager(); vardef.EnableResourceControl.Load() && rm != nil {
 		sessionVars := sctx.GetSessionVars()
 		stmtCtx := sessionVars.StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
 		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
-		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
+		switchGroupName, err := stmtCtx.RunawayChecker.BeforeExecutor()
+		if err != nil {
 			return nil, err
+		}
+		if len(switchGroupName) > 0 {
+			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
+			if err != nil || group == nil {
+				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
+			} else {
+				stmtCtx.ResourceGroupName = switchGroupName
+			}
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -586,6 +601,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if a.isSelectForUpdate {
 		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			terror.Log(exec.Close(e))
 			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
 		}
 		// Special handle for "select for update statement" in pessimistic transaction.
@@ -602,6 +618,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var txnStartTS uint64
 	txn, err := sctx.Txn(false)
 	if err != nil {
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 	if txn.Valid() {
@@ -627,7 +644,7 @@ func (a *ExecStmt) inheritContextFromExecuteStmt() {
 }
 
 func (a *ExecStmt) getSQLForProcessInfo() string {
-	sql := a.OriginText()
+	sql := a.Text()
 	if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 		if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 			// Use SecureText to avoid leak password information.
@@ -645,7 +662,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
-		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
@@ -868,12 +885,12 @@ func isNoResultPlan(p base.Plan) bool {
 type chunkRowRecordSet struct {
 	rows     []chunk.Row
 	idx      int
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	e        exec.Executor
 	execStmt *ExecStmt
 }
 
-func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+func (c *chunkRowRecordSet) Fields() []*resolve.ResultField {
 	if c.fields == nil {
 		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
 	}
@@ -1021,7 +1038,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactLog)
+			stmtText := parser.Normalize(a.Text(), sctx.GetSessionVars().EnableRedactLog)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),
@@ -1295,7 +1312,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 
 func formatSQL(sql string) string {
 	length := len(sql)
-	maxQueryLen := variable.QueryLogMaxLen.Load()
+	maxQueryLen := vardef.QueryLogMaxLen.Load()
 	if maxQueryLen <= 0 {
 		return QueryReplacer.Replace(sql) // no limit
 	}
@@ -1401,10 +1418,13 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
+
+	a.updateMPPNetworkTraffic()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
+	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			executor_metrics.TotalTiFlashQuerySuccCounter.Inc()
@@ -1414,6 +1434,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
+	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
@@ -1458,6 +1479,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+func (a *ExecStmt) recordAffectedRows2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		switch sessVars.StmtCtx.StmtType {
+		case "Insert":
+			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
+		case "Replace":
+			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
+		case "Delete":
+			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
+		case "Update":
+			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		}
+	}
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -1641,7 +1678,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          &copTaskInfo,
+		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
@@ -1654,9 +1691,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
-		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
-		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        resultRows,
 		ExecRetryCount:    a.retryCount,
@@ -1669,6 +1704,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1761,12 +1797,29 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	if runtimeStatsColl == nil {
 		return 0
 	}
-	rootPlanID := p.ID()
-	if !runtimeStatsColl.ExistsRootStats(rootPlanID) {
-		return 0
+	return runtimeStatsColl.GetPlanActRows(p.ID())
+}
+
+func (a *ExecStmt) updateMPPNetworkTraffic() {
+	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return
 	}
-	rootStats := runtimeStatsColl.GetRootStats(rootPlanID)
-	return rootStats.GetActRows()
+	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	if tiflashNetworkStats == nil {
+		return
+	}
+	var tikvExecDetail *util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw == nil {
+		tikvExecDetailRaw = &util.ExecDetails{}
+		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
+	}
+
+	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
@@ -1900,46 +1953,19 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	sessVars.SetPrevStmtDigest(digest.String())
 
-	// No need to encode every time, so encode lazily.
-	planGenerator := func() (p string, h string, e any) {
-		defer func() {
-			e = recover()
-			if e != nil {
-				logutil.BgLogger().Warn("fail to generate plan info",
-					zap.Stack("backtrace"),
-					zap.Any("error", e))
-			}
-		}()
-		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
-		return
-	}
-	var binPlanGen func() string
-	if variable.GenerateBinaryPlan.Load() {
-		binPlanGen = func() string {
-			binPlan := getBinaryPlan(a.Ctx)
-			return binPlan
-		}
-	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
 	var planDigest string
-	var planDigestGen func() string
-	if a.Plan.TP() == plancodec.TypePointGet {
-		planDigestGen = func() string {
-			_, planDigest := GetPlanDigest(stmtCtx)
-			return planDigest.String()
-		}
-	} else {
+	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
-	copTaskInfo := stmtCtx.CopTasksDetails()
+	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.getLazyStmtText()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1975,49 +2001,87 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
 
-	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:          strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:         &sql,
-		Charset:             charset,
-		Collation:           collation,
-		NormalizedSQL:       normalizedSQL,
-		Digest:              digest.String(),
-		PrevSQL:             prevSQL,
-		PrevSQLDigest:       prevSQLDigest,
-		PlanGenerator:       planGenerator,
-		BinaryPlanGenerator: binPlanGen,
-		PlanDigest:          planDigest,
-		PlanDigestGen:       planDigestGen,
-		User:                userString,
-		TotalLatency:        costTime,
-		ParseLatency:        sessVars.DurationParse,
-		CompileLatency:      sessVars.DurationCompile,
-		StmtCtx:             stmtCtx,
-		CopTasks:            &copTaskInfo,
-		ExecDetail:          &execDetail,
-		MemMax:              memMax,
-		DiskMax:             diskMax,
-		StartTime:           sessVars.StartTime,
-		IsInternal:          sessVars.InRestrictedSQL,
-		Succeed:             succ,
-		PlanInCache:         sessVars.FoundInPlanCache,
-		PlanInBinding:       sessVars.FoundInBinding,
-		ExecRetryCount:      a.retryCount,
-		StmtExecDetails:     stmtDetail,
-		ResultRows:          resultRows,
-		TiKVExecDetails:     tikvExecDetail,
-		Prepared:            a.isPreparedStmt,
-		KeyspaceName:        keyspaceName,
-		KeyspaceID:          keyspaceID,
-		RUDetail:            ruDetail,
-		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
-
-		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
+	if sessVars.CacheStmtExecInfo == nil {
+		sessVars.CacheStmtExecInfo = &stmtsummary.StmtExecInfo{}
 	}
+	stmtExecInfo := sessVars.CacheStmtExecInfo
+	stmtExecInfo.SchemaName = strings.ToLower(sessVars.CurrentDB)
+	stmtExecInfo.Charset = charset
+	stmtExecInfo.Collation = collation
+	stmtExecInfo.NormalizedSQL = normalizedSQL
+	stmtExecInfo.Digest = digest.String()
+	stmtExecInfo.PrevSQL = prevSQL
+	stmtExecInfo.PrevSQLDigest = prevSQLDigest
+	stmtExecInfo.PlanDigest = planDigest
+	stmtExecInfo.User = userString
+	stmtExecInfo.TotalLatency = costTime
+	stmtExecInfo.ParseLatency = sessVars.DurationParse
+	stmtExecInfo.CompileLatency = sessVars.DurationCompile
+	stmtExecInfo.StmtCtx = stmtCtx
+	stmtExecInfo.CopTasks = copTaskInfo
+	stmtExecInfo.ExecDetail = execDetail
+	stmtExecInfo.MemMax = memMax
+	stmtExecInfo.DiskMax = diskMax
+	stmtExecInfo.StartTime = sessVars.StartTime
+	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.Succeed = succ
+	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
+	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
+	stmtExecInfo.ExecRetryCount = a.retryCount
+	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.ResultRows = resultRows
+	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
+	stmtExecInfo.Prepared = a.isPreparedStmt
+	stmtExecInfo.KeyspaceName = keyspaceName
+	stmtExecInfo.KeyspaceID = keyspaceID
+	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
+	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
+	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
+	stmtExecInfo.LazyInfo = a
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummaryv2.Add(stmtExecInfo)
+}
+
+// GetOriginalSQL implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetOriginalSQL() string {
+	stmt := a.getLazyStmtText()
+	return stmt.String()
+}
+
+// GetEncodedPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
+	defer func() {
+		e = recover()
+		if e != nil {
+			logutil.BgLogger().Warn("fail to generate plan info",
+				zap.Stack("backtrace"),
+				zap.Any("error", e))
+		}
+	}()
+
+	sessVars := a.Ctx.GetSessionVars()
+	p, h = getEncodedPlan(sessVars.StmtCtx, !sessVars.InRestrictedSQL)
+	return
+}
+
+// GetBinaryPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetBinaryPlan() string {
+	if variable.GenerateBinaryPlan.Load() {
+		return getBinaryPlan(a.Ctx)
+	}
+	return ""
+}
+
+// GetPlanDigest implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetPlanDigest() string {
+	if a.Plan.TP() == plancodec.TypePointGet {
+		_, planDigest := GetPlanDigest(a.Ctx.GetSessionVars().StmtCtx)
+		return planDigest.String()
+	}
+	return ""
 }
 
 // GetTextToLog return the query text to log.
@@ -2120,6 +2184,31 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 }
 
+// UpdatePlanCacheRuntimeInfo updates the runtime information of the plan in the plan cache.
+func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
+	if !vardef.EnableInstancePlanCache.Load() {
+		return // only record for Instance Plan Cache
+	}
+	v := a.Ctx.GetSessionVars().PlanCacheValue
+	if v == nil {
+		return
+	}
+	pcv, ok := v.(*plannercore.PlanCacheValue)
+	if !ok {
+		return
+	}
+
+	execDetail := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	var procKeys, totKeys int64
+	if execDetail.ScanDetail != nil { // only support TiKV
+		procKeys = execDetail.ScanDetail.ProcessedKeys
+		totKeys = execDetail.ScanDetail.TotalKeys
+	}
+	costTime := a.Ctx.GetSessionVars().GetTotalCostDuration()
+	pcv.UpdateRuntimeInfo(procKeys, totKeys, int64(costTime))
+	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
+}
+
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
@@ -2218,7 +2307,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     []bindinfo.Bindings{bindings},
+		SessionBindings:     [][]*bindinfo.Binding{bindings},
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []any{stmtCtx.OptimizerDebugTrace},

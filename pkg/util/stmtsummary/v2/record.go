@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -130,6 +130,8 @@ type StmtRecord struct {
 	SumPDTotal           time.Duration `json:"sum_pd_total"`
 	SumBackoffTotal      time.Duration `json:"sum_backoff_total"`
 	SumWriteSQLRespTotal time.Duration `json:"sum_write_sql_resp_total"`
+	SumTidbCPU           time.Duration `json:"sum_tidb_cpu"`
+	SumTikvCPU           time.Duration `json:"sum_tikv_cpu"`
 	SumResultRows        int64         `json:"sum_result_rows"`
 	MaxResultRows        int64         `json:"max_result_rows"`
 	MinResultRows        int64         `json:"min_result_rows"`
@@ -154,6 +156,8 @@ type StmtRecord struct {
 
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
+
+	stmtsummary.StmtNetworkTrafficSummary
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -177,22 +181,19 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	}
 	tableNames := buffer.String()
 	planDigest := info.PlanDigest
-	if info.PlanDigestGen != nil && len(planDigest) == 0 {
+	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
-		planDigest = info.PlanDigestGen()
+		planDigest = info.LazyInfo.GetPlanDigest()
 	}
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, _ := info.PlanGenerator()
+	samplePlan, planHint, _ := info.LazyInfo.GetEncodedPlan()
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := ""
-	if info.BinaryPlanGenerator != nil {
-		binPlan = info.BinaryPlanGenerator()
-		if len(binPlan) > MaxEncodedPlanSizeInBytes {
-			binPlan = plancodec.BinaryPlanDiscardedEncoded
-		}
+	binPlan := info.LazyInfo.GetBinaryPlan()
+	if len(binPlan) > MaxEncodedPlanSizeInBytes {
+		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
@@ -202,7 +203,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		SampleSQL:     formatSQL(info.OriginalSQL.String()),
+		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -254,15 +255,17 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.MaxCompileLatency = info.CompileLatency
 	}
 	// Coprocessor
-	numCopTasks := int64(info.CopTasks.NumCopTasks)
-	r.SumNumCopTasks += numCopTasks
-	if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
-		r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
-		r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
-	}
-	if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
-		r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
-		r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+	if info.CopTasks != nil {
+		numCopTasks := int64(info.CopTasks.NumCopTasks)
+		r.SumNumCopTasks += numCopTasks
+		if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
+			r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
+			r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
+		}
+		if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
+			r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
+			r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+		}
 	}
 	// TiKV
 	r.SumProcessTime += info.ExecDetail.TimeDetail.ProcessTime
@@ -413,10 +416,15 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.MinResultRows = 0
 	}
-	r.SumKVTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitKVRespDuration))
-	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
-	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
+	r.SumKVTotal += time.Duration(info.TiKVExecDetails.WaitKVRespDuration)
+	r.SumPDTotal += time.Duration(info.TiKVExecDetails.WaitPDRespDuration)
+	r.SumBackoffTotal += time.Duration(info.TiKVExecDetails.BackoffDuration)
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
+	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
+
+	// Networks
+	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -576,6 +584,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumPDTotal += other.SumPDTotal
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
+	r.SumTidbCPU += other.SumTidbCPU
+	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
@@ -611,27 +621,21 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         digest,
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  func() (string, string, any) { return "", "", nil },
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
@@ -687,7 +691,28 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		TiKVExecDetails:   &util.ExecDetails{},
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
+		LazyInfo:          &mockLazyInfo{},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
+}
+
+type mockLazyInfo struct{}
+
+func (*mockLazyInfo) GetOriginalSQL() string {
+	return ""
+}
+
+func (*mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
+	return "", "", nil
+}
+
+func (*mockLazyInfo) GetBinaryPlan() string {
+	return ""
+}
+
+func (*mockLazyInfo) GetPlanDigest() string {
+	return ""
 }

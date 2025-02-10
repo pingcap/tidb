@@ -43,6 +43,8 @@ minio_cli_url="${file_server_url}/download/builds/minio/minio/RELEASE.2020-02-27
 kes_url="${file_server_url}/download/kes"
 fake_gcs_server_url="${file_server_url}/download/builds/fake-gcs-server"
 brv_url="${file_server_url}/download/builds/brv4.0.8"
+# already manually uploaded to file server for localstack
+localstack_url="${file_server_url}/download/localstack-cli.tar.gz"
 
 set -o nounset
 
@@ -102,6 +104,13 @@ function main() {
     download "$kes_url" "kes" "third_bin/kes"
     download "$fake_gcs_server_url" "fake-gcs-server" "third_bin/fake-gcs-server"
     download "$brv_url" "brv4.0.8" "third_bin/brv4.0.8"
+
+    # Download and set up LocalStack
+    download "$localstack_url" "localstack-cli.tar.gz" "tmp/localstack-cli.tar.gz"
+    mkdir -p tmp/localstack_extract
+    tar -xzf tmp/localstack-cli.tar.gz -C tmp/localstack_extract
+    mv tmp/localstack_extract/localstack/* third_bin/
+    rm -rf tmp/localstack_extract
 
     chmod +x third_bin/*
     rm -rf tmp

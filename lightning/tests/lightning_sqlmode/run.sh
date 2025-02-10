@@ -61,28 +61,28 @@ run_sql 'SELECT min(id), max(id) FROM sqlmodedb.t'
 check_contains 'min(id): 4'
 check_contains 'max(id): 4'
 
-run_sql 'SELECT count(*) FROM sqlmodedb_lightning_task_info.type_error_v1'
+run_sql 'SELECT count(*) FROM sqlmodedb_lightning_task_info.type_error_v2'
 check_contains 'count(*): 4'
 
-run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(1,%";'
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v2 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(1,%";'
 check_contains 'path: sqlmodedb.t.1.sql'
 check_contains 'offset: 53'
 check_contains 'cannot convert datum from unsigned bigint to type timestamp.'
 check_contains "row_data: (1,9,128,'too long','x,y,z')"
 
-run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(2,%";'
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v2 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(2,%";'
 check_contains 'path: sqlmodedb.t.1.sql'
 check_contains 'offset: 100'
 check_contains "Incorrect timestamp value: '2000-00-00 00:00:00'"
 check_contains "row_data: (2,'2000-00-00 00:00:00',-99999,'🤩',3)"
 
-run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(3,%";'
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v2 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(3,%";'
 check_contains 'path: sqlmodedb.t.1.sql'
 check_contains 'offset: 149'
 check_contains "Incorrect timestamp value: '9999-12-31 23:59:59'"
 check_contains "row_data: (3,'9999-12-31 23:59:59','NaN',x'99','x+y')"
 
-run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(5,%";'
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v2 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(5,%";'
 check_contains 'path: sqlmodedb.t.1.sql'
 check_contains 'offset: 237'
 check_contains "Column 'a' cannot be null"

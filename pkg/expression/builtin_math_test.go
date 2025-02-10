@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -514,6 +514,17 @@ func TestTruncate(t *testing.T) {
 		{[]any{uint64(9223372036854775808), -10}, 9223372030000000000},
 		{[]any{9223372036854775807, -7}, 9223372036850000000},
 		{[]any{uint64(18446744073709551615), -10}, uint64(18446744070000000000)},
+
+		// For issue 57651
+		{[]any{math.NaN(), 400}, math.NaN()},
+		{[]any{math.NaN(), -400}, math.NaN()},
+		{[]any{math.NaN(), 3}, math.NaN()},
+		{[]any{1.1, 400}, 1.1},
+		{[]any{1.1, -400}, 0},
+		{[]any{1.1, 3}, 1.1},
+		{[]any{0, 400}, 0},
+		{[]any{0, -400}, 0},
+		{[]any{0, 3}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -550,7 +561,7 @@ func TestCRC32(t *testing.T) {
 		{[]any{"一"}, "gbk", 2925846374, false},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
@@ -756,6 +767,8 @@ func TestRadians(t *testing.T) {
 		{float64(180), float64(math.Pi)},
 		{-360, -2 * float64(math.Pi)},
 		{"180", float64(math.Pi)},
+		{float64(1.0e308), float64(1.7453292519943295e306)},
+		{float64(23), float64(0.4014257279586958)},
 	}
 
 	Dtbl := tblToDtbl(tbl)

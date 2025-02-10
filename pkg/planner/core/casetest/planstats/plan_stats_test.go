@@ -25,16 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -76,7 +77,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
-					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
+					require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 					require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
 				default:
 					t.Error("unexpected plan:", pp)
@@ -165,20 +166,6 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
-		{ // CTE
-			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalProjection)
-				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
-				require.True(t, ok)
-				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
-				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
-				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
-			},
-		},
 		{ // recursive CTE
 			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
@@ -213,12 +200,54 @@ func TestPlanStatsLoad(t *testing.T) {
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
+	}
+}
+
+func TestPlanStatsLoadForCTE(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
+	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+	tk.MustExec("insert into pt values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -267,7 +296,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -283,7 +312,8 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
-	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, is)
 	require.Error(t, err) // fail sql for timeout when pseudo=false
 
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
@@ -296,7 +326,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec(sql)
 	failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
-	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+	plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
 	switch pp := plan.(type) {
 	case *plannercore.PhysicalTableReader:
@@ -360,12 +390,12 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	is := dom.InfoSchema()
 	tableNames := []string{"t", "t1"}
 	tblName2TblID := make(map[string]int64)
-	tblID2Tbl := make(map[int64]table.Table)
+	tblID2Tbl := make(map[int64]*model.TableInfo)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
-		tblID2Tbl[tbl.Meta().ID] = tbl
+		tblID2Tbl[tbl.Meta().ID] = tbl.Meta()
 	}
 
 	var input []struct {
@@ -386,9 +416,9 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		require.NotNil(t, tbl)
 		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
-			col := tbl.Meta().FindPublicColumnByName(colName)
+			col := tbl.FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function
@@ -397,7 +427,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// record and check the output
 		cols := make([]string, 0, len(res))
 		for _, tblColID := range res {
-			colName := tbl.Meta().FindColumnNameByID(tblColID.ID)
+			colName := tbl.FindColumnNameByID(tblColID.ID)
 			require.NotEmpty(t, colName)
 			cols = append(cols, colName)
 		}
@@ -453,5 +483,6 @@ func TestPartialStatsInExplain(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	}
 }

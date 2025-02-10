@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	. "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -463,6 +462,27 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 	}
 }
 
+func TestRecommendIndex(t *testing.T) {
+	table := []testCase{
+		{"recommend index run", true, "RECOMMEND INDEX RUN"},
+		{"recommend index run with A = 1", true, "RECOMMEND INDEX RUN WITH A = 1"},
+		{"recommend index run with A = 1, B = 2", true, "RECOMMEND INDEX RUN WITH A = 1, B = 2"},
+		{"recommend index run for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1'"},
+		{"recommend index run for 'select * from t where a=1' with A = 1", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
+		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
+		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
+		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
+		{"recommend index set A = 1", true, "RECOMMEND INDEX SET A = 1"},
+		{"recommend index set A = 1, B = 2", true, "RECOMMEND INDEX SET A = 1, B = 2"},
+		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestAdminStmt(t *testing.T) {
 	table := []testCase{
 		{"admin show ddl;", true, "ADMIN SHOW DDL"},
@@ -477,6 +497,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
 		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin create workload snapshot;", true, "ADMIN CREATE WORKLOAD SNAPSHOT"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
@@ -517,6 +538,17 @@ func TestAdminStmt(t *testing.T) {
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
 		{"admin unset bdr role", true, "ADMIN UNSET BDR ROLE"},
 		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
+		// for alter job
+		{"admin alter ddl jobs 1 thread = 2", true, "ADMIN ALTER DDL JOBS 1 thread = 2"},
+		{"admin alter ddl jobs 1 thread = ", false, ""},
+		{"admin alter ddl jobs 1 thread", false, ""},
+		{"admin alter ddl jobs 1 batch_size = 3", true, "ADMIN ALTER DDL JOBS 1 batch_size = 3"},
+		{"admin alter ddl jobs 1 batch_size = ", false, ""},
+		{"admin alter ddl jobs 1 batch_size", false, ""},
+		{"admin alter ddl jobs 1 max_write_speed = 4", true, "ADMIN ALTER DDL JOBS 1 max_write_speed = 4"},
+		{"admin alter ddl jobs 1 max_write_speed = _UTF8MB4'4MiB'", true, "ADMIN ALTER DDL JOBS 1 max_write_speed = _UTF8MB4'4MiB'"},
+		{"admin alter ddl jobs 1 max_write_speed = ", false, ""},
+		{"admin alter ddl jobs 1 max_write_speed", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -1260,9 +1292,6 @@ func TestDBAStmt(t *testing.T) {
 		// for show column_stats_usage.
 		{"show column_stats_usage", true, "SHOW COLUMN_STATS_USAGE"},
 		{"show column_stats_usage where table_name = 't'", true, "SHOW COLUMN_STATS_USAGE WHERE `table_name`=_UTF8MB4't'"},
-		// for show pump/drainer status.
-		{"show pump status", true, "SHOW PUMP STATUS"},
-		{"show drainer status", true, "SHOW DRAINER STATUS"},
 		// for show binding_cache status
 		{"show binding_cache status", true, "SHOW BINDING_CACHE STATUS"},
 		{"show analyze status", true, "SHOW ANALYZE STATUS"},
@@ -1402,10 +1431,6 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
-
-		// for change statement
-		{"change pump to node_state ='paused' for node_id '127.0.0.1:8250'", true, "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8250'"},
-		{"change drainer to node_state ='paused' for node_id '127.0.0.1:8249'", true, "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8249'"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -1668,7 +1693,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT tidb_decode_key('abc');`, true, "SELECT TIDB_DECODE_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_base64_key('abc');`, true, "SELECT TIDB_DECODE_BASE64_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_sql_digests('[]');`, true, "SELECT TIDB_DECODE_SQL_DIGESTS(_UTF8MB4'[]')"},
-		{`SELECT get_mvcc_info('hex', '0xabc');`, true, "SELECT GET_MVCC_INFO(_UTF8MB4'hex', _UTF8MB4'0xabc')"},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true, "CREATE TABLE `t` (`c1` TIME(2),`c2` DATETIME(2),`c3` TIMESTAMP(2))"},
@@ -2230,7 +2254,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true, "SELECT ENCRYPT(_UTF8MB4'hello'),ENCRYPT(_UTF8MB4'hello', @`salt`)"},
 		{`SELECT MD5('testing');`, true, "SELECT MD5(_UTF8MB4'testing')"},
 		{`SELECT OLD_PASSWORD(@str);`, true, "SELECT OLD_PASSWORD(@`str`)"},
-		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD_FUNC(@`str`)"},
+		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD(@`str`)"},
 		{`SELECT RANDOM_BYTES(@len);`, true, "SELECT RANDOM_BYTES(@`len`)"},
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
@@ -2512,8 +2536,6 @@ func TestDDL(t *testing.T) {
 		{"drop global temporary table t", true, "DROP GLOBAL TEMPORARY TABLE `t`"},
 		{"drop temporary table t", true, "DROP TEMPORARY TABLE `t`"},
 		// test use key word as column name
-		{"CREATE TABLE foo (pump varchar(50), b int);", true, "CREATE TABLE `foo` (`pump` VARCHAR(50),`b` INT)"},
-		{"CREATE TABLE foo (drainer varchar(50), b int);", true, "CREATE TABLE `foo` (`drainer` VARCHAR(50),`b` INT)"},
 		{"CREATE TABLE foo (node_id varchar(50), b int);", true, "CREATE TABLE `foo` (`node_id` VARCHAR(50),`b` INT)"},
 		{"CREATE TABLE foo (node_state varchar(50), b int);", true, "CREATE TABLE `foo` (`node_state` VARCHAR(50),`b` INT)"},
 		// for table option
@@ -3156,6 +3178,17 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX IF NOT EXISTS (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX IF NOT EXISTS(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (by (1, 'a'), (2, 'b'), (3, 'c'));", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BY (1,_UTF8MB4'a'),(2,_UTF8MB4'b'),(3,_UTF8MB4'c'))"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE /*T![global_index] GLOBAL */ COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a' GLOBAL"},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) /*T![global_index] GLOBAL */", true, "ALTER TABLE `t` ADD UNIQUE(`a`) GLOBAL"},
@@ -3168,6 +3201,19 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true, "ALTER TABLE `t` ADD UNIQUE(`a`) COMMENT 'a'"},
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true, "ALTER TABLE `t` ADD UNIQUE(`a`) COMMENT 'a'"},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true, "ALTER TABLE `t` ADD UNIQUE(`a`) COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR (a) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR (VEC_COSINE_DISTANCE(a)) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR ((VEC_COSINE_DISTANCE(a))) USING HASH COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR KEY ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`, `b`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((lower(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((LOWER(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a), a)) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY IF NOT EXISTS (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY IF NOT EXISTS (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT c_1 CHECK (1+1) NOT ENFORCED, ADD UNIQUE (a)", true, "ALTER TABLE `t` ADD CONSTRAINT `c_1` CHECK(1+1) NOT ENFORCED, ADD UNIQUE(`a`)"},
@@ -3215,7 +3261,6 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ALTER INDEX a VISIBLE", true, "ALTER TABLE `t` ALTER INDEX `a` VISIBLE"},
 
 		{"ALTER TABLE t DROP FOREIGN KEY a", true, "ALTER TABLE `t` DROP FOREIGN KEY `a`"},
-		{"ALTER TABLE t DROP FOREIGN KEY IF EXISTS a", true, "ALTER TABLE `t` DROP FOREIGN KEY IF EXISTS `a`"},
 		{"ALTER TABLE t DROP COLUMN a CASCADE", true, "ALTER TABLE `t` DROP COLUMN `a`"},
 		{"ALTER TABLE t DROP COLUMN IF EXISTS a CASCADE", true, "ALTER TABLE `t` DROP COLUMN IF EXISTS `a`"},
 		{`ALTER TABLE testTableCompression COMPRESSION="LZ4";`, true, "ALTER TABLE `testTableCompression` COMPRESSION = 'LZ4'"},
@@ -3339,6 +3384,25 @@ func TestDDL(t *testing.T) {
 		{"CREATE INDEX idx ON t ( a ) VISIBLE INVISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) INVISIBLE"},
 		{"CREATE INDEX idx ON t ( a ) USING HASH VISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) USING HASH VISIBLE"},
 		{"CREATE INDEX idx ON t ( a ) USING HASH INVISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) USING HASH INVISIBLE"},
+
+		// For create vector index statement
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, ""},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, ""},
+		{"CREATE VECTOR INDEX idx ON t USING HNSW ((VEC_COSINE_DISTANCE(a)))", false, ""},
+		{"CREATE VECTOR idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
+		{"CREATE VECTOR KEY idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX ident TYPE HNSW ON d_n.t_n ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX idx USING HNSW ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", false, ""},
+		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", false, ""},
 
 		// For create index with algorithm
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM = DEFAULT", true, "CREATE INDEX `idx` ON `t` (`a`)"},
@@ -3795,6 +3859,19 @@ func TestDDL(t *testing.T) {
 		{"alter table t add primary key (`a`, `b`) clustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) CLUSTERED"},
 		{"alter table t add primary key (`a`, `b`) nonclustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) NONCLUSTERED"},
 
+		// for create table with vector index
+		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", false, ""},
+		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index(VEC_COSINE_DISTANCE(b)) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector key((VEC_COSINE_DISTANCE(b))) TYPE HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index((b+1)) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((`b`+1)) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(a, b))) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`a`, `b`))) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
+
 		// for drop placement policy
 		{"drop placement policy x", true, "DROP PLACEMENT POLICY `x`"},
 		{"drop placement policy x, y", false, ""},
@@ -3868,10 +3945,18 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '8s' ACTION COOLDOWN WATCH EXACT DURATION = UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '8s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION UNLIMITED)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED '7s' ACTION COOLDOWN WATCH EXACT DURATION 'UNLIMITED')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '7s' ACTION = COOLDOWN WATCH = EXACT DURATION = UNLIMITED)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' RU 100 ACTION DRYRUN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' RU = 100 ACTION = DRYRUN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' PROCESSED_KEYS 100 ACTION DRYRUN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' PROCESSED_KEYS = 100 ACTION = DRYRUN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
 		{"create resource group x ru_per_sec=1000 background = (task_types='')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = '')"},
+		{"create resource group x ru_per_sec=1000 background = (UTILIZATION_LIMIT=50)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (UTILIZATION_LIMIT = 50)"},
+		{"create resource group x ru_per_sec=1000 background = (UTILIZATION_LIMIT=\"NAN\")", false, ""},
 		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning',utilization_limit=50)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning', UTILIZATION_LIMIT = 50)"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning', utilization_limit 10)`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning', UTILIZATION_LIMIT = 10)"},
 		{`create resource group x ru_per_sec=UNLIMITED QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
@@ -3880,6 +3965,20 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s'", false, ""},
 		{"create resource group x ru_per_sec=1000 LIMIT=(EXEC_ELAPSED '10s')", false, ""},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (PROCESSED_KEYS=100)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (PROCESSED_KEYS = 100)"},
+		{"create resource group x ru_per_sec=1000 QUERY=(PROCESSED_KEYS 100)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=PROCESSED_KEYS 100", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (PROCESSED_KEYS 100", false, ""},
+		{"create resource group x ru_per_sec=1000 LIMIT=(PROCESSED_KEYS 100)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (PROCESSED_KEYS 100 ACTION DRYRUN ACTION KILL)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (RU=100)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (RU = 100)"},
+		{"create resource group x ru_per_sec=1000 QUERY=(RU 100)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=RU 100", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (RU 100", false, ""},
+		{"create resource group x ru_per_sec=1000 LIMIT=(RU 100)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (RU 100 ACTION DRYRUN ACTION KILL)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED='10s' PROCESSED_KEYS=100)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' PROCESSED_KEYS = 100)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED='10s', PROCESSED_KEYS=100, RU=100)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' PROCESSED_KEYS = 100 RU = 100)"},
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
@@ -3919,6 +4018,9 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group default priority=low background = ( task_types \"ttl\" )", true, "ALTER RESOURCE GROUP `default` PRIORITY = LOW, BACKGROUND = (TASK_TYPES = 'ttl')"},
 		{"alter resource group default burstable background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable background ( utilization_limit = 'abc' )", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},
@@ -4476,12 +4578,12 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "read_from_storage", hints[0].HintName.L)
-	require.Equal(t, "tiflash", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "tiflash", hints[0].HintData.(ast.CIStr).L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 	require.Equal(t, "read_from_storage", hints[1].HintName.L)
-	require.Equal(t, "tikv", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "tikv", hints[1].HintData.(ast.CIStr).L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 
@@ -4554,9 +4656,9 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "query_type", hints[0].HintName.L)
-	require.Equal(t, "olap", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "olap", hints[0].HintData.(ast.CIStr).L)
 	require.Equal(t, "query_type", hints[1].HintName.L)
-	require.Equal(t, "oltp", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "oltp", hints[1].HintData.(ast.CIStr).L)
 
 	// Test MEMORY_QUOTA
 	stmt, _, err = p.Parse("select /*+ MEMORY_QUOTA(1 MB), memory_quota(1 GB) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -5719,10 +5821,10 @@ func TestView(t *testing.T) {
 	require.NoError(t, err)
 	v, ok := sms[0].(*ast.CreateViewStmt)
 	require.True(t, ok)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "select * from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src := `CREATE OR REPLACE ALGORITHM = UNDEFINED DEFINER = root@localhost
                   SQL SECURITY DEFINER
@@ -5735,15 +5837,15 @@ func TestView(t *testing.T) {
 	v, ok = st.(*ast.CreateViewStmt)
 	require.True(t, ok)
 	require.True(t, v.OrReplace)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "root", v.Definer.Username)
 	require.Equal(t, "localhost", v.Definer.Hostname)
-	require.Equal(t, model.NewCIStr("a"), v.Cols[0])
-	require.Equal(t, model.NewCIStr("b"), v.Cols[1])
-	require.Equal(t, model.NewCIStr("c"), v.Cols[2])
+	require.Equal(t, ast.NewCIStr("a"), v.Cols[0])
+	require.Equal(t, ast.NewCIStr("b"), v.Cols[1])
+	require.Equal(t, ast.NewCIStr("c"), v.Cols[2])
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6356,8 +6458,8 @@ func TestTablePartitionNameList(t *testing.T) {
 		tableName, ok := source.Source.(*ast.TableName)
 		require.True(t, ok)
 		require.Len(t, tableName.PartitionNames, 2)
-		require.Equal(t, model.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
-		require.Equal(t, model.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
+		require.Equal(t, ast.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
+		require.Equal(t, ast.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
 	}
 }
 
@@ -6871,66 +6973,6 @@ func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-// For index advisor
-func TestIndexAdviseStmt(t *testing.T) {
-	table := []testCase{
-		{"INDEX ADVISE INFILE '/tmp/t.sql'", true, "INDEX ADVISE INFILE '/tmp/t.sql'"},
-		{"INDEX ADVISE LOCAL INFILE '/tmp/t.sql'", true, "INDEX ADVISE LOCAL INFILE '/tmp/t.sql'"},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1", false, ""},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_TABLE 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_TABLE 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_TABLE 8 PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_TABLE 8 PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_DB 4 PER_TABLE 8", false, ""},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 4", false, ""},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_DB 4", false, ""},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4", false, ""},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 LINES STARTING BY 'ab' TERMINATED BY '\n'", false, ""},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 LINES STARTING BY 'ab' TERMINATED BY 'cd'", false, ""},
-
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", false, ""},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", false, ""},
-	}
-
-	RunTest(t, table, false)
-}
-
 // For BRIE
 func TestBRIE(t *testing.T) {
 	table := []testCase{
@@ -7019,11 +7061,11 @@ func TestStatisticsOps(t *testing.T) {
 	require.True(t, v.IfNotExists)
 	require.Equal(t, "stats1", v.StatsName)
 	require.Equal(t, ast.StatsTypeCardinality, v.StatsType)
-	require.Equal(t, model.CIStr{O: "t", L: "t"}, v.Table.Name)
+	require.Equal(t, ast.CIStr{O: "t", L: "t"}, v.Table.Name)
 	require.Len(t, v.Columns, 3)
-	require.Equal(t, model.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
-	require.Equal(t, model.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
-	require.Equal(t, model.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
+	require.Equal(t, ast.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
+	require.Equal(t, ast.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
+	require.Equal(t, ast.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {
@@ -7339,6 +7381,59 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "SELECT a FROM t", v.Stmt.Text())
 	require.True(t, v.Analyze)
+}
+
+func TestTrafficStmt(t *testing.T) {
+	table := []testCase{
+		{"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' encryption_method='aes' duration='1s'", true, "TRAFFIC CAPTURE TO '/tmp' ENCRYPTION_METHOD = 'aes' DURATION = '1s'"},
+		{"traffic capture to '/tmp' duration='1m'", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1m'"},
+		{"traffic capture to '/tmp' duration='1'", false, ""},
+		{"traffic capture to '/tmp' duration=1s", false, ""},
+		{"traffic capture to '/tmp' compress='true'", false, ""},
+		{"traffic capture duration='1m'", false, ""},
+		{"traffic capture", false, ""},
+		{"traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' user 'root' password '123456' speed 1.0 read_only true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' speed 1.0 user='root'", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1.0 USER = 'root'"},
+		{"traffic replay from '/tmp' speed=1", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1"},
+		{"traffic replay from '/tmp' speed=0.5", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 0.5"},
+		{"traffic replay from '/tmp' speed=-1", false, ""},
+		{"traffic replay speed=1", false, ""},
+		{"traffic replay", false, ""},
+		{"show traffic jobs", true, "SHOW TRAFFIC JOBS"},
+		{"show traffic jobs duration='1m'", false, ""},
+		{"show traffic", false, ""},
+		{"cancel traffic jobs", true, "CANCEL TRAFFIC JOBS"},
+		{"cancel traffic jobs duration='1m'", false, ""},
+		{"cancel traffic", false, ""},
+		{"traffic test", false, ""},
+		{"traffic", false, ""},
+	}
+
+	p := parser.New()
+	var sb strings.Builder
+	for _, tbl := range table {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err, tbl.src)
+			continue
+		}
+		require.NoError(t, err, tbl.src)
+		require.Len(t, stmts, 1)
+		v, ok := stmts[0].(*ast.TrafficStmt)
+		require.True(t, ok)
+		switch v.OpType {
+		case ast.TrafficOpCapture, ast.TrafficOpReplay:
+			require.Equal(t, "/tmp", v.Dir)
+		}
+		sb.Reset()
+		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
+		err = v.Restore(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tbl.restore, sb.String())
+	}
 }
 
 func TestGBKEncoding(t *testing.T) {

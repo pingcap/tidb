@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -103,6 +103,12 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		session.MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
+	if ver < 212 && ver >= 172 {
+		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		// related tables created after version172.
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
+	}
 }
 
 func TestUpgradeVersion66(t *testing.T) {
@@ -112,7 +118,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	seV65 := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(65))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
@@ -120,7 +126,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	revertVersionAndVariables(t, seV65, 65)
 	session.MustExec(t, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
 	session.MustExec(t, seV65, "commit")
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV65)
 	require.NoError(t, err)
 	require.Equal(t, int64(65), ver)
@@ -162,7 +168,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			seV73 := session.CreateSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			err = m.FinishBootstrap(int64(73))
 			require.NoError(t, err)
 			err = txn.Commit(context.Background())
@@ -170,7 +176,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			revertVersionAndVariables(t, seV73, 72)
 			session.MustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
 			session.MustExec(t, seV73, "commit")
-			session.UnsetStoreBootstrapped(store.UUID())
+			store.SetOption(session.StoreBootstrappedKey, nil)
 			ver, err := session.GetBootstrapVersion(seV73)
 			require.NoError(t, err)
 			require.Equal(t, int64(72), ver)
@@ -201,7 +207,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	seV74 := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(int64(74))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
@@ -211,7 +217,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	session.MustExec(t, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
 	session.MustExec(t, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
 	session.MustExec(t, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV74)
 	require.NoError(t, err)
 	require.Equal(t, int64(74), ver)
@@ -247,13 +253,13 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
@@ -312,13 +318,13 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.SupportUpgradeHTTPOpVer)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.SupportUpgradeHTTPOpVer))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.SupportUpgradeHTTPOpVer, ver)
@@ -362,13 +368,13 @@ func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.SupportUpgradeHTTPOpVer)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.SupportUpgradeHTTPOpVer))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.SupportUpgradeHTTPOpVer, ver)
@@ -405,13 +411,13 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
@@ -420,7 +426,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table test.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -436,7 +442,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -454,7 +460,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
 func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
-	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
+	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
 	for i := 0; i < 20; i++ {
 		rows, err := execute(context.Background(), se, sql)
@@ -486,13 +492,13 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
@@ -501,7 +507,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table mysql.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -513,7 +519,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 		}
 	})
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
 		if job != nil && job.ID == jobID {
 			once.Do(func() { ch <- struct{}{} })
 		}
@@ -526,7 +532,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -547,13 +553,13 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
@@ -602,7 +608,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 
 	wg.Wait()
 	// Make sure the second add index operation is successful.
-	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id >=%d order by job_id", jobID)
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id >=%d and table_name in ('upgrade_tbl', 'upgrade_tbl1') order by job_id", jobID)
 	rows, err := execute(context.Background(), seLatestV, sql)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(rows), 2)
@@ -718,7 +724,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
-			if tidb_util.IsSysDB(runJob.SchemaName) {
+			if tidbutil.IsSysDB(runJob.SchemaName) {
 				require.False(t, isPause, cmt)
 			} else {
 				require.True(t, isPause, cmt)
@@ -754,13 +760,13 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	revertVersionAndVariables(t, seV, int(session.CurrentBootstrapVersion-1))
-	session.UnsetStoreBootstrapped(store.UUID())
+	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)

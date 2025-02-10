@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,7 +47,7 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
 
-	ct := testNewContext(store)
+	ct := testNewContext(t, store)
 	// set up hook
 	var (
 		deleteOnlyTable table.Table
@@ -58,7 +57,7 @@ func TestColumnAdd(t *testing.T) {
 	)
 	first := true
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
@@ -83,13 +82,13 @@ func TestColumnAdd(t *testing.T) {
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if dropCol == nil {
 			tbl := external.GetTableByName(t, internal, "test", "t")
 			dropCol = tbl.VisibleCols()[2]
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.NotStarted() {
 			return
 		}
@@ -108,7 +107,7 @@ func TestColumnAdd(t *testing.T) {
 
 	// Add column not default.
 	first = true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
@@ -120,7 +119,7 @@ func TestColumnAdd(t *testing.T) {
 				return
 			}
 			first = false
-			sess := testNewContext(store)
+			sess := testNewContext(t, store)
 			txn, err := newTxn(sess)
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), txn, types.MakeDatums(10, 10))
@@ -143,7 +142,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	var dbID int64
 	var tID int64
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		jobID = job.ID
 		dbID = job.SchemaID
 		tID = job.TableID
@@ -151,7 +150,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 			atomic.AddInt32(&errCount, -1)
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBackfillDDLPrefix+ddl.DDLBackfillers[model.ActionModifyColumn])
 			genAutoRandErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				t := meta.NewMeta(txn)
+				t := meta.NewMutator(txn)
 				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
 			})
@@ -166,7 +165,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	var newTbInfo *model.TableInfo
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		var err error
 		newTbInfo, err = t.GetTable(dbID, tID)
 		if err != nil {
@@ -210,6 +209,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -248,6 +251,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -262,6 +269,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
 	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(2, 2))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Commit(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,6 +305,10 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -308,6 +323,10 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
 	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), txn, h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Commit(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -361,7 +380,7 @@ type historyJobArgs struct {
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	ver, err := m.GetSchemaVersion()
 	require.NoError(t, err)
 	return ver
@@ -415,10 +434,8 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(store kv.Storage) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = store
-	return ctx
+func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
+	return testkit.NewSession(t, store)
 }
 
 func TestIssue40135(t *testing.T) {
@@ -432,7 +449,7 @@ func TestIssue40135(t *testing.T) {
 	tk.MustExec("CREATE TABLE t40135 ( a tinyint DEFAULT NULL, b varchar(32) DEFAULT 'md') PARTITION BY HASH (a) PARTITIONS 2")
 	one := true
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if one {
 			one = false
 			_, checkErr = tk1.Exec("alter table t40135 change column a aNew SMALLINT NULL DEFAULT '-14996'")

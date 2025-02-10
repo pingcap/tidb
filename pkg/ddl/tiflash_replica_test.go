@@ -30,8 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -165,7 +166,7 @@ func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.Sess
 func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		return m.UpdateTable(dbID, tableInfo)
 	})
 	require.NoError(t, err)
@@ -187,7 +188,7 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
 	dom := domain.GetDomain(tk.Session())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
 	updateTableMeta(t, store, tbl.Meta().DBID, tbl.Meta())
@@ -240,12 +241,12 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
-					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+					require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for system table and memory table", err.Error())
 				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
@@ -311,7 +312,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
 	var onceChecker sync.Map
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
 			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
@@ -374,7 +375,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -411,7 +412,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
 	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	oldTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	oldTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
 
@@ -421,7 +422,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	newTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	newTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	require.Greater(t, newTblInfo.Meta().ID, oldTblID)
 

@@ -284,7 +284,7 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 		return origin, true, nil
 	}
 	var newIndexRanges Ranges
-	for i := 0; i < len(origin); i++ {
+	for i := range origin {
 		oRange := origin[i]
 		if !oRange.IsPoint(sctx) {
 			newIndexRanges = append(newIndexRanges, oRange)
@@ -484,7 +484,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		rangeFallback bool
 		err           error
 	)
-	for i := 0; i < eqAndInCount; i++ {
+	for i := range eqAndInCount {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.convertToSortKey)
 		if rb.err != nil {

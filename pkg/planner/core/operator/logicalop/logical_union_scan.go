@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -32,9 +32,9 @@ import (
 type LogicalUnionScan struct {
 	BaseLogicalPlan
 
-	Conditions []expression.Expression
+	Conditions []expression.Expression `hash64-equals:"true"`
 
-	HandleCols util.HandleCols
+	HandleCols util.HandleCols `hash64-equals:"true"`
 }
 
 // Init initializes LogicalUnionScan.

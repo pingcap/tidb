@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -314,7 +314,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 
 	// test normal table should not be allowed
 	val, err = getSessionKey(ctx, normalTb.Meta(), retriever, encodeTableKey(1))
-	require.Error(t, err, "Cannot get normal table key from session")
+	require.ErrorContains(t, err, "Cannot get normal table key from session")
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 

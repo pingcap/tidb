@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
@@ -282,6 +282,19 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			res.Partitions = []string{partitionName}
 		}
+	}
+	if p.AnnIndexExtra != nil {
+		index := IndexAccess{
+			Name: p.AnnIndexExtra.IndexInfo.Name.O,
+		}
+		for _, idxCol := range p.AnnIndexExtra.IndexInfo.Columns {
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
+			} else {
+				index.Cols = append(index.Cols, idxCol.Name.O)
+			}
+		}
+		res.Indexes = []IndexAccess{index}
 	}
 	return res
 }

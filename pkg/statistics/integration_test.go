@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -48,7 +50,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -138,7 +140,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -265,7 +267,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	)
 	tk.MustExec("analyze table t with 2 topn")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -343,7 +345,8 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -352,7 +355,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	getStatsHealthy := func() int {
 		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
@@ -406,7 +409,8 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	defer func() { h.SetLease(origLease) }()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b, c))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
@@ -423,7 +427,8 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
@@ -452,11 +457,12 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	c1 := tblInfo.Columns[0]
@@ -475,10 +481,11 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10),partition p1 values less than maxvalue)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
@@ -498,7 +505,8 @@ func TestIssue44369(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t value(1,1);")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
@@ -506,46 +514,6 @@ func TestIssue44369(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
-}
-
-// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
-func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t value(1,1);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("analyze table t;")
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tblInfo)
-	colA := tblInfo.Columns[0]
-	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
-	require.Equal(t, colA, colInfo)
-
-	tk.MustExec("alter table t modify column a double")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	is = dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo = tbl.Meta()
-	newColA := tblInfo.Columns[0]
-	require.NotEqual(t, colA.ID, newColA.ID)
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-	tk.MustExec("analyze table t;")
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
 }
 
 func TestTableLastAnalyzeVersion(t *testing.T) {
@@ -556,10 +524,11 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// Only create table should not set the last_analyze_version
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl, found := h.Get(tbl.Meta().ID)
 	require.True(t, found)
@@ -568,17 +537,19 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// Only alter table should not set the last_analyze_version
 	tk.MustExec("alter table t add column b int default 0")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
 	tk.MustExec("alter table t add index idx(a)")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	// We don't handle the ADD INDEX event in the HandleDDLEvent.
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	e := <-h.DDLEventCh()
+	require.Equal(t, metamodel.ActionAddIndex, e.GetType())
 	require.Equal(t, 0, len(h.DDLEventCh()))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
@@ -606,7 +577,6 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
 	defer tk.MustExec("set global tidb_enable_historical_stats = default")
@@ -628,4 +598,28 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	}
 	// Each analyze will only generate one record
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
+}
+
+func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int);")
+	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("insert into t values (1, 1);")
+	err = dom.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	tk.MustExec("alter table t add column c int default 1;")
+	err = statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
+	tk.MustExec("select * from t where a = 1 or b = 1 or c = 1;")
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	result := tk.MustQuery("show stats_meta where table_name = 't'")
+	require.Len(t, result.Rows(), 1)
+	// The last analyze time.
+	require.Equal(t, "<nil>", result.Rows()[0][6])
 }

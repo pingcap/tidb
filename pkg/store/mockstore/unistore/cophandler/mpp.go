@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
@@ -384,6 +384,7 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	e.baseMPPExec.children = []mppExec{leftCh, rightCh}
 	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
 		for _, tp := range rightCh.getFieldTypes() {
 			tp.DelFlag(mysql.NotNullFlag)

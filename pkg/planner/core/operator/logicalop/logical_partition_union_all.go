@@ -23,7 +23,7 @@ import (
 
 // LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
 type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
+	LogicalUnionAll `hash64-equals:"true"`
 }
 
 // Init initializes LogicalPartitionUnionAll.

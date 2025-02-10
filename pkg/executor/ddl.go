@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -74,17 +76,20 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+func (e *DDLExec) getLocalTemporaryTable(schema ast.CIStr, table ast.CIStr) (table.Table, bool, error) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil, false
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, errors.Trace(err)
 	}
 
 	if tbl.Meta().TempTableType != model.TempTableLocal {
-		return nil, false
+		return nil, false, nil
 	}
 
-	return tbl, true
+	return tbl, true, nil
 }
 
 // Next implements the Executor Next interface.
@@ -109,7 +114,11 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			if _, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+			_, ok, err := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
@@ -239,16 +248,24 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+	_, exist, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
-	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
+	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	for _, tables := range s.TableToTables {
-		if _, ok := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
 	}
@@ -277,7 +294,10 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
 
-	_, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	_, exists, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if exists {
 		err := infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name})
 		if s.IfNotExists {
@@ -287,7 +307,8 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.Ctx(), is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(ddl.NewMetaBuildContextWithSctx(e.Ctx()), e.Ctx().GetStore(), is, s,
+		dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
 	if err != nil {
 		return err
 	}
@@ -302,7 +323,8 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) error {
 	ret := &core.PreprocessorReturn{}
-	err := core.Preprocess(ctx, e.Ctx(), s.Select, core.WithPreprocessorReturn(ret))
+	nodeW := resolve.NewNodeW(s.Select)
+	err := core.Preprocess(ctx, e.Ctx(), nodeW, core.WithPreprocessorReturn(ret))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -315,7 +337,11 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
@@ -335,11 +361,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.Ctx().GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
+		err = sessionVars.SetSystemVar(vardef.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.SetSystemVar(variable.CollationDatabase, mysql.DefaultCollationName)
+		err = sessionVars.SetSystemVar(vardef.CollationDatabase, mysql.DefaultCollationName)
 		if err != nil {
 			return err
 		}
@@ -375,7 +401,11 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
@@ -383,7 +413,11 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
@@ -410,7 +444,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// Check the table ID was not exists.
 	tbl, ok := dom.InfoSchema().TableByID(context.Background(), tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", tblInfo.Name.O, tbl.Meta().Name.O)
 	}
 
 	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
@@ -419,7 +453,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -470,9 +504,11 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	// Return the cloned meta here, since meta will be modified later.
-	// This may corrupt the infocache.
-	return job, table.Meta().Clone(), nil
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *table.Meta()
+	return job, &tblInfo, nil
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
@@ -537,7 +573,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if tableInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
-	return jobInfo, tableInfo, nil
+
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *tableInfo
+	return jobInfo, &tblInfo, nil
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
@@ -561,7 +602,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = model.NewCIStr(s.NewName)
+		tblInfo.Name = ast.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -576,7 +617,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -596,7 +637,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = model.NewCIStr(s.NewName)
+		dbName = ast.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -617,7 +658,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -651,7 +692,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,
@@ -682,7 +723,11 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	}
 
 	for _, tb := range s.TableLocks {
-		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
@@ -701,7 +746,11 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 	for _, tb := range s.Tables {
-		if _, ok := e.getLocalTemporaryTable(tb.Schema, tb.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tb.Schema, tb.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
 		}
 	}
@@ -733,21 +782,21 @@ func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) e
 }
 
 func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AddResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AlterResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.DropResourceGroup(e.Ctx(), s)

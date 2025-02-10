@@ -29,10 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -60,7 +61,7 @@ type Builder struct {
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
-func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	b.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
@@ -105,11 +106,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 }
 
-func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
 }
 
-func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -118,8 +119,9 @@ func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaD
 	// bundle ops
 	if diff.Type == model.ActionTruncateTable {
 		b.deleteBundle(b.infoSchema, diff.OldTableID)
-		b.markTableBundleShouldUpdate(diff.TableID)
 	}
+	b.markTableBundleShouldUpdate(diff.TableID)
+	// TODO: check that all partitions are updated to the cache!
 
 	for _, opt := range diff.AffectedOpts {
 		if diff.Type == model.ActionTruncateTablePartition {
@@ -127,14 +129,13 @@ func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaD
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			tblIDs = append(tblIDs, opt.OldTableID)
-			b.markPartitionBundleShouldUpdate(opt.TableID)
 		}
 		b.deleteBundle(b.infoSchema, opt.OldTableID)
 	}
 	return tblIDs, nil
 }
 
-func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -148,26 +149,28 @@ func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyReorganizePartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// The table might have changed TableID
+	if diff.TableID != diff.OldTableID && diff.OldTableID != 0 {
+		b.deleteBundle(b.infoSchema, diff.OldTableID)
+	}
+	b.markTableBundleShouldUpdate(diff.TableID)
 
 	// bundle ops
 	for _, opt := range diff.AffectedOpts {
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.infoSchema, opt.OldTableID)
 		}
-		if opt.TableID != 0 {
-			b.markTableBundleShouldUpdate(opt.TableID)
-		}
-		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
 
-func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyExchangeTablePartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
 		ntIDs, err := applyTableUpdate(b, m, diff)
@@ -227,6 +230,7 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 	}
 	// partID is the new id for the non-partitioned table!
 	b.markTableBundleShouldUpdate(partID)
+	b.markTableBundleShouldUpdate(ptID)
 	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
@@ -237,7 +241,6 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 		return nil, errors.Trace(err)
 	}
 	// ntID is the new id for the partition!
-	b.markPartitionBundleShouldUpdate(ntID)
 	err = updateAutoIDForExchangePartition(b.Requirement.Store(), ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -245,7 +248,7 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 	return append(ptIDs, ntIDs...), nil
 }
 
-func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -260,7 +263,7 @@ func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int6
 
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := meta.NewMutator(txn)
 		ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 		if err != nil {
 			return err
@@ -273,7 +276,7 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 		}
 
 		// Set both tables to the maximum auto IDs between normal table and partitioned table.
-		newAutoIDs := meta.AutoIDGroup{
+		newAutoIDs := model.AutoIDGroup{
 			RowID:       max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 			IncrementID: max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 			RandomID:    max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
@@ -292,7 +295,7 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 	return err
 }
 
-func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.SchemaDiff, tp model.ActionType) ([]int64, error) {
+func (b *Builder) applyAffectedOpts(m meta.Reader, tblIDs []int64, diff *model.SchemaDiff, tp model.ActionType) ([]int64, error) {
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			affectedDiff := &model.SchemaDiff{
@@ -313,7 +316,7 @@ func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.Sc
 	return tblIDs, nil
 }
 
-func applyDefaultAction(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -322,7 +325,7 @@ func applyDefaultAction(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
-func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
+func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
@@ -340,6 +343,18 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+
+		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
+		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
+		// only the table with foreign keys are stored in the infoschema to keep a consistent behavior for all
+		// tables.
+		tblInfo, err := m.GetTable(diff.SchemaID, oldTableID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if tblInfo != nil && tblInfo.State != model.StateNone {
+			newTableID = diff.TableID
+		}
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
 		model.ActionRemovePartitioning:
@@ -355,7 +370,7 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -364,7 +379,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionAlterTablePlacement:
+	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
 }
@@ -412,7 +427,7 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 	return tblIDs, keptAllocs, nil
 }
 
-func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -420,7 +435,10 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	oldTableID, newTableID := b.getTableIDs(diff)
+	oldTableID, newTableID, err := b.getTableIDs(m, diff)
+	if err != nil {
+		return nil, err
+	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
@@ -444,14 +462,14 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
 	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 		autoIDChanged = true
 	case model.ActionRebaseAutoRandomBase:
 		autoRandomChanged = true
 	case model.ActionMultiSchemaChange:
 		for _, t := range diff.SubActionTypes {
 			switch t {
-			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 				autoIDChanged = true
 			case model.ActionRebaseAutoRandomBase:
 				autoRandomChanged = true
@@ -489,7 +507,7 @@ func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
 	return affected
 }
 
-func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyCreateSchema(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -505,7 +523,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
-func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaCharsetAndCollate(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -522,7 +540,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 	return nil
 }
 
-func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,7 +583,7 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	return tableIDs
 }
 
-func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyRecoverSchema(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.infoSchema.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", di.ID),
@@ -599,29 +617,12 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.infoSchema.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.ActionType) {
-	switch tp {
-	case model.ActionDropTablePartition:
-	case model.ActionTruncateTablePartition:
-	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-	default:
-		pi := tblInfo.GetPartitionInfo()
-		if pi != nil {
-			for _, partition := range pi.Definitions {
-				b.markPartitionBundleShouldUpdate(partition.ID)
-			}
-		}
-	}
-}
-
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
-		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
+			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 			// If the allocator type might be AutoIncrementType, create both AutoIncrementType
 			// and RowIDAllocType allocator for it. Because auto id and row id could share the same allocator.
 			// Allocate auto id may route to allocate row id, if row id allocator is nil, the program panic!
@@ -648,7 +649,7 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 	return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 }
 
-func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
+func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -661,8 +662,6 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
-
-	b.updateBundleForCreateTable(tblInfo, tp)
 
 	if tp != model.ActionTruncateTablePartition {
 		affected = appendAffectedIDs(affected, tblInfo)
@@ -681,6 +680,12 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
+	for _, alloc := range allocs.Allocs {
+		err := alloc.Transfer(dbInfo.ID, tableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
 	tbl, err := tableFromMeta(allocs, b.factory, tblInfo)
@@ -956,12 +961,12 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			item := tableItem{
 				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     model.NewCIStr(name),
+				tableName:     ast.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.Set(item)
-			b.infoData.byName.Set(item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -1018,7 +1023,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		infoData:     infoData,
 		enableV2:     useV2,
 	}
-	schemaCacheSize := variable.SchemaCacheSize.Load()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -41,7 +41,7 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
-func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
+func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {

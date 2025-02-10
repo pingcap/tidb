@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -36,7 +36,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("begin")
@@ -58,17 +58,20 @@ func TestGetTSFailDirtyState(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockGetTSFail", "return"))
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
 		return fpname == "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
 	})
-	_, err := tk.Session().Execute(ctx, "select * from t")
-	if config.GetGlobalConfig().Store == "unistore" {
+	rss, err := tk.Session().Execute(ctx, "select * from t")
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		require.Error(t, err)
 	} else {
+		for _, rs := range rss {
+			rs.Close()
+		}
 		require.NoError(t, err)
 	}
 
@@ -89,7 +92,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError", `return(true)`))
@@ -108,7 +111,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `sleep(1000)->return("timeout")->return("")`))
@@ -131,7 +134,7 @@ func TestClusterTableSendError(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult")) }()
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
@@ -144,7 +147,7 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)`)
@@ -321,4 +324,11 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
+}
+
+func TestIssue57530(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select * from  TIKV_REGION_STATUS where table_id = 81920").Check(testkit.Rows())
 }

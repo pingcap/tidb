@@ -205,12 +205,12 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
-		ast.DateFormat,
+		ast.DateFormat, ast.DateAdd, ast.AddDate, ast.DateSub, ast.SubDate,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
-		ast.FromDays,                  /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.FromDays, /* ast.ToDays */
+		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd*/, ast.FromUnixTime,
 		/* ast.LastDay */
 		ast.Sysdate,
 
@@ -291,7 +291,15 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			tipb.ScalarFuncSig_CoalesceDuration,
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
+			tipb.ScalarFuncSig_CaseWhenDuration,
+			tipb.ScalarFuncSig_LTJson,
+			tipb.ScalarFuncSig_LEJson,
+			tipb.ScalarFuncSig_GTJson,
+			tipb.ScalarFuncSig_GEJson,
+			tipb.ScalarFuncSig_EQJson,
+			tipb.ScalarFuncSig_NEJson,
+			tipb.ScalarFuncSig_JsonIsNull,
+			tipb.ScalarFuncSig_InJson:
 			return false
 		}
 		return true

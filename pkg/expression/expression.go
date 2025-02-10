@@ -20,16 +20,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
@@ -41,6 +41,7 @@ const (
 	scalarFunctionFlag byte = 3
 	parameterFlag      byte = 4
 	ScalarSubQFlag     byte = 5
+	correlatedColumn   byte = 6
 )
 
 // EvalSimpleAst evaluates a simple ast expression directly.
@@ -55,7 +56,7 @@ type BuildOptions struct {
 	// InputNames is the input names for expression to build
 	InputNames types.NameSlice
 	// SourceTableDB is the database that the source table located
-	SourceTableDB model.CIStr
+	SourceTableDB ast.CIStr
 	// SourceTable is used to provide some extra column info.
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
@@ -71,7 +72,7 @@ type BuildOption func(*BuildOptions)
 // When this option is specified, it will use the table meta to resolve column names.
 func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
-		options.SourceTableDB = model.NewCIStr(db)
+		options.SourceTableDB = ast.NewCIStr(db)
 		options.SourceTable = tblInfo
 	}
 }
@@ -103,11 +104,10 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 // This function is used to build some "simple" expressions with limited context.
 // The below expressions are not supported:
 //   - Subquery
-//   - Param marker (e.g. `?`)
-//   - Variable (e.g. `@a`)
+//   - System Variables (e.g. `@tidb_enable_async_commit`)
 //   - Window functions
 //   - Aggregate functions
-//   - Other special functions such as `GROUPING`
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
 //
 // If you want to build a more complex expression, you should use `EvalAstExprWithPlanCtx` or `RewriteAstExprWithPlanCtx`
 // in `github.com/pingcap/tidb/pkg/planner/util`. They are more powerful but need planner context to build expressions.
@@ -166,10 +166,19 @@ const (
 	ConstStrict
 )
 
+// SafeToShareAcrossSession indicates whether the expression can be shared across different sessions.
+// In Instance Plan Cache, we'll share the same Plan/Expression across different sessions, and this interface
+// is used to check whether the expression is safe to share without cloning.
+type SafeToShareAcrossSession interface {
+	SafeToShareAcrossSession() bool
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
 	CollationInfo
+	base.HashEquals
+	SafeToShareAcrossSession
 
 	Traverse(TraverseAction) Expression
 
@@ -435,7 +444,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		for i := range sel {
 			if isZero[i] == -1 {
-				if eType != types.ETInt && !isEQCondFromIn {
+				if eType != types.ETInt || !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -447,6 +456,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 			}
 
 			if isZero[i] == 0 {
+				nulls[sel[i]] = false
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -811,7 +821,7 @@ func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression 
 }
 
 func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
-	var ret []Expression
+	ret := make([]Expression, 0, len(conditions.GetArgs()))
 	for _, arg := range conditions.GetArgs() {
 		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
 			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
@@ -839,7 +849,7 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 type Assignment struct {
 	Col *Column
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
-	ColName model.CIStr
+	ColName ast.CIStr
 	Expr    Expression
 	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
 	// should be evaluated after the duplicate situation is detected in the executing procedure.
@@ -909,49 +919,57 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
-		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
-		return expr
+		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return res, err
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = evaluateExprWithNull(ctx, schema, arg)
+			res, err := EvaluateExprWithNull(ctx, schema, arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = res
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x
+			return x, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x)
+			return FoldConstant(ctx, x), nil
 		}
 	}
-	return expr
+	return expr, nil
 }
 
 // evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			res, nullFromSet, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			if err != nil {
+				return nil, false, err
+			}
+			args[i], nullFromSets[i] = res, nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
@@ -988,26 +1006,29 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		if err != nil {
+			return nil, false, err
+		}
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
 		// then we think the result Null Constant is also affected by the column schema
-		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+		return c, ok && cons.Value.IsNull() && allArgsNullFromSet, nil
 	case *Column:
 		if !schema.Contains(x) {
-			return x, false
+			return x, false, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x), false
+			return FoldConstant(ctx, x), false, nil
 		}
 	}
-	return expr, false
+	return expr, false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -1049,12 +1070,12 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 		}
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
 	return schema, names, nil
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1117,7 +1138,7 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
+		FuncName: ast.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
 	}
@@ -1158,12 +1179,12 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
+		FuncName: ast.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
 	if keepNull {
-		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
+		sf.FuncName = ast.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(ctx, sf), nil
 }
@@ -1228,7 +1249,7 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
 						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
 						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
-						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						incDecimal := min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
 						newFlen = oldFlen + incDecimal
 						newDecimal = oldDecimal + incDecimal
 					} else {

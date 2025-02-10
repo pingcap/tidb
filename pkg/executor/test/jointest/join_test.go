@@ -757,6 +757,12 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a int, index(a));")
 	tk.MustExec("create table t2(a int, index(a));")
+	fpName2 := "github.com/pingcap/tidb/pkg/executor/join/TestIssue49692"
+	require.NoError(t, failpoint.Enable(fpName2, `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName2))
+	}()
+
 	func() {
 		fpName := "github.com/pingcap/tidb/pkg/executor/join/TestIssue30211"
 		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
@@ -771,13 +777,21 @@ func TestIssue30211(t *testing.T) {
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
-	tk.MustExec("set @@tidb_mem_quota_query=8000;")
+
+	// the memory used in planner stage is less than the memory used in executor stage, so we have to use
+	// the Plan Cache so that the query will not be canceled during compilation.
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustExec("prepare stmt2 from 'select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+
+	tk.MustExec("set @@tidb_mem_quota_query=1000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err := tk.QueryToErr("execute stmt1")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err = tk.QueryToErr("execute stmt2")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
@@ -898,4 +912,41 @@ func TestIssue49033(t *testing.T) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.EqualError(t, err, "testIssue49033")
 	require.NoError(t, rs.Close())
+}
+
+func TestIssue11895(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint unsigned);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(18446744073709551615);")
+	tk.MustExec("insert into t1 value(-1);")
+
+	tk.MustQuery("select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;").Check(testkit.Rows("18446744073709551615 FFFFFFFFFFFFFFFF"))
+}
+
+func TestIssue11896(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(1);")
+	tk.MustExec("insert into t1 value(1);")
+
+	tk.MustQuery("select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(-1);")
+	tk.MustExec("insert into t1 value(18446744073709551615);")
+
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;").Check(nil)
 }

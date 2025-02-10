@@ -28,7 +28,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,16 +38,16 @@ func TestFieldsFromTraceInfo(t *testing.T) {
 	fields := fieldsFromTraceInfo(nil)
 	require.Equal(t, 0, len(fields))
 
-	fields = fieldsFromTraceInfo(&model.TraceInfo{})
+	fields = fieldsFromTraceInfo(&tracing.TraceInfo{})
 	require.Equal(t, 0, len(fields))
 
-	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1})
+	fields = fieldsFromTraceInfo(&tracing.TraceInfo{ConnectionID: 1})
 	require.Equal(t, []zap.Field{zap.Uint64("conn", 1)}, fields)
 
-	fields = fieldsFromTraceInfo(&model.TraceInfo{SessionAlias: "alias123"})
+	fields = fieldsFromTraceInfo(&tracing.TraceInfo{SessionAlias: "alias123"})
 	require.Equal(t, []zap.Field{zap.String("session_alias", "alias123")}, fields)
 
-	fields = fieldsFromTraceInfo(&model.TraceInfo{ConnectionID: 1, SessionAlias: "alias123"})
+	fields = fieldsFromTraceInfo(&tracing.TraceInfo{ConnectionID: 1, SessionAlias: "alias123"})
 	require.Equal(t, []zap.Field{zap.Uint64("conn", 1), zap.String("session_alias", "alias123")}, fields)
 }
 
@@ -87,14 +87,14 @@ func TestZapLoggerWithKeys(t *testing.T) {
 
 	err = InitLogger(conf)
 	require.NoError(t, err)
-	ctx1 = WithTraceFields(context.Background(), &model.TraceInfo{ConnectionID: 456, SessionAlias: "alias789"})
+	ctx1 = WithTraceFields(context.Background(), &tracing.TraceInfo{ConnectionID: 456, SessionAlias: "alias789"})
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 
 	err = InitLogger(conf)
 	require.NoError(t, err)
-	newLogger := LoggerWithTraceInfo(log.L(), &model.TraceInfo{ConnectionID: 789, SessionAlias: "alias012"})
+	newLogger := LoggerWithTraceInfo(log.L(), &tracing.TraceInfo{ConnectionID: 789, SessionAlias: "alias012"})
 	ctx1 = context.WithValue(context.Background(), CtxLogKey, newLogger)
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithTraceInfoPattern)
 	err = os.Remove(fileCfg.Filename)
@@ -187,7 +187,7 @@ func TestSetLevel(t *testing.T) {
 func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 	var prop *log.ZapProperties
 	var err error
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		level := "Error"
 		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 		if i == 0 {
@@ -285,7 +285,7 @@ func TestProxyFields(t *testing.T) {
 			require.NoError(t, os.Unsetenv(env))
 		}
 
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if (1<<i)&mask != 0 {
 				require.NoError(t, os.Setenv(envs[i], envPreset[i]))
 			}
@@ -320,7 +320,7 @@ func prepareStdoutLogger(t *testing.T) (*os.File, string) {
 func TestSampleLoggerFactory(t *testing.T) {
 	file, filename := prepareStdoutLogger(t)
 	fac := SampleLoggerFactory(time.Minute, 3, zap.String(LogFieldCategory, "ddl"))
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		fac().Info("sample log test")
 	}
 	require.NoError(t, file.Close())

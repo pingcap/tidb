@@ -16,15 +16,18 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -35,38 +38,37 @@ func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPat
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	idxMergeDigest := "["
-	for i := startIndex; i < len(paths); i++ {
-		if i != startIndex {
-			idxMergeDigest += ","
-		}
-		path := paths[i]
-		idxMergeDigest += "{Idxs:["
-		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
-			if j > 0 {
-				idxMergeDigest += ","
-			}
-			idxMergeDigest += "{"
+	resultStrs := make([]string, 0, len(paths)-startIndex)
+	for _, path := range paths[startIndex:] {
+		partialPathsStrs := make([]string, 0, len(path.PartialIndexPaths))
+		for _, partial := range path.PartialAlternativeIndexPaths {
 			// for every ONE index partial alternatives, output a set.
-			for k, one := range path.PartialAlternativeIndexPaths[j] {
-				if k != 0 {
-					idxMergeDigest += ","
+			oneAlternativeStrs := make([]string, 0, len(partial))
+			for _, oneAlternative := range partial {
+				if len(oneAlternative) == 1 {
+					oneAlternativeStrs = append(oneAlternativeStrs, oneAlternative[0].Index.Name.L)
+					continue
 				}
-				idxMergeDigest += one.Index.Name.L
+				pathStrs := make([]string, 0, len(oneAlternative))
+				for _, singlePath := range oneAlternative {
+					pathStrs = append(pathStrs, singlePath.Index.Name.L)
+				}
+				oneAlternativeStrs = append(oneAlternativeStrs, "{"+strings.Join(pathStrs, ",")+"}")
 			}
-			idxMergeDigest += "}"
+			partialPathsStrs = append(partialPathsStrs, "{"+strings.Join(oneAlternativeStrs, ",")+"}")
 		}
-		idxMergeDigest += "],TbFilters:["
-		for j := 0; j < len(path.TableFilters); j++ {
-			if j > 0 {
-				idxMergeDigest += ","
-			}
-			idxMergeDigest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
+
+		filterStrs := make([]string, 0, len(path.TableFilters))
+		for _, filter := range path.TableFilters {
+			filterStrs = append(filterStrs, filter.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
-		idxMergeDigest += "]}"
+		resultStrs = append(resultStrs, "{Idxs:["+
+			strings.Join(partialPathsStrs, ",")+
+			"],TbFilters:["+
+			strings.Join(filterStrs, ",")+
+			"]}")
 	}
-	idxMergeDigest += "]"
-	return idxMergeDigest
+	return "[" + strings.Join(resultStrs, ",") + "]"
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {
@@ -84,11 +86,12 @@ func TestIndexMergePathGeneration(t *testing.T) {
 	for i, tc := range input {
 		stmt, err := parser.ParseOneStmt(tc, "", "")
 		require.NoErrorf(t, err, "case:%v sql:%s", i, tc)
-		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		if err != nil {
 			testdata.OnRecord(func() {
 				output[i] = err.Error()
@@ -100,10 +103,10 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		lp := p.(base.LogicalPlan)
-		var ds *DataSource
+		var ds *logicalop.DataSource
 		for ds == nil {
 			switch v := lp.(type) {
-			case *DataSource:
+			case *logicalop.DataSource:
 				ds = v
 			default:
 				lp = lp.Children()[0]
@@ -111,7 +114,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.PossibleAccessPaths)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
 		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {

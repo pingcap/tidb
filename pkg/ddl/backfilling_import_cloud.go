@@ -24,45 +24,55 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	job           *model.Job
+	store         kv.Storage
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
-	bc            ingest.BackendCtx
 	cloudStoreURI string
+	backendCtx    ingest.BackendCtx
+	backend       *local.Backend
 }
 
 func newCloudImportExecutor(
 	job *model.Job,
+	store kv.Storage,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
 	return &cloudImportExecutor{
 		job:           job,
+		store:         store,
 		indexes:       indexes,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
+		return err
+	}
+	m.backend = bd
+	m.backendCtx = bCtx
 	return nil
 }
 
@@ -73,8 +83,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-
-	local := m.bc.GetLocalBackend()
+	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -109,6 +118,11 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		all.Merge(g)
 	}
 
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
@@ -116,6 +130,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
 			EndKey:        all.EndKey,
+			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
@@ -126,7 +141,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = subtask.Concurrency * 2
+	local.WorkerConcurrency = int(m.GetResource().CPU.Capacity()) * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err == nil {
 		return nil
@@ -149,12 +164,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	return nil
-}
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
+	if m.backendCtx != nil {
+		m.backendCtx.Close()
+	}
+	m.backend.Close()
 	return nil
 }

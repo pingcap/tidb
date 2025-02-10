@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -58,8 +59,8 @@ func TransferBoolToValue(enable bool) string {
 // GetTableSchema returns the schema of a table from TiDB.
 func GetTableSchema(
 	dom *domain.Domain,
-	dbName model.CIStr,
-	tableName model.CIStr,
+	dbName ast.CIStr,
+	tableName ast.CIStr,
 ) (*model.TableInfo, error) {
 	info := dom.InfoSchema()
 	table, err := info.TableByName(context.Background(), dbName, tableName)
@@ -74,7 +75,7 @@ const maxUserTablesNum = 10
 // AssertUserDBsEmpty check whether user dbs exist in the cluster
 func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
-	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
+	m := meta.NewReader(dom.Store().GetSnapshot(kv.MaxVersion))
 	userTables := make([]string, 0, maxUserTablesNum+1)
 	appendTables := func(dbName, tableName string) bool {
 		if len(userTables) >= maxUserTablesNum {
@@ -148,7 +149,7 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
 		}
 		return getTSErr
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	if err != nil {
 		log.Error("failed to get TS", zap.Error(err))

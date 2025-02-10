@@ -68,34 +68,12 @@ func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)
 }
 
-// Max returns the largest one from its arguments.
-func Max[T constraints.Ordered](x T, xs ...T) T {
-	max := x
-	for _, n := range xs {
-		if n > max {
-			max = n
-		}
-	}
-	return max
-}
-
-// Min returns the smallest one from its arguments.
-func Min[T constraints.Ordered](x T, xs ...T) T {
-	min := x
-	for _, n := range xs {
-		if n < min {
-			min = n
-		}
-	}
-	return min
-}
-
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Ordered](n, min, max T) T {
-	if n >= max {
-		return max
-	} else if n <= min {
-		return min
+func Clamp[T constraints.Ordered](n, minv, maxv T) T {
+	if n >= maxv {
+		return maxv
+	} else if n <= minv {
+		return minv
 	}
 	return n
 }

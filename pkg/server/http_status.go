@@ -109,6 +109,8 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
+		// The protocols should be listed as the same order we dispatch the connection with cmux.
+		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
 		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
 		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
 	} else {
@@ -217,6 +219,8 @@ func (s *Server) startHTTPServer() {
 		Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
 		Name("StatsHistoryDump")
+	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
+		Name("StatsPriorityQueue")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
@@ -225,7 +229,6 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
-	router.Handle("/binlog/recover", tikvhandler.BinlogRecover{}).Name("BinlogRecover")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -256,7 +259,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
 		router.Handle("/tables/{db}/{table}/ranges", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRanges))
@@ -482,7 +485,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
-	if s.cfg.Store == "tikv" {
+	if s.cfg.Store == config.StoreTypeTiKV {
 		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
 			var fullPath string
@@ -621,4 +624,18 @@ func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHistoryHandler(do)
+}
+
+func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+
+	return optimizor.NewStatsPriorityQueueHandler(do)
 }

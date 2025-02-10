@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -39,16 +40,17 @@ import (
 
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{tblInfo},
 	}
+	args := &model.CreateTableArgs{TableInfo: tblInfo}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -61,7 +63,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest
 func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
 
@@ -79,7 +81,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
-		Name: model.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 	genIDs, err := genGlobalIDs(store, 1)
 
@@ -91,7 +93,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
-			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Name:         ast.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
 			DefaultValue: i + 1,
 			State:        model.StatePublic,
@@ -112,7 +114,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
 		return err
@@ -122,7 +124,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 
 func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 
 	genIDs, err := genGlobalIDs(store, 1)
@@ -135,17 +137,17 @@ func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 
 func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{dbInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
 		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.CreateSchemaArgs{DBInfo: dbInfo}, true)))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -155,28 +157,29 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 }
 
 func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
-	return &model.Job{
+	j := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{true},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
 		}},
 	}
+	return j
 }
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{FKCheck: true}, true))
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
 }
 
-func isDDLJobDone(test *testing.T, t *meta.Meta, store kv.Storage) bool {
+func isDDLJobDone(test *testing.T, t *meta.Mutator, store kv.Storage) bool {
 	tk := testkit.NewTestKit(test, store)
 	rows := tk.MustQuery("select * from mysql.tidb_ddl_job").Rows()
 
@@ -193,7 +196,7 @@ func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInf
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for {
 		err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
+			t := meta.NewMutator(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			require.NoError(test, err)
 
@@ -269,6 +272,7 @@ func TestSchema(t *testing.T) {
 
 	// Drop a non-existent database.
 	job = &model.Job{
+		Version:    model.JobVersion1,
 		SchemaID:   dbInfo.ID,
 		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
@@ -276,7 +280,7 @@ func TestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{}, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -303,7 +307,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithSchemaLoader(domain),
 	)
 	det2 := de2.(ddl.ExecutorForTest)
-	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
+	err := d2.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
 		return session, nil
@@ -332,7 +336,9 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.NoError(t, err)
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
-		[]any{dbInfo}, testkit.NewTestKit(t, store).Session(), det2, store)
+		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) model.JobArgs {
+			return &model.CreateSchemaArgs{DBInfo: dbInfo}
+		})
 }
 
 func doDDLJobErr(
@@ -340,23 +346,24 @@ func doDDLJobErr(
 	schemaID, tableID int64,
 	schemaName, tableName string,
 	tp model.ActionType,
-	args []any,
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	store kv.Storage,
+	handler func(job *model.Job) model.JobArgs,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   schemaID,
 		SchemaName: schemaName,
 		TableID:    tableID,
 		TableName:  tableName,
 		Type:       tp,
-		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+	args := handler(job)
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job
@@ -377,6 +384,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	dbName := "RenameTableAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`create schema ` + dbName + "2")
@@ -390,8 +398,6 @@ func TestRenameTableAutoIDs(t *testing.T) {
 
 	waitFor := func(col int, tableName, s string) {
 		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
 			sql := `admin show ddl jobs where db_name like '` + strings.ToLower(dbName) + `%' and table_name like '` + tableName + `%' and job_type = 'rename table'`
 			res := tk4.MustQuery(sql).Rows()
 			if len(res) == 1 && res[0][col] == s {

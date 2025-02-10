@@ -941,6 +941,7 @@ const (
 	ErrConstraintNotFound                                    = 3940
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
+	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
@@ -1084,6 +1085,8 @@ const (
 	ErrBRJobNotFound                       = 8174
 	ErrMemoryExceedForQuery                = 8175
 	ErrMemoryExceedForInstance             = 8176
+	ErrDeleteNotFoundColumn                = 8177
+	ErrKeyTooLarge                         = 8178
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1142,6 +1145,8 @@ const (
 
 	ErrGlobalIndexNotExplicitlySet = 8264
 
+	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1152,6 +1157,10 @@ const (
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
+
+	// Reserved for future use.
+	ErrEngineAttributeInvalidFormat = 8270
+	ErrStorageClassInvalidSpec      = 8271
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1167,4 +1176,5 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
+	ErrTiFlashBackfillIndex      = 9014
 )

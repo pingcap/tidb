@@ -67,8 +67,8 @@
       "Join{DataScan(a)->DataScan(b)}(test.t.a,test.t.a)->Aggr(count(1))->Projection",
       "DataScan(t)->Projection->Projection",
       "DataScan(t)->Projection->Projection",
-      "DataScan(t)->Projection->Projection",
-      "DataScan(t)->Projection->Projection",
+      "Dual->Projection->Projection",
+      "Dual->Projection->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.b)(test.t.a,test.t.c)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
@@ -150,15 +150,22 @@
       "Join{DataScan(t)->DataScan(s)}->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}->Limit->Projection",
       "DataScan(t)->Projection->TopN([Column#13 true],0,1)->Projection",
-      "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
-      "Join{DataScan(t)->TopN([test.t.a],0,10)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],5,5)->Projection",
+      "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->Sort->Projection",
+      "Join{DataScan(t)->TopN([test.t.a],5,5)->DataScan(s)}(test.t.a,test.t.a)->Sort->Projection",
+      "Join{DataScan(t)->TopN([test.t.f test.t.g],5,5)->DataScan(s)}(test.t.f,test.t.f)(test.t.g,test.t.g)->Sort->Projection",
+      "Join{DataScan(t)->TopN([test.t.g test.t.f],5,5)->DataScan(s)}(test.t.f,test.t.f)(test.t.g,test.t.g)->Sort->Projection",
+      "Join{DataScan(t)->TopN([test.t.g],0,10)->DataScan(s)}(test.t.g,test.t.g)->TopN([test.t.g],5,5)->Projection",
+      "Join{DataScan(t)->TopN([test.t.f test.t.g],0,10)->DataScan(s)}(test.t.g,test.t.g)->TopN([test.t.f test.t.g],5,5)->Projection",
+      "Join{DataScan(t)->TopN([test.t.c test.t.d test.t.e],5,5)->DataScan(s)}(test.t.c,test.t.c)(test.t.d,test.t.d)(test.t.e,test.t.e)->Sort->Projection",
+      "Join{DataScan(t)->TopN([test.t.c test.t.d],0,10)->DataScan(s)}(test.t.c,test.t.c)(test.t.d,test.t.d)->TopN([test.t.c test.t.d],5,5)->Projection",
+      "Join{DataScan(t)->TopN([test.t.b],0,10)->DataScan(s)}(test.t.b,test.t.b)->TopN([test.t.b],5,5)->Projection",
       "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,test.t.a)->Limit->Projection",
       "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,test.t.a)->Limit->Projection",
-      "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
+      "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->Sort->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#37],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
-      "Join{DataScan(t)->DataScan(s)->TopN([test.t.a],0,5)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
+      "Join{DataScan(t)->DataScan(s)->TopN([test.t.a],0,5)}(test.t.a,test.t.a)->Sort->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a test.t.b],0,5)->Projection",
       "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([test.t.a test.t.b],0,5)->Projection}->TopN([Column#25 Column#26],0,5)",
       "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([test.t.a test.t.b],0,10)->Projection}->TopN([Column#25 Column#26],5,5)",
@@ -849,12 +856,12 @@
         "Right": "[]"
       },
       {
-        "Plan": "Join{DataScan(t1)->DataScan(t2)}->Projection",
+        "Plan": "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->Projection",
         "Left": "[]",
         "Right": "[]"
       },
       {
-        "Plan": "Join{DataScan(t1)->DataScan(t2)}->Projection",
+        "Plan": "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->Projection",
         "Left": "[]",
         "Right": "[]"
       },
@@ -1043,6 +1050,136 @@
         "Sel": "[or(and(eq(test.t.c, 1), or(and(eq(test.t.a, 3), eq(test.t.a, 3)), and(eq(test.t.a, 4), eq(test.t.a, 4)))), and(eq(test.t.a, 2), isnull(test.t.a)))]",
         "Left": "[or(and(eq(test.t.c, 1), or(eq(test.t.a, 3), eq(test.t.a, 4))), eq(test.t.a, 2))]",
         "Right": "[]"
+      }
+    ]
+  },
+  {
+    "Name": "TestPruneColumnsForDelete",
+    "Cases": [
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "PointGet(Handle(t.a)1)"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "BatchPointGet(Handle(t.a)[1 2 3])"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ]
+        ],
+        "InsidePlan": "TableReader(Table(t))"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t3._tidb_rowid: 0",
+        "FullLayoutInfo": [
+          [
+            "tid: 4, [start, end]: [0, 0] ",
+            "handle cols: test.t3._tidb_rowid:0"
+          ]
+        ],
+        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)]))->Projection"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.pt2.a: 0, test.pt2.b: 1, test.pt2.c: 2, test.pt2.d: 3, test.pt2.e: 4, test.pt2.c_str: 5, test.pt2.d_str: 6, test.pt2.e_str: 7, test.pt2.f: 8, test.pt2.g: 9, test.pt2.h: 10, test.pt2.i_date: 11, test.pt2.ptn: 12",
+        "FullLayoutInfo": [
+          [
+            "no column-pruning happened"
+          ]
+        ],
+        "InsidePlan": "PartitionUnionAll{TableReader(Table(pt2))->TableReader(Table(pt2))}"
+      },
+      {
+        "SQL": "",
+        "PrunedOutput": "test.t.a: 0, test.t.c: 1, test.t.d: 2, test.t.e: 3, test.t.c_str: 4, test.t.d_str: 5, test.t.e_str: 6, test.t.f: 7, test.t.g: 8, test.t3._tidb_rowid: 9",
+        "FullLayoutInfo": [
+          [
+            "tid: 1, [start, end]: [0, 9] ",
+            "handle cols: test.t.a:0",
+            "index c_d_e: c d e ",
+            "col offset: [1 2 3]",
+            "index x: e ",
+            "col offset: [3]",
+            "index f: f ",
+            "col offset: [7]",
+            "index g: g ",
+            "col offset: [8]",
+            "index f_g: f g ",
+            "col offset: [7 8]",
+            "index c_d_e_str: c_str d_str e_str ",
+            "col offset: [4 5 6]",
+            "index e_d_c_str_prefix: e_str d_str c_str ",
+            "col offset: [6 5 4]"
+          ],
+          [
+            "tid: 4, [start, end]: [9, 9] ",
+            "handle cols: test.t3._tidb_rowid:9"
+          ]
+        ],
+        "InsidePlan": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t3))}(test.t.a,test.t3.a)"
       }
     ]
   }

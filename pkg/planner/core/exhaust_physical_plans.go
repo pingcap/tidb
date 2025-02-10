@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -372,6 +372,57 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
+func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+	// nullaware join
+	if len(leftNAJoinKeys) > 0 {
+		return false
+	}
+	// cross join
+	if len(leftJoinKeys) == 0 {
+		return false
+	}
+	// join with null equal condition
+	for _, value := range isNullEQ {
+		if value {
+			return false
+		}
+	}
+	switch joinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+	if !isGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+		return false
+	}
+	switch joinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin,
+		logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+		// null aware join is not supported yet
+		if len(leftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(leftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range isNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
@@ -380,18 +431,41 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints")
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Conflicting HASH_JOIN_BUILD and HASH_JOIN_PROBE hints detected. " +
+			"Both sides cannot be specified to use the same table. Please review the hints")
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
+		leftNAJoinKeys, _ := p.GetNAJoinKeys()
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
+			if !forceLeftToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, false))
+			}
+			if !forceRightToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, true))
+			}
+		} else {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+			if forceLeftToBuild || forceRightToBuild {
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
+						"Please remove these hints",
+					p.JoinType))
+				forceLeftToBuild = false
+				forceRightToBuild = false
+			}
+		}
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
-			// Do not support specifying the build and probe side for semi join.
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
+					"Please remove these hints",
+				p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
@@ -746,7 +820,7 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 // hasDitryWrite: whether the inner child contains dirty data.
 // zippedChildren: [Projection, Aggregation, Selection]
 type indexJoinInnerChildWrapper struct {
-	ds             *DataSource
+	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
 }
@@ -762,7 +836,7 @@ func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base
 childLoop:
 	for curChild := innerChild; curChild != nil; curChild = nextChild(curChild) {
 		switch child := curChild.(type) {
-		case *DataSource:
+		case *logicalop.DataSource:
 			wrapper.ds = child
 			break childLoop
 		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
@@ -826,7 +900,7 @@ func buildIndexJoinInner2TableScan(
 		ranges = indexJoinResult.chosenRanges
 	} else {
 		pkMatched := false
-		pkCol := ds.getPKIsHandleCol()
+		pkCol := ds.GetPKIsHandleCol()
 		if pkCol == nil {
 			return nil
 		}
@@ -1024,23 +1098,29 @@ func constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	return constructIndexJoinInnerSideTask(p, prop, copTask, ds, nil, wrapper)
+	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, copTask, ds, nil, wrapper)
 }
 
-func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
+func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, skipAgg bool) base.Task {
 	for i := len(zippedChildren) - 1; i >= 0; i-- {
 		switch x := zippedChildren[i].(type) {
 		case *logicalop.LogicalUnionScan:
-			child = constructInnerUnionScan(prop, x, child)
+			curTask = constructInnerUnionScan(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalProjection:
-			child = constructInnerProj(prop, x, child)
+			curTask = constructInnerProj(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalSelection:
-			child = constructInnerSel(prop, x, child)
+			curTask = constructInnerSel(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalAggregation:
-			child = constructInnerAgg(prop, x, child)
+			if skipAgg {
+				continue
+			}
+			curTask = constructInnerAgg(prop, x, curTask.Plan()).Attach2Task(curTask)
+		}
+		if curTask.Invalid() {
+			return nil
 		}
 	}
-	return child
+	return curTask
 }
 
 func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
@@ -1049,7 +1129,6 @@ func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.Lo
 	}
 	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
 	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
-	physicalHashAgg.SetChildren(child)
 	return physicalHashAgg
 }
 
@@ -1060,7 +1139,6 @@ func constructInnerSel(prop *property.PhysicalProperty, sel *logicalop.LogicalSe
 	physicalSel := PhysicalSelection{
 		Conditions: sel.Conditions,
 	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), prop)
-	physicalSel.SetChildren(child)
 	return physicalSel
 }
 
@@ -1072,22 +1150,20 @@ func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.Logical
 		Exprs:            proj.Exprs,
 		CalculateNoDelay: proj.CalculateNoDelay,
 	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
-	physicalProj.SetChildren(child)
 	physicalProj.SetSchema(proj.Schema())
 	return physicalProj
 }
 
-func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, childPlan base.PhysicalPlan) base.PhysicalPlan {
 	if us == nil {
-		return reader
+		return childPlan
 	}
 	// Use `reader.StatsInfo()` instead of `us.StatsInfo()` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.Conditions,
 		HandleCols: us.HandleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), prop)
-	physicalUnionScan.SetChildren(reader)
+	}.Init(us.SCtx(), childPlan.StatsInfo(), us.QueryBlockOffset(), prop)
 	return physicalUnionScan
 }
 
@@ -1179,7 +1255,7 @@ func constructInnerIndexScanTask(
 		isPartition:      ds.PartitionDefIdx != nil,
 		physicalTableID:  ds.PhysicalTableID,
 		tblColHists:      ds.TblColHists,
-		pkIsHandleCol:    ds.getPKIsHandleCol(),
+		pkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	cop := &CopTask{
 		indexPlan:   is,
@@ -1325,7 +1401,7 @@ func constructInnerIndexScanTask(
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
 	}
-	return constructIndexJoinInnerSideTask(p, prop, cop, ds, path, wrapper)
+	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, cop, ds, path, wrapper)
 }
 
 // construct the inner join task by inner child plan tree
@@ -1336,7 +1412,7 @@ func constructInnerIndexScanTask(
 //	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
 //
 // Step2: build other inner plan node to task
-func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
+func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *logicalop.DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
 	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {
@@ -1353,8 +1429,7 @@ func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.Ph
 	// If the bottom plan is not aggregation or the aggregation can't be pushed to coprocessor, we will construct a root task directly.
 	if !canPushAggToCop {
 		result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-		result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren, result.GetPlan()))
-		return result
+		return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, false)
 	}
 
 	// Try stream aggregation first.
@@ -1434,8 +1509,7 @@ func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.Ph
 	if !ok {
 		return nil
 	}
-	result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
-	return result
+	return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, true)
 }
 
 func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.PhysicalPlan) []base.PhysicalPlan {
@@ -2169,7 +2243,8 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if lt.SCtx().GetSessionVars().IsMPPAllowed() {
+	mppAllowed := lt.SCtx().GetSessionVars().IsMPPAllowed()
+	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
@@ -2181,6 +2256,46 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
+		ret = append(ret, topN)
+	}
+	// If we can generate MPP task and there's vector distance function in the order by column.
+	// We will try to generate a property for possible vector indexes.
+	if mppAllowed {
+		if len(lt.ByItems) != 1 {
+			return ret
+		}
+		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
+		if vs == nil {
+			return ret
+		}
+		// Currently vector index only accept ascending order.
+		if lt.ByItems[0].Desc {
+			return ret
+		}
+		// Currently, we only deal with the case the TopN is directly above a DataSource.
+		ds, ok := lt.Children()[0].(*logicalop.DataSource)
+		if !ok {
+			return ret
+		}
+		// Reject any filters.
+		if len(ds.PushedDownConds) > 0 {
+			return ret
+		}
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VSInfo = vs
+		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	return ret
@@ -2321,9 +2436,19 @@ func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProp
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.Start.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
+				return nil
+			}
 			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
+				return nil
+			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.End.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
 				return nil
 			}
 
@@ -2414,87 +2539,6 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
-}
-
-func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
-	p := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
-	ret := true
-	for _, ch := range p.Children() {
-		switch c := ch.(type) {
-		case *DataSource:
-			validDs := false
-			indexMergeIsIntersection := false
-			for _, path := range c.PossibleAccessPaths {
-				if path.StoreType == storeTp {
-					validDs = true
-				}
-				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
-					indexMergeIsIntersection = true
-				}
-			}
-			ret = ret && validDs
-
-			_, isTopN := p.Self().(*logicalop.LogicalTopN)
-			_, isLimit := p.Self().(*logicalop.LogicalLimit)
-			if (isTopN || isLimit) && indexMergeIsIntersection {
-				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
-			}
-
-			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-				// Don't push to cop for cached table, it brings more harm than good:
-				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
-				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-				// Once aggregation is pushed to cop, the cache data can't be use any more.
-				return false
-			}
-		case *logicalop.LogicalUnionAll:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *logicalop.LogicalSort:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *logicalop.LogicalProjection:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *logicalop.LogicalExpand:
-			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *logicalop.LogicalTableDual:
-			return storeTp == kv.TiFlash && considerDual
-		case *logicalop.LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			ret = ret && c.CanPushToCop(storeTp)
-		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
-		case *logicalop.LogicalLimit, *logicalop.LogicalTopN:
-			return false
-		case *logicalop.LogicalSequence:
-			return storeTp == kv.TiFlash
-		case *logicalop.LogicalCTE:
-			if storeTp != kv.TiFlash {
-				return false
-			}
-			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
-				return false
-			}
-			return true
-		default:
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
-			return false
-		}
-	}
-	return ret
 }
 
 func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -2962,7 +3006,7 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && logicalop.CanPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -3030,7 +3074,7 @@ func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.Physic
 			return ret, true, nil
 		}
 	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
+		if logicalop.CanPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
 			ps := getNominalSortSimple(ls, prop)
 			return []base.PhysicalPlan{ps}, true, nil
 		}

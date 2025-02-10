@@ -17,10 +17,10 @@ package builder
 import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -54,7 +54,7 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
-	if ctx.GetSessionVars().GetDivPrecisionIncrement() != variable.DefDivPrecisionIncrement {
+	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr
 	}

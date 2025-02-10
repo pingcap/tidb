@@ -8,10 +8,13 @@ go_library(
     deps = [
         "//br/pkg/config",
         "//br/pkg/glue",
+        "//br/pkg/logutil",
         "//br/pkg/utils",
         "//pkg/util",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
+        "@com_github_aws_aws_sdk_go//aws/client",
+        "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_aws_aws_sdk_go//aws/session",
         "@com_github_aws_aws_sdk_go//service/cloudwatch",
         "@com_github_aws_aws_sdk_go//service/ec2",

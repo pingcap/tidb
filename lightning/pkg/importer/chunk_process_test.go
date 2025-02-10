@@ -41,9 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
@@ -710,7 +711,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	)
 `, "", "")
 	require.NoError(t, err)
-	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	core, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), node.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	core.State = model.StatePublic
 

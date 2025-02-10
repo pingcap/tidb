@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -39,7 +39,7 @@ import (
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		id, err := m.GetGlobalID()
 		require.NoError(t, err)
 		res = id
@@ -65,11 +65,12 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{}},
 	}}
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
@@ -92,7 +93,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	wg.Wait()
 
 	jobCount := threads * iterations
-	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+	gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 	require.NoError(t, err)
 	require.Len(t, gotJobs, jobCount)
 	currGID := getGlobalID(ctx, t, store)
@@ -134,69 +135,88 @@ func TestCombinedIDAllocation(t *testing.T) {
 		return info
 	}
 
-	genCreateTblJob := func(tp model.ActionType, partitionCnt int) *model.Job {
-		return &model.Job{
-			Type: tp,
-			Args: []any{genTblInfo(partitionCnt)},
-		}
+	genCreateTblJobW := func(tp model.ActionType, partitionCnt int, idAllocated bool) *ddl.JobWrapper {
+		return ddl.NewJobWrapperWithArgs(
+			&model.Job{
+				Version: model.GetJobVerInUse(),
+				Type:    tp,
+			},
+			&model.CreateTableArgs{TableInfo: genTblInfo(partitionCnt)},
+			idAllocated,
+		)
 	}
 
-	genCreateTblsJob := func(partitionCounts ...int) *model.Job {
-		infos := make([]*model.TableInfo, 0, len(partitionCounts))
+	genCreateTblsJobW := func(idAllocated bool, partitionCounts ...int) *ddl.JobWrapper {
+		args := &model.BatchCreateTableArgs{
+			Tables: make([]*model.CreateTableArgs, 0, len(partitionCounts)),
+		}
 		for _, c := range partitionCounts {
-			infos = append(infos, genTblInfo(c))
+			args.Tables = append(args.Tables, &model.CreateTableArgs{TableInfo: genTblInfo(c)})
 		}
-		return &model.Job{
-			Type: model.ActionCreateTables,
-			Args: []any{infos},
-		}
+		return ddl.NewJobWrapperWithArgs(
+			&model.Job{
+				Version: model.JobVersion1,
+				Type:    model.ActionCreateTables,
+			},
+			args,
+			idAllocated,
+		)
 	}
 
-	genCreateDBJob := func() *model.Job {
+	genCreateDBJob := func(idAllocated bool) *ddl.JobWrapper {
 		info := &model.DBInfo{}
-		return &model.Job{
-			Type: model.ActionCreateSchema,
-			Args: []any{info},
+		j := &model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionCreateSchema,
 		}
+		return ddl.NewJobWrapperWithArgs(j, &model.CreateSchemaArgs{DBInfo: info}, idAllocated)
 	}
 
-	genRGroupJob := func() *model.Job {
+	genRGroupJob := func(idAllocated bool) *ddl.JobWrapper {
 		info := &model.ResourceGroupInfo{}
-		return &model.Job{
-			Type: model.ActionCreateResourceGroup,
-			Args: []any{info},
+		job := &model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionCreateResourceGroup,
 		}
+		return ddl.NewJobWrapperWithArgs(job, &model.ResourceGroupArgs{
+			RGInfo: info,
+		}, idAllocated)
 	}
 
-	genAlterTblPartitioningJob := func(partCnt int) *model.Job {
+	genAlterTblPartitioningJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
 		info := &model.PartitionInfo{
 			Definitions: make([]model.PartitionDefinition, partCnt),
 		}
-		return &model.Job{
-			Type: model.ActionAlterTablePartitioning,
-			Args: []any{[]string{}, info},
-		}
+		return ddl.NewJobWrapperWithArgs(
+			&model.Job{
+				Version: model.GetJobVerInUse(),
+				Type:    model.ActionAlterTablePartitioning,
+			},
+			&model.TablePartitionArgs{
+				PartInfo: info,
+			},
+			idAllocated)
 	}
 
-	genTruncPartitionJob := func(partCnt int) *model.Job {
+	genTruncPartitionJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
 		oldIDs := make([]int64, partCnt)
-		return &model.Job{
-			Type: model.ActionTruncateTablePartition,
-			Args: []any{oldIDs, []int64{}},
-		}
+		return ddl.NewJobWrapperWithArgs(&model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionTruncateTablePartition,
+		}, &model.TruncateTableArgs{OldPartitionIDs: oldIDs}, idAllocated)
 	}
 
-	genAddPartitionJob := func(partCnt int) *model.Job {
+	genAddPartitionJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
 		info := &model.PartitionInfo{
 			Definitions: make([]model.PartitionDefinition, partCnt),
 		}
-		return &model.Job{
-			Type: model.ActionAddTablePartition,
-			Args: []any{info},
-		}
+		return ddl.NewJobWrapperWithArgs(&model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionAddTablePartition,
+		}, &model.TablePartitionArgs{PartInfo: info}, idAllocated)
 	}
 
-	genReorgOrRemovePartitionJob := func(remove bool, partCnt int) *model.Job {
+	genReorgOrRemovePartitionJob := func(remove bool, partCnt int, idAllocated bool) *ddl.JobWrapper {
 		info := &model.PartitionInfo{
 			Definitions: make([]model.PartitionDefinition, partCnt),
 		}
@@ -205,118 +225,120 @@ func TestCombinedIDAllocation(t *testing.T) {
 			tp = model.ActionRemovePartitioning
 			require.Equal(t, 1, partCnt)
 		}
-		return &model.Job{
-			Type: tp,
-			Args: []any{[]string{}, info},
-		}
+		return ddl.NewJobWrapperWithArgs(&model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    tp,
+		}, &model.TablePartitionArgs{PartInfo: info}, idAllocated)
 	}
 
-	genTruncTblJob := func(partCnt int) *model.Job {
-		return &model.Job{
-			Type: model.ActionTruncateTable,
-			Args: []any{int64(0), false, []int64{}, partCnt},
+	genTruncTblJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
+		j := &model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionTruncateTable,
 		}
+		args := &model.TruncateTableArgs{OldPartitionIDs: make([]int64, partCnt)}
+		return ddl.NewJobWrapperWithArgs(j, args, idAllocated)
 	}
 
 	cases := []idAllocationCase{
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(1, 2, 0), false),
+			jobW:            genCreateTblsJobW(false, 1, 2, 0),
 			requiredIDCount: 1 + 3 + 1 + 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(3, 4), true),
+			jobW:            genCreateTblsJobW(true, 3, 4),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 3), false),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 3, false),
 			requiredIDCount: 1 + 1 + 3,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 0, false),
 			requiredIDCount: 1 + 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 8), true),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 8, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateSequence, 0, false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), true),
+			jobW:            genCreateTblJobW(model.ActionCreateSequence, 0, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateView, 0, false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), true),
+			jobW:            genCreateTblJobW(model.ActionCreateView, 0, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), false),
+			jobW:            genCreateDBJob(false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), true),
+			jobW:            genCreateDBJob(true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genRGroupJob(), false),
+			jobW:            genRGroupJob(false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genRGroupJob(), true),
+			jobW:            genRGroupJob(true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genAlterTblPartitioningJob(9), false),
+			jobW:            genAlterTblPartitioningJob(9, false),
 			requiredIDCount: 11,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genAlterTblPartitioningJob(4), true),
+			jobW:            genAlterTblPartitioningJob(4, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(33), false),
+			jobW:            genTruncPartitionJob(33, false),
 			requiredIDCount: 34,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(2), true),
+			jobW:            genTruncPartitionJob(2, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genAddPartitionJob(15), false),
+			jobW:            genAddPartitionJob(15, false),
 			requiredIDCount: 16,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genAddPartitionJob(33), true),
+			jobW:            genAddPartitionJob(33, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(false, 12), false),
+			jobW:            genReorgOrRemovePartitionJob(false, 12, false),
 			requiredIDCount: 13,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(false, 12), true),
+			jobW:            genReorgOrRemovePartitionJob(false, 12, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(true, 1), false),
+			jobW:            genReorgOrRemovePartitionJob(true, 1, false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(true, 1), true),
+			jobW:            genReorgOrRemovePartitionJob(true, 1, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncTblJob(17), false),
+			jobW:            genTruncTblJob(17, false),
 			requiredIDCount: 19,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncTblJob(6), true),
+			jobW:            genTruncTblJob(6, true),
 			requiredIDCount: 1,
 		},
 	}
@@ -329,7 +351,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store), fmt.Sprintf("case-%d", i))
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -347,7 +369,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -383,7 +405,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(pInfo)
 			}
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, allocIDCaseCount)
 		for _, j := range gotJobs {
@@ -391,62 +413,50 @@ func TestCombinedIDAllocation(t *testing.T) {
 			switch j.Type {
 			case model.ActionCreateTable, model.ActionCreateView, model.ActionCreateSequence:
 				require.Greater(t, j.TableID, initialGlobalID)
-				info := &model.TableInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				require.Equal(t, j.TableID, info.ID)
-				checkTableInfo(info)
+				args, err := model.GetCreateTableArgs(j)
+				require.NoError(t, err)
+				require.Equal(t, j.TableID, args.TableInfo.ID)
+				checkTableInfo(args.TableInfo)
 			case model.ActionCreateTables:
-				var infos []*model.TableInfo
-				require.NoError(t, j.DecodeArgs(&infos))
-				for _, info := range infos {
-					checkTableInfo(info)
+				args, err := model.GetBatchCreateTableArgs(j)
+				require.NoError(t, err)
+				for _, tblArgs := range args.Tables {
+					checkTableInfo(tblArgs.TableInfo)
 				}
 			case model.ActionCreateSchema:
 				require.Greater(t, j.SchemaID, initialGlobalID)
-				info := &model.DBInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				uniqueIDs[info.ID] = struct{}{}
-				require.Equal(t, j.SchemaID, info.ID)
+				args, err := model.GetCreateSchemaArgs(j)
+				require.NoError(t, err)
+				uniqueIDs[args.DBInfo.ID] = struct{}{}
+				require.Equal(t, j.SchemaID, args.DBInfo.ID)
 			case model.ActionCreateResourceGroup:
-				info := &model.ResourceGroupInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				checkID(info.ID)
+				args, err := model.GetResourceGroupArgs(j)
+				require.NoError(t, err)
+				checkID(args.RGInfo.ID)
 			case model.ActionAlterTablePartitioning:
-				var partNames []string
-				info := &model.PartitionInfo{}
-				require.NoError(t, j.DecodeArgs(&partNames, info))
+				args, err := model.GetTablePartitionArgs(j)
+				require.NoError(t, err)
+				info := args.PartInfo
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
-			case model.ActionTruncateTablePartition:
-				var oldIDs, newIDs []int64
-				require.NoError(t, j.DecodeArgs(&oldIDs, &newIDs))
-				for _, id := range newIDs {
-					checkID(id)
-				}
-			case model.ActionAddTablePartition:
-				info := &model.PartitionInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				checkPartitionInfo(info)
-			case model.ActionReorganizePartition:
-				var oldNames []string
-				info := &model.PartitionInfo{}
-				require.NoError(t, j.DecodeArgs(&oldNames, info))
+			case model.ActionAddTablePartition, model.ActionReorganizePartition:
+				args, err := model.GetTablePartitionArgs(j)
+				require.NoError(t, err)
+				info := args.PartInfo
 				checkPartitionInfo(info)
 			case model.ActionRemovePartitioning:
-				var oldNames []string
-				info := &model.PartitionInfo{}
-				require.NoError(t, j.DecodeArgs(&oldNames, info))
+				args, err := model.GetTablePartitionArgs(j)
+				require.NoError(t, err)
+				info := args.PartInfo
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
-			case model.ActionTruncateTable:
-				var (
-					newTblID int64
-					fkCheck  bool
-					partIDs  []int64
-				)
-				require.NoError(t, j.DecodeArgs(&newTblID, &fkCheck, &partIDs))
-				checkID(newTblID)
-				for _, id := range partIDs {
+			case model.ActionTruncateTable, model.ActionTruncateTablePartition:
+				args, err := model.GetTruncateTableArgs(j)
+				require.NoError(t, err)
+				if j.Type == model.ActionTruncateTable {
+					checkID(args.NewTableID)
+				}
+				for _, id := range args.NewPartitionIDs {
 					checkID(id)
 				}
 			}
@@ -474,11 +484,12 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 	payload := strings.Repeat("a", payloadSize)
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{Comment: payload}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Comment: payload}},
 	}}
 	counters := make([]atomic.Int64, thread+1)
 	var wg util.WaitGroupWrapper
@@ -534,11 +545,12 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	ddlSe := sess.NewSession(tk.Session())
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{}},
 	}}
 	submitter := ddl.NewJobSubmitterForTest()
 	// retry for 3 times
@@ -552,7 +564,7 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 		require.True(t, ok)
 		counter++
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
+			m := meta.NewMutator(txn)
 			_, err := m.GenGlobalIDs(100)
 			require.NoError(t, err)
 			return nil
@@ -568,4 +580,18 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	_, ok := m.Load(newGID)
 	require.True(t, ok)
 	require.Equal(t, newGID-1, jobs[0].TableID)
+}
+
+func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+
+	var ddlErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDDLCloseCancel", func() {
+		ddlErr = tk.ExecToErr("create database test2;")
+	})
+	err := dom.DDL().Stop()
+	require.NoError(t, err)
+	require.Error(t, ddlErr)
+	require.Equal(t, "context canceled", ddlErr.Error())
 }

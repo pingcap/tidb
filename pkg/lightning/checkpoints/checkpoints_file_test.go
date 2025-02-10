@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,7 +65,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 				"t3": {
 					Name: "t3",
 					Desired: &model.TableInfo{
-						Name: model.NewCIStr("t3"),
+						Name: ast.NewCIStr("t3"),
 					},
 				},
 			},
@@ -124,7 +125,9 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 	}
 	scm.MergeInto(cpd)
 	rcm := checkpoints.RebaseCheckpointMerger{
-		AllocBase: 132861,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
 	}
 	rcm.MergeInto(cpd)
 	cksum := checkpoints.TableChecksumMerger{
@@ -166,9 +169,11 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 func TestGet(t *testing.T) {
 	ctx := context.Background()
 	expectT2 := &checkpoints.TableCheckpoint{
-		Status:    checkpoints.CheckpointStatusAllWritten,
-		AllocBase: 132861,
-		Checksum:  verification.MakeKVChecksum(4492, 686, 486070148910),
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		Checksum:      verification.MakeKVChecksum(4492, 686, 486070148910),
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
 				Status: checkpoints.CheckpointStatusLoaded,
@@ -218,7 +223,7 @@ func TestGet(t *testing.T) {
 			},
 		},
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t3"),
+			Name: ast.NewCIStr("t3"),
 		},
 	}
 

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -41,11 +41,11 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustExec("set global tidb_scatter_region = 'table'")
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
@@ -75,7 +75,7 @@ func TestShowTableRegion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
-	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustExec("set global tidb_scatter_region = 'table'")
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 	tk.MustGetErrMsg(
@@ -215,7 +215,6 @@ func TestShowTableRegion(t *testing.T) {
 	// Test show table regions for partition table when disable split region when create table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	tk.MustExec("drop table if exists partition_t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
@@ -224,7 +223,7 @@ func TestShowTableRegion(t *testing.T) {
 
 	// Test show table regions for partition table when enable split region when create table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	tk.MustExec("drop table if exists partition_t;")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/bitmap"
@@ -214,10 +214,17 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
-			return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
-		}, e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
-			false, e.ProbeSideTupleFetcher.IsOuterJoin, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
+			ctx,
+			e.MaxChunkSize(),
+			func() bool {
+				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
+			},
+			func() bool { return false },
+			e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
+			false,
+			e.ProbeSideTupleFetcher.IsOuterJoin,
+			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -299,7 +306,7 @@ func (w *ProbeWorkerV1) runJoinWorker() {
 			t := time.Since(start)
 			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
 			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			w.HashJoinCtx.stats.setMaxFetchAndProbeTime(int64(t))
+			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
 		}()
 	}
 
@@ -1034,7 +1041,7 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildWorker.fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildWorker.fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, nil, nil, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {
@@ -1071,7 +1078,7 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 	rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	rowContainer.GetDiskTracker().AttachTo(w.HashJoinCtx.diskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		actionSpill := rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {

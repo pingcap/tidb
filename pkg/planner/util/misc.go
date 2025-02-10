@@ -17,21 +17,91 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
+	"iter"
 	"math"
+	"reflect"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
+
+// SliceDeepClone uses Clone() to clone a slice.
+// The elements in the slice must implement func (T) Clone() T.
+func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	cloned := make([]T, 0, len(s))
+	for _, item := range s {
+		cloned = append(cloned, item.Clone())
+	}
+	return cloned
+}
+
+// SliceRecursiveFlattenIter returns an iterator (iter.Seq2) that recursively iterates over all elements of an
+// any-dimensional slice of any type.
+// Performance note:
+// For each slice, this function need to check the dynamic type before iterating over it. For each non-leaf slice, this
+// function uses reflect to iterate over it. Be careful when trying to use this function in performance-critical code.
+/*
+Example:
+	paths := [][][]*AccessPath{...}
+	for idx, path := range SliceRecursiveFlattenIter[*AccessPath](paths) {
+		// path is a *AccessPath here
+	}
+*/
+func SliceRecursiveFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
+	return func(yield func(int, E) bool) {
+		sliceRecursiveFlattenIterHelper(s, yield, 0)
+	}
+}
+
+func sliceRecursiveFlattenIterHelper[E any, Slice any](
+	s Slice,
+	yield func(int, E) bool,
+	startIdx int,
+) (nextIdx int, stop bool) {
+	intest.AssertFunc(func() bool {
+		return reflect.TypeOf(s).Kind() == reflect.Slice
+	})
+	// Case 1: Input slice is []E, which means it's already the lowest level.
+	if leafSlice, isLeafSlice := any(s).([]E); isLeafSlice {
+		idx := startIdx
+		for _, v := range leafSlice {
+			if !yield(idx, v) {
+				return idx + 1, true
+			}
+			idx++
+		}
+		return idx, false
+	}
+	// Case 2: Otherwise, element of Slice is still a slice, we need to flatten it recursively.
+	idx := startIdx
+	// We have to use reflect to iterate over the slice here.
+	v := reflect.ValueOf(s)
+	for i := range v.Len() {
+		val := v.Index(i).Interface()
+		intest.AssertFunc(func() bool {
+			return reflect.TypeOf(val).Kind() == reflect.Slice
+		})
+		idx, stop = sliceRecursiveFlattenIterHelper[E](val, yield, idx)
+		if stop {
+			return idx, true
+		}
+	}
+	return idx, false
+}
 
 // CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.
 func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
@@ -46,12 +116,12 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 	return cloned
 }
 
-// CloneCIStrs uses model.CIStr.Clone to clone a slice of model.CIStr.
-func CloneCIStrs(strs []model.CIStr) []model.CIStr {
+// CloneCIStrs uses ast.CIStr.Clone to clone a slice of ast.CIStr.
+func CloneCIStrs(strs []ast.CIStr) []ast.CIStr {
 	if strs == nil {
 		return nil
 	}
-	cloned := make([]model.CIStr, 0, len(strs))
+	cloned := make([]ast.CIStr, 0, len(strs))
 	cloned = append(cloned, strs...)
 	return cloned
 }
@@ -71,30 +141,6 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 // CloneExpressions uses CloneExprs to clone a slice of expression.Expression.
 func CloneExpressions(exprs []expression.Expression) []expression.Expression {
 	return CloneExprs(exprs)
-}
-
-// CloneExpression2D uses CloneExprs to clone a 2D slice of expression.Expression.
-func CloneExpression2D(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, CloneExprs(e))
-	}
-	return cloned
-}
-
-// CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
-func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
-	if scalarFuncs == nil {
-		return nil
-	}
-	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
-	for _, f := range scalarFuncs {
-		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
-	}
-	return cloned
 }
 
 // CloneAssignments uses (*Assignment).Clone to clone a slice of *Assignment.
@@ -137,11 +183,6 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 	return cloned
 }
 
-// CloneColumns uses CloneCols to clone a slice of expression.Column.
-func CloneColumns(cols []*expression.Column) []*expression.Column {
-	return CloneCols(cols)
-}
-
 // CloneConstants uses (*Constant).Clone to clone a slice of *Constant.
 func CloneConstants(constants []*expression.Constant) []*expression.Constant {
 	if constants == nil {
@@ -150,18 +191,6 @@ func CloneConstants(constants []*expression.Constant) []*expression.Constant {
 	cloned := make([]*expression.Constant, 0, len(constants))
 	for _, c := range constants {
 		cloned = append(cloned, c.Clone().(*expression.Constant))
-	}
-	return cloned
-}
-
-// CloneConstant2D uses CloneConstants to clone a 2D slice of *Constant.
-func CloneConstant2D(constants [][]*expression.Constant) [][]*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([][]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, CloneConstants(c))
 	}
 	return cloned
 }
@@ -332,7 +361,7 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
-			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
 		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}

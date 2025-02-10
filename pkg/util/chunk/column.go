@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"math/rand"
 	"reflect"
@@ -25,6 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
+
+// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
+// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
+const estimatedElemLen = 8
 
 // AppendDuration appends a duration value into this Column.
 // Fsp is ignored.
@@ -120,22 +125,30 @@ func newColumn(ts, capacity int) *Column {
 func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, capacity*elemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		data:       make([]byte, 0, getDataMemCap(capacity, elemLen)),
+		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
-	estimatedElemLen := 8
-	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
-	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
-
 	return &Column{
-		offsets:    make([]int64, 1, capacity+1),
-		data:       make([]byte, 0, capacity*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
+		data:       make([]byte, 0, getDataMemCap(estimatedElemLen, capacity)),
+		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
+}
+
+func getDataMemCap(capacity int, elemLen int) int64 {
+	return int64(elemLen * capacity)
+}
+
+func getNullBitmapCap(capacity int) int64 {
+	return int64((capacity + 7) >> 3)
+}
+
+func getOffsetsCap(capacity int) int64 {
+	return int64(capacity + 1)
 }
 
 func (c *Column) typeSize() int {
@@ -244,12 +257,12 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	if c.isFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
-		for i := 0; i < times; i++ {
+		for range times {
 			c.data = append(c.data, src.data[offset:offset+elemLen]...)
 		}
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
-		for i := 0; i < times; i++ {
+		for range times {
 			c.data = append(c.data, src.data[start:end]...)
 			c.offsets = append(c.offsets, int64(len(c.data)))
 		}
@@ -266,7 +279,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	if notNull {
 		b = 0xff
 	}
-	for i := 0; i < numNewBytes; i++ {
+	for range numNewBytes {
 		c.nullBitmap = append(c.nullBitmap, b)
 	}
 	if !notNull {
@@ -286,12 +299,12 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 func (c *Column) AppendNNulls(n int) {
 	c.appendMultiSameNullBitmap(false, n)
 	if c.isFixed() {
-		for i := 0; i < n; i++ {
+		for range n {
 			c.data = append(c.data, c.elemBuf...)
 		}
 	} else {
 		currentLength := c.offsets[c.length]
-		for i := 0; i < n; i++ {
+		for range n {
 			c.offsets = append(c.offsets, currentLength)
 		}
 	}
@@ -371,6 +384,7 @@ func (c *Column) AppendEnum(enum types.Enum) {
 const (
 	sizeInt64      = int(unsafe.Sizeof(int64(0)))
 	sizeUint64     = int(unsafe.Sizeof(uint64(0)))
+	sizeUint32     = int(unsafe.Sizeof(uint32(0)))
 	sizeFloat32    = int(unsafe.Sizeof(float32(0)))
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
@@ -855,7 +869,26 @@ func (c *Column) MergeNulls(cols ...*Column) {
 // we can test if data in column are deeply copied.
 func (c *Column) DestroyDataForTest() {
 	dataByteNum := len(c.data)
-	for i := 0; i < dataByteNum; i++ {
+	for i := range dataByteNum {
 		c.data[i] = byte(rand.Intn(256))
 	}
+}
+
+// ContainsVeryLargeElement checks if the column contains element whose length is greater than math.MaxUint32.
+func (c *Column) ContainsVeryLargeElement() bool {
+	if c.length == 0 {
+		return false
+	}
+	if c.isFixed() {
+		return false
+	}
+	if c.offsets[c.length] <= math.MaxUint32 {
+		return false
+	}
+	for i := range c.length {
+		if c.offsets[i+1]-c.offsets[i] > math.MaxUint32 {
+			return true
+		}
+	}
+	return false
 }

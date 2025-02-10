@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -613,6 +613,11 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+
+	// Set healthy. This is used by graceful shutdown
+	// and is used in the response for ComPing and the
+	// /status HTTP endpoint
+	server.health.Store(true)
 	defer server.Close()
 
 	cc := &clientConn{
@@ -658,7 +663,7 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		},
 	}
 	cc.SetCtx(tc)
-	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
+	require.Equal(t, uint64(vardef.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -819,6 +824,39 @@ func TestShutDown(t *testing.T) {
 	}
 }
 
+func TestCommitWaitGroup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc := &clientConn{server: srv}
+	cc.SetCtx(tc)
+	cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+	cc.getCtx().GetSessionVars().SetInTxn(false)
+	srv.clients[dom.NextConnID()] = cc
+
+	wg := cc.getCtx().GetCommitWaitGroup()
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		wg.Done()
+	}()
+	begin := time.Now()
+	srv.DrainClients(time.Second, time.Second)
+	require.Greater(t, time.Since(begin), 100*time.Millisecond)
+	require.Less(t, time.Since(begin), time.Second)
+}
+
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }
@@ -834,7 +872,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
@@ -883,7 +921,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
@@ -984,8 +1022,6 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	query := "delete from prefetch where a = 2;" +
 		"delete from prefetch where a = 3;" +
 		"delete from prefetch where a in (4,5);"
-	// TODO: refactor the build code and extract the partition pruning one,
-	// so it can be called in prefetchPointPlanKeys
 	err := cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)

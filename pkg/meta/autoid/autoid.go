@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,8 +29,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -109,9 +110,6 @@ func AutoRandomRangeBitsNormalize(rangeBits int) (ret uint64, err error) {
 	return uint64(rangeBits), nil
 }
 
-// Test needs to change it, so it's a variable.
-var step = int64(30000)
-
 // AllocatorType is the type of allocator for generating auto-id. Different type of allocators use different key-value pairs.
 type AllocatorType uint8
 
@@ -180,7 +178,7 @@ type Allocator interface {
 	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 	// cycle option.
-	AllocSeqCache() (min int64, max int64, round int64, err error)
+	AllocSeqCache() (minv, maxv, round int64, err error)
 
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
@@ -192,6 +190,9 @@ type Allocator interface {
 
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 	RebaseSeq(newBase int64) (int64, bool, error)
+
+	// Transfer transfor the ownership of this allocator to another table
+	Transfer(databaseID, tableID int64) error
 
 	// Base return the current base of Allocator.
 	Base() int64
@@ -271,14 +272,18 @@ type allocator struct {
 	sequence      *model.SequenceInfo
 }
 
-// GetStep is only used by tests
+// Test needs to change it, so it's a variable.
+// Don't use it directly, use the GetStep/SetStep function.
+var defaultStep = int64(30000)
+
+// GetStep gets the defautStep value.
 func GetStep() int64 {
-	return step
+	return atomic.LoadInt64(&defaultStep)
 }
 
 // SetStep is only used by tests
 func SetStep(s int64) {
-	step = s
+	atomic.StoreInt64(&defaultStep, s)
 }
 
 // Base implements autoid.Allocator Base interface.
@@ -313,6 +318,22 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 		return int64(uint64(autoID) + 1), err
 	}
 	return autoID + 1, err
+}
+
+// Transfer implements autoid.Allocator Transfer interface.
+func (alloc *allocator) Transfer(databaseID, tableID int64) error {
+	if alloc.dbID == databaseID && alloc.tbID == tableID {
+		return nil
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
+		return alloc.getIDAccessor(txn).CopyTo(databaseID, tableID)
+	})
+	if err == nil {
+		alloc.dbID = databaseID
+		alloc.tbID = tableID
+	}
+	return err
 }
 
 func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
@@ -440,7 +461,7 @@ func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error)
 	alreadySatisfied := false
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
-		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
 			return err
@@ -546,7 +567,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	})
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(step)
+			failpoint.Return(GetStep())
 		}
 	})
 
@@ -608,7 +629,7 @@ func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 		dbID:          dbID,
 		tbID:          tbID,
 		isUnsigned:    isUnsigned,
-		step:          step,
+		step:          GetStep(),
 		lastAllocTime: time.Now(),
 		allocType:     allocType,
 	}
@@ -627,7 +648,7 @@ func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 			// Now that the autoid and rowid allocator are separated, the AUTO_ID_CACHE 1 setting should not make
 			// the rowid allocator do not use cache.
 			alloc.customStep = false
-			alloc.step = step
+			alloc.step = GetStep()
 		}
 	}
 
@@ -651,19 +672,18 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
+func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
-	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasRowID || hasAutoIncID {
+	if hasRowID || (hasAutoIncID && !tblInfo.SepAutoInc()) {
 		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
-	if hasAutoIncID {
+	if hasAutoIncID && tblInfo.SepAutoInc() {
 		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
@@ -691,7 +711,7 @@ func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.Tabl
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	if alloc.tbID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
@@ -711,7 +731,7 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 	return alloc.alloc4Signed(ctx, n, increment, offset)
 }
 
-func (alloc *allocator) AllocSeqCache() (min int64, max int64, round int64, err error) {
+func (alloc *allocator) AllocSeqCache() (minv, maxv int64, round int64, err error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
@@ -742,48 +762,48 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
-func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64, error) {
+func CalcSequenceBatchSize(base, size, increment, offset, minv, maxv int64) (int64, error) {
 	// The sequence is positive growth.
 	if increment > 0 {
 		if increment == 1 {
 			// Sequence is already allocated to the end.
-			if base >= max {
+			if base >= maxv {
 				return 0, ErrAutoincReadFailed
 			}
 			// The rest of sequence < cache size, return the rest.
-			if max-base < size {
-				return max - base, nil
+			if maxv-base < size {
+				return maxv - base, nil
 			}
 			// The rest of sequence is adequate.
 			return size, nil
 		}
-		nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
+		nr, ok := SeekToFirstSequenceValue(base, increment, offset, minv, maxv)
 		if !ok {
 			return 0, ErrAutoincReadFailed
 		}
 		// The rest of sequence < cache size, return the rest.
-		if max-nr < (size-1)*increment {
-			return max - base, nil
+		if maxv-nr < (size-1)*increment {
+			return maxv - base, nil
 		}
 		return (nr - base) + (size-1)*increment, nil
 	}
 	// The sequence is negative growth.
 	if increment == -1 {
-		if base <= min {
+		if base <= minv {
 			return 0, ErrAutoincReadFailed
 		}
-		if base-min < size {
-			return base - min, nil
+		if base-minv < size {
+			return base - minv, nil
 		}
 		return size, nil
 	}
-	nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
+	nr, ok := SeekToFirstSequenceValue(base, increment, offset, minv, maxv)
 	if !ok {
 		return 0, ErrAutoincReadFailed
 	}
 	// The rest of sequence < cache size, return the rest.
-	if nr-min < (size-1)*(-increment) {
-		return base - min, nil
+	if nr-minv < (size-1)*(-increment) {
+		return base - minv, nil
 	}
 	return (base - nr) + (size-1)*(-increment), nil
 }
@@ -796,13 +816,13 @@ func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64
 //
 // first := nr*increment + offset
 // Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
-func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, bool) {
+func SeekToFirstSequenceValue(base, increment, offset, minv, maxv int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
-		if base >= max {
+		if base >= maxv {
 			return 0, false
 		}
-		uMax := EncodeIntToCmpUint(max)
+		uMax := EncodeIntToCmpUint(maxv)
 		uBase := EncodeIntToCmpUint(base)
 		uOffset := EncodeIntToCmpUint(offset)
 		uIncrement := uint64(increment)
@@ -821,10 +841,10 @@ func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, b
 		return first, true
 	}
 	// Sequence is already allocated to the end.
-	if base <= min {
+	if base <= minv {
 		return 0, false
 	}
-	uMin := EncodeIntToCmpUint(min)
+	uMin := EncodeIntToCmpUint(minv)
 	uBase := EncodeIntToCmpUint(base)
 	uOffset := EncodeIntToCmpUint(offset)
 	uIncrement := uint64(-increment)
@@ -857,7 +877,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (mini int64, max int64, err error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
@@ -940,12 +960,12 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			zap.Int64("table ID", alloc.tbID),
 			zap.Int64("database ID", alloc.dbID))
 	}
-	mini = alloc.base
+	minv = alloc.base
 	alloc.base += n1
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (mini int64, max int64, err error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
@@ -957,8 +977,9 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
-		return 0, 0, ErrAutoincReadFailed
+		return 0, 0, errors.Trace(ErrAutoincReadFailed)
 	}
+
 	// The local rest is not enough for alloc, skip it.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
 		var newBase, newEnd int64
@@ -1031,10 +1052,10 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	mini = alloc.base
+	minv = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorRuntimeStats, **tikvutil.CommitDetails) {
@@ -1054,7 +1075,7 @@ func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorR
 // 3: sequence allocation may have negative growth.
 // 4: sequence allocation batch length can be dissatisfied.
 // 5: sequence batch allocation will be consumed immediately.
-func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err error) {
+func (alloc *allocator) alloc4Sequence() (minv int64, maxv int64, round int64, err error) {
 	increment := alloc.sequence.Increment
 	offset := alloc.sequence.Start
 	minValue := alloc.sequence.MinValue
@@ -1068,7 +1089,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 	startTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
-		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error
 			seqStep int64
@@ -1156,7 +1177,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 }
 
 func (alloc *allocator) getIDAccessor(txn kv.Transaction) meta.AutoIDAccessor {
-	acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+	acc := meta.NewMutator(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 	switch alloc.allocType {
 	case RowIDAllocType:
 		return acc.RowID()

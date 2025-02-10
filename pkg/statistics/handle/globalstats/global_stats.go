@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -354,7 +354,7 @@ func blockingMergePartitionStats2GlobalStats(
 
 		// Merge histogram.
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
 		if err != nil {
 			return
 		}
@@ -387,7 +387,6 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			cms,
 			topN,
 			info.StatsVersion,
-			1,
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)

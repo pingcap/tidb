@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -65,6 +65,9 @@ type TopNExec struct {
 	isSpillTriggeredInStage2ForTest bool
 
 	Concurrency int
+
+	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	ColumnIdxsUsedByChild []int
 }
 
 // Open implements the Executor Open interface.
@@ -84,7 +87,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		diskTracker := e.Ctx().GetSessionVars().StmtCtx.DiskTracker
 		if diskTracker != nil {
@@ -106,14 +109,15 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			e.resultChannel,
 			e.memTracker,
 			e.diskTracker,
-			exec.RetTypes(e),
+			exec.RetTypes(e.Children(0)),
 			workers,
 			e.Concurrency,
+			&e.Ctx().GetSessionVars().SQLKiller,
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	} else {
-		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0)
+		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0, nil)
 	}
 
 	return exec.Open(ctx, e.Children(0))
@@ -239,7 +243,12 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok || row.err != nil {
 				return row.err
 			}
-			req.AppendRow(row.row)
+			// Be careful, if inline projection occurs.
+			// TopN's schema may be not match child executor's output columns.
+			// We should extract only the required columns from child's executor.
+			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+			// cauz it may destroy the correctness of executor's `keyColumns`.
+			req.AppendRowsByColIdxs([]chunk.Row{row.row}, e.ColumnIdxsUsedByChild)
 		}
 	}
 	return nil

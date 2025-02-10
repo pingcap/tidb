@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -36,16 +36,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 )
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,
@@ -59,13 +61,13 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 type mockPDClient struct {
 	t *testing.T
 	pd.Client
-	regions       []*pd.Region
+	regions       []*router.Region
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	if len(c.regions) == 0 {
-		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
+		return []*router.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
 
 	if !c.regionsSorted {
@@ -75,11 +77,11 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 		c.regionsSorted = true
 	}
 
-	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
+	regions := []*router.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
 	regions = append(regions, c.regions...)
 	regions = append(regions, newMockRegion(2, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
 
-	result := make([]*pd.Region, 0)
+	result := make([]*router.Region, 0)
 	for _, r := range regions {
 		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
 			continue
@@ -165,7 +167,7 @@ func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
+	s.pdClient.regions = append(s.pdClient.regions, &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: key,
@@ -244,9 +246,9 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	tk.MustExec(sql)
 	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
 	return ttlTbl
 }
@@ -517,9 +519,10 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		createTTLTable(t, tk, "t3", "varchar(32) CHARACTER SET BINARY"),
 		createTTLTable(t, tk, "t4", "bit(32)"),
 		create2PKTTLTable(t, tk, "t5", "binary(32)"),
-		createTTLTable(t, tk, "t6", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
-		createTTLTable(t, tk, "t7", "char(32) CHARACTER SET utf8 COLLATE utf8_bin"),
-		create2PKTTLTable(t, tk, "t8", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin"),
+		createTTLTable(t, tk, "t6", "varbinary(32)"),
+		createTTLTable(t, tk, "t7", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+		createTTLTable(t, tk, "t8", "char(32) CHARACTER SET utf8 COLLATE utf8_bin"),
+		create2PKTTLTable(t, tk, "t9", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin"),
 	}
 
 	cases := []struct {

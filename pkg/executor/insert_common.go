@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -95,6 +95,8 @@ type InsertValues struct {
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
+
+	ignoreErr bool
 }
 
 type defaultVal struct {
@@ -202,7 +204,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -456,7 +458,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -873,19 +875,19 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
-			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
+			minv, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min)
+				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
-				id := int64(uint64(min) + uint64(j)*uint64(increment))
+				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
@@ -1179,11 +1181,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 	if handle == nil {
 		return false, nil
 	}
-	_, err = e.removeRow(ctx, txn, handle, r, true)
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return e.removeRow(ctx, txn, handle, r, true)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.
@@ -1374,7 +1372,7 @@ func (e *InsertValues) removeRow(
 	if err != nil {
 		return false, err
 	}
-	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades)
+	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades, e.ignoreErr)
 	if err != nil {
 		return false, err
 	}

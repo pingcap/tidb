@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -48,7 +49,8 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	ctx := context.Background()
 	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
-	plan, err := builder.Build(ctx, stmt)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 
 	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
@@ -1800,7 +1802,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		tk.MustExec(setStmt)
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		nodeW := resolve.NewNodeW(stmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1817,7 +1820,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			BinaryArgs: params,
 			PrepStmt:   prepStmt,
 		}
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		nodeW := resolve.NewNodeW(execStmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1835,10 +1839,31 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		colPredicates map[string]set.StringSet
 	}{
 		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("test"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='t';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where tidb_table_id=111;`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"tidb_table_id": set.NewStringSet("111"),
+			},
+		},
+		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name": set.NewStringSet("T"),
+				"table_name": set.NewStringSet("t"),
 			},
 		},
 		{
@@ -1859,7 +1884,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where upper(table_name)=upper('T');`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name": set.NewStringSet("T"),
+				"table_name": set.NewStringSet("t"),
 			},
 		},
 		{

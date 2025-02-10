@@ -17,7 +17,7 @@ package ddl_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -28,7 +28,7 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteReorganization {
 			needReorg = true
 		}

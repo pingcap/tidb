@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -33,8 +34,8 @@ import (
 func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/table/contextimpl/forceWriteBinlog", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/table/contextimpl/forceWriteBinlog")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog")
 	testInsertOnDuplicateKey(t, tk)
 }
 
@@ -239,6 +240,24 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 		"<nil>/<nil>/x/1.2",
 		"<nil>/<nil>/x/1.2"))
 
+	// Test issue 56829
+	tk.MustExec(`
+		CREATE TABLE cache (
+			cache_key varchar(512) NOT NULL,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			expired_at datetime GENERATED ALWAYS AS (if(expires > 0, date_add(updated_at, interval expires second), date_add(updated_at, interval 99 year))) VIRTUAL,
+			expires int(11),
+			PRIMARY KEY (cache_key) /*T![clustered_index] CLUSTERED */,
+			KEY idx_c_on_expired_at (expired_at)
+		)`)
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("admin check table cache")
+	rs1 := tk.MustQuery("select cache_key, expired_at from cache use index() order by cache_key")
+	rs2 := tk.MustQuery("select cache_key, expired_at from cache use index(idx_c_on_expired_at) order by cache_key")
+	require.True(t, rs1.Equal(rs2.Rows()))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
@@ -416,7 +435,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+	for _, enable := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 		tk.Session().GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -591,4 +610,96 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 			)
 		}
 	}
+}
+
+func TestMySQLInsertID(t *testing.T) {
+	// mysql_insert_id() differs from LAST_INSERT_ID()
+	// See https://github.com/pingcap/tidb/issues/55965
+	// mysql_insert_id() is got from tk.Session().LastInsertID()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists tb")
+	tk.MustExec("create table tb(pk int primary key auto_increment, a int, b int, unique(a))")
+	defer tk.MustExec("drop table if exists tb")
+
+	tk.MustExec("insert into tb (a, b) values (1, 1) on duplicate key update b = values(b)")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(1))
+
+	tk.MustExec("insert into tb (a, b) values (2, 2) on duplicate key update b = values(b)")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(2))
+
+	// If there is an AUTO_INCREMENT column in the table and there were some explicit successfully
+	// inserted values or some updated values, return the last of the inserted or updated values.
+	// Ref https://dev.mysql.com/doc/c-api/5.7/en/mysql-insert-id.html#:~:text=When%20called%20after%20an%20INSERT%20...%20ON,of%20the%20inserted%20or%20updated%20values
+	tk.MustExec("insert into tb (a, b) values (1, 2) on duplicate key update b = values(b)")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(1))
+	tk.MustQuery("select LAST_INSERT_ID()").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select * from tb").Sort().Check(testkit.Rows("1 1 2", "2 2 2"))
+
+	// When the new row and the old row are exactly the same (no inserted or updated values), mysql_insert_id() is 0
+	tk.MustExec("insert into tb (a, b) values (1, 2) on duplicate key update b = 2")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
+	tk.MustQuery("select LAST_INSERT_ID()").Check(testkit.Rows("2"))
+
+	// When the value of auto increment column is assigned explicitly, LAST_INSERT_ID() is unchanged.
+	// mysql_insert_id() is set to the explicit assigned value.
+	tk.MustExec("insert into tb values (6, 6, 6)")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(6))
+	tk.MustQuery("select LAST_INSERT_ID()").Check(testkit.Rows("2"))
+
+	// Update statement touches neigher mysql_insert_id() nor LAST_INSERT_ID()
+	tk.MustExec("update tb set b = 7, pk = pk + 1 where b = 6")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
+	tk.MustQuery("select LAST_INSERT_ID()").Check(testkit.Rows("2"))
+
+	// How to distinguish LAST_INSERT_ID() and mysql_insert_id()?
+	// In a word, LAST_INSERT_ID() is always get from auto allocated value, while mysql_insert_id() can be
+	// auto allocated or explicited specified.
+
+	// Another scenario mentioned by @lcwangcao
+	// What's the behaviour when transaction conflict involved?
+	tk.MustExec("truncate table tb")
+	tk.MustExec("insert into tb (a, b) values (1, 1), (2, 2)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustExec("update tb set b = 2 where a = 1")
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		tk1.MustExec("commit")
+	}()
+	// The first time this will update one row.
+	// Then transaction conflict and retry, in the second time it modify nothing.
+	tk.MustExec("insert into tb(a, b) values(1,2) on duplicate key update b = 2;")
+	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
+}
+
+func TestInsertNullInNonStrictMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, col1 varchar(10) not null default '')")
+	tk.MustExec("create table t2 (id int primary key, col1 varchar(10))")
+	tk.MustExec("insert into t2 values (1, null)")
+	tk.MustExec("insert ignore into t1 values(5, null)")
+
+	tk.MustExec("set session sql_mode = ''")
+
+	err := tk.ExecToErr("insert into t1 values(1, null)")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	err = tk.ExecToErr("insert into t1 set id = 1, col1 = null")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	err = tk.ExecToErr("insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
+	tk.MustExec("insert into t1 select * from t2")
+	tk.MustExec("insert into t1 values(2, null), (3, 3), (4, 4)")
+	tk.MustExec("update t1 set col1 = null where id = 3")
+	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
 }

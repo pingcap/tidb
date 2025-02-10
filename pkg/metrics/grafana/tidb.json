@@ -95,10 +95,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 1
@@ -218,11 +218,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 1
@@ -348,11 +348,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 7
@@ -466,7 +466,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 7
@@ -577,7 +577,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 13
@@ -680,7 +680,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 13
@@ -727,7 +727,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -737,7 +737,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "total",
@@ -797,10 +797,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 19
@@ -872,7 +872,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Slow query",
+          "title": "Slow Query",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -922,10 +922,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 19
@@ -1059,10 +1059,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 25
@@ -1155,10 +1155,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 25
@@ -1251,10 +1251,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 31
@@ -1347,10 +1347,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 31
@@ -1457,7 +1457,7 @@
           "description": "TiDB durations with 80 percent buckets by instance",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -1551,7 +1551,7 @@
           "description": "TiDB durations with 95 percent buckets by instance",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -1648,7 +1648,7 @@
           "description": "TiDB durations with 99 percent buckets by instance",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -1741,7 +1741,7 @@
           "description": "TiDB durations with 99.9 percent buckets by instance",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -1834,7 +1834,7 @@
           "description": "TiDB failed query statistics with failing information ",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -1927,7 +1927,7 @@
           "description": "The internal SQL is used by TiDB itself.",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -2022,7 +2022,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -2082,7 +2082,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Queries in Multi-Statement",
+          "title": "Queries In Multi-Statement",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -2150,7 +2150,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -2267,7 +2267,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -2377,7 +2377,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -2762,7 +2762,7 @@
               "refId": "B"
             }
           ],
-          "title": "Runtime GC rate and GOMEMLIMIT",
+          "title": "Runtime GC Rate And GOMEMLIMIT",
           "type": "timeseries"
         },
         {
@@ -2776,7 +2776,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -2876,7 +2876,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -2993,7 +2993,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3093,7 +3093,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -3202,7 +3202,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -3317,7 +3317,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3415,7 +3415,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3522,7 +3522,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3620,7 +3620,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3716,7 +3716,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3814,7 +3814,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -3922,7 +3922,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -4021,7 +4021,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -4118,7 +4118,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -4204,7 +4204,117 @@
             "align": false,
             "alignLevel": null
           }
-        }
+        },
+	{
+	  "aliasColors": {},
+	  "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+	  "description": "The total count of internal sessions.",
+	  "editable": true,
+	  "fieldConfig": {
+	    "defaults": {},
+	    "overrides": []
+	  },
+	  "grid": {},
+	  "gridPos": {
+	    "h": 7,
+	    "w": 12,
+	    "x": 12,
+	    "y": 66
+	  },
+	  "id": 23763572016,
+	  "legend": {
+	    "alignAsTable": true,
+	    "avg": false,
+	    "current": true,
+	    "hideEmpty": true,
+	    "hideZero": false,
+	    "max": true,
+	    "min": false,
+	    "rightSide": true,
+	    "show": true,
+	    "sideWidth": null,
+	    "total": false,
+	    "values": true
+	  },
+	  "lines": true,
+	  "linewidth": 1,
+	  "links": [],
+	  "nullPointMode": "null as zero",
+	  "options": {
+	    "alertThreshold": true
+	  },
+	  "pluginVersion": "7.5.11",
+	  "pointradius": 5,
+	  "renderer": "flot",
+	  "seriesOverrides": [],
+	  "spaceLength": 10,
+	  "targets": [
+	    {
+	      "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+	      "legendFormat": "{{instance}}",
+	      "interval": "",
+	      "exemplar": true,
+	      "format": "time_series",
+	      "hide": false,
+	      "intervalFactor": 1,
+	      "refId": "H"
+	    }
+	  ],
+	  "thresholds": [],
+	  "timeRegions": [],
+	  "title": "Internal Sessions",
+	  "tooltip": {
+	    "msResolution": true,
+	    "shared": true,
+	    "sort": 0,
+	    "value_type": "cumulative"
+	  },
+	  "type": "graph",
+	  "xaxis": {
+	    "buckets": null,
+	    "mode": "time",
+	    "name": null,
+	    "show": true,
+	    "values": []
+	  },
+	  "yaxes": [
+	    {
+	      "format": "short",
+	      "label": "",
+	      "logBase": 1,
+	      "max": null,
+	      "min": "0",
+	      "show": true,
+	      "$$hashKey": "object:264"
+	    },
+	    {
+	      "format": "short",
+	      "label": "",
+	      "logBase": 1,
+	      "max": null,
+	      "min": null,
+	      "show": false,
+	      "$$hashKey": "object:265"
+	    }
+	  ],
+	  "yaxis": {
+	    "align": false,
+	    "alignLevel": null
+	  },
+	  "timeFrom": null,
+	  "timeShift": null,
+	  "bars": false,
+	  "dashes": false,
+	  "error": false,
+	  "fill": 0,
+	  "fillGradient": 0,
+	  "hiddenSeries": false,
+	  "percentage": false,
+	  "points": false,
+	  "stack": false,
+	  "steppedLine": false
+	}
       ],
       "repeat": null,
       "title": "Server",
@@ -4237,7 +4347,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -4349,7 +4459,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -4597,7 +4707,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -4698,7 +4808,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -4814,7 +4924,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -4917,7 +5027,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -5105,7 +5215,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -5171,7 +5281,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction Write KV Num Rate and Sum",
+          "title": "Transaction Write KV Num Rate And Sum",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -5364,7 +5474,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -5485,7 +5595,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -5551,7 +5661,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction Write Size Bytes Rate and Sum",
+          "title": "Transaction Write Size Bytes Rate And Sum",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -5674,7 +5784,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -5795,7 +5905,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -5899,7 +6009,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -6076,7 +6186,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -6190,7 +6300,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -6258,7 +6368,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction Commit .99 Backoff",
+          "title": "Transaction Commit P99 Backoff",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -6311,7 +6421,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -6409,7 +6519,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -6507,7 +6617,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -6607,7 +6717,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -6671,7 +6781,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction execution states duration",
+          "title": "Transaction Execution States Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -6723,7 +6833,7 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -6786,7 +6896,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction with lock execution states duration",
+          "title": "Transaction With Lock Execution States Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -6836,7 +6946,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -6900,7 +7010,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction execution states duration",
+          "title": "Transaction Execution States Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -6950,7 +7060,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -6999,7 +7109,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction enter state",
+          "title": "Transaction Enter State",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -7049,7 +7159,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -7098,7 +7208,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction leave state",
+          "title": "Transaction Leave State",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -7148,7 +7258,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -7197,7 +7307,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction state count change",
+          "title": "Transaction State Count Change",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -7247,7 +7357,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -7346,7 +7456,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -7589,7 +7699,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -7758,11 +7868,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 5
@@ -7869,11 +7979,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 5
@@ -7980,11 +8090,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 13
@@ -8091,11 +8201,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 13
@@ -8199,11 +8309,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 21
@@ -8307,11 +8417,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 21
@@ -8415,11 +8525,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 29
@@ -8524,10 +8634,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 29
@@ -8628,11 +8738,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 37
@@ -8730,6 +8840,121 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "decimals": null,
+          "description": "The time cost of Plan Cache Process",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 23763572017,
+          "interval": "",
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sort": null,
+            "sortDesc": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_server_plan_cache_process_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le, type) / sum(rate(tidb_server_plan_cache_process_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le, type)",
+              "format": "time_series",
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "avg-{{type}}",
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Plan Cache Process Duration",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:65",
+              "decimals": null,
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:66",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "Records Mpp coordinator related stats",
           "fieldConfig": {
             "defaults": {},
@@ -8738,10 +8963,10 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
-            "y": 37
+            "y": 45
           },
           "hiddenSeries": false,
           "id": 311,
@@ -8838,7 +9063,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 45
@@ -8970,7 +9195,7 @@
           "description": "durations of distsql execution by type",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9091,7 +9316,7 @@
           "description": "distsql query handling durations per second",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9184,7 +9409,7 @@
           "description": "the numebr of distsql partial scan numbers",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9275,7 +9500,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "the numebr of distsql scan numbers",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -9375,7 +9600,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "the numebr of distsql partial scan key numbers",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -9475,7 +9700,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "distsql partial numbers per query",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -9577,7 +9802,7 @@
           "description": "TiDB coprocessor cache hit, evict and miss number",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9672,7 +9897,7 @@
           "description": "kv storage coprocessor processing durations",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9783,7 +10008,7 @@
           "description": "kv backoff time durations by type",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -9995,7 +10220,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage backoff times",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -10087,7 +10312,7 @@
           "description": "lock resolve times",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -10183,7 +10408,7 @@
           "description": "This metric shows the reasons of replica selector failure (which needs a backoff).",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10299,7 +10524,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10402,7 +10627,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10456,7 +10681,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV Request Duration 99 by store",
+          "title": "KV Request Duration 99 By Store",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -10507,7 +10732,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10561,7 +10786,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV Request Duration 99 by type",
+          "title": "KV Request Duration 99 By Type",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -10612,7 +10837,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10715,7 +10940,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -10767,7 +10992,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV Request Forwarding OPS by Type",
+          "title": "KV Request Forwarding OPS By Type",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -10816,7 +11041,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -10913,7 +11138,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11010,7 +11235,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11119,7 +11344,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11230,7 +11455,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11331,7 +11556,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11435,7 +11660,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11535,7 +11760,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The slow score calculated by time cost of some specific TiKV RPC requests.",
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11589,7 +11814,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Client-side slow score",
+          "title": "Client-side Slow Score",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -11626,7 +11851,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The slow score calculated by TiKV rafstore and sent to TiDB via health feedback.",
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -11680,7 +11905,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "TiKV-side slow score",
+          "title": "TiKV-side Slow Score",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -11739,7 +11964,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -11842,7 +12067,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -11965,7 +12190,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12068,7 +12293,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12175,7 +12400,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12233,6 +12458,13 @@
               "intervalFactor": 2,
               "legendFormat": "90",
               "refId": "C"
+            },
+            {
+              "expr": "sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"wait\"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"wait\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "avg",
+              "refId": "D"
             }
           ],
           "thresholds": [],
@@ -12290,7 +12522,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12348,6 +12580,13 @@
               "intervalFactor": 2,
               "legendFormat": "99",
               "refId": "C"
+            },
+            {
+              "expr": "sum(rate(pd_client_request_handle_requests_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"tso\"}[1m])) / sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"tso\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "avg",
+              "refId": "D"
             }
           ],
           "thresholds": [],
@@ -12398,6 +12637,107 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The estimated latency of TSO RPC calls that's used to adjust batching time for parallel RPC requests",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 23
+          },
+          "hiddenSeries": false,
+          "id": 23763572011,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "pd_client_request_estimate_tso_latency{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-{{stream}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Estimate TSO RTT Latency",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "The duration of the async TS until called the Wait function.",
           "editable": true,
           "error": false,
@@ -12405,7 +12745,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12519,7 +12859,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -12571,7 +12911,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Request forwarded status",
+          "title": "Request Forwarded Status",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -12621,7 +12961,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12777,7 +13117,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -12893,7 +13233,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -13002,6 +13342,111 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The stale regions from PD per second.",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 37
+          },
+          "hiddenSeries": false,
+          "id": 339,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 2,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_tikvclient_stale_region_from_pd{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s]))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "all",
+              "refId": "A",
+              "step": 10
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Stale Region From PD",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "ops",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "How long tidb side wait for tso future",
           "editable": true,
           "error": false,
@@ -13009,7 +13454,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -13159,7 +13604,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -13263,7 +13708,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -13912,7 +14357,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -13972,7 +14417,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Infoschema v2 Cache Operation",
+          "title": "Infoschema V2 Cache Operation",
           "tooltip": {
             "shared": true,
             "sort": 2,
@@ -14032,10 +14477,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 38
@@ -14073,7 +14518,7 @@
               "exemplar": true,
               "expr": "tidb_domain_infoschema_v2_cache_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "interval": "",
-              "legendFormat": "used",
+              "legendFormat": "{{instance}} used",
               "refId": "A"
             },
             {
@@ -14081,7 +14526,7 @@
               "expr": "tidb_domain_infoschema_v2_cache_limit{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "hide": false,
               "interval": "",
-              "legendFormat": "limit",
+              "legendFormat": "{{instance}} limit",
               "refId": "B"
             }
           ],
@@ -14089,7 +14534,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Infoschema v2 Cache Size",
+          "title": "Infoschema V2 Cache Size",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14264,7 +14709,104 @@
             "align": false,
             "alignLevel": null
           }
-	}
+	},
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Cached table count of infoschema cache v2",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 46
+          },
+          "hiddenSeries": false,
+          "id": 23763572018,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "tidb_domain_infoschema_v2_cache_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+              "interval": "",
+              "legendFormat": "used",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Infoschema V2 Cache Table Count",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        }
       ],
       "repeat": null,
       "title": "Schema Load",
@@ -14287,17 +14829,121 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "executed DDL jobs per second",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 11
+          },
+          "hiddenSeries": false,
+          "id": 190,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{ type }}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "total",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "OPS",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB DDL duration statistics",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 12
+            "w": 12,
+            "x": 12,
+            "y": 11
           },
+          "hiddenSeries": false,
           "id": 9,
           "legend": {
             "alignAsTable": true,
@@ -14314,7 +14960,11 @@
           "linewidth": 2,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14324,10 +14974,13 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type))",
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}} - p99",
+              "hide": true,
+              "range": true,
               "refId": "A",
               "step": 10
             },
@@ -14338,13 +14991,21 @@
               "legendFormat": "add index worker",
               "refId": "B",
               "step": 10
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type) / sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "hide": false,
+              "legendFormat": "{{type}} -avg",
+              "range": true,
+              "refId": "C"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Duration 95",
+          "title": "Execute Duration",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -14362,24 +15023,18 @@
           "yaxes": [
             {
               "format": "s",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14388,33 +15043,43 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
-          "fill": 1,
+          "description": "TiDB worker duration by type, action, results",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 12
+            "w": 12,
+            "x": 0,
+            "y": 18
           },
-          "id": 63,
+          "hiddenSeries": false,
+          "id": 56,
           "legend": {
             "alignAsTable": true,
             "avg": false,
-            "current": true,
+            "current": false,
             "hideEmpty": true,
             "hideZero": true,
-            "max": true,
+            "max": false,
             "min": false,
             "rightSide": true,
             "show": true,
             "total": false,
-            "values": true
+            "values": false
           },
           "lines": true,
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14424,18 +15089,29 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_ddl_add_index_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type, action, result))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}}-{{action}}-{{result}} - p99",
+              "range": true,
+              "hide": true,
               "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(increase(tidb_ddl_worker_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, action, result)/sum(increase(tidb_ddl_worker_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, action, result)",
+              "hide": false,
+              "legendFormat": "{{type}}-{{action}}-{{result}} - avg",
+              "range": true,
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Backfill Data Rate",
+          "title": "Job Worker Operations Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14451,25 +15127,238 @@
           },
           "yaxes": [
             {
-              "format": "none",
-              "label": null,
+              "format": "s",
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Sync schema version operations duration",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
+          "hiddenSeries": false,
+          "id": 65,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(.99, sum(rate(tidb_ddl_owner_handle_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, type, result))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-{{result}} - p99",
+              "range": true,
+              "hide": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(.99, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, result))",
+              "hide": true,
+              "legendFormat": "update_self_ver-{{result}} - p99",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "rate(tidb_ddl_owner_handle_syncer_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]) / rate(tidb_ddl_owner_handle_syncer_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "hide": false,
+              "legendFormat": "{{type}} - {{result}} - avg",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(tidb_ddl_update_self_ver_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (result) / sum(rate(tidb_ddl_update_self_ver_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (result)",
+              "hide": false,
+              "legendFormat": "update_self_ver-{{result}} - avg",
+              "range": true,
+              "refId": "D"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Sync Schema Version Operations Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "DDL system table operations duration",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 25
+          },
+          "hiddenSeries": false,
+          "id": 264,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_job_table_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", }[1m])) by (le, type))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-95",
+              "queryType": "randomWalk",
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(tidb_ddl_job_table_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type) / sum(rate(tidb_ddl_job_table_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "hide": false,
+              "legendFormat": "{{type}} - avg",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "System Table Operations Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false
           }
         },
         {
@@ -14479,13 +15368,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB ddl request in queue",
-          "fill": 1,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 12
+            "w": 12,
+            "x": 12,
+            "y": 25
           },
+          "hiddenSeries": false,
           "id": 62,
           "legend": {
             "alignAsTable": true,
@@ -14504,7 +15399,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14525,7 +15424,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Waiting Jobs Count",
+          "title": "Waiting Job Count",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14542,24 +15441,18 @@
           "yaxes": [
             {
               "format": "none",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14568,17 +15461,23 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB different ddl worker numbers",
-          "fill": 1,
+          "description": "current count of the running DDL jobs",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 19
+            "y": 32
           },
-          "id": 55,
+          "hiddenSeries": false,
+          "id": 265,
           "legend": {
-            "alignAsTable": true,
+            "alignAsTable": false,
             "avg": false,
             "current": false,
             "max": false,
@@ -14592,8 +15491,12 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
-          "pointradius": 5,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -14602,10 +15505,12 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "increase(tidb_ddl_worker_operation_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "exemplar": true,
+              "expr": "tidb_ddl_running_job_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}-{{type}}",
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "{{ type }}",
               "refId": "A"
             }
           ],
@@ -14613,7 +15518,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL META OPM",
+          "title": "Running Job Count By Worker Pool",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14630,114 +15535,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB worker duration by type, action, results",
-          "fill": 1,
-          "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 12,
-            "y": 19
-          },
-          "id": 56,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "hideEmpty": true,
-            "hideZero": true,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.99, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type, action, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{action}}-{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "DDL Worker Duration 99",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14747,13 +15555,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB ddl schema syncer statistics, including init, start, watch, clear function call time cost",
-          "fill": 1,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 26
+            "w": 12,
+            "x": 12,
+            "y": 32
           },
+          "hiddenSeries": false,
           "id": 64,
           "legend": {
             "alignAsTable": true,
@@ -14770,7 +15584,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14808,24 +15626,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14834,196 +15645,28 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB ddl owner time operations on etcd duration statistics ",
-          "fill": 1,
+          "description": "TiDB different ddl worker numbers",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 26
-          },
-          "id": 65,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_owner_handle_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, type, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "Owner Handle Syncer Duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB schema syncer version update time duration",
-          "fill": 1,
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 26
-          },
-          "id": 66,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "Update Self Version Duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "executed DDL jobs per minute",
-          "fill": 1,
-          "gridPos": {
-            "h": 8,
             "w": 12,
             "x": 0,
-            "y": 33
+            "y": 39
           },
-          "id": 190,
+          "hiddenSeries": false,
+          "id": 55,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
             "current": false,
             "max": false,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
             "values": false
@@ -15032,8 +15675,12 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
-          "pointradius": 2,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -15042,25 +15689,18 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "increase(tidb_ddl_worker_operation_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
               "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "{{ type }}",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
-            },
-            {
-              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
-              "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "total",
-              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL OPM",
+          "title": "DDL META OPM",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15077,24 +15717,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15104,13 +15737,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB DDL backfill progress in percentage. The value is [0,100]",
-          "fill": 1,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
-            "y": 33
+            "y": 39
           },
+          "hiddenSeries": false,
           "id": 192,
           "legend": {
             "alignAsTable": true,
@@ -15127,8 +15766,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
-          "options": {},
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -15156,7 +15798,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL backfill progress in percentage",
+          "title": "Backfill Progress In Percentage",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15173,24 +15815,18 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15199,129 +15835,33 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "DDL job table duration",
+          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
-            "y": 40
+            "y": 46
           },
           "hiddenSeries": false,
-          "id": 264,
+          "id": 63,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
-            "current": false,
-            "max": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": true,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "options": {
-            "alertThreshold": true
-          },
-          "percentage": false,
-          "pluginVersion": "7.5.11",
-          "pointradius": 2,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_job_table_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", }[1m])) by (le, type))",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "{{type}}-95",
-              "queryType": "randomWalk",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "DDL job table duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "$$hashKey": "object:629",
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "$$hashKey": "object:630",
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": false
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "current count of the running DDL jobs",
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "fill": 1,
-          "fillGradient": 0,
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 40
-          },
-          "hiddenSeries": false,
-          "id": 265,
-          "legend": {
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "show": true,
-            "total": false,
-            "values": false
+            "values": true
           },
           "lines": true,
           "linewidth": 1,
@@ -15331,8 +15871,8 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
-          "pointradius": 2,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -15341,12 +15881,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
-              "expr": "tidb_ddl_running_job_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(rate(tidb_ddl_add_index_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "{{ type }}",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}",
               "refId": "A"
             }
           ],
@@ -15354,7 +15892,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Running Job Cnt",
+          "title": "Backfill Data Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15370,25 +15908,19 @@
           },
           "yaxes": [
             {
-              "format": "short",
-              "label": null,
+              "format": "none",
               "logBase": 1,
-              "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15404,13 +15936,13 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
-            "x": 0,
-            "y": 48
+            "x": 12,
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 23763572001,
@@ -15422,7 +15954,7 @@
             "hideZero": false,
             "max": false,
             "min": false,
-            "rightSide": false,
+            "rightSide": true,
             "show": true,
             "total": false,
             "values": false
@@ -15435,7 +15967,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "8.5.27",
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -15489,13 +16021,11 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:598",
               "format": "MiBs",
               "logBase": 2,
               "show": true
             },
             {
-              "$$hashKey": "object:599",
               "format": "short",
               "logBase": 1,
               "show": true
@@ -15506,7 +16036,6 @@
           }
         }
       ],
-      "repeat": null,
       "title": "DDL",
       "type": "row"
     },
@@ -15531,10 +16060,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 20
@@ -15633,10 +16162,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 20
@@ -15736,10 +16265,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 30
@@ -15831,10 +16360,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 28
@@ -16027,7 +16556,7 @@
             ]
           },
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 36
@@ -16104,7 +16633,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 20
@@ -16131,14 +16660,14 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|failed|canceled|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
               "refId": "A"
             }
           ],
-          "title": "Uncompleted Subtask Distribution on TiDB Nodes",
+          "title": "Uncompleted Subtask Distribution On TiDB Nodes",
           "type": "piechart"
         },
         {
@@ -16195,7 +16724,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 36
@@ -16231,7 +16760,7 @@
               "refId": "B"
             }
           ],
-          "title": "Slots usage",
+          "title": "Slots Usage",
           "type": "timeseries"
         }
       ],
@@ -16261,7 +16790,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16367,7 +16896,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16464,7 +16993,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16575,7 +17104,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16672,7 +17201,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16868,7 +17397,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -16988,7 +17517,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -17026,7 +17555,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -17036,7 +17565,7 @@
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -17050,7 +17579,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Sync Load Latency 95",
+          "title": "Sync Load Latency P9999",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17215,7 +17744,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -17318,7 +17847,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -17437,7 +17966,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -17547,10 +18076,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 48
@@ -17646,10 +18175,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 48
@@ -17741,7 +18270,7 @@
             "x": 0,
             "y": 56,
             "w": 8,
-            "h": 8
+            "h": 7
           },
           "id": 23763572008,
           "targets": [
@@ -17803,7 +18332,7 @@
             "alignLevel": null
           },
           "lines": true,
-          "fill": 1,
+          "fill": 0,
           "linewidth": 1,
           "dashLength": 10,
           "spaceLength": 10,
@@ -17846,7 +18375,7 @@
             "x": 8,
             "y": 56,
             "w": 8,
-            "h": 8
+            "h": 7
           },
           "id": 23763572009,
           "targets": [
@@ -17908,7 +18437,7 @@
             "alignLevel": null
           },
           "lines": true,
-          "fill": 1,
+          "fill": 0,
           "linewidth": 1,
           "dashLength": 10,
           "spaceLength": 10,
@@ -17946,12 +18475,12 @@
         },
         {
           "type": "graph",
-          "title": "Number of Bindings in Cache",
+          "title": "Number Of Bindings In Cache",
           "gridPos": {
             "x": 16,
             "y": 56,
             "w": 8,
-            "h": 8
+            "h": 7
           },
           "id": 23763572010,
           "targets": [
@@ -18005,7 +18534,7 @@
             "alignLevel": null
           },
           "lines": true,
-          "fill": 1,
+          "fill": 0,
           "linewidth": 1,
           "dashLength": 10,
           "spaceLength": 10,
@@ -18066,7 +18595,7 @@
           "description": "TiDB new session durations for new etcd sessions",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -18157,7 +18686,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB owner  watcher counts",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -18259,7 +18788,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB auto id requests per second including  single table/global auto id processing and single table auto id rebase processing",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -18347,7 +18876,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB auto id requests durations",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -18442,7 +18971,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB meta operation durations including get/set schema and ddl jobs",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -18532,7 +19061,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
@@ -18649,7 +19178,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage garbage collection counts by type",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -18738,7 +19267,7 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": 2,
           "description": "kv storage garbage collection time durations",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -18827,7 +19356,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage garbage collection config including gc_life_time and gc_run_interval",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -18914,7 +19443,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage garbage collection failing counts",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -19000,7 +19529,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage unsafe destroy range failed counts",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -19088,7 +19617,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage region garbage collection clean too many locks count",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -19174,7 +19703,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "kv storage garbage collection results including failed and successful ones",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -19262,7 +19791,7 @@
           "description": "kv storage delete range task execution status by type",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -19361,7 +19890,7 @@
           "description": "kv storage range worker processing one task duration",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -19618,7 +20147,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Metrics for 'no available connection'.\nThere should be no data here if the connection between TiDB and TiKV is healthy.",
-          "fill": 1,
+          "fill": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
@@ -19706,7 +20235,7 @@
           "description": "kv storage batch processing unvailable durations",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -19800,7 +20329,7 @@
           "description": "kv storage batch client wait new connection establish duration",
           "editable": true,
           "error": false,
-          "fill": 1,
+          "fill": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
@@ -19895,7 +20424,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -20033,7 +20562,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -20138,7 +20667,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -20248,7 +20777,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -20349,7 +20878,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 7,
@@ -20468,7 +20997,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -20574,7 +21103,7 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
@@ -20695,11 +21224,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 20
@@ -20817,11 +21346,11 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 20
@@ -20948,7 +21477,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 28
@@ -21048,10 +21577,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 28
@@ -21161,10 +21690,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 36
@@ -21261,10 +21790,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 36
@@ -21359,10 +21888,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 44
@@ -21459,10 +21988,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 44
@@ -21558,10 +22087,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 52
@@ -21679,10 +22208,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 52
@@ -21800,10 +22329,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 60
@@ -21930,10 +22459,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 60
@@ -22060,10 +22589,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 68
@@ -22174,10 +22703,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 68
@@ -22288,7 +22817,7 @@
           "fill": 8,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 74
@@ -22459,7 +22988,7 @@
             ]
           },
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 74
@@ -22549,7 +23078,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 111
@@ -22674,10 +23203,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 20
@@ -22770,10 +23299,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 20
@@ -22881,10 +23410,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 105
@@ -22981,10 +23510,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 105
@@ -23031,7 +23560,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Coprocessor Response Size Per Instance and TiKV",
+          "title": "Coprocessor Response Size Per Instance And TiKV",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23081,10 +23610,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 113
@@ -23223,10 +23752,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 20
@@ -23287,7 +23816,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Total encode/deliver/import-kv speed",
+          "title": "Total Encode/Deliver/Import-kv Speed",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23335,10 +23864,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 20
@@ -23407,7 +23936,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Encoded/Delivered/Imported data size",
+          "title": "Encoded/Delivered/Imported Data Size",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23455,10 +23984,10 @@
             "defaults": {},
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 28
@@ -23503,7 +24032,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Delivered kv count",
+          "title": "Delivered KV Count",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23553,10 +24082,10 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 28
@@ -23617,7 +24146,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Data read/encode/deliver average duration",
+          "title": "Data Read/Encode/Deliver Average Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23736,7 +24265,7 @@
             ]
           },
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 36
@@ -23765,7 +24294,7 @@
               "refId": "A"
             }
           ],
-          "title": "Import/Normal mode",
+          "title": "Import/Normal Mode",
           "transformations": [
             {
               "id": "reduce",
@@ -23799,10 +24328,10 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Duration of writing to cloud storage",
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 1
@@ -23907,10 +24436,10 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 1
@@ -24011,10 +24540,10 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Duration of reading from cloud storage",
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 7
@@ -24119,10 +24648,10 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 7
@@ -24229,10 +24758,10 @@
             },
             "overrides": []
           },
-          "fill": 1,
+          "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 0,
             "y": 13
@@ -24364,7 +24893,7 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
             "x": 12,
             "y": 105
@@ -24394,7 +24923,7 @@
               "refId": "A"
             }
           ],
-          "title": "Parallel upload worker count",
+          "title": "Parallel Upload Worker Count",
           "type": "timeseries"
         }
       ],

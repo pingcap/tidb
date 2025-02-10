@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
@@ -49,7 +50,7 @@ func TestEmptyTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -66,7 +67,7 @@ func TestColumnIDs(t *testing.T) {
 	testKit.MustExec("analyze table t all columns")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -88,7 +89,7 @@ func TestColumnIDs(t *testing.T) {
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -115,10 +116,20 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t1 all columns")
 	do := dom
 	is := do.InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		testKit.Session(),
+		testKit2.Session(),
+		time.Millisecond,
+		is,
+		do.SysSessionPool(),
+		do.SysProcTracker(),
+		do.DDLNotifier(),
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	defer func() {
 		h.Close()
 	}()
@@ -134,7 +145,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("analyze table t2 all columns")
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
@@ -185,7 +196,7 @@ func TestVersion(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
-	tbl2, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 = tbl2.Meta()
 	statsTbl2, err = h.TableStatsFromStorage(tableInfo2, tableInfo2.ID, true, 0)
@@ -200,7 +211,7 @@ func TestLoadHist(t *testing.T) {
 	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
 	do := dom
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {
@@ -208,7 +219,7 @@ func TestLoadHist(t *testing.T) {
 	}
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	oldStatsTbl := h.GetTableStats(tableInfo)
@@ -221,25 +232,17 @@ func TestLoadHist(t *testing.T) {
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
 	require.False(t, oldStatsTbl == newStatsTbl)
-	// Only the TotColSize of histograms is updated.
+	// TotColSize of histograms is not changed.
 	oldStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
-		require.Less(t, hist.TotColSize, newStatsTbl.GetCol(id).TotColSize)
-
-		temp := hist.TotColSize
-		hist.TotColSize = newStatsTbl.GetCol(id).TotColSize
-		require.True(t, statistics.HistogramEqual(&hist.Histogram, &newStatsTbl.GetCol(id).Histogram, false))
-		hist.TotColSize = temp
-
-		require.True(t, hist.CMSketch.Equal(newStatsTbl.GetCol(id).CMSketch))
-		require.Equal(t, newStatsTbl.GetCol(id).Info, hist.Info)
+		require.Equal(t, hist.TotColSize, newStatsTbl.GetCol(id).TotColSize)
 		return false
 	})
 	// Add column c3, we only update c3.
 	testKit.MustExec("alter table t add column c3 int")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -452,7 +455,7 @@ func TestExtendedStatsOps(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(context.Background(), is)
@@ -496,7 +499,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(context.Background(), is)
@@ -573,7 +576,7 @@ func TestCorrelationStatsCompute(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(context.Background(), is)
@@ -656,7 +659,7 @@ func TestSyncStatsExtendedRemoval(t *testing.T) {
 	tk.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -687,16 +690,16 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
@@ -1124,7 +1127,7 @@ func TestLoadHistogramWithCollate(t *testing.T) {
 	do := dom
 	h := do.StatsHandle()
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
@@ -1138,11 +1141,12 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	h := do.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
+	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("insert into t values(1, 2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl1 := h.GetTableStats(tableInfo)
@@ -1166,9 +1170,9 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 		tk.MustExec("set @@session.tidb_analyze_version = 2")
 		h := dom.StatsHandle()
-		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		tid := tblInfo.ID
@@ -1245,7 +1249,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	tk.MustExec("alter table t add index multi(a, b)")
 	tk.MustExec("analyze table t with 2 topn")
 
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
 	require.NoError(t, err)
@@ -1270,7 +1274,7 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.Nil(t, err)
 	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -1294,12 +1298,13 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tblStats := h.GetTableStats(tblInfo)
@@ -1388,7 +1393,7 @@ func TestInitStatsLite(t *testing.T) {
 	}()
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colBID := tblInfo.Columns[1].ID
@@ -1401,9 +1406,10 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background(), is))
+	require.NoError(t, h.InitStatsLite(context.Background()))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
+	require.Equal(t, int(statistics.Version2), statsTbl1.StatsVer)
 	{
 		// internal.AssertTableEqual(t, statsTbl0, statsTbl1)
 		// statsTbl0 is loaded when the cache has pseudo table.
@@ -1417,7 +1423,7 @@ func TestInitStatsLite(t *testing.T) {
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(is))
 	statsTbl2 := h.GetTableStats(tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
 	colCStats := statsTbl2.GetCol(colCID)
@@ -1464,7 +1470,7 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t partition p0, p1")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tblInfo)
@@ -1478,4 +1484,32 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 		require.True(t, idx.IsStatsInitialized())
 		return false
 	})
+}
+
+func TestStatsCacheUpdateTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t partition p0, p1")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats.RealtimeCount))
+	require.Equal(t, 2, int(globalStats.ModifyCount))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
+	}()
+	require.Error(t, h.Update(context.Background(), dom.InfoSchema()))
+	globalStats2 := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats2.RealtimeCount))
+	require.Equal(t, 2, int(globalStats2.ModifyCount))
 }
