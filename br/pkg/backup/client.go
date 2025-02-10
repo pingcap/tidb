@@ -353,10 +353,13 @@ mainLoop:
 							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
 								zap.Uint64("round", round), zap.Error(err))
 						} else {
-							// send resolved locks to next round backup request
-							// so that backup scanner can skip these ignore locks next time.
-							loop.BackupReq.Context.ResolvedLocks = append(loop.BackupReq.Context.ResolvedLocks, ignoreLocks...)
-							loop.BackupReq.Context.CommittedLocks = append(loop.BackupReq.Context.CommittedLocks, accessLocks...)
+							// context is nil when doing raw/txn backup
+							if loop.BackupReq.Context != nil {
+								// send resolved locks to next round backup request
+								// so that backup scanner can skip these ignore locks next time.
+								loop.BackupReq.Context.ResolvedLocks = append(loop.BackupReq.Context.ResolvedLocks, ignoreLocks...)
+								loop.BackupReq.Context.CommittedLocks = append(loop.BackupReq.Context.CommittedLocks, accessLocks...)
+							}
 						}
 						reset = false
 					}
