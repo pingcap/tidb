@@ -700,7 +700,7 @@ func TestOpenReadSlowly(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		Return(&s3.GetObjectOutput{
 			Body:          &alphabetReader{character: 'A'},
 			ContentLength: aws.Int64(26),
