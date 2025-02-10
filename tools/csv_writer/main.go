@@ -148,6 +148,59 @@ func generateData(columns []Column, rowCount int) [][]string {
 	return data
 }
 
+// 生成符合字段类型的数据（并发）
+func generateDataConcurrently(columns []Column, rowCount int) [][]string {
+	var wg sync.WaitGroup
+	chunkSize := rowCount / concurrency
+	dataChannel := make(chan [][]string, concurrency) // 并发安全的 channel
+
+	startTime := time.Now()
+
+	// 并发生成数据
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+
+		go func(workerID int) {
+			defer wg.Done()
+
+			start := workerID * chunkSize
+			end := start + chunkSize
+			if workerID == concurrency-1 { // 处理剩余数据
+				end = rowCount
+			}
+
+			log.Printf("Worker %d: 生成数据 %d - %d", workerID, start, end)
+
+			workerData := make([][]string, 0, end-start)
+			for j := start; j < end; j++ {
+				row := []string{}
+				for _, col := range columns {
+					row = append(row, generateValue(col))
+				}
+				workerData = append(workerData, row)
+			}
+
+			dataChannel <- workerData
+			log.Printf("Worker %d: 生成完成 %d 行数据", workerID, len(workerData))
+		}(i)
+	}
+
+	// 等待所有 goroutine 完成
+	wg.Wait()
+	close(dataChannel)
+
+	// 合并所有数据
+	data := make([][]string, 0, rowCount)
+	for chunk := range dataChannel {
+		data = append(data, chunk...)
+	}
+
+	endTime := time.Now()
+	log.Printf("生成随机数据完成，耗时: %v", endTime.Sub(startTime))
+
+	return data
+}
+
 func extractNumberFromSQLType(sqlType string) int {
 	start := strings.Index(sqlType, "(")
 	end := strings.Index(sqlType, ")")
@@ -314,7 +367,7 @@ func main() {
 
 	// 生成数据
 	startTime := time.Now()
-	data := generateData(columns, rowCount)
+	data := generateDataConcurrently(columns, rowCount)
 	endTime := time.Now()
 	log.Printf("生成随机数据，耗时: %v", endTime.Sub(startTime))
 
