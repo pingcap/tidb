@@ -14,9 +14,6 @@
 package ast
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -2251,7 +2248,7 @@ type ResourceGroupOption struct {
 	Tp                ResourceUnitType
 	StrValue          string
 	UintValue         uint64
-	BoolValue         bool
+	Burstable         BurstableType
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
@@ -2262,6 +2259,7 @@ const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
 	ResourcePriority
+	ResourceBurstable
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -2269,8 +2267,17 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
+	ResourceUnlimitedOption
 	ResourceGroupRunaway
 	ResourceGroupBackground
+)
+
+type BurstableType int
+
+const (
+	BurstableDisable BurstableType = iota
+	BurstableModerated
+	BurstableUnlimited
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2278,7 +2285,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		if n.BoolValue {
+		if n.Burstable == BurstableUnlimited {
 			ctx.WriteKeyWord("UNLIMITED")
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
@@ -2299,10 +2306,17 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case ResourceBurstableOpiton:
+	case ResourceBurstable:
 		ctx.WriteKeyWord("BURSTABLE ")
 		ctx.WritePlain("= ")
-		ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
+		switch n.Burstable {
+		case BurstableDisable:
+			ctx.WritePlain("OFF")
+		case BurstableModerated:
+			ctx.WritePlain("MODERATED")
+		case BurstableUnlimited:
+			ctx.WritePlain("UNLIMITED")
+		}
 	case ResourceGroupRunaway:
 		ctx.WritePlain("QUERY_LIMIT ")
 		ctx.WritePlain("= ")

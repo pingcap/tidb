@@ -875,6 +875,7 @@ var tokenMap = map[string]int{
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
+	"MODERATED":                moderated,
 	"UNSET":                    unset,
 	"UNSIGNED":                 unsigned,
 	"UNTIL":                    until,
