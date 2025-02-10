@@ -26,12 +26,6 @@ import (
 )
 
 type cacheData struct {
-	// If `usingMem`` is true, chunkData will be used, and the chunk data will be stored in memory.
-	// Otherwise, the chunk data will be stored in a file.
-	//
-	// The default value of `usingMem` is false.
-	// We found when the concurrency is high(means that there are many `chunk_sender`), writing to the file system is slow.
-	// So we add a new parameter `usingMem` to control whether to store the chunk data in memory.
 	chunkData []byte
 	size      int
 	checksum  uint32
@@ -39,8 +33,14 @@ type cacheData struct {
 
 // chunksCache is a simple cache for chunks.
 type chunksCache struct {
-	chunks   map[uint64]cacheData // chunkID -> cacheData
-	baseDir  string
+	chunks  map[uint64]cacheData // chunkID -> cacheData
+	baseDir string
+	// If `usingMem`` is true, chunkData will be used, and the chunk data will be stored in memory.
+	// Otherwise, the chunk data will be stored in a file.
+	//
+	// The default value of `usingMem` is false.
+	// We found when the concurrency is high(means that there are many `chunk_sender`), writing to the file system is slow.
+	// So we add a new parameter `usingMem` to control whether to store the chunk data in memory.
 	usingMem bool
 }
 

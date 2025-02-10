@@ -1056,10 +1056,11 @@ func (tr *TableImporter) postProcess(
 
 		// 4.5. do duplicate detection.
 		// if we came here, it must be a physical backend.
-		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
-		// try to abstract it with logical mode.
+		// TODO: remove this cast after we refactor the backend interface.
+		// 1. Physical mode is so different, we shouldn't try to abstract it with logical mode.
+		// 2. We should abstract `GetDupeController` for local backend and remote backend.
 		var dupeController *local.DupeController
-		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+		if rc.cfg.IsLocalBackend() {
 			localBackend := rc.backend.(*local.Backend)
 			dupeController = localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		} else {
