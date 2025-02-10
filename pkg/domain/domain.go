@@ -2410,9 +2410,6 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
-<<<<<<< HEAD
-			err = statsHandle.LoadNeededHistograms()
-=======
 		case <-do.exit:
 			return
 		}
@@ -2440,8 +2437,7 @@ func (do *Domain) asyncLoadHistogram() {
 	for {
 		select {
 		case <-cleanupTicker.C:
-			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
->>>>>>> 0be1983389d (domain: move async load stats into single goroutine (#58302))
+			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
 				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
