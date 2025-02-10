@@ -160,7 +160,10 @@ func (n *DDLNotifier) start() {
 			return
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
-				intest.Assert(false, fmt.Sprintf("Error processing events: %v", err))
+				intest.Assert(
+					errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded),
+					fmt.Sprintf("error processing events: %v", err),
+				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
 			}
 		}
