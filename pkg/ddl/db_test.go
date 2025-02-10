@@ -1232,20 +1232,21 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 
 	job = model.Job{
 		ID:   1,
 		Type: model.ActionAddIndex,
 		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg: true,
+			IsDistReorg:     true,
+			UseCloudStorage: true,
 		},
 	}
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 }
 
