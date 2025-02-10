@@ -2521,7 +2521,7 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
+		if err := PutRawKvWithRetry(ctx, rc.rawKVClient, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 
@@ -2932,4 +2932,14 @@ func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
 // Attempt returns the remain attempt times
 func (b *waitTiFlashBackoffer) Attempt() int {
 	return b.Attempts
+}
+
+func PutRawKvWithRetry(ctx context.Context, client *RawKVBatchClient, key, value []byte, originTs uint64) error {
+	err := utils.WithRetry(ctx, func() error {
+		return client.Put(ctx, key, value, originTs)
+	}, utils.NewRawClientBackoffStrategy())
+	if err != nil {
+		return errors.Errorf("failed to put raw kv after retry")
+	}
+	return nil
 }
