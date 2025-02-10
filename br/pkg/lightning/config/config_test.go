@@ -1322,3 +1322,30 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 1
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
 }
+
+func TestRedactConfig(t *testing.T) {
+	tests := []struct {
+		origin string
+		redact string
+	}{
+		{"", ""},
+		{":", ":"},
+		{"~/file", "~/file"},
+		{"gs://bucket/file", "gs://bucket/file"},
+		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
+		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file?secret-access-key=123"},
+		{"s3://bucket/file", "s3://bucket/file"},
+		{"s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"},
+		{"s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"},
+		{"s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"},
+		{"s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"},
+		{"s3://bucket/file?secret_access_key=123", "s3://bucket/file?secret_access_key=xxxxxx"},
+	}
+	for _, tt := range tests {
+		cfg := NewConfig()
+		cfg.Mydumper.SourceDir = tt.origin
+
+		require.Contains(t, cfg.Redact(), tt.redact)
+		require.Contains(t, cfg.String(), tt.origin)
+	}
+}

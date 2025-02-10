@@ -37,6 +37,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
+<<<<<<< HEAD:br/pkg/lightning/config/config.go
+=======
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> a83ed8f7dd1 (lightning: redact external storage url (#59256)):pkg/lightning/config/config.go
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -270,6 +276,16 @@ func (cfg *Config) String() string {
 		log.L().Error("marshal config to json error", log.ShortError(err))
 	}
 	return string(bytes)
+}
+
+// Redact redacts the sensitive information.
+func (cfg *Config) Redact() string {
+	originDir := cfg.Mydumper.SourceDir
+	defer func() {
+		cfg.Mydumper.SourceDir = originDir
+	}()
+	cfg.Mydumper.SourceDir = ast.RedactURL(cfg.Mydumper.SourceDir)
+	return cfg.String()
 }
 
 // ToTLS creates a common.TLS from the config.
