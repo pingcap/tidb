@@ -525,7 +525,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	n.OnBecomeOwner()
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	require.Never(t, func() bool {
@@ -577,7 +577,7 @@ func TestCommitFailed(t *testing.T) {
 	n.OnBecomeOwner()
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 	require.Never(t, func() bool {
