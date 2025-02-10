@@ -36,6 +36,23 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+type testInfo struct {
+	cluster *integration.ClusterV3
+	client  *clientv3.Client
+}
+
+func newTestInfo(t *testing.T) *testInfo {
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	return &testInfo{
+		cluster: cluster,
+		client:  cluster.Client(0),
+	}
+}
+
+func (ti *testInfo) Close(t *testing.T) {
+	ti.cluster.Terminate(t)
+}
+
 func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
@@ -339,4 +356,21 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 	}
 	_, err = cli.Delete(context.Background(), string(resp.Kvs[0].Key))
 	return errors.Trace(err)
+}
+
+func TestImmediatelyCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	defer tInfo.Close(t)
+	ownerMgr := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "1", "/owner/key")
+	defer ownerMgr.Cancel()
+	for i := 0; i < 10; i++ {
+		err := ownerMgr.CampaignOwner()
+		require.NoError(t, err)
+		ownerMgr.CampaignCancel()
+	}
 }
