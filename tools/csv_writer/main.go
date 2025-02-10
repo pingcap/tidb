@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/brianvoe/gofakeit/v6"
@@ -227,12 +228,78 @@ func readSQLFile(filename string) (string, error) {
 	return string(data), nil
 }
 
+// 并发数
+func writeToGCSConcurrently(data [][]string, baseFileName string) {
+	var wg sync.WaitGroup
+	chunkSize := len(data) / concurrency // 每个协程处理 chunkSize 行数据
+
+	// GCS 认证信息
+	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+
+	// 初始化 GCS 存储
+	s, err := storage.ParseBackend("gcs://global-sort-dir", &op)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	if err != nil {
+		panic(err)
+	}
+
+	startTime := time.Now()
+
+	// 启动 3 个 goroutine 并发写入
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+
+		go func(workerID int) {
+			defer wg.Done()
+
+			fileName := fmt.Sprintf("%s.%d.sql", baseFileName, workerID) // 生成不同文件
+			writer, err := store.Create(context.Background(), fileName, nil)
+			if err != nil {
+				log.Printf("Worker %d: 创建 GCS 文件失败: %v", workerID, err)
+				return
+			}
+
+			// 计算数据切片范围
+			start := workerID * chunkSize
+			end := start + chunkSize
+			if workerID == concurrency-1 { // 最后一个 worker 可能需要写剩余的数据
+				end = len(data)
+			}
+
+			// 写入数据
+			for _, row := range data[start:end] {
+				_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
+				if err != nil {
+					log.Printf("Worker %d: 写入 GCS 失败: %v", workerID, err)
+					return
+				}
+			}
+			writer.Close(context.Background())
+
+			log.Printf("Worker %d: 完成写入 %s (%d 行)", workerID, fileName, end-start)
+		}(i)
+	}
+
+	wg.Wait() // 等待所有协程完成
+	endTime := time.Now()
+	log.Printf("GCS 并发写入完成，耗时: %v", endTime.Sub(startTime))
+}
+
 // 主函数
+const (
+	credentialPath = "/home/admin/credential"
+	templatePath   = "/home/admin/template.sql"
+	concurrency    = 3
+	rowCount       = 10000
+)
+
 func main() {
 	//gcs_demo()
 	//return
 
-	templatePath := "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer/template.sql"
 	sqlSchema, err := readSQLFile(templatePath)
 	if err != nil {
 		log.Fatalf("read schema template err: %v", err)
@@ -242,7 +309,6 @@ func main() {
 	columns := parseSQLSchema(sqlSchema)
 
 	// 生成数据
-	rowCount := 10000
 	data := generateData(columns, rowCount)
 
 	// write to local disk
@@ -253,9 +319,11 @@ func main() {
 	//}
 
 	// write to GCS
-	fileName := "testCSVWriter.0.sql"
+	//fileName := "testCSVWriter.0.sql"
 	//startTime := time.Now()
-	writeToGCS(data, fileName)
+	//writeToGCS(data, fileName)
 	//endTime := time.Now()
 	//log.Printf("GCS write time: %v", endTime.Sub(startTime))
+
+	writeToGCSConcurrently(data, "testCSVWriter")
 }
