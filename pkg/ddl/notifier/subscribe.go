@@ -18,6 +18,7 @@ import (
 	"context"
 	goerr "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -161,7 +162,7 @@ func (n *DDLNotifier) start() {
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
 				intest.Assert(
-					errors.ErrorEqual(err, context.Canceled),
+					errors.ErrorEqual(err, context.Canceled) || strings.Contains(err.Error(), "mock handleTaskOnce error"),
 					fmt.Sprintf("error processing events: %v", err),
 				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
