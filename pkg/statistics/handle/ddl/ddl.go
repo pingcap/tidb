@@ -51,7 +51,13 @@ func NewDDLHandler(
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
 	err := h.sub.handle(ctx, sctx, s)
-	intest.Assert(err == nil, fmt.Sprintf("handle ddl event failed, err: %v", err))
+	if err != nil {
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded),
+			fmt.Sprintf("handle ddl event failed, err: %v", err),
+		)
+	}
+
 	return err
 }
 
