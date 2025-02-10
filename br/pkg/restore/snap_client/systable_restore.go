@@ -130,7 +130,7 @@ var unRecoverableTable = map[string]map[string]struct{}{
 }
 
 var unRecoverableSchema = map[string]struct{}{
-	"workload_schema": {},
+	mysql.WorkloadSchema: {},
 }
 
 func isUnrecoverableTable(schemaName string, tableName string) bool {
@@ -166,7 +166,7 @@ func isPlanReplayerTables(schemaName string, tableName string) bool {
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
-	sysDBs := []string{mysql.SystemDB, mysql.SysDB, "workload_schema"}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
 	for _, sysDB := range sysDBs {
 		err := rc.restoreSystemSchema(ctx, f, sysDB)
 		if err != nil {
