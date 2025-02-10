@@ -53,7 +53,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 	err := h.sub.handle(ctx, sctx, s)
 	if err != nil {
 		intest.Assert(
-			errors.ErrorEqual(err, context.Canceled) || errors.ErrorEqual(err, context.DeadlineExceeded),
+			errors.ErrorEqual(err, context.Canceled),
 			fmt.Sprintf("handle ddl event failed, err: %v", err),
 		)
 	}
