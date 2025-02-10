@@ -3,18 +3,17 @@ package core
 import (
 	"encoding/json"
 
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 )
 
 func (e *Explain) UnityOnline() string {
-	node := e.unityOnlineSubPlan(e.TargetPlan.(base.PhysicalPlan))
+	node := e.unityOnlineSubPlan()
 	data, err := json.Marshal(node)
 	must(err)
 	return string(data)
 }
 
-func (e *Explain) unityOnlineSubPlan(op base.PhysicalPlan) *UnityOnlinePlanNode {
+func (e *Explain) unityOnlineSubPlan() *UnityOnlinePlanNode {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
 	var iterSubPlanFunc func(op *FlatOperator) *UnityOnlinePlanNode
 	iterSubPlanFunc = func(flatOp *FlatOperator) *UnityOnlinePlanNode {
@@ -31,8 +30,8 @@ func (e *Explain) unityOnlineSubPlan(op base.PhysicalPlan) *UnityOnlinePlanNode 
 		explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
 		textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-		estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(op, textTreeExplainID)
-		preSequence := planPreSequences(op)
+		estRows, estCost, _, accessObject, operatorInfo := e.getOperatorInfo(flatOp.Origin, textTreeExplainID)
+		preSequence := planPreSequences(flatOp.Origin)
 
 		node := &UnityOnlinePlanNode{
 			ID:           explainID,
@@ -60,6 +59,6 @@ type UnityOnlinePlanNode struct {
 	AccessObject string                 `json:"accessObject,omitempty"`
 	OperatorInfo string                 `json:"operatorInfo,omitempty"`
 	EstCost      string                 `json:"estCost,omitempty"`
-	SubOperators []*UnityOnlinePlanNode `json:"subOperators,omitempty"`
 	PreSequence  *UnityPreSequence      `json:"preSequence"`
+	SubOperators []*UnityOnlinePlanNode `json:"subOperators,omitempty"`
 }
