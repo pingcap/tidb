@@ -787,8 +787,8 @@ func (e *DDLExec) dropProcedure(schemaName pmodel.CIStr) error {
 	key := is.InfoStore.CiStr2Key(schemaName)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "delete from  %n.%n where route_schema = %?", mysql.SystemDB, mysql.Routines, key)
-	logutil.BgLogger().Error(sql.String())
+	sqlescape.MustFormatSQL(sql, "delete from %n.%n where route_schema = %?", mysql.SystemDB, mysql.Routines, key)
+	logutil.BgLogger().Info(sql.String())
 	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 	if err != nil {
 		return err
