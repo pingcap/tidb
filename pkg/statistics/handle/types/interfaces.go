@@ -48,7 +48,7 @@ type StatsGC interface {
 
 	// DeleteTableStatsFromKV deletes table statistics from kv.
 	// A statsID refers to statistic of a table or a partition.
-	DeleteTableStatsFromKV(statsIDs []int64) (err error)
+	DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error)
 }
 
 // ColStatsTimeInfo records usage information of this column stats.
@@ -109,8 +109,8 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
@@ -345,20 +345,13 @@ type StatsReadWriter interface {
 
 	// SaveStatsToStorage save the stats data to the storage.
 	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
 
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
-
-	// InsertColStats2KV inserts columns stats to kv.
-	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
-
-	// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
-	// new columns and indices which belong to this table.
-	InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error)
 
 	// UpdateStatsVersion will set statistics version to the newest TS,
 	// then tidb-server will reload automatic.

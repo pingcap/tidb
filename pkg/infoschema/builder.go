@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -961,12 +961,12 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			item := tableItem{
 				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     pmodel.NewCIStr(name),
+				tableName:     ast.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.Set(&item)
-			b.infoData.byName.Set(&item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -1023,7 +1023,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		infoData:     infoData,
 		enableV2:     useV2,
 	}
-	schemaCacheSize := variable.SchemaCacheSize.Load()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }

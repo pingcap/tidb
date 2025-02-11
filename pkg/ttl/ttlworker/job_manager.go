@@ -27,7 +27,7 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	ttltablestore "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -65,6 +65,11 @@ const taskGCTemplate = `DELETE task FROM
 
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
 const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE (current_job_status IS NULL OR current_job_owner_hb_time < %?)`
+
+// don't remove the rows for non-exist tables directly. Instead, set them to cancelled. In some special situations, the TTL job may still be able
+// to finish correctly. If that happen, the status will be updated from 'cancelled' to 'finished' in `(*ttlJob).finish`
+const ttlJobHistoryGCNonExistTableTemplate = `UPDATE mysql.tidb_ttl_job_history SET status = 'cancelled'
+	WHERE table_id NOT IN (SELECT table_id FROM mysql.tidb_ttl_table_status) AND status = 'running'`
 
 var timeFormat = time.DateTime
 
@@ -363,12 +368,12 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, err))
 	}
 
-	if !variable.EnableTTLJob.Load() {
+	if !vardef.EnableTTLJob.Load() {
 		responseErr(errors.New("tidb_ttl_job_enable is disabled"))
 		return
 	}
 
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
+	if !timeutil.WithinDayTimePeriod(vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -499,8 +504,15 @@ func (m *JobManager) reportMetrics(se session.Session) {
 	metrics.RunningJobsCnt.Set(runningJobs)
 	metrics.CancellingJobsCnt.Set(cancellingJobs)
 
+	if !m.isLeader() {
+		// only the leader can do collect delay metrics to reduce the performance overhead
+		metrics.ClearDelayMetrics()
+		return
+	}
+
 	if time.Since(m.lastReportDelayMetricsTime) > 10*time.Minute {
 		m.lastReportDelayMetricsTime = time.Now()
+		logutil.Logger(m.ctx).Info("TTL leader to collect delay metrics")
 		records, err := GetDelayMetricRecords(m.ctx, se, time.Now())
 		if err != nil {
 			logutil.Logger(m.ctx).Info("failed to get TTL delay metrics", zap.Error(err))
@@ -512,7 +524,10 @@ func (m *JobManager) reportMetrics(se session.Session) {
 
 // checkNotOwnJob removes the job whose current job owner is not yourself
 func (m *JobManager) checkNotOwnJob() {
-	for _, job := range m.runningJobs {
+	// reverse iteration so that we could remove the job safely in the loop
+	for i := len(m.runningJobs) - 1; i >= 0; i-- {
+		job := m.runningJobs[i]
+
 		tableStatus := m.tableStatusCache.Tables[job.tbl.ID]
 		if tableStatus == nil || tableStatus.CurrentJobOwnerID != m.id {
 			logger := logutil.Logger(m.ctx).With(zap.String("jobID", job.id))
@@ -526,8 +541,11 @@ func (m *JobManager) checkNotOwnJob() {
 }
 
 func (m *JobManager) checkFinishedJob(se session.Session) {
+	// reverse iteration so that we could remove the job safely in the loop
 j:
-	for _, job := range m.runningJobs {
+	for i := len(m.runningJobs) - 1; i >= 0; i-- {
+		job := m.runningJobs[i]
+
 		timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 
 		sql, args := cache.SelectFromTTLTaskWithJobID(job.id)
@@ -559,11 +577,13 @@ j:
 				zap.Int64("tableID", job.tbl.ID),
 				zap.String("table", job.tbl.FullName()),
 			)
-			logger.Info("job has finished")
 			summary, err := summarizeTaskResult(allTasks)
 			if err != nil {
 				logger.Info("fail to summarize job", zap.Error(err))
 			}
+			logger.Info("job has finished", zap.String("summary", summary.SummaryText),
+				zap.Uint64("totalRows", summary.TotalRows), zap.Uint64("successRows", summary.SuccessRows), zap.Uint64("errorRows", summary.ErrorRows),
+				zap.String("scanTaskError", summary.ScanTaskErr))
 			err = job.finish(se, se.Now(), summary)
 			if err != nil {
 				logger.Warn("fail to finish job", zap.Error(err))
@@ -595,17 +615,20 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	cancelJobs := false
 	cancelReason := ""
 	switch {
-	case !variable.EnableTTLJob.Load():
+	case !vardef.EnableTTLJob.Load():
 		cancelJobs = true
 		cancelReason = "tidb_ttl_job_enable turned off"
-	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+	case !timeutil.WithinDayTimePeriod(vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load(), now):
 		cancelJobs = true
 		cancelReason = "out of TTL job schedule window"
 	}
 
 	if cancelJobs {
 		if len(m.runningJobs) > 0 {
-			for _, job := range m.runningJobs {
+			// reverse iteration so that we could remove the job safely in the loop
+			for i := len(m.runningJobs) - 1; i >= 0; i-- {
+				job := m.runningJobs[i]
+
 				logger := logutil.Logger(m.ctx).With(
 					zap.String("jobID", job.id),
 					zap.Int64("tableID", job.tbl.ID),
@@ -628,7 +651,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	}
 
 	// if the table of a running job disappears, also cancel it
-	for _, job := range m.runningJobs {
+	// reverse iteration so that we could remove the job safely in the loop
+	for i := len(m.runningJobs) - 1; i >= 0; i-- {
+		job := m.runningJobs[i]
+
 		_, ok := m.infoSchemaCache.Tables[job.tbl.ID]
 		if ok {
 			continue
@@ -1074,6 +1100,12 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
 func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time) {
+	if !m.isLeader() {
+		// only the leader can do the GC to reduce the performance impact
+		return
+	}
+
+	logutil.Logger(m.ctx).Info("TTL leader to DoGC")
 	// Remove the table not exist in info schema cache.
 	// Delete the table status before deleting the tasks. Therefore the related tasks
 	if err := m.updateInfoSchemaCache(se); err == nil {
@@ -1096,6 +1128,10 @@ func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time
 
 	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCNonExistTableTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history for non-exist table", zap.Error(err))
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/rawkv"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -1659,11 +1661,11 @@ func TestCompactedSplitStrategy(t *testing.T) {
 	}
 
 	cases := []struct {
-		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
 		ExpectRegionEndKeys  [][]byte
 	}{
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
@@ -1678,7 +1680,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
@@ -1694,7 +1696,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1719,7 +1721,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
 			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
 		}
 
@@ -1774,14 +1776,14 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 	}
 
 	cases := []struct {
-		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
 		CheckpointSet        map[string]struct{}
 		ProcessedKVCount     int
 		ProcessedSize        int
 		ExpectRegionEndKeys  [][]byte
 	}{
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
@@ -1801,7 +1803,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
@@ -1820,7 +1822,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1843,7 +1845,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1866,7 +1868,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1897,7 +1899,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
 			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
 		}
 		totalSize := 0
@@ -1929,8 +1931,8 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 	}
 }
 
-func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
-	return &backuppb.LogFileSubcompaction{
+func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
 		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
@@ -1950,10 +1952,10 @@ func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uin
 				TotalKvs: num,
 			},
 		},
-	}
+	}}
 }
-func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
-	return &backuppb.LogFileSubcompaction{
+func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
 		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
@@ -1966,7 +1968,7 @@ func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64
 				TotalKvs: num,
 			},
 		},
-	}
+	}}
 }
 
 func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
@@ -1985,4 +1987,70 @@ func fakeRowKey(tableID, rowID int64) kv.Key {
 
 func fakeRowRawKey(tableID, rowID int64) kv.Key {
 	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
+}
+
+type mockRawKVClient struct {
+	rawkv.Client
+	putCount     int
+	errThreshold int
+}
+
+func (m *mockRawKVClient) BatchPut(ctx context.Context, keys, values [][]byte, options ...rawkv.RawOption) error {
+	m.putCount += 1
+	if m.errThreshold >= m.putCount {
+		return errors.New("rpcClient is idle")
+	}
+	return nil
+}
+
+func TestPutRawKvWithRetry(t *testing.T) {
+	tests := []struct {
+		name         string
+		errThreshold int
+		cancelAfter  time.Duration
+		wantErr      string
+		wantPuts     int
+	}{
+		{
+			name:         "success on first try",
+			errThreshold: 0,
+			wantPuts:     1,
+		},
+		{
+			name:         "success on after failure",
+			errThreshold: 2,
+			wantPuts:     3,
+		},
+		{
+			name:         "fails all retries",
+			errThreshold: 5,
+			wantErr:      "failed to put raw kv after retry",
+			wantPuts:     5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRawClient := &mockRawKVClient{
+				errThreshold: tt.errThreshold,
+			}
+			client := rawclient.NewRawKVBatchClient(mockRawClient, 1)
+
+			ctx := context.Background()
+			if tt.cancelAfter > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.cancelAfter)
+				defer cancel()
+			}
+
+			err := logclient.PutRawKvWithRetry(ctx, client, []byte("key"), []byte("value"), 1)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
+		})
+	}
 }

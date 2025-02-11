@@ -26,9 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
@@ -51,46 +52,6 @@ func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsRea
 	return &statsReadWriter{statsHandler: statsHandler}
 }
 
-// InsertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
-// This operation also updates version.
-func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
-		}
-	}()
-
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := InsertColStats2KV(util.StatsCtx, sctx, physicalID, colInfos)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		statsVer = startTS
-		return nil
-	}, util.FlagWrapTxn)
-}
-
-// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
-// new columns and indices which belong to this table.
-func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
-		}
-	}()
-
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := InsertTableStats2KV(util.StatsCtx, sctx, info, physicalID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		statsVer = startTS
-		return nil
-	}, util.FlagWrapTxn)
-}
-
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
 func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
@@ -104,7 +65,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
 		}
 	}()
 
@@ -135,7 +96,7 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, true)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, true, tableID)
 	}
 	return err
 }
@@ -175,18 +136,17 @@ func (s *statsReadWriter) SaveStatsToStorage(
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
 	statsVersion int,
-	isAnalyzed int64,
 	updateAnalyzeTime bool,
 	source string,
 ) (err error) {
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveStatsToStorage(sctx, tableID,
-			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
+			count, modifyCount, isIndex, hg, cms, topN, statsVersion, updateAnalyzeTime)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
 }
@@ -199,7 +159,7 @@ func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, s
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
 }
@@ -212,7 +172,7 @@ func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, 
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }
@@ -225,7 +185,7 @@ func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }
@@ -238,7 +198,7 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
 	}
 	return
 }
@@ -310,10 +270,10 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 ) {
 	historicalStatsEnabled, err := s.statsHandler.CheckHistoricalStatsEnable()
 	if err != nil {
-		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
+		return nil, nil, errors.Errorf("check %v failed: %v", vardef.TiDBEnableHistoricalStats, err)
 	}
 	if !historicalStatsEnabled {
-		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
+		return nil, nil, errors.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats)
 	}
 
 	defer func() {
@@ -567,7 +527,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error {
-	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(jsonTbl.DatabaseName), pmodel.NewCIStr(jsonTbl.TableName))
+	table, err := is.TableByName(context.Background(), ast.NewCIStr(jsonTbl.DatabaseName), ast.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -627,7 +587,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}
@@ -640,7 +600,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}

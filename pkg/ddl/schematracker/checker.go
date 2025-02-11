@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -89,7 +89,7 @@ func (d *Checker) CreateTestDB(ctx sessionctx.Context) {
 	d.tracker.CreateTestDB(ctx)
 }
 
-func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName pmodel.CIStr) {
+func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName ast.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -122,7 +122,7 @@ func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName pmodel.CIStr) {
 	}
 }
 
-func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmodel.CIStr) {
+func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -484,13 +484,13 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ ast.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ ast.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -512,7 +512,7 @@ func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 }
 
 // GetScope implements the DDL interface.
-func (d *Checker) GetScope(status string) variable.ScopeFlag {
+func (d *Checker) GetScope(status string) vardef.ScopeFlag {
 	return d.realDDL.GetScope(status)
 }
 

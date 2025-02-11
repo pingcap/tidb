@@ -1283,7 +1283,7 @@ select * from select_limit limit 18446744073709551615 offset 3;
 id	name
 4	hello
 select * from select_limit limit 18446744073709551616 offset 3;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3" 
 drop table if exists select_order_test;
 create table select_order_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
 insert INTO select_order_test VALUES (1, "hello");
@@ -1541,7 +1541,7 @@ null
 NULL
 true
 3
-4
+4.0
 "string"
 select json_type(a) from test_json tj order by tj.id;
 json_type(a)
@@ -1557,7 +1557,7 @@ a
 3
 select a from test_json tj where a = 4.0;
 a
-4
+4.0
 select a from test_json tj where a = true;
 a
 true
@@ -1592,7 +1592,7 @@ a	count(1)
 NULL	1
 null	1
 3	1
-4	1
+4.0	1
 "string"	1
 {"a": [1, "2", {"aa": "bb"}, 4], "b": true}	1
 true	1
@@ -2765,47 +2765,35 @@ create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		inner join, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
 explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
 explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
-MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-├─TableDual(Build)	0.00	root		rows:0
-└─TableDual(Probe)	0.00	root		rows:0
+TableDual	0.00	root		rows:0
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
 explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─MergeJoin	0.00	root		left outer join, left side:TableDual, left key:executor__executor.t.c1, right key:executor__executor.t.c1
-  ├─TableDual(Build)	0.00	root		rows:0
-  └─TableDual(Probe)	0.00	root		rows:0
+└─TableDual	0.00	root		rows:0
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
@@ -3142,9 +3130,9 @@ select c > a from t;
 c > a
 0
 load stats;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 11 near ";" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 10 near "" 
 load stats ./xxx.json;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json" 
 drop database if exists test_show;
 create database test_show;
 use test_show;
@@ -3217,6 +3205,8 @@ RESTRICTED_CONNECTION_ADMIN	Server Admin
 RESTRICTED_REPLICA_WRITER_ADMIN	Server Admin	
 RESOURCE_GROUP_ADMIN	Server Admin	
 RESOURCE_GROUP_USER	Server Admin	
+TRAFFIC_CAPTURE_ADMIN	Server Admin	
+TRAFFIC_REPLAY_ADMIN	Server Admin	
 show table status;
 Name	Engine	Version	Row_format	Rows	Avg_row_length	Data_length	Max_data_length	Index_length	Data_free	Auto_increment	Create_time	Update_time	Check_time	Collation	Checksum	Create_options	Comment
 t	InnoDB	10	Compact	0	0	0	0	0	0	NULL	0	NULL	NULL	utf8mb4_bin			
@@ -3526,7 +3516,7 @@ Error 1406 (22001): Data too long for column 'c1' at row 1
 insert into t values ('123');
 insert into t values ('1234');
 insert into t values ('12345);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 30 near "'12345);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near "'12345)" 
 drop table if exists t;
 create table t (c1 bit(62));
 insert into t values ('12345678');
@@ -3616,7 +3606,7 @@ create table t2(a int, b int, c int);
 insert into t2 values (11, 8, (select not b));
 Error 1054 (42S22): Unknown column 'b' in 'field list'
 insert into t2 set a = 11, b = 8, c = (select b));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ");" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ")" 
 insert into t2 values(1, 1, (select b from t2));
 select * from t2;
 a	b	c
@@ -4086,7 +4076,7 @@ admin show bdr role;
 BDR_ROLE
 
 admin set bdr role test_err;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err" 
 admin show bdr role;
 BDR_ROLE
 

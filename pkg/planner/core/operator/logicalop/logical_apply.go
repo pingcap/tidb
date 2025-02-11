@@ -120,11 +120,15 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if la.StatsInfo() != nil {
+func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childStats)
-		return la.StatsInfo(), nil
+		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
+		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
 	la.SetStats(&property.StatsInfo{
@@ -141,8 +145,8 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
 		}
 	}
-	la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childStats)
-	return la.StatsInfo(), nil
+	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
+	return la.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -279,8 +283,8 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 	return nil
 }
 
-func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
-	if len(colGroups) > 0 && (la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin) {
+func (la *LogicalApply) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
+	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin {
 		return childStats[0].GroupNDVs
 	}
 	return nil

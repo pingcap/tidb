@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -70,6 +71,8 @@ var dynamicPrivs = []string{
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
+	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
+	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -349,24 +352,6 @@ func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, h
 	return "", errors.New("Failed to get plugin for user")
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(ctx context.Context, user, host string) (string, error) {
-	if SkipWithGrant {
-		return mysql.AuthNativePassword, nil
-	}
-
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		return "", errors.New("Failed to get user record")
-	}
-	if !p.isValidHash(record) {
-		return "", errors.New("Failed to get plugin for user")
-	}
-	return record.AuthPlugin, nil
-}
-
 // MatchIdentity implements the Manager interface.
 func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
@@ -467,7 +452,7 @@ func checkAuthTokenClaims(claims map[string]any, record *UserRecord, tokenLife t
 
 // CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
-	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
+	isSandBoxModeEnabled := vardef.IsSandBoxModeEnabled.Load()
 	if record.PasswordExpired {
 		if isSandBoxModeEnabled {
 			return true, nil
@@ -477,7 +462,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 	if record.PasswordLifeTime != 0 {
 		lifeTime := record.PasswordLifeTime
 		if lifeTime == -1 {
-			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultPasswordLifetime)
 			if err != nil {
 				return false, err
 			}

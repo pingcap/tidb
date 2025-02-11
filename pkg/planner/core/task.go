@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -918,18 +919,16 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	//
 	// Original: DataSource(id, vec) -> TopN(by vec->dis) -> Projection(id)
 	//                                  └─Byitem: vec_distance(vec, '[1,2,3]')
-	//                                  └─Schema: id, vec
 	//
 	// New:      DataSource(id, vec) -> Projection(id, vec->dis) -> TopN(by dis) -> Projection(id)
 	//                                  └─Byitem: dis
-	//                                  └─Schema: id, dis
 	//
 	// Note that for plan now, TopN has its own schema and does not use the schema of children.
 	if newGlobalTopN != nil {
 		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
 		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))
 		bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns))
-		for _, col := range childPlan.Schema().Columns {
+		for _, col := range newGlobalTopN.Schema().Columns {
 			newCol := col.Clone().(*expression.Column)
 			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 			bottomProjExprs = append(bottomProjExprs, newCol)
@@ -966,8 +965,8 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 			Count:       newCount,
 		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 		// mppTask's topN
-		for _, expr := range distanceCols {
-			topN.ByItems[expr.Index].Expr = expr.DistanceCol
+		for _, item := range distanceCols {
+			topN.ByItems[item.Index].Expr = item.DistanceCol
 		}
 
 		// rootTask's topn, need reuse the distance col
@@ -1089,7 +1088,75 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 	return true
 }
 
-// Attach2Task implements physical plan
+// For https://github.com/pingcap/tidb/issues/51723,
+// This function only supports `CLUSTER_SLOW_QUERY`,
+// it will change plan from
+// TopN -> TableReader -> TableFullScan[cop] to
+// TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
+func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
+	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
+		return nil, false
+	}
+
+	var (
+		selOnTblScan   *PhysicalSelection
+		selSelectivity float64
+		tblScan        *PhysicalTableScan
+		err            error
+		ok             bool
+	)
+
+	copTsk.tablePlan, err = copTsk.tablePlan.Clone(p.SCtx())
+	if err != nil {
+		return nil, false
+	}
+	finalTblScanPlan := copTsk.tablePlan
+	for len(finalTblScanPlan.Children()) > 0 {
+		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		finalTblScanPlan = finalTblScanPlan.Children()[0]
+	}
+
+	if tblScan, ok = finalTblScanPlan.(*PhysicalTableScan); !ok {
+		return nil, false
+	}
+
+	// Check the table is `CLUSTER_SLOW_QUERY` or not.
+	if tblScan.Table.Name.O != infoschema.ClusterTableSlowLog {
+		return nil, false
+	}
+
+	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	if !ok {
+		return nil, false
+	}
+	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
+		return nil, false
+	}
+	if selOnTblScan != nil && tblScan.StatsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.StatsInfo().RowCount / tblScan.StatsInfo().RowCount
+	}
+	tblScan.Desc = colsProp.SortItems[0].Desc
+	tblScan.KeepOrder = true
+
+	childProfile := copTsk.Plan().StatsInfo()
+	newCount := p.Offset + p.Count
+	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	pushedLimit := PhysicalLimit{
+		Count: newCount,
+	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
+	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
+	child := pushedLimit.Children()[0]
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	if selSelectivity > 0 && selSelectivity < 1 {
+		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+	}
+	rootTask := copTsk.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask), true
+}
+
+// Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
@@ -1097,6 +1164,12 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
+	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
+		if changed {
+			return newTask
+		}
+	}
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
@@ -2573,17 +2646,8 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 			return true
 		}
 		// TODO: consider equalivant class
-		// TODO: `prop.IsSubsetOf` is enough, instead of equal.
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
-		if len(prop.MPPPartitionCols) != len(t.hashCols) {
-			return true
-		}
-		for i, col := range prop.MPPPartitionCols {
-			if !col.Equal(t.hashCols[i]) {
-				return true
-			}
-		}
-		return false
+		return !prop.IsSubset(t.hashCols)
 	}
 }
 

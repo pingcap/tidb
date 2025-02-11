@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -330,7 +330,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -780,7 +780,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, vardef.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
@@ -910,6 +910,22 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
+}
+
+// RemoveTopologyInfo remove self server topology information from etcd.
+func (is *InfoSyncer) RemoveTopologyInfo() {
+	if is.etcdCli == nil {
+		return
+	}
+	prefix := fmt.Sprintf(
+		"%s/%s",
+		TopologyInformationPath,
+		net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))),
+	)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
+	}
 }
 
 // GetPrometheusAddr gets prometheus Address

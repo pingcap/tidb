@@ -15,35 +15,14 @@
 package bindinfo
 
 import (
-	"errors"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/dgraph-io/ristretto"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
-
-// GetBindingReturnNil is only for test
-var GetBindingReturnNil = stringutil.StringerStr("GetBindingReturnNil")
-
-// GetBindingReturnNilBool is only for test
-var GetBindingReturnNilBool atomic.Bool
-
-// GetBindingReturnNilAlways is only for test
-var GetBindingReturnNilAlways = stringutil.StringerStr("getBindingReturnNilAlways")
-
-// LoadBindingNothing is only for test
-var LoadBindingNothing = stringutil.StringerStr("LoadBindingNothing")
 
 // digestBiMap represents a bidirectional map between noDBDigest and sqlDigest, used to support cross-db binding.
 // One noDBDigest can map to multiple sqlDigests, but one sqlDigest can only map to one noDBDigest.
@@ -141,13 +120,13 @@ func (b *digestBiMapImpl) SQLDigest2NoDBDigest(sqlDigest string) string {
 // BindingCache is the interface for the cache of the SQL plan bindings.
 type BindingCache interface {
 	// MatchingBinding supports cross-db matching on bindings.
-	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (bindings Binding, isMatched bool)
+	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (binding *Binding, isMatched bool)
 	// GetBinding gets the binding for the specified sqlDigest.
-	GetBinding(sqlDigest string) Bindings
+	GetBinding(sqlDigest string) *Binding
 	// GetAllBindings gets all the bindings in the cache.
-	GetAllBindings() Bindings
+	GetAllBindings() []*Binding
 	// SetBinding sets the binding for the specified sqlDigest.
-	SetBinding(sqlDigest string, meta Bindings) (err error)
+	SetBinding(sqlDigest string, binding *Binding) (err error)
 	// RemoveBinding removes the binding for the specified sqlDigest.
 	RemoveBinding(sqlDigest string)
 	// SetMemCapacity sets the memory capacity for the cache.
@@ -168,172 +147,81 @@ type BindingCache interface {
 type bindingCache struct {
 	digestBiMap digestBiMap      // mapping between noDBDigest and sqlDigest, used to support cross-db binding.
 	cache       *ristretto.Cache // the underlying cache to store the bindings.
-
-	// loadBindingFromStorageFunc is used to load binding from storage if cache miss.
-	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)
 }
 
-func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)) BindingCache {
+func newBindCache() BindingCache {
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
-		MaxCost:     variable.MemQuotaBindingCache.Load(),
+		MaxCost:     vardef.MemQuotaBindingCache.Load(),
 		BufferItems: 64,
 		Cost: func(value any) int64 {
-			return int64(value.(Bindings).size())
+			return int64(value.(*Binding).size())
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
 	})
 	c := bindingCache{
-		cache:                      cache,
-		digestBiMap:                newDigestBiMap(),
-		loadBindingFromStorageFunc: bindingLoad,
+		cache:       cache,
+		digestBiMap: newDigestBiMap(),
 	}
 	return &c
 }
 
-func (c *bindingCache) shouldMetric() bool {
-	return c.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
-}
-
-func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	matchedBinding, isMatched, missingSQLDigest := c.getFromMemory(sctx, noDBDigest, tableNames)
-	if len(missingSQLDigest) == 0 {
-		if c.shouldMetric() && isMatched {
-			metrics.BindingCacheHitCounter.Inc()
-		}
-		return
-	}
-	if c.shouldMetric() {
-		metrics.BindingCacheMissCounter.Inc()
-	}
-	if c.loadBindingFromStorageFunc == nil {
-		return
-	}
-	c.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
-	matchedBinding, isMatched, _ = c.getFromMemory(sctx, noDBDigest, tableNames)
-	return
-}
-
-func (c *bindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
+func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	if c.Size() == 0 {
 		return
 	}
-	leastWildcards := len(tableNames) + 1
-	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	possibleBindings := make([]*Binding, 0, 2)
 	for _, sqlDigest := range c.digestBiMap.NoDBDigest2SQLDigest(noDBDigest) {
-		bindings := c.GetBinding(sqlDigest)
-		if intest.InTest {
-			if sctx.Value(GetBindingReturnNil) != nil {
-				if GetBindingReturnNilBool.CompareAndSwap(false, true) {
-					bindings = nil
-				}
-			}
-			if sctx.Value(GetBindingReturnNilAlways) != nil {
-				bindings = nil
-			}
+		binding := c.GetBinding(sqlDigest)
+		if binding != nil {
+			possibleBindings = append(possibleBindings, binding)
 		}
-		if bindings != nil {
-			for _, binding := range bindings {
-				numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
-					continue // cross-db binding is disabled, skip this binding
-				}
-				if matched && numWildcards < leastWildcards {
-					matchedBinding = binding
-					isMatched = true
-					leastWildcards = numWildcards
-					break
-				}
-			}
-		} else {
-			missingSQLDigest = append(missingSQLDigest, sqlDigest)
-		}
+		// TODO: handle cache miss safely.
 	}
-	return matchedBinding, isMatched, missingSQLDigest
-}
-
-func (c *bindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
-	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
-		return
-	}
-	defer func(start time.Time) {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("loading binding from storage takes " + time.Since(start).String()))
-	}(time.Now())
-
-	for _, sqlDigest := range missingSQLDigest {
-		start := time.Now()
-		bindings, err := c.loadBindingFromStorageFunc(sctx, sqlDigest)
-		if err != nil {
-			logutil.BindLogger().Warn("failed to load binding from storage",
-				zap.String("sqlDigest", sqlDigest),
-				zap.Error(err),
-				zap.Duration("duration", time.Since(start)),
-			)
-			continue
-		}
-		// put binding into the cache
-		oldBinding := c.GetBinding(sqlDigest)
-		newBindings := removeDeletedBindings(merge(oldBinding, bindings))
-		if len(newBindings) > 0 {
-			err = c.SetBinding(sqlDigest, newBindings)
-			if err != nil {
-				// When the memory capacity of bing_cache is not enough,
-				// there will be some memory-related errors in multiple places.
-				// Only needs to be handled once.
-				logutil.BindLogger().Warn("update binding cache error", zap.Error(err))
-			}
-		}
-	}
+	matchedBinding, isMatched = crossDBMatchBindings(sctx, tableNames, possibleBindings)
+	return
 }
 
 // GetBinding gets the Bindings from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
+func (c *bindingCache) GetBinding(sqlDigest string) *Binding {
 	v, ok := c.cache.Get(sqlDigest)
 	if !ok {
 		return nil
 	}
-	return v.(Bindings)
+	return v.(*Binding)
 }
 
 // GetAllBindings return all the bindings from the bindingCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindingCache) GetAllBindings() Bindings {
+func (c *bindingCache) GetAllBindings() []*Binding {
 	sqlDigests := c.digestBiMap.All()
-	bindings := make(Bindings, 0, len(sqlDigests))
+	bindings := make([]*Binding, 0, len(sqlDigests))
 	for _, sqlDigest := range sqlDigests {
-		bindings = append(bindings, c.GetBinding(sqlDigest)...)
+		bindings = append(bindings, c.GetBinding(sqlDigest))
 	}
 	return bindings
 }
 
 // SetBinding sets the Bindings to the cache.
 // The function is thread-safe.
-func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
-	// prepare noDBDigests for all bindings
-	noDBDigests := make([]string, 0, len(bindings))
+func (c *bindingCache) SetBinding(sqlDigest string, binding *Binding) (err error) {
 	p := parser.New()
-	for _, binding := range bindings {
-		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-		if err != nil {
-			return err
-		}
-		_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
-		noDBDigests = append(noDBDigests, noDBDigest)
+	stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+	if err != nil {
+		return err
 	}
-
-	for i := range bindings {
-		c.digestBiMap.Add(noDBDigests[i], sqlDigest)
-	}
+	_, noDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
+	c.digestBiMap.Add(noDBDigest, sqlDigest)
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with digestBiMap,
 	// but it's acceptable, the optimizer will load the binding when cache-miss.
 	// NOTE: the Set might fail if the operation is too frequent, but binding update is a low-frequently operation, so
 	// this risk seems acceptable.
 	// TODO: handle the Set failure more gracefully.
-	c.cache.Set(sqlDigest, bindings, 0)
+	c.cache.Set(sqlDigest, binding, 0)
 	c.cache.Wait()
 	return
 }

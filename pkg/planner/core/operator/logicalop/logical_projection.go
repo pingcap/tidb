@@ -283,12 +283,16 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		RowCount: childProfile.RowCount,
@@ -298,8 +302,8 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -535,8 +539,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
+	if len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
 	exprCol2ProjCol := make(map[int64]int64)

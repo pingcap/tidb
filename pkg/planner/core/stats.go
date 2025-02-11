@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -49,7 +48,7 @@ import (
 )
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	return p.RecursiveDeriveStats(nil)
 }
 
@@ -58,9 +57,9 @@ func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
-func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, err error) {
+func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, _ bool, err error) {
 	ts := lp.(*logicalop.LogicalTableScan)
-	initStats(ts.Source, nil)
+	initStats(ts.Source)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	exprCtx := ts.SCtx().GetExprCtx()
 	for i, expr := range ts.AccessConds {
@@ -84,14 +83,14 @@ func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, e
 		ts.Ranges = ranger.FullIntRange(isUnsigned)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return ts.StatsInfo(), nil
+	return ts.StatsInfo(), true, nil
 }
 
-func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error) {
+func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, bool, error) {
 	is := lp.(*logicalop.LogicalIndexScan)
-	initStats(is.Source, nil)
+	initStats(is.Source)
 	exprCtx := is.SCtx().GetExprCtx()
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
@@ -109,20 +108,20 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
 	}
-	return is.StatsInfo(), nil
+	return is.StatsInfo(), true, nil
 }
 
-func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
-	if ds.StatsInfo() != nil && len(colGroups) == 0 {
-		return ds.StatsInfo(), nil
+	if ds.StatsInfo() != nil {
+		return ds.StatsInfo(), false, nil
 	}
-	initStats(ds, colGroups)
+	initStats(ds)
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
 		selectivity := ds.StatsInfo().RowCount / ds.TableStats.RowCount
 		ds.SetStats(ds.TableStats.Scale(selectivity))
-		return ds.StatsInfo(), nil
+		return ds.StatsInfo(), false, nil
 	}
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
@@ -142,7 +141,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		}
 		err := fillIndexPath(ds, path, ds.PushedDownConds)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
@@ -150,11 +149,11 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.PossibleAccessPaths))
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if err := generateIndexMergePath(ds); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -166,7 +165,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
 	}
 
-	return ds.StatsInfo(), nil
+	return ds.StatsInfo(), true, nil
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
@@ -234,7 +233,8 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
@@ -333,7 +333,8 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return err
@@ -371,7 +372,8 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	}
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return nil
@@ -428,8 +430,9 @@ func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float
 	return minSelectivity, indexForce
 }
 
-func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []property.GroupNDV {
-	if colGroups == nil {
+func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
+	colGroups := ds.AskedColumnGroup
+	if len(ds.AskedColumnGroup) == 0 {
 		return nil
 	}
 	tbl := ds.TableStats.HistColl
@@ -496,12 +499,7 @@ func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullNa
 	return
 }
 
-func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
-	if ds.TableStats != nil {
-		// Reload GroupNDVs since colGroups may have changed.
-		ds.TableStats.GroupNDVs = getGroupNDVs(ds, colGroups)
-		return
-	}
+func initStats(ds *logicalop.DataSource) {
 	if ds.StatisticTable == nil {
 		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
 	}
@@ -530,21 +528,11 @@ func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
 		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
 	}
 	ds.TableStats = tableStats
-	ds.TableStats.GroupNDVs = getGroupNDVs(ds, colGroups)
+	ds.TableStats.GroupNDVs = getGroupNDVs(ds)
 	ds.TblColHists = ds.StatisticTable.ID2UniqueID(ds.TblCols)
 	for _, col := range ds.TableInfo.Columns {
 		if col.State != model.StatePublic {
 			continue
-		}
-		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
-		_, isLoadNeeded, _ := ds.StatisticTable.ColumnIsLoadNeeded(col.ID, false)
-		if isLoadNeeded {
-			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
-				TableID:          ds.TableInfo.ID,
-				ID:               col.ID,
-				IsIndex:          false,
-				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			}, false)
 		}
 	}
 }

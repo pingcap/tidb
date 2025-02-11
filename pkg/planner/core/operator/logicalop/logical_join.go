@@ -112,12 +112,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
-	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
-	RightConditions expression.CNFExprs          `hash64-equals:"true"`
-	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -496,11 +496,15 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+		return p.StatsInfo(), false, nil
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
@@ -518,7 +522,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		for id, c := range leftProfile.ColNDVs {
 			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
 		}
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.SetStats(&property.StatsInfo{
@@ -529,8 +533,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			p.StatsInfo().ColNDVs[id] = c
 		}
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+		return p.StatsInfo(), true, nil
 	}
 	count := p.EqualCondOutCnt
 	if p.JoinType == LeftOuterJoin {
@@ -549,8 +553,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		RowCount: count,
 		ColNDVs:  colNDVs,
 	})
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements the base.LogicalPlan.<12th> interface.
@@ -1190,14 +1194,15 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 	return nil
 }
 
-func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+// logical join group ndv is just to output the corresponding child's groupNDV is asked previously and only outer side is cared.
+func (p *LogicalJoin) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
 	outerIdx := int(-1)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		outerIdx = 0
 	} else if p.JoinType == RightOuterJoin {
 		outerIdx = 1
 	}
-	if outerIdx >= 0 && len(colGroups) > 0 {
+	if outerIdx >= 0 {
 		return childStats[outerIdx].GroupNDVs
 	}
 	return nil
@@ -1347,7 +1352,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
+	child := p.Children()
+	rightSchema := child[1].Schema()
+	leftSchema := child[0].Schema()
+	return p.ExtractOnCondition(conditions, leftSchema, rightSchema, deriveLeft, deriveRight)
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
@@ -1859,27 +1867,6 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	}
 	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
-	}
-	return nil
-}
-
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
-	if len(conds) != 1 {
-		return nil
-	}
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
 	}
 	return nil
 }

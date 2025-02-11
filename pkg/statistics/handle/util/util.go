@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -75,6 +77,7 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
 		return err
@@ -106,14 +109,14 @@ func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// async merge global stats
-	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
 
 	// concurrency of save stats to storage
-	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
 	if err != nil {
 		return err
 	}
@@ -124,7 +127,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
 
 	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -135,40 +138,40 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
 	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
 
 	// partition mode
-	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
 
 	// enable analyze snapshot
-	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 
 	// skip missing partition stats
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBSkipMissingPartitionStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
 	if err != nil {
 		return err
 	}

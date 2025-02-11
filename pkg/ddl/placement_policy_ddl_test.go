@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ import (
 
 func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settings *model.PlacementSettings) *model.PolicyInfo {
 	policy := &model.PolicyInfo{
-		Name:              pmodel.NewCIStr(name),
+		Name:              ast.NewCIStr(name),
 		PlacementSettings: settings,
 	}
 	genIDs, err := genGlobalIDs(store, 1)
@@ -125,7 +125,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.State = model.StatePublic
 	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t4)
 
-	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
@@ -161,12 +161,12 @@ func testTableInfoWithPartition(t *testing.T, store kv.Storage, name string, num
 	require.NoError(t, err)
 	pid := genIDs[0]
 	tblInfo.Partition = &model.PartitionInfo{
-		Type:   pmodel.PartitionTypeRange,
+		Type:   ast.PartitionTypeRange,
 		Expr:   tblInfo.Columns[0].Name.L,
 		Enable: true,
 		Definitions: []model.PartitionDefinition{{
 			ID:       pid,
-			Name:     pmodel.NewCIStr("p0"),
+			Name:     ast.NewCIStr("p0"),
 			LessThan: []string{"maxvalue"},
 		}},
 	}

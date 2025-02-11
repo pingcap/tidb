@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -41,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -276,7 +277,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !variable.EnableMDL.Load() {
+	if !vardef.EnableMDL.Load() {
 		return nil
 	}
 	if ver == 0 {
@@ -529,18 +530,31 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 // non-zero, caller should wait for other nodes to catch up.
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
-	job *model.Job,
+	jobW *model.JobW,
 	sysTblMgr systable.Manager,
 ) (int64, error) {
-	var (
-		err error
-	)
-
+	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
 	}
 	jobCtx.metaMut = meta.NewMutator(txn)
+
+	// we are using optimistic txn in nearly all DDL related transactions, if
+	// time range of another concurrent job updates, such as 'cancel/pause' job
+	// or on owner change, overlap with us, we will report 'write conflict', but
+	// if they don't overlap, we query and check inside our txn to detect the conflict.
+	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+	if err != nil {
+		// TODO maybe we can unify where to rollback, they are scatting around.
+		w.sess.Rollback()
+		return 0, err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		w.sess.Rollback()
+		return 0, errors.New("job meta changed by others")
+	}
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
@@ -606,6 +620,7 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -700,7 +715,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	if err1 := loadDDLVars(w); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
-	errorCount := variable.GetDDLErrorCountLimit()
+	errorCount := vardef.GetDDLErrorCountLimit()
 
 	if job.ErrorCount > errorCount {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
@@ -728,8 +743,8 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
 		job.State = model.JobStateCancelling
 	}
 	return err
@@ -785,7 +800,7 @@ func (w *worker) runOneJobStep(
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))
+		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -839,6 +854,7 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
+						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
 						if err == systable.ErrNotFound {
 							logutil.DDLLogger().Info(
@@ -869,9 +885,9 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateRunning:
 							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
 							}
 						}
 					}
@@ -1086,7 +1102,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

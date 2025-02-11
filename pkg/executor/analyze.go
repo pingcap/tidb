@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -327,7 +328,7 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
-	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
 	// only to save table options if dynamic prune mode

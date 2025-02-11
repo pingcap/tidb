@@ -40,33 +40,38 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
+// StmtDigestKeyPool is the pool for StmtDigestKey.
+var StmtDigestKeyPool = sync.Pool{
+	New: func() any {
+		return &StmtDigestKey{}
+	},
+}
+
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// `hash` is the hash value of this object.
 	hash []byte
+}
+
+// Init initialize the hash key.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+	if cap(key.hash) < length {
+		key.hash = make([]byte, 0, length)
+	} else {
+		key.hash = key.hash[:0]
+	}
+	key.hash = append(key.hash, hack.Slice(digest)...)
+	key.hash = append(key.hash, hack.Slice(schemaName)...)
+	key.hash = append(key.hash, hack.Slice(prevDigest)...)
+	key.hash = append(key.hash, hack.Slice(planDigest)...)
+	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
-	}
+func (key *StmtDigestKey) Hash() []byte {
 	return key.hash
 }
 
@@ -230,9 +235,11 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -250,7 +257,7 @@ type StmtExecInfo struct {
 	ParseLatency   time.Duration
 	CompileLatency time.Duration
 	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *execdetails.CopTasksDetails
+	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
 	DiskMax        int64
@@ -263,7 +270,7 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
-	TiKVExecDetails   util.ExecDetails
+	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
 	KeyspaceName      string
 	KeyspaceID        uint32
@@ -308,7 +315,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -335,16 +342,11 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
-	}
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
+	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
 	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
@@ -365,9 +367,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
-		value, ok := ssMap.summaryMap.Get(key)
+		var value kvcache.Value
+		value, exist = ssMap.summaryMap.Get(key)
 		var summary *stmtSummaryByDigest
-		if !ok {
+		if !exist {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			ssMap.summaryMap.Put(key, summary)
@@ -380,6 +383,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
 	}
 }
 
@@ -974,6 +980,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
+	// network traffic
+	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
+
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
@@ -1104,5 +1113,46 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+}
+
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
+type StmtNetworkTrafficSummary struct {
+	UnpackedBytesSentTiKVTotal            int64 `json:"unpacked_bytes_send_tikv_total"`
+	UnpackedBytesReceivedTiKVTotal        int64 `json:"unpacked_bytes_received_tikv_total"`
+	UnpackedBytesSentTiKVCrossZone        int64 `json:"unpacked_bytes_send_tikv_cross_zone"`
+	UnpackedBytesReceivedTiKVCrossZone    int64 `json:"unpacked_bytes_received_tikv_cross_zone"`
+	UnpackedBytesSentTiFlashTotal         int64 `json:"unpacked_bytes_send_tiflash_total"`
+	UnpackedBytesReceivedTiFlashTotal     int64 `json:"unpacked_bytes_received_tiflash_total"`
+	UnpackedBytesSentTiFlashCrossZone     int64 `json:"unpacked_bytes_send_tiflash_cross_zone"`
+	UnpackedBytesReceivedTiFlashCrossZone int64 `json:"unpacked_bytes_received_tiflash_cross_zone"`
+}
+
+// Merge merges the value of 2 network traffic summary records.
+func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
+	if other == nil {
+		return
+	}
+	s.UnpackedBytesSentTiKVTotal += other.UnpackedBytesSentTiKVTotal
+	s.UnpackedBytesReceivedTiKVTotal += other.UnpackedBytesReceivedTiKVTotal
+	s.UnpackedBytesSentTiKVCrossZone += other.UnpackedBytesSentTiKVCrossZone
+	s.UnpackedBytesReceivedTiKVCrossZone += other.UnpackedBytesReceivedTiKVCrossZone
+	s.UnpackedBytesSentTiFlashTotal += other.UnpackedBytesSentTiFlashTotal
+	s.UnpackedBytesReceivedTiFlashTotal += other.UnpackedBytesReceivedTiFlashTotal
+	s.UnpackedBytesSentTiFlashCrossZone += other.UnpackedBytesSentTiFlashCrossZone
+	s.UnpackedBytesReceivedTiFlashCrossZone += other.UnpackedBytesReceivedTiFlashCrossZone
+}
+
+// Add add a new sample value to the ru summary record.
+func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
+	if info != nil {
+		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
 	}
 }

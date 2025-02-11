@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -585,7 +585,7 @@ func (e *SimpleExec) dbAccessDenied(dbname string) error {
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
-	dbname := model.NewCIStr(s.DBName)
+	dbname := ast.NewCIStr(s.DBName)
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -609,7 +609,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// collation if this one is not supported.
 	// The SetSystemVar will also update the CharsetDatabase
 	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
-	return sessionVars.SetSystemVarWithoutValidation(variable.CollationDatabase, dbCollate)
+	return sessionVars.SetSystemVarWithoutValidation(vardef.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -823,12 +823,12 @@ func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
 		passwdSaveNum = plOptions.passwordHistory
 	} else {
-		passwdSaveNum = variable.PasswordHistory.Load()
+		passwdSaveNum = vardef.PasswordHistory.Load()
 	}
 	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
 		passwdSaveTime = plOptions.passwordReuseInterval
 	} else {
-		passwdSaveTime = variable.PasswordReuseInterval.Load()
+		passwdSaveTime = vardef.PasswordReuseInterval.Load()
 	}
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
@@ -1012,7 +1012,7 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
-	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return false
 	}
@@ -1077,7 +1077,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	if s.ResourceGroupNameOption != nil {
-		if !variable.EnableResourceControl.Load() {
+		if !vardef.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
 		if s.IsCreateRole {
@@ -1088,7 +1088,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		// check if specified resource group exists
 		if resourceGroupName != resourcegroup.DefaultResourceGroupName && resourceGroupName != "" {
-			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 			if !exists {
 				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 			}
@@ -1121,7 +1121,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if savePasswdHistory {
 		sqlescape.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
 	}
-	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1184,7 +1184,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 
-		pwd, ok := encodePassword(spec, pluginImpl)
+		pwd, ok := encodePasswordWithPlugin(*spec, pluginImpl, defaultAuthPlugin)
 		if !ok {
 			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
@@ -1327,12 +1327,12 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 		if !row.IsNull(1) {
 			res.passwordReuseInterval = int64(row.GetUint64(1))
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	if plOptions.passwordHistoryChange {
@@ -1340,7 +1340,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordHistory != notSpecified {
 			res.passwordHistory = plOptions.passwordHistory
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 	}
 	if plOptions.passwordReuseIntervalChange {
@@ -1348,7 +1348,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordReuseInterval != notSpecified {
 			res.passwordReuseInterval = plOptions.passwordReuseInterval
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	return res, nil
@@ -1490,7 +1490,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1540,7 +1540,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1586,7 +1586,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1856,7 +1856,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			pwd, ok := encodePassword(spec, authPluginImpl)
+			// we have assigned the currentAuthPlugin to spec.AuthOpt.AuthPlugin if the latter is empty, so keep the incomming argument defaultPlugin empty is ok.
+			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, "")
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -1932,7 +1933,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil {
-			if !variable.EnableResourceControl.Load() {
+			if !vardef.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
 			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
@@ -1946,7 +1947,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// check if specified resource group exists
 			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 			if resourceGroupName != resourcegroup.DefaultResourceGroupName && s.ResourceGroupNameOption.Value != "" {
-				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+				_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 				if !exists {
 					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 				}
@@ -2794,7 +2795,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
+	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
 	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
@@ -2959,7 +2960,7 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 		return errors.New("only support alter range policy")
 	}
 	bundle := &placement.Bundle{}
-	policyName := model.NewCIStr(s.PlacementOption.StrValue)
+	policyName := ast.NewCIStr(s.PlacementOption.StrValue)
 	if policyName.L != placement.DefaultKwd {
 		policy, ok := e.is.PolicyByName(policyName)
 		if !ok {

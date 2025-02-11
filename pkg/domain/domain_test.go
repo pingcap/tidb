@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -137,7 +137,7 @@ func TestInfo(t *testing.T) {
 	require.True(t, syncerStarted)
 
 	stmt := &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("aaa"),
+		Name: ast.NewCIStr("aaa"),
 		// Make sure loading schema is normal.
 		Options: []*ast.DatabaseOption{
 			{
@@ -182,7 +182,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext())
+	dom.gcStatsWorker()
 	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
@@ -262,7 +262,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}()
 	dom.sysVarCache.Lock()
 	dom.sysVarCache.global = map[string]string{
-		variable.TiDBReplicaRead: "closest-adaptive",
+		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
 

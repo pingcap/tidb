@@ -16,6 +16,7 @@ package memo
 
 import (
 	"container/list"
+	"unsafe"
 
 	"github.com/bits-and-blooms/bitset"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -47,14 +48,18 @@ type Memo struct {
 }
 
 // NewMemo creates a new memo.
-func NewMemo() *Memo {
+func NewMemo(caps ...uint64) *Memo {
+	// default capacity is 4.
+	capacity := uint64(4)
+	if len(caps) > 1 {
+		capacity = caps[0]
+	}
 	return &Memo{
 		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
 		hash2GlobalGroupExpr: hashmap.New[*GroupExpression, *GroupExpression](
-			// todo: feel the operator count at the prev normalization rule.
-			4,
+			capacity,
 			func(a, b *GroupExpression) bool {
 				return a.Equals(b)
 			},
@@ -63,6 +68,17 @@ func NewMemo() *Memo {
 			}),
 		hasher: base2.NewHashEqualer(),
 	}
+}
+
+// Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
+func (mm *Memo) Destroy() {
+	// when a memo itself is useless, we can clean itself actively.
+	mm.groupIDGen.id = 0
+	mm.rootGroup = nil
+	mm.groups.Init()
+	clear(mm.groupID2Group)
+	mm.hash2GlobalGroupExpr.Clear()
+	mm.hasher.Reset()
 }
 
 // GetHasher gets a hasher from the memo that ready to use.
@@ -149,7 +165,15 @@ func (mm *Memo) GetRootGroup() *Group {
 // InsertGroupExpression insert ge into a target group.
 // @GroupExpression indicates the returned group expression, which may be the existed one or the newly inserted.
 // @bool indicates whether the groupExpr is inserted to a new group.
-func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) (*GroupExpression, bool) {
+func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) (_ *GroupExpression, inserted bool) {
+	defer func() {
+		if inserted {
+			// maintain the parentGE refs after being successfully inserted.
+			for _, childG := range groupExpr.Inputs {
+				childG.addParentGEs(groupExpr)
+			}
+		}
+	}()
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
@@ -160,8 +184,6 @@ func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group)
 	}
 	if target == nil {
 		target = mm.NewGroup()
-		mm.groups.PushBack(target)
-		mm.groupID2Group[target.groupID] = mm.groups.Back()
 	}
 	// if target has already existed a same groupExpr, it should exit above and return existedGE. Here just safely add it.
 	target.Insert(groupExpr)
@@ -174,6 +196,8 @@ func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group)
 func (mm *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
 	group.groupID = mm.groupIDGen.NextGroupID()
+	mm.groups.PushBack(group)
+	mm.groupID2Group[group.groupID] = mm.groups.Back()
 	return group
 }
 
@@ -213,10 +237,8 @@ func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupE
 	// init hasher
 	h := mm.GetHasher()
 	ge.Init(h)
-	// maintain the parentGE refs.
-	for _, childG := range inputs {
-		childG.addParentGEs(ge)
-	}
+	// since we can't ensure this new group expression can be successfully inserted in target group,
+	// it may be duplicated, so we move the maintenance of parentGE refs after insert action.
 	return ge
 }
 
@@ -227,6 +249,187 @@ func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupE
 // 3: this two GEs has the same operator info.
 // from the 3 above, we could say this two group expression are equivalent,
 // and their groups are equivalent as well from the equivalent transitive rule.
-func (*Memo) mergeGroup(_, _ *Group) {
-	// todo: in next pull request
+func (mm *Memo) mergeGroup(src, dst *Group) {
+	// two groups should be different at group id.
+	needMerge := dst != nil && dst.GetGroupID() != src.GetGroupID()
+	if !needMerge {
+		return
+	}
+	// step1: remove src group from the global register map and list, it may have been merged.
+	srcGroupElem, ok := mm.groupID2Group[src.GetGroupID()]
+	if !ok {
+		return
+	}
+	mm.groups.Remove(srcGroupElem)
+	delete(mm.groupID2Group, src.GetGroupID())
+	// reset the root group which has been remove above.
+	if src.GetGroupID() == mm.rootGroup.GetGroupID() {
+		mm.rootGroup = dst
+	}
+	// record <src, dst> pair for latter call if any.
+	lazyCallPair := make([]*GroupPair, 0)
+	// step2: change src group's parent GE's child group id and reinsert them.
+	// for each src group's parent groupExpression, we need modify their input group.
+	src.hash2ParentGroupExpr.Each(func(_ unsafe.Pointer, val *GroupExpression) {
+		if val.group.Equals(dst) {
+			// child GE in child group is equivalent with one in parent Group.
+			return
+		}
+		// when GE's child group is changed, its hash64 is changed as well, re-insert them.
+		mm.hash2GlobalGroupExpr.Remove(val)
+		// keep the original owner group, otherwise, it will be set to nil when delete the key from it.
+		parentOwnerG := val.GetGroup()
+		parentOwnerG.Delete(val)
+		// parentGE's input group has been modified, reinsert them.
+		reInsertGE := mm.replaceGEChild(val, src, dst)
+		// insert it back to group, but we are not sure if they are a global equivalent one, check below.
+		// in group merge recursive case, when a re-inserted parent GE has a global equivalent one, we
+		// temporarily add them back to group to keep the GE's state.
+		parentOwnerG.Insert(reInsertGE)
+
+		existedGE, ok := mm.hash2GlobalGroupExpr.Get(reInsertGE)
+		if ok {
+			intest.Assert(existedGE.GetGroup() != nil)
+			// group expression is already in the Memo's groupExpressions, this indicates that reInsertGE is a redundant
+			// group Expression, and it should be removed. With the concern that this redundant group expression may be
+			// already in the TaskScheduler stack for some already pushed task types, we should set it be skipped for a signal.
+			reInsertGE.SetAbandoned()
+			if existedGE.GetGroup().Equals(reInsertGE.GetGroup()) {
+				// equiv one and re-insert one are in same group, merge them.
+				reInsertGE.mergeTo(existedGE)
+			} else {
+				// the reinsertGE and existedGE share the same hash64 while not in the same group, it triggers another
+				// group merge action upward. we don't do it recursively here, cause parentOwnerG is not state complete yet.
+				// register group pair for lazy call.
+				lazyCallPair = append(lazyCallPair, &GroupPair{first: reInsertGE.GetGroup(), second: existedGE.GetGroup()})
+			}
+		} else {
+			mm.hash2GlobalGroupExpr.Put(reInsertGE, reInsertGE)
+		}
+	})
+	// step3: merge two groups' element together.
+	src.mergeTo(dst)
+	// step4: call the lazy call for group merge if any after dst group state is complete.
+	for _, pair := range lazyCallPair {
+		mm.mergeGroup(pair.first, pair.second)
+	}
+}
+
+func (mm *Memo) replaceGEChild(ge *GroupExpression, older, newer *Group) *GroupExpression {
+	// maintain the old group's parentGEs
+	older.removeParentGEs(ge)
+	for i, childGroup := range ge.Inputs {
+		if childGroup.GetGroupID() == older.GetGroupID() {
+			ge.Inputs[i] = newer
+		}
+	}
+	// recompute the hash
+	hasher := mm.GetHasher()
+	ge.Hash64(hasher)
+	ge.hash64 = hasher.Sum64()
+	// maintain the new group's parentGEs
+	newer.addParentGEs(ge)
+	return ge
+}
+
+// IteratorLP serves as iterator to get all logical plan inside memo.
+type IteratorLP struct {
+	root      *Group
+	stackInfo []*list.Element
+	// traceID is the unique id mark of stepping into a group, traced from the root group as stack calling.
+	traceID int
+	// hasher is for compute the subtree's IDs' hash64 rooted from current logical operator.
+	hasher base2.Hasher
+}
+
+// NewIterator new a logical plan iterator from current memo based on its root group.
+func (mm *Memo) NewIterator() *IteratorLP {
+	return &IteratorLP{
+		root:      mm.rootGroup,
+		stackInfo: make([]*list.Element, 0, mm.groups.Len()),
+		traceID:   -1,
+		hasher:    mm.GetHasher(),
+	}
+}
+
+// Each iterator all logical plan from current memo group.
+func (it *IteratorLP) Each(f func(base.LogicalPlan) bool) {
+	cur := it.Next()
+	for ; cur != nil; cur = it.Next() {
+		if !f(cur) {
+			break
+		}
+	}
+}
+
+// Next return valid logical plan implied in memo without duplication.
+func (it *IteratorLP) Next() (logic base.LogicalPlan) {
+	for {
+		// when non-first time loop here, we should reset traceID back to -1.
+		it.traceID = -1
+		it.hasher.Reset()
+		if len(it.stackInfo) != 0 {
+			// when state stack is not empty, we need to pick the next group expression from the top of stack .
+			continueGroup := len(it.stackInfo) - 1
+			continueGroupElement := it.stackInfo[continueGroup]
+			// auto inc gE offset inside group to make sure the next iteration will start from the next group expression.
+			it.stackInfo[continueGroup] = continueGroupElement.Next()
+		}
+		logic = it.dfs(it.root)
+		if logic != nil || len(it.stackInfo) == 0 {
+			break
+		}
+	}
+	return logic
+}
+
+func (it *IteratorLP) dfs(target *Group) base.LogicalPlan {
+	// when stepping into a new group, trace the path.
+	it.traceIn(target)
+	ge := it.pickGroupExpression()
+	if ge == nil {
+		return nil
+	}
+	lp := ge.LogicalPlan
+	// clean the children to avoid pollution.
+	children := lp.Children()[:0]
+	for _, childGroup := range ge.Inputs {
+		lp := it.dfs(childGroup)
+		// one child is nil, quick fail over to iterating next.
+		if lp == nil {
+			return nil
+		}
+		children = append(children, lp)
+	}
+	lp.SetChildren(children...)
+	// iterator only hashes the subtree's ids from bottom up.
+	it.hasher.Reset()
+	for _, children := range lp.Children() {
+		it.hasher.HashUint64(children.GetPlanIDsHash())
+	}
+	it.hasher.HashInt(lp.ID())
+	lp.SetPlanIDsHash(it.hasher.Sum64())
+	return lp
+}
+
+func (it *IteratorLP) traceIn(g *Group) {
+	it.traceID++
+	// complement the missing stackInfo when stepping into a new group.
+	for i := len(it.stackInfo); i <= it.traceID; i++ {
+		// for a new stepped-in group, the start iterating index set the first element.
+		it.stackInfo = append(it.stackInfo, g.logicalExpressions.Front())
+	}
+}
+
+// pickGroupExpression tries to find the next matched group expression from the current group.
+func (it *IteratorLP) pickGroupExpression() *GroupExpression {
+	currentGroup := it.traceID
+	currentGroupElement := it.stackInfo[currentGroup]
+	if currentGroupElement == nil {
+		// current group has been exhausted, pop out the current group trace info(*element thing) from stackInfo.
+		it.stackInfo = it.stackInfo[:currentGroup]
+		return nil
+	}
+	// get the current group expression's logical plan
+	return currentGroupElement.Value.(*GroupExpression)
 }

@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -46,7 +46,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -55,7 +55,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
@@ -70,7 +70,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	partitionInfo := tableInfo.Meta().GetPartitionInfo()
 	require.NotNil(t, partitionInfo)
@@ -88,7 +88,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze index.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -101,7 +101,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
@@ -131,7 +131,7 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table"))
 	require.NoError(t, err)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",
@@ -185,7 +185,7 @@ func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table"))
 	require.NoError(t, err)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",

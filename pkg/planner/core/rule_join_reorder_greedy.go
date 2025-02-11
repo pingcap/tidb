@@ -106,7 +106,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.RecursiveDeriveStats(nil)
+			_, _, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
 			}

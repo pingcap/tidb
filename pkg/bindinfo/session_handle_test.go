@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/server"
@@ -74,7 +72,7 @@ func TestSessionBinding(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		internal.UtilCleanBindingEnv(tk)
+		utilCleanBindingEnv(tk)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -94,13 +92,13 @@ func TestSessionBinding(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoError(t, err)
 
-		_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
 		binding, matched := handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.True(t, matched)
 		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
 		require.Equal(t, "test", binding.Db)
-		require.Equal(t, bindinfo.Enabled, binding.Status)
+		require.Equal(t, bindinfo.StatusEnabled, binding.Status)
 		require.NotNil(t, binding.Charset)
 		require.NotNil(t, binding.Collation)
 		require.NotNil(t, binding.CreateTime)
@@ -123,7 +121,7 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.originSQL, row.GetString(0))
 		require.Equal(t, testSQL.bindSQL, row.GetString(1))
 		require.Equal(t, "test", row.GetString(2))
-		require.Equal(t, bindinfo.Enabled, row.GetString(3))
+		require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 		require.NotNil(t, row.GetTime(4))
 		require.NotNil(t, row.GetTime(5))
 		require.NotNil(t, row.GetString(6))
@@ -131,7 +129,7 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
 		_, matched = handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
 	}

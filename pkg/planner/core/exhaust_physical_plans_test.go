@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -74,45 +73,45 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
-		ColName: model.NewCIStr("a"),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("a"),
+		TblName: ast.NewCIStr("t"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
-		ColName: model.NewCIStr("b"),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("b"),
+		TblName: ast.NewCIStr("t"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
-		ColName: model.NewCIStr("c"),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("c"),
+		TblName: ast.NewCIStr("t"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
-		ColName: model.NewCIStr("d"),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("d"),
+		TblName: ast.NewCIStr("t"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, charset.CollationASCII, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
-		ColName: model.NewCIStr("c_ascii"),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("c_ascii"),
+		TblName: ast.NewCIStr("t"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	dataSourceNode.SetSchema(dsSchema)
 	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
@@ -127,36 +126,36 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
-		ColName: model.NewCIStr("e"),
-		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("e"),
+		TblName: ast.NewCIStr("t1"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
-		ColName: model.NewCIStr("f"),
-		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("f"),
+		TblName: ast.NewCIStr("t1"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
-		ColName: model.NewCIStr("g"),
-		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("g"),
+		TblName: ast.NewCIStr("t1"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
-		ColName: model.NewCIStr("h"),
-		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		ColName: ast.NewCIStr("h"),
+		TblName: ast.NewCIStr("t1"),
+		DBName:  ast.NewCIStr("test"),
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
 	joinColNames := append(dsNames.Shallow(), outerChildNames...)
