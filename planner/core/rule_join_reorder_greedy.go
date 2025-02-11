@@ -18,13 +18,7 @@ import (
 	"math"
 	"sort"
 
-<<<<<<< HEAD:planner/core/rule_join_reorder_greedy.go
 	"github.com/pingcap/tidb/expression"
-=======
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> eebdcfebd5b (planner, stats: overflow estimation may lead to wrong join reorder (#56752)):pkg/planner/core/rule_join_reorder_greedy.go
 )
 
 type joinReorderGreedySolver struct {
@@ -101,15 +95,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
 		bestCost := math.MaxFloat64
-<<<<<<< HEAD:planner/core/rule_join_reorder_greedy.go
-		bestIdx := -1
-		var finalRemainOthers []expression.Expression
-		var bestJoin LogicalPlan
-=======
 		bestIdx, whateverValidOneIdx := -1, -1
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
-		var bestJoin, whateverValidOne base.LogicalPlan
->>>>>>> eebdcfebd5b (planner, stats: overflow estimation may lead to wrong join reorder (#56752)):pkg/planner/core/rule_join_reorder_greedy.go
+		var bestJoin, whateverValidOne LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
@@ -136,9 +124,6 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			if whateverValidOne == nil {
 				break
 			}
-			// This branch is for the unexpected case.
-			// We throw assertion in test env. And create a valid join to avoid wrong result in the production env.
-			intest.Assert(false, "Join reorder should find one valid join but failed.")
 			bestJoin = whateverValidOne
 			bestCost = math.MaxFloat64
 			bestIdx = whateverValidOneIdx
