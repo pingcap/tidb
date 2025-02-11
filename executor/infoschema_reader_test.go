@@ -874,3 +874,29 @@ func TestNullColumns(t *testing.T) {
 	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
 		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
 }
+
+func TestIssue57345(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';").
+		Check(testkit.Rows())
+}
