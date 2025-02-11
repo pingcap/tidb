@@ -21,6 +21,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Builder builds a new InfoSchema.
@@ -801,6 +804,10 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
+	t := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("[InfoSchema] init with old infoschema", zap.Duration("cost time", time.Since(t)))
+	}()
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	isV2, _ := IsV2(oldSchema)
@@ -820,8 +827,9 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
+	ts := time.Now()
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
-
+	logutil.BgLogger().Info("[InfoSchema] init refered foreign key map", zap.Duration("cost time", time.Since(ts)))
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
 }
