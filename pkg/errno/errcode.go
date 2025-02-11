@@ -1138,7 +1138,7 @@ const (
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
 	ErrProtectedTableMode                 = 8258
-	ErrInvalidTableModeConversion         = 8259
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261

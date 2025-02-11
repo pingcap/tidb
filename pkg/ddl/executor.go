@@ -1060,18 +1060,18 @@ func (e *executor) createTableWithInfoJob(
 	if oldTable, err := is.TableByName(e.ctx, schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch cfg.OnExist {
+		// If table not exists, we will set tableMode as specified in tbInfo. If table exists:
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			// If table exists:
-			// and if target TableMode is ModeRestore, we check if the existing table is consistent
+			// If table exists, and if target TableMode is ModeRestore, we check if the existing table is consistent
 			if tbInfo.TableMode == model.TableModeRestore {
 				oldTableMode := oldTable.Meta().TableMode
 				if oldTableMode != model.TableModeRestore {
 					// Indeed this is not a conversion problem but an inconsistency problem.
-					return nil, infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(oldTableMode, tbInfo.TableMode)
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.TableMode)
 				}
 			}
-			// target TableMode will not be ModeImport because ImportInto does not use this function
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.

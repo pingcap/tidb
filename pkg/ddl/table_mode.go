@@ -46,7 +46,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		}
 	default:
 		job.State = model.JobStateCancelled
-		err = infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+		err = infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
 	}
 
 	return ver, err
@@ -58,7 +58,7 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 	if args.TableMode == model.TableModeImport {
 		// only transition from ModeNormal to ModeImport is allowed
 		if tbInfo.TableMode != model.TableModeNormal {
-			return infoschema.ErrInvalidTableModeConversion.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+			return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
 		}
 	}
 	tbInfo.TableMode = args.TableMode

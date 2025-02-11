@@ -32,12 +32,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getClonedTableInfoFromDomain(dbName string, tableName string, dom *domain.Domain) (*model.TableInfo, error) {
+func getClonedTableInfoFromDomain(
+	t *testing.T,
+	dbName string,
+	tableName string,
+	dom *domain.Domain,
+) *model.TableInfo {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
-	if err != nil {
-		return nil, err
-	}
-	return tbl.Meta().Clone(), nil
+	require.NoError(t, err)
+	return tbl.Meta().Clone()
 }
 
 func setTableModeTest(
@@ -115,13 +118,12 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 	tk.MustExec("create table t1(id int)")
 
 	// get cloned table info for creating new table t1_restore
-	tblInfo, err := getClonedTableInfoFromDomain("test", "t1", domain)
-	require.NoError(t, err)
+	tblInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
 
 	// For testing create table as ModeRestore
 	tblInfo.Name = ast.NewCIStr("t1_restore")
 	tblInfo.TableMode = model.TableModeRestore
-	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	err := de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -139,7 +141,7 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 
 	// For testing AlterTable ModeRestore -> ModeImport is not allowed
 	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeImport)
-	checkErrorCode(t, err, errno.ErrInvalidTableModeConversion)
+	checkErrorCode(t, err, errno.ErrInvalidTableModeSet)
 
 	// For testing AlterTableMode ModeRestore -> ModeNormal
 	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeNormal)
@@ -151,13 +153,13 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 
 	// For testing batch create tables with info
 	var tblInfo1, tblInfo2, tblInfo3 *model.TableInfo
-	tblInfo1, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo1 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo1.Name = ast.NewCIStr("t1_1")
 	tblInfo1.TableMode = model.TableModeNormal
-	tblInfo2, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo2 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo2.Name = ast.NewCIStr("t1_2")
 	tblInfo2.TableMode = model.TableModeImport
-	tblInfo3, err = getClonedTableInfoFromDomain("test", "t1", domain)
+	tblInfo3 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo3.Name = ast.NewCIStr("t1_3")
 	tblInfo3.TableMode = model.TableModeRestore
 	err = de.BatchCreateTableWithInfo(

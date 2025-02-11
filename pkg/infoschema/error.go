@@ -110,6 +110,6 @@ var (
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
 	// ErrProtectedTableMode returns for accessing table in import/restore mode.
 	ErrProtectedTableMode = dbterror.ClassSchema.NewStd(mysql.ErrProtectedTableMode)
-	// ErrInvalidTableModeConversion returns for invalid TableMode conversion.
-	ErrInvalidTableModeConversion = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeConversion)
+	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
+	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
 )
