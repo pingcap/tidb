@@ -230,16 +230,10 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 			used = []int{FullRange}
 			break
 		}
-<<<<<<< HEAD
 		highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
 		highLowVals = append(highLowVals, r.HighVal...)
 		highLowVals = append(highLowVals, r.LowVal...)
 		pos, isNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
-=======
-		vals := make([]types.Datum, 0, len(partCols))
-		vals = append(vals, r.HighVal...)
-		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(vals).ToRow())
->>>>>>> 15d25e03fd5 (planner: fix hash partition prune with `is null` condition (#58383))
 		if err != nil {
 			// If we failed to get the point position, we can just skip and ignore it.
 			continue
