@@ -829,7 +829,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	ts := time.Now()
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
-	logutil.BgLogger().Info("[InfoSchema] init refered foreign key map", zap.Duration("cost time", time.Since(ts)))
+	logutil.BgLogger().Info("[InfoSchema] init referred foreign key map", zap.Duration("cost time", time.Since(ts)))
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
 }
