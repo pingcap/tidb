@@ -1728,6 +1728,9 @@ const DefNumHistoryJobs = 10
 
 const batchNumHistoryJobs = 128
 
+// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
+const DefNumGetDDLHistoryJobs = 2048
+
 // GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
 func GetLastNHistoryDDLJobs(t *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
@@ -1888,8 +1891,21 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	var iter meta.LastJobIterator
 	var err error
 	if startJobID == 0 {
+		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
+		if limit == 0 {
+			limit = DefNumGetDDLHistoryJobs
+
+			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+				injectLimit, ok := val.(int)
+				if ok {
+					logutil.BgLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
+					limit = injectLimit
+				}
+			})
+		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {
+		// if 'start_job_id' > 0, it must set value to 'limit'
 		if limit == 0 {
 			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
 		}
