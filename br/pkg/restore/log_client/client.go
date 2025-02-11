@@ -1828,12 +1828,12 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 	}
 
 	sessionCount := defaultRepairIndexSessionCount
-	unsafeSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
+	indexSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		closeSessions(unsafeSessions)
+		closeSessions(indexSessions)
 	}()
 	workerpool := tidbutil.NewWorkerPool(sessionCount, "repair ingest index")
 	eg, ectx := errgroup.WithContext(ctx)
@@ -1850,7 +1850,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			defer w.Done()
 
-			unsafeSession := unsafeSessions[id%uint64(len(unsafeSessions))]
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
 			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
 			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
 			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
@@ -1862,7 +1862,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || sql.OldIndexIDFound {
-				if err := unsafeSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := indexSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1872,7 +1872,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := unsafeSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Increment()
