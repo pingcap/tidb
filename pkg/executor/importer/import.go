@@ -1116,31 +1116,29 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				allFiles = append(allFiles, mydump.RawFile{Index: len(allFiles), Path: remotePath, Size: size})
+				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
 				return nil
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
 
-		var dataFileMap sync.Map
-		if err := mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt, func(ctx context.Context, f mydump.RawFile) error {
-			index, path, size := f.Index, f.Path, f.Size
-			compressTp := mydump.ParseCompressionOnFileExtension(path)
-			fileMeta := mydump.SourceFileMeta{
-				Path:        path,
-				FileSize:    size,
-				Compression: compressTp,
-				Type:        sourceType,
-			}
-			fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-			dataFileMap.Store(index, &fileMeta)
-			return nil
-		}); err != nil {
+		var err error
+		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt,
+			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				path, size := f.Path, f.Size
+				compressTp := mydump.ParseCompressionOnFileExtension(path)
+				fileMeta := mydump.SourceFileMeta{
+					Path:        path,
+					FileSize:    size,
+					Compression: compressTp,
+					Type:        sourceType,
+				}
+				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				return &fileMeta, nil
+			}); err != nil {
 			return err
 		}
-
-		dataFiles = mydump.ConvertMapToSlice[*mydump.SourceFileMeta](&dataFileMap)
 	}
 
 	e.dataFiles = dataFiles

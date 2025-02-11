@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -240,9 +241,8 @@ type MDLoader struct {
 
 // RawFile store the path and size of a file.
 type RawFile struct {
-	Index int // Used to sort files
-	Path  string
-	Size  int64
+	Path string
+	Size int64
 }
 
 type mdLoaderSetup struct {
@@ -257,11 +257,6 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 
 	// store all file infos from parallel reading
-	allFiles               []RawFile
-	dbSchemasMap           sync.Map
-	tableSchemasMap        sync.Map
-	viewSchemasMap         sync.Map
-	tableDatasMap          sync.Map
 	sampledParquetRowSizes sync.Map
 }
 
@@ -339,7 +334,6 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
-		allFiles:      make([]RawFile, 0, 16),
 	}
 
 	if err := setup.setup(ctx); err != nil {
@@ -387,51 +381,51 @@ type ExtendColumnData struct {
 }
 
 // ParallelProcess is a helper function to parallel process files, used for both lightning and IMPORT INTO.
-func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl func(ctx context.Context, f RawFile) error) error {
+func ParallelProcess[T any](
+	ctx context.Context,
+	files []RawFile,
+	workerCount int,
+	hdl func(ctx context.Context, f RawFile) (T, error),
+) ([]T, error) {
 	fileChan := make(chan RawFile, len(files))
 	for _, file := range files {
 		fileChan <- file
 	}
 	close(fileChan)
 
+	workerCount = max(workerCount, 1)
+	batchCounts := mathutil.Divide2Batches(len(files), workerCount)
+	starts := make([]int, len(batchCounts))
+	ends := make([]int, len(batchCounts))
+	for i, batch := range batchCounts {
+		if i > 0 {
+			starts[i] = ends[i-1]
+		}
+		ends[i] = starts[i] + batch
+	}
+
+	res := make([]T, len(files))
+
 	// Parallel process all files
 	eg, ctx := errgroup.WithContext(ctx)
 	for i := 0; i < max(workerCount, 1); i++ {
+		id := i
 		eg.Go(func() error {
-			for f := range fileChan {
-				if err := hdl(ctx, f); err != nil {
+			for j := starts[id]; j < ends[id]; j++ {
+				v, err := hdl(ctx, files[j])
+				if err != nil {
 					return err
 				}
+				res[j] = v
 			}
+
 			return nil
 		})
 	}
-	return eg.Wait()
-}
-
-// ConvertMapToSlice converts values stored in sync.Map to a slice, the return slice will be sort by the key.
-func ConvertMapToSlice[T any](m *sync.Map) []T {
-	type temp struct {
-		key int
-		val T
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
 	}
-	tempSlice := make([]temp, 0, 128)
-	m.Range(func(k, v any) bool {
-		key, _ := k.(int)
-		val, _ := v.(T)
-		tempSlice = append(tempSlice, temp{key, val})
-		return true
-	})
-
-	sort.Slice(tempSlice, func(i, j int) bool {
-		return tempSlice[i].key < tempSlice[j].key
-	})
-
-	result := make([]T, 0, len(tempSlice))
-	for _, item := range tempSlice {
-		result = append(result, item.val)
-	}
-	return result
+	return res, nil
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
@@ -462,7 +456,11 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	}
 
 	// First collect all file paths
-	if err := fileIter.IterateFiles(ctx, s.collectFiles); err != nil {
+	allFiles := make([]RawFile, 0, 128)
+	if err := fileIter.IterateFiles(ctx, func(_ context.Context, path string, size int64) error {
+		allFiles = append(allFiles, RawFile{path, size})
+		return nil
+	}); err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
@@ -470,24 +468,37 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	}
 
 	// Parallel process all files
-	if err := ParallelProcess(ctx, s.allFiles, runtime.NumCPU()*2, s.constructFileInfo); err != nil {
+	allInfos, err := ParallelProcess(ctx, allFiles, runtime.NumCPU()*2, s.constructFileInfo)
+	if err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
 	}
 
-	// Post process all data stored in sync.Map
-	s.dbSchemas = ConvertMapToSlice[FileInfo](&s.dbSchemasMap)
-	s.tableSchemas = ConvertMapToSlice[FileInfo](&s.tableSchemasMap)
-	s.viewSchemas = ConvertMapToSlice[FileInfo](&s.viewSchemasMap)
-	s.tableDatas = ConvertMapToSlice[FileInfo](&s.tableDatasMap)
-	for i := range s.tableDatas {
-		if s.tableDatas[i].FileMeta.Type == SourceTypeParquet {
-			info := s.tableDatas[i]
+	// Post process all data
+	for _, info := range allInfos {
+		// skipped path
+		if info == nil {
+			continue
+		}
+
+		// process row size for parquet files
+		if info.FileMeta.Type == SourceTypeParquet {
 			v, _ := s.sampledParquetRowSizes.Load(info.TableName.String())
 			avgRowSize, _ := v.(float64)
-			s.tableDatas[i].FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+		}
+
+		switch info.FileMeta.Type {
+		case SourceTypeSchemaSchema:
+			s.dbSchemas = append(s.dbSchemas, *info)
+		case SourceTypeTableSchema:
+			s.tableSchemas = append(s.tableSchemas, *info)
+		case SourceTypeViewSchema:
+			s.viewSchemas = append(s.viewSchemas, *info)
+		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+			s.tableDatas = append(s.tableDatas, *info)
 		}
 	}
 
@@ -584,44 +595,34 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	return errors.Trace(err)
 }
 
-func (s *mdLoaderSetup) collectFiles(_ context.Context, path string, size int64) error {
-	s.allFiles = append(s.allFiles, RawFile{len(s.allFiles), path, size})
-	return nil
-}
-
-func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) error {
-	idx, path, size := f.Index, f.Path, f.Size
+func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*FileInfo, error) {
+	path, size := f.Path, f.Size
 	logger := log.FromContext(ctx).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 	if err != nil {
-		return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
+		return nil, errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 	}
 	if res == nil {
 		logger.Info("file is filtered by file router", zap.String("category", "loader"))
-		return nil
+		return nil, nil
 	}
 
-	info := FileInfo{
+	info := &FileInfo{
 		TableName: filter.Table{Schema: res.Schema, Name: res.Name},
 		FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size, RealSize: size},
 	}
 
 	if s.loader.shouldSkip(&info.TableName) {
 		logger.Debug("ignoring table file", zap.String("category", "filter"))
-
-		return nil
+		return nil, nil
 	}
 
 	switch res.Type {
-	case SourceTypeSchemaSchema:
-		s.dbSchemasMap.Store(idx, info)
-	case SourceTypeTableSchema:
-		s.tableSchemasMap.Store(idx, info)
-	case SourceTypeViewSchema:
-		s.viewSchemasMap.Store(idx, info)
+	case SourceTypeSchemaSchema, SourceTypeTableSchema, SourceTypeViewSchema:
+		return info, nil
 	case SourceTypeSQL, SourceTypeCSV:
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
-		s.tableDatasMap.Store(idx, info)
+		return info, nil
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
 
@@ -632,7 +633,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) error 
 			logger.Error("fail to get file total row count", zap.String("category", "loader"),
 				zap.String("schema", res.Schema), zap.String("table", res.Name),
 				zap.Stringer("type", res.Type), zap.Error(err))
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		if !loaded {
@@ -643,14 +644,13 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) error 
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 		}
-
-		s.tableDatasMap.Store(idx, info)
+		return info, nil
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
 		zap.String("table", res.Name), zap.Stringer("type", res.Type))
 
-	return nil
+	return nil, nil
 }
 
 func (l *MDLoader) shouldSkip(table *filter.Table) bool {
