@@ -779,6 +779,17 @@ func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 	return nil
 }
 
+// FieldEncodeType is the type of encoding for a CSV field.
+type FieldEncodeType string
+
+const (
+	// FieldEncodeNone means no special encoding.
+	FieldEncodeNone FieldEncodeType = ""
+	// FieldEncodeBase64 means the field is encoded in base64.
+	// this encoding also implies some constraints on other parameters
+	FieldEncodeBase64 FieldEncodeType = "base64"
+)
+
 // CSVConfig is the config for CSV files.
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
@@ -793,7 +804,8 @@ type CSVConfig struct {
 	// deprecated, use `escaped-by` instead.
 	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
 	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
-	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
+	EscapedBy       string          `toml:"escaped-by" json:"escaped-by"`
+	FieldsEncodedBy FieldEncodeType `toml:"encoded-by" json:"encoded-by"`
 
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
@@ -812,6 +824,18 @@ type CSVConfig struct {
 }
 
 func (csv *CSVConfig) adjust() error {
+	csv.FieldsEncodedBy = FieldEncodeType(strings.ToLower(string(csv.FieldsEncodedBy)))
+	if csv.FieldsEncodedBy == FieldEncodeBase64 {
+		if csv.Header {
+			return common.ErrInvalidConfig.GenWithStack("`header` must be false when `encoded-by` is 'base64'")
+		}
+		if csv.Separator != "" {
+			return common.ErrInvalidConfig.GenWithStack("`separator` must be empty when `encoded-by` is 'base64'")
+		}
+		if csv.EscapedBy != "" {
+			return common.ErrInvalidConfig.GenWithStack("`escaped-by` must be empty when `encoded-by` is 'base64'")
+		}
+	}
 	if len(csv.Separator) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
 	}
@@ -912,6 +936,11 @@ func (m *MydumperRuntime) adjust() error {
 
 	if len(m.DataCharacterSet) == 0 {
 		m.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	if m.CSV.FieldsEncodedBy == FieldEncodeBase64 {
+		if m.DataCharacterSet != "binary" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-character-set` must be 'binary' when `mydumper.csv.encoded-by` is 'base64'")
+		}
 	}
 	charset, err1 := ParseCharset(m.DataCharacterSet)
 	if err1 != nil {
