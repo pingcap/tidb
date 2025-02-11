@@ -511,7 +511,7 @@ func TestReadNoError(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
@@ -622,7 +622,7 @@ func TestReadError(t *testing.T) {
 	expectedErr := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	_, err := s.storage.ReadFile(ctx, "file-missing")
@@ -1443,7 +1443,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 	expectedErr := errors.New(errMsg)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
@@ -1452,7 +1452,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 			}, nil
 		})
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
 			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
@@ -1461,7 +1461,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 			}, nil
 		})
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed", "2*return(true)"))
@@ -1479,7 +1479,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	start, end := int64(10), int64(30)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{
 				ContentRange: aws.String("bytes 10-20/20"),
@@ -1490,7 +1490,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	require.Nil(t, reader)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{}, nil
 		})
