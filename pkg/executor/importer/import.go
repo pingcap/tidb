@@ -1124,7 +1124,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var dataFileMap sync.Map
-		if err := mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt, func(ctx context.Context, path string, size int64) error {
+		if err := mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt, func(ctx context.Context, f mydump.RawFile) error {
+			path, size := f.Path, f.Size
 			compressTp := mydump.ParseCompressionOnFileExtension(path)
 			fileMeta := mydump.SourceFileMeta{
 				Path:        path,

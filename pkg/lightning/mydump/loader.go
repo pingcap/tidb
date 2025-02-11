@@ -240,8 +240,9 @@ type MDLoader struct {
 
 // RawFile store the path and size of a file.
 type RawFile struct {
-	Path string
-	Size int64
+	index int // Used to sort files
+	Path  string
+	Size  int64
 }
 
 type mdLoaderSetup struct {
@@ -386,7 +387,7 @@ type ExtendColumnData struct {
 }
 
 // ParallelProcess is a helper function to parallel process files, used for both lightning and IMPORT INTO.
-func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl func(ctx context.Context, path string, size int64) error) error {
+func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl func(ctx context.Context, f RawFile) error) error {
 	fileChan := make(chan RawFile, len(files))
 	for _, file := range files {
 		fileChan <- file
@@ -398,7 +399,7 @@ func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl 
 	for i := 0; i < max(workerCount, 1); i++ {
 		eg.Go(func() error {
 			for f := range fileChan {
-				if err := hdl(ctx, f.Path, f.Size); err != nil {
+				if err := hdl(ctx, f); err != nil {
 					return err
 				}
 			}
@@ -451,32 +452,43 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		gerr = err
 	}
 
+	convertMapToSlice := func(m *sync.Map) []FileInfo {
+		type temp struct {
+			key int
+			val FileInfo
+		}
+		tempSlice := make([]temp, 0, 128)
+		m.Range(func(k, v interface{}) bool {
+			key, _ := k.(int)
+			val, _ := v.(FileInfo)
+			tempSlice = append(tempSlice, temp{key, val})
+			return true
+		})
+
+		sort.Slice(tempSlice, func(i, j int) bool {
+			return tempSlice[i].key < tempSlice[j].key
+		})
+
+		result := make([]FileInfo, 0, len(tempSlice))
+		for _, item := range tempSlice {
+			result = append(result, item.val)
+		}
+		return result
+	}
+
 	// Post process all data stored in sync.Map
-	s.dbSchemasMap.Range(func(_, value any) bool {
-		info, _ := value.(FileInfo)
-		s.dbSchemas = append(s.dbSchemas, info)
-		return true
-	})
-	s.tableSchemasMap.Range(func(_, value any) bool {
-		info, _ := value.(FileInfo)
-		s.tableSchemas = append(s.tableSchemas, info)
-		return true
-	})
-	s.viewSchemasMap.Range(func(_, value any) bool {
-		info, _ := value.(FileInfo)
-		s.viewSchemas = append(s.viewSchemas, info)
-		return true
-	})
-	s.tableDatasMap.Range(func(_, value any) bool {
-		info, _ := value.(FileInfo)
-		s.tableDatas = append(s.tableDatas, info)
-		if info.FileMeta.Type == SourceTypeParquet {
+	s.dbSchemas = convertMapToSlice(&s.dbSchemasMap)
+	s.tableSchemas = convertMapToSlice(&s.tableSchemasMap)
+	s.viewSchemas = convertMapToSlice(&s.viewSchemasMap)
+	s.tableDatas = convertMapToSlice(&s.tableDatasMap)
+	for i := range s.tableDatas {
+		if s.tableDatas[i].FileMeta.Type == SourceTypeParquet {
+			info := s.tableDatas[i]
 			v, _ := s.sampledParquetRowSizes.Load(info.TableName.String())
 			avgRowSize, _ := v.(float64)
-			info.FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+			s.tableDatas[i].FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
 		}
-		return true
-	})
+	}
 
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -572,11 +584,12 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 }
 
 func (s *mdLoaderSetup) collectFiles(_ context.Context, path string, size int64) error {
-	s.allFiles = append(s.allFiles, RawFile{path, size})
+	s.allFiles = append(s.allFiles, RawFile{len(s.allFiles), path, size})
 	return nil
 }
 
-func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size int64) error {
+func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) error {
+	idx, path, size := f.index, f.Path, f.Size
 	logger := log.FromContext(ctx).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 	if err != nil {
@@ -600,14 +613,14 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 
 	switch res.Type {
 	case SourceTypeSchemaSchema:
-		s.dbSchemasMap.Store(path, info)
+		s.dbSchemasMap.Store(idx, info)
 	case SourceTypeTableSchema:
-		s.tableSchemasMap.Store(path, info)
+		s.tableSchemasMap.Store(idx, info)
 	case SourceTypeViewSchema:
-		s.viewSchemasMap.Store(path, info)
+		s.viewSchemasMap.Store(idx, info)
 	case SourceTypeSQL, SourceTypeCSV:
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
-		s.tableDatasMap.Store(path, info)
+		s.tableDatasMap.Store(idx, info)
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
 
@@ -630,7 +643,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 		}
 
-		s.tableDatasMap.Store(path, info)
+		s.tableDatasMap.Store(idx, info)
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
