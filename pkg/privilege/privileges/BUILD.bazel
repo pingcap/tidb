@@ -35,6 +35,7 @@ go_library(
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "//pkg/util/stringutil",
+        "@com_github_google_btree//:btree",
         "@com_github_lestrrat_go_jwx_v2//jwk",
         "@com_github_lestrrat_go_jwx_v2//jws",
         "@com_github_lestrrat_go_jwx_v2//jwt",
