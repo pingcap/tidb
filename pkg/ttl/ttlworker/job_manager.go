@@ -582,24 +582,13 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		if len(m.runningJobs) > 0 {
-<<<<<<< HEAD
-			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
-
-				summary, err := summarizeErr(errors.New("ttl job is disabled"))
-=======
 			// reverse iteration so that we could remove the job safely in the loop
 			for i := len(m.runningJobs) - 1; i >= 0; i-- {
 				job := m.runningJobs[i]
 
-				logger := logutil.Logger(m.ctx).With(
-					zap.String("jobID", job.id),
-					zap.Int64("tableID", job.tbl.ID),
-					zap.String("table", job.tbl.FullName()),
-				)
-				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
-				summary, err := summarizeErr(errors.New(cancelReason))
->>>>>>> b7aafa67ec2 (ttl: fix the issue that the TTL jobs are skipped or handled multiple times in one iteration (#59348))
+				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
+
+				summary, err := summarizeErr(errors.New("ttl job is disabled"))
 				if err != nil {
 					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
 				}

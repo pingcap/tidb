@@ -1472,7 +1472,7 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 func TestIterationOfRunningJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
-	sessionFactory := sessionFactory(t, dom)
+	sessionFactory := sessionFactory(t, store)
 
 	tk := testkit.NewTestKit(t, store)
 	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
