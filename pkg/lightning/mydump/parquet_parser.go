@@ -203,7 +203,9 @@ func ReadParquetRowCountAndSizeByFile(
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	defer parser.Close()
+	defer func() {
+		_ = parser.Close()
+	}()
 
 	numberRows = parser.Reader.Footer.NumRows
 	if !sampleRowSize {

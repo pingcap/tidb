@@ -1139,7 +1139,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err
 		}
 
-		dataFileMap.Range(func(_, value interface{}) bool {
+		dataFileMap.Range(func(_, value any) bool {
 			info, _ := value.(*mydump.SourceFileMeta)
 			dataFiles = append(dataFiles, info)
 			return true

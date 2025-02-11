@@ -452,22 +452,22 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	}
 
 	// Post process all data stored in sync.Map
-	s.dbSchemasMap.Range(func(_, value interface{}) bool {
+	s.dbSchemasMap.Range(func(_, value any) bool {
 		info, _ := value.(FileInfo)
 		s.dbSchemas = append(s.dbSchemas, info)
 		return true
 	})
-	s.tableSchemasMap.Range(func(_, value interface{}) bool {
+	s.tableSchemasMap.Range(func(_, value any) bool {
 		info, _ := value.(FileInfo)
 		s.tableSchemas = append(s.tableSchemas, info)
 		return true
 	})
-	s.viewSchemasMap.Range(func(_, value interface{}) bool {
+	s.viewSchemasMap.Range(func(_, value any) bool {
 		info, _ := value.(FileInfo)
 		s.viewSchemas = append(s.viewSchemas, info)
 		return true
 	})
-	s.tableDatasMap.Range(func(_, value interface{}) bool {
+	s.tableDatasMap.Range(func(_, value any) bool {
 		info, _ := value.(FileInfo)
 		s.tableDatas = append(s.tableDatas, info)
 		if info.FileMeta.Type == SourceTypeParquet {
