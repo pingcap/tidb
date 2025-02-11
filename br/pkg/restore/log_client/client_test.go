@@ -28,6 +28,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -2148,4 +2149,93 @@ func TestRepairIngestIndex(t *testing.T) {
 		}
 		require.Equal(t, 2, existsCount)
 	}
+}
+
+func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+
+	infoschema := s.Mock.InfoSchema()
+	table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	indexIDi1 := int64(0)
+	indexIDi2 := int64(0)
+	for _, indexInfo := range tableInfo.Indices {
+		switch indexInfo.Name.L {
+		case "i1":
+			indexIDi1 = indexInfo.ID
+		case "i2":
+			indexIDi2 = indexInfo.ID
+		}
+	}
+	require.NotEqual(t, int64(0), indexIDi1)
+	require.NotEqual(t, int64(0), indexIDi2)
+
+	// add checkpoint
+	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+	require.NoError(t, err)
+	defer func() {
+		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+		require.NoError(t, err)
+	}()
+	require.NoError(t, checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
+			{
+				// from checkpoint and old index (i1) id is found
+				IndexID:    indexIDi1,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i1",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i1", "id"},
+			},
+			{
+				// from checkpoint and the index (i2) is repaired
+				IndexID:    indexIDi2 + 99,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i2",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i2", "a"},
+			},
+			{
+				// from checkpoint and old index (i3) id is not found
+				IndexID:    indexIDi2 + 100,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i3",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i3", "b"},
+			},
+		},
+	}))
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+	infoschema = s.Mock.InfoSchema()
+	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+	require.NoError(t, err)
+	tableInfo2 := table2.Meta()
+	existsCount := 0
+	for _, indexInfo2 := range tableInfo2.Indices {
+		switch indexInfo2.Name.L {
+		case "i1":
+			require.Less(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		case "i2":
+			require.Equal(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		case "i3":
+			require.Less(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		}
+	}
+	require.Equal(t, 3, existsCount)
 }

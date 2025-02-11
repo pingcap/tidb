@@ -1797,19 +1797,19 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 
 	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
-	for _, sql := range sqls {
+	for i, sql := range sqls {
 		tableInfo, err := info.TableByName(ctx, sql.SchemaName, sql.TableName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql.OldIndexIDFound = false
-		sql.IndexRepaired = false
+		sqls[i].OldIndexIDFound = false
+		sqls[i].IndexRepaired = false
 		if fromCheckpoint {
 			for _, idx := range tableInfo.Indices() {
 				indexInfo := idx.Meta()
 				if indexInfo.ID == sql.IndexID {
 					// the original index id is not dropped
-					sql.OldIndexIDFound = true
+					sqls[i].OldIndexIDFound = true
 					break
 				}
 				// what if index's state is not public?
@@ -1820,7 +1820,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 					if _, err := fmt.Fprintf(console.Out(), "%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE")); err != nil {
 						return errors.Trace(err)
 					}
-					sql.IndexRepaired = true
+					sqls[i].IndexRepaired = true
 					break
 				}
 			}
