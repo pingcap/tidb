@@ -21,8 +21,11 @@ import (
 
 // onAlterTableMode should only be called by alterTableMode, will call updateVersionAndTableInfo
 func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	var args *model.AlterTableModeArgs
-	args, err = model.GetAlterTableModeArgs(job)
+	args, err := model.GetAlterTableModeArgs(job)
+	if err != nil {
+		return ver, err
+	}
+
 	var tbInfo *model.TableInfo
 	metaMut := jobCtx.metaMut
 	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
