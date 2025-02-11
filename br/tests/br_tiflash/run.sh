@@ -16,7 +16,7 @@
 
 set -eu
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-. $cur/../_utils/run_services
+. run_services
 
 DB="${TEST_NAME}_DATABASE"
 RECORD_COUNT=1000
