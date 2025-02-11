@@ -458,7 +458,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			val FileInfo
 		}
 		tempSlice := make([]temp, 0, 128)
-		m.Range(func(k, v interface{}) bool {
+		m.Range(func(k, v any) bool {
 			key, _ := k.(int)
 			val, _ := v.(FileInfo)
 			tempSlice = append(tempSlice, temp{key, val})
