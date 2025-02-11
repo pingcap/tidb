@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"testing"
@@ -39,7 +40,15 @@ func getClonedTableInfoFromDomain(dbName string, tableName string, dom *domain.D
 	return tbl.Meta().Clone(), nil
 }
 
-func setTableModeTest(ctx sessionctx.Context, t *testing.T, store kv.Storage, de ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableModeState) error {
+func setTableModeTest(
+	ctx sessionctx.Context,
+	t *testing.T,
+	store kv.Storage,
+	de ddl.ExecutorForTest,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	mode model.TableModeState,
+) error {
 	args := &model.AlterTableModeArgs{
 		TableMode: mode,
 		SchemaID:  dbInfo.ID,
@@ -62,6 +71,9 @@ func setTableModeTest(ctx sessionctx.Context, t *testing.T, store kv.Storage, de
 	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 
 	if err == nil {
+		v := getSchemaVer(t, ctx)
+		checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+
 		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 		testCheckJobDone(t, store, job.ID, true)
 		checkTableModeTest(t, store, dbInfo, tblInfo, mode)
@@ -70,7 +82,19 @@ func setTableModeTest(ctx sessionctx.Context, t *testing.T, store kv.Storage, de
 	return err
 }
 
-// TODO(xiaoyuan): consider use different error code for transition error and not-accessible error
+func checkTableModeTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableModeState) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMutator(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.Equal(t, mode, info.TableMode)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func checkErrorCode(t *testing.T, err error, expected int) {
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
