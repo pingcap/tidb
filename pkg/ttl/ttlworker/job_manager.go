@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -856,26 +857,7 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 // updateHeartBeat updates the heartbeat for all task with current instance as owner
 func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
 	for _, job := range m.localJobs() {
-<<<<<<< HEAD
-		if job.createTime.Add(ttlJobTimeout).Before(now) {
-			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
-			summary, err := summarizeErr(errors.New("job is timeout"))
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
-			}
-			err = job.finish(se, now, summary)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
-				continue
-			}
-			m.removeJob(job)
-		}
-
-		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
-		_, err := se.ExecuteSQL(ctx, sql, args...)
-=======
 		err := m.updateHeartBeatForJob(ctx, se, now, job)
->>>>>>> 0392cdda767 (ttl: fix the issue that one task losing heartbeat will block other tasks (#57919))
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to update heartbeat for job", zap.Error(err), zap.String("jobID", job.id))
 		}

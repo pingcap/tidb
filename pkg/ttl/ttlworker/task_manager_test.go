@@ -86,8 +86,6 @@ func (t *runningScanTask) SetResult(err error) {
 	t.result = t.ttlScanTask.result(err)
 }
 
-<<<<<<< HEAD
-=======
 // SetCancel sets the cancel function of the task
 func (t *runningScanTask) SetCancel(cancel func()) {
 	t.cancel = cancel
@@ -108,7 +106,6 @@ func (m *taskManager) UpdateHeartBeatForTask(ctx context.Context, se session.Ses
 	return m.updateHeartBeatForTask(ctx, se, now, task)
 }
 
->>>>>>> 0392cdda767 (ttl: fix the issue that one task losing heartbeat will block other tasks (#57919))
 func TestResizeWorkers(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 
