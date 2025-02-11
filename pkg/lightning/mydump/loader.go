@@ -240,7 +240,7 @@ type MDLoader struct {
 
 // RawFile store the path and size of a file.
 type RawFile struct {
-	index int // Used to sort files
+	Index int // Used to sort files
 	Path  string
 	Size  int64
 }
@@ -409,6 +409,31 @@ func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl 
 	return eg.Wait()
 }
 
+// ConvertMapToSlice converts values stored in sync.Map to a slice, the return slice will be sort by the key.
+func ConvertMapToSlice[T any](m *sync.Map) []T {
+	type temp struct {
+		key int
+		val T
+	}
+	tempSlice := make([]temp, 0, 128)
+	m.Range(func(k, v any) bool {
+		key, _ := k.(int)
+		val, _ := v.(T)
+		tempSlice = append(tempSlice, temp{key, val})
+		return true
+	})
+
+	sort.Slice(tempSlice, func(i, j int) bool {
+		return tempSlice[i].key < tempSlice[j].key
+	})
+
+	result := make([]T, 0, len(tempSlice))
+	for _, item := range tempSlice {
+		result = append(result, item.val)
+	}
+	return result
+}
+
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
 //
 // The database and tables are inserted in a consistent order, so creating an
@@ -452,35 +477,11 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		gerr = err
 	}
 
-	convertMapToSlice := func(m *sync.Map) []FileInfo {
-		type temp struct {
-			key int
-			val FileInfo
-		}
-		tempSlice := make([]temp, 0, 128)
-		m.Range(func(k, v any) bool {
-			key, _ := k.(int)
-			val, _ := v.(FileInfo)
-			tempSlice = append(tempSlice, temp{key, val})
-			return true
-		})
-
-		sort.Slice(tempSlice, func(i, j int) bool {
-			return tempSlice[i].key < tempSlice[j].key
-		})
-
-		result := make([]FileInfo, 0, len(tempSlice))
-		for _, item := range tempSlice {
-			result = append(result, item.val)
-		}
-		return result
-	}
-
 	// Post process all data stored in sync.Map
-	s.dbSchemas = convertMapToSlice(&s.dbSchemasMap)
-	s.tableSchemas = convertMapToSlice(&s.tableSchemasMap)
-	s.viewSchemas = convertMapToSlice(&s.viewSchemasMap)
-	s.tableDatas = convertMapToSlice(&s.tableDatasMap)
+	s.dbSchemas = ConvertMapToSlice[FileInfo](&s.dbSchemasMap)
+	s.tableSchemas = ConvertMapToSlice[FileInfo](&s.tableSchemasMap)
+	s.viewSchemas = ConvertMapToSlice[FileInfo](&s.viewSchemasMap)
+	s.tableDatas = ConvertMapToSlice[FileInfo](&s.tableDatasMap)
 	for i := range s.tableDatas {
 		if s.tableDatas[i].FileMeta.Type == SourceTypeParquet {
 			info := s.tableDatas[i]
@@ -589,7 +590,7 @@ func (s *mdLoaderSetup) collectFiles(_ context.Context, path string, size int64)
 }
 
 func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) error {
-	idx, path, size := f.index, f.Path, f.Size
+	idx, path, size := f.Index, f.Path, f.Size
 	logger := log.FromContext(ctx).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 	if err != nil {

@@ -1116,7 +1116,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
+				allFiles = append(allFiles, mydump.RawFile{Index: len(allFiles), Path: remotePath, Size: size})
 				totalSize += size
 				return nil
 			}); err != nil {
@@ -1125,7 +1125,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 		var dataFileMap sync.Map
 		if err := mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt, func(ctx context.Context, f mydump.RawFile) error {
-			path, size := f.Path, f.Size
+			index, path, size := f.Index, f.Path, f.Size
 			compressTp := mydump.ParseCompressionOnFileExtension(path)
 			fileMeta := mydump.SourceFileMeta{
 				Path:        path,
@@ -1134,17 +1134,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				Type:        sourceType,
 			}
 			fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-			dataFileMap.Store(path, &fileMeta)
+			dataFileMap.Store(index, &fileMeta)
 			return nil
 		}); err != nil {
 			return err
 		}
 
-		dataFileMap.Range(func(_, value any) bool {
-			info, _ := value.(*mydump.SourceFileMeta)
-			dataFiles = append(dataFiles, info)
-			return true
-		})
+		dataFiles = mydump.ConvertMapToSlice[*mydump.SourceFileMeta](&dataFileMap)
 	}
 
 	e.dataFiles = dataFiles
