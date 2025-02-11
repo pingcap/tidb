@@ -764,6 +764,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	PipelinedDMLConfig
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -2955,9 +2956,6 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
-
-	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
-	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3153,6 +3151,21 @@ type BatchSize struct {
 
 	// MinPagingSize defines the max size used by the coprocessor paging protocol.
 	MaxPagingSize int
+}
+
+// PipelinedDMLConfig defines the configuration for pipelined DML.
+type PipelinedDMLConfig struct {
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
+
+	// PipelinedFLushConcurrency indicates the number of concurrent worker for pipelined flush.
+	PipelinedFlushConcurrency int
+
+	// PipelinedResolveLockConcurrency indicates the number of concurrent worker for pipelined resolve lock.
+	PipelinedResolveLockConcurrency int
+
+	// PipelinedWriteThrottleRatio throttles the rate of pipelined flush. 1 = no throttle.
+	PipelinedWriteThrottleRatio float64
 }
 
 const (

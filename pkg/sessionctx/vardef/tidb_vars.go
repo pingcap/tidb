@@ -1028,6 +1028,9 @@ const (
 	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
+	// TiDBPipelinedDMLResourcePolicy controls the number of running concurrent requests in the
+	// pipelined flush action.
+	TiDBPipelinedDMLResourcePolicy = "tidb_pipelined_dml_resource_policy"
 	// TiDBEnableBatchDML enables batch dml.
 	TiDBEnableBatchDML = "tidb_enable_batch_dml"
 	// TiDBStatsCacheMemQuota records stats cache quota
@@ -1231,6 +1234,24 @@ const (
 	MaxPreSplitRegions = 15
 )
 
+// Pipelined-DML related constants
+const (
+	// MinPipelinedDMLConcurrency is the minimum acceptable concurrency
+	MinPipelinedDMLConcurrency = 1
+	// MaxPipelinedDMLConcurrency is the maximum acceptable concurrency
+	MaxPipelinedDMLConcurrency = 8192
+
+	// DefaultFlushConcurrency is the default flush concurrency
+	DefaultFlushConcurrency = 128
+	// DefaultResolveConcurrency is the default resolve_lock concurrency
+	DefaultResolveConcurrency = 8
+
+	// ConservationFlushConcurrency is the flush concurrency in conservation mode
+	ConservationFlushConcurrency = 2
+	// ConservationResolveConcurrency is the resolve_lock concurrency in conservation mode
+	ConservationResolveConcurrency = 2
+)
+
 // Default TiDB system variable values.
 const (
 	DefHostname                             = "localhost"
@@ -1427,6 +1448,7 @@ const (
 	DefTiDBQueryLogMaxLen                             = 4096
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBPipelinedDmlResourcePolicy                 = StrategyPerformance
 	DefTiDBBatchDMLIgnoreError                        = false
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
@@ -1879,6 +1901,15 @@ const (
 	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+
+	// StrategyPerformance is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	// the best performance policy
+	StrategyPerformance = "performance"
+	// StrategyConservation is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	// a rather conservative policy
+	StrategyConservation = "conservation"
+	// StrategyCustom is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	StrategyCustom = "custom"
 )
 
 // Global config name list.
