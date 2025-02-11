@@ -224,8 +224,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 
-<<<<<<< HEAD:domain/domain.go
-=======
 	// add failpoint to simulate long-running schema loading scenario
 	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
 		if val.(bool) {
@@ -236,7 +234,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	})
 
 	// full load.
->>>>>>> 8fe061897e8 (br: fix insert gc failed due to slow schema reload (#57742)):pkg/domain/domain.go
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -1124,24 +1121,11 @@ func (do *Domain) Init(
 	return nil
 }
 
-<<<<<<< HEAD:domain/domain.go
-=======
-// GetSchemaLease return the schema lease.
-func (do *Domain) GetSchemaLease() time.Duration {
-	return do.schemaLease
-}
-
 // IsLeaseExpired returns whether lease has expired
 func (do *Domain) IsLeaseExpired() bool {
 	return do.SchemaValidator.IsLeaseExpired()
 }
 
-// InitInfo4Test init infosync for distributed execution test.
-func (do *Domain) InitInfo4Test() {
-	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
-}
-
->>>>>>> 8fe061897e8 (br: fix insert gc failed due to slow schema reload (#57742)):pkg/domain/domain.go
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose

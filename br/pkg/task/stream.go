@@ -29,6 +29,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -1696,7 +1697,7 @@ func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig)
 	return nil
 }
 
-func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {
+func waitUntilSchemaReload(ctx context.Context, client *restore.Client) error {
 	log.Info("waiting for schema info finishes reloading")
 	reloadStart := time.Now()
 	conditionFunc := func() bool {

@@ -21,11 +21,8 @@ go_library(
         "safe_point.go",
         "schema.go",
         "store_manager.go",
-<<<<<<< HEAD
         "suspend_importing.go",
-=======
         "wait.go",
->>>>>>> 8fe061897e8 (br: fix insert gc failed due to slow schema reload (#57742))
         "worker.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/utils",
