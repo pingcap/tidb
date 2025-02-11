@@ -42,7 +42,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		} else {
 			// update table info and schema version
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo) // TODO: change of schema state
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		}
 	default:
 		job.State = model.JobStateCancelled
@@ -54,7 +54,10 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 
 // alterTableMode first checks if the change is valid and changes table mode to target mode
 func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) error {
-	// currently we can assume args.TableMode will not be model.TableModeRestore
+	// Currently we can assume args.TableMode will NEVER be model.TableModeRestore.
+	// Because BR will NOT use this function to set a table into ModeRestore,
+	// instead BR will use (batch)CreateTableWithInfo.
+
 	if args.TableMode == model.TableModeImport {
 		// only transition from ModeNormal to ModeImport is allowed
 		if tbInfo.TableMode != model.TableModeNormal {

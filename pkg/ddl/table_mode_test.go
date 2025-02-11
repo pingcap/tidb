@@ -16,18 +16,18 @@ package ddl_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"testing"
-
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -168,6 +168,7 @@ func TestCreateTableWithModeInfo(t *testing.T) {
 		[]*model.TableInfo{tblInfo1, tblInfo2, tblInfo3},
 		ddl.WithOnExist(ddl.OnExistIgnore),
 	)
+	require.NoError(t, err)
 	checkTableModeTest(t, store, dbInfo, tblInfo1, model.TableModeNormal)
 	checkTableModeTest(t, store, dbInfo, tblInfo2, model.TableModeImport)
 	checkTableModeTest(t, store, dbInfo, tblInfo3, model.TableModeRestore)
