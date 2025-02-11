@@ -150,7 +150,7 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 	for _, metric := range metrics {
 		tbl, err := infoSchema.TableByName(ctx, metric.dbName, metric.tableName)
 		if err != nil {
-			logutil.BgLogger().Warn("Failed to save this table cost metrics due to table id not found in info schema",
+			logutil.BgLogger().Warn("failed to save this table cost metrics due to table id not found in info schema",
 				zap.String("db_name", metric.dbName.String()),
 				zap.String("table_name", metric.tableName.String()),
 				zap.Float64("table_scan_time", metric.tableScanTime),
@@ -162,7 +162,7 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		}
 		metricBytes, err := json.Marshal(metric)
 		if err != nil {
-			logutil.BgLogger().Warn("Marshal table cost metrics failed",
+			logutil.BgLogger().Warn("marshal table cost metrics failed",
 				zap.String("db_name", metric.dbName.String()),
 				zap.String("table_name", metric.tableName.String()),
 				zap.Float64("table_scan_time", metric.tableScanTime),
@@ -199,5 +199,8 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		}
 	}
 	// step3: commit the txn, finish the save
-	sctx.CommitTxn(ctx)
+	err = sctx.CommitTxn(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("commit txn failed when saving table cost metrics", zap.Error(err))
+	}
 }
