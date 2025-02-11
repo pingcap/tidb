@@ -228,12 +228,14 @@ func ArchiveSize(files []*backuppb.File) uint64 {
 	return total
 }
 
+// ChecksumStats contains checksum summary for group of files from a table
 type ChecksumStats struct {
 	Crc64Xor   uint64
 	TotalKvs   uint64
 	TotalBytes uint64
 }
 
+// ChecksumExists checks whether it contains the checksum summary
 func (stats ChecksumStats) ChecksumExists() bool {
 	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
 		return false
