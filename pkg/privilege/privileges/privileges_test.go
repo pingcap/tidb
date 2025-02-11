@@ -2170,7 +2170,7 @@ func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	// 2. change the variable and check
 	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = on")
 	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
-	require.True(t, variable.AccelerateUserCreationUpdate.Load())
+	require.True(t, vardef.AccelerateUserCreationUpdate.Load())
 	tk.MustExec("create user bbb")
 	handle.CheckFullData(t, false)
 	// trigger priv reload, but data for bbb is not really loaded
