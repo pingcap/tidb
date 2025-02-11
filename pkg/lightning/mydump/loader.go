@@ -387,14 +387,11 @@ func ParallelProcess[T any](
 	workerCount int,
 	hdl func(ctx context.Context, f RawFile) (T, error),
 ) ([]T, error) {
-	fileChan := make(chan RawFile, len(files))
-	for _, file := range files {
-		fileChan <- file
-	}
-	close(fileChan)
-
+	// In some tests, the passed workerCount may be zero.
 	workerCount = max(workerCount, 1)
 	batchCounts := mathutil.Divide2Batches(len(files), workerCount)
+	workerCount = min(workerCount, len(batchCounts))
+
 	starts := make([]int, len(batchCounts))
 	ends := make([]int, len(batchCounts))
 	for i, batch := range batchCounts {
@@ -408,7 +405,7 @@ func ParallelProcess[T any](
 
 	// Parallel process all files
 	eg, ctx := errgroup.WithContext(ctx)
-	for i := 0; i < max(workerCount, 1); i++ {
+	for i := 0; i < workerCount; i++ {
 		id := i
 		eg.Go(func() error {
 			for j := starts[id]; j < ends[id]; j++ {
