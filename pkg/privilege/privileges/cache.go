@@ -835,6 +835,10 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err != nil {
 		return err
 	}
+	p.db.Ascend(func(itm itemDB) bool {
+		slices.SortFunc(itm.data, compareDBRecord)
+		return true
+	})
 	return nil
 }
 
