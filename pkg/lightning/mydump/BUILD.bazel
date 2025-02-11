@@ -33,6 +33,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/filter",
+        "//pkg/util/intest",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",
         "//pkg/util/slice",

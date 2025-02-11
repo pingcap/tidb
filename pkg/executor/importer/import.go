@@ -86,6 +86,7 @@ const (
 	fieldsEnclosedByOption      = "fields_enclosed_by"
 	fieldsEscapedByOption       = "fields_escaped_by"
 	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	fieldsEncodedByOption       = "fields_encoded_by"
 	linesTerminatedByOption     = "lines_terminated_by"
 	skipRowsOption              = "skip_rows"
 	splitFileOption             = "split_file"
@@ -112,6 +113,7 @@ var (
 		fieldsEnclosedByOption:      true,
 		fieldsEscapedByOption:       true,
 		fieldsDefinedNullByOption:   true,
+		fieldsEncodedByOption:       true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
 		splitFileOption:             false,
@@ -134,6 +136,7 @@ var (
 		fieldsEnclosedByOption:    {},
 		fieldsEscapedByOption:     {},
 		fieldsDefinedNullByOption: {},
+		fieldsEncodedByOption:     {},
 		linesTerminatedByOption:   {},
 		skipRowsOption:            {},
 		splitFileOption:           {},
@@ -218,7 +221,8 @@ type Plan struct {
 	ImportantSysVars map[string]string
 
 	// used for LOAD DATA and CSV format of IMPORT INTO
-	FieldNullDef []string
+	FieldNullDef    []string
+	FieldsEncodedBy config.FieldEncodeType
 	// this is not used in IMPORT INTO
 	NullValueOptEnclosed bool
 	// LinesStartingBy is not used in IMPORT INTO
@@ -512,6 +516,17 @@ func (e *LoadDataController) checkFieldParams() error {
 		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
+		if e.FieldsEncodedBy == config.FieldEncodeBase64 {
+			if e.FieldsEnclosedBy != "" {
+				return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("fields_enclosed_by must be empty when fields_encoded_by is 'base64'")
+			}
+			if e.FieldsEscapedBy != "" {
+				return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("fields_escaped_by must be empty when fields_encoded_by is 'base64'")
+			}
+			if e.Charset != nil && *e.Charset != "binary" {
+				return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("character_set must be 'binary' when fields_encoded_by is 'base64'")
+			}
+		}
 	} else {
 		if e.NullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
@@ -650,6 +665,17 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldNullDef = []string{v}
+	}
+	if opt, ok := specifiedOptions[fieldsEncodedByOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		v = strings.ToLower(v)
+		if config.FieldEncodeType(v) != config.FieldEncodeBase64 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.FieldsEncodedBy = config.FieldEncodeType(v)
 	}
 	if opt, ok := specifiedOptions[linesTerminatedByOption]; ok {
 		v, err := optAsString(opt)
@@ -953,6 +979,7 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 		FieldsTerminatedBy: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
 		FieldsEnclosedBy:   e.FieldsEnclosedBy,
+		FieldsEncodedBy:    e.FieldsEncodedBy,
 		LinesTerminatedBy:  e.LinesTerminatedBy,
 		NotNull:            false,
 		FieldNullDefinedBy: e.FieldNullDef,
