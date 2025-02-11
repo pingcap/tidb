@@ -771,7 +771,6 @@ const (
         description text,
         primary key(module, name))`
 
-	// Workload-based learning system tables
 	// CreateWorkloadValuesTable is a table to store workload-based learning values for tidb.
 	CreateWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
 		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
