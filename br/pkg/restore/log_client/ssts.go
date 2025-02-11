@@ -17,6 +17,11 @@ var (
 	_ RewrittenSSTs = &CopiedSST{}
 )
 
+const (
+	CompactedSSTsType = 1
+	CopiedSSTsType    = 2
+)
+
 // RewrittenSSTs is an extension to the `SSTs` that needs extra key rewriting.
 // This allows a SST being restored "as if" it in another table.
 //
@@ -37,6 +42,7 @@ type RewrittenSSTs interface {
 type SSTs interface {
 	fmt.Stringer
 
+	Type() int
 	// TableID returns the ID of the table associated with the SST files.
 	// This should be the same as the physical content's table ID.
 	TableID() int64
@@ -49,6 +55,10 @@ type SSTs interface {
 
 type CompactedSSTs struct {
 	*backuppb.LogFileSubcompaction
+}
+
+func (s *CompactedSSTs) Type() int {
+	return CompactedSSTsType
 }
 
 func (s *CompactedSSTs) String() string {
@@ -75,7 +85,11 @@ type CopiedSST struct {
 }
 
 func (s *CopiedSST) String() string {
-	return fmt.Sprintf("AddedSSTs: %s", s.File)
+	return fmt.Sprintf("CopiedSSTs: %s", s.File)
+}
+
+func (s *CopiedSST) Type() int {
+	return CopiedSSTsType
 }
 
 func (s *CopiedSST) TableID() int64 {

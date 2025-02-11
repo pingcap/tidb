@@ -161,14 +161,7 @@
       {
         "SQL": "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t2.b3 != NULL; -- self join",
         "Plan": [
-          "Projection 0.00 root  test.t3.a3, test.t3.b3, test.t3.c3, test.t3.a3, test.t3.b3, test.t3.c3",
-          "└─HashJoin 0.00 root  inner join, equal:[eq(test.t3.c3, test.t3.c3)]",
-          "  ├─TableReader(Build) 0.00 root  data:Selection",
-          "  │ └─Selection 0.00 cop[tikv]  ne(test.t3.b3, NULL), not(isnull(test.t3.c3))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.c3))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
@@ -434,13 +427,7 @@
       {
         "SQL": "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t1.b3 != NULL -- negative case with self join",
         "Plan": [
-          "HashJoin 0.00 root  left outer join, left side:TableReader, equal:[eq(test.t3.c3, test.t3.c3)]",
-          "├─TableReader(Build) 0.00 root  data:Selection",
-          "│ └─Selection 0.00 cop[tikv]  ne(test.t3.b3, NULL)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.c3))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {

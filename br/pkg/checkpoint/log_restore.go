@@ -304,6 +304,9 @@ type CheckpointIngestIndexRepairSQL struct {
 	IndexName  string    `json:"index-name"`
 	AddSQL     string    `json:"add-sql"`
 	AddArgs    []any     `json:"add-args"`
+
+	OldIndexIDFound bool `json:"-"`
+	IndexRepaired   bool `json:"-"`
 }
 
 type CheckpointIngestIndexRepairSQLs struct {

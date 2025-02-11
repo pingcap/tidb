@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -199,7 +199,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 		// suppress ErrTooLongKey
 		metabuild.WithSuppressTooLongIndexErr(true),
 		// support drop PK
-		metabuild.WithClusteredIndexDefMode(variable.ClusteredIndexDefModeOff),
+		metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeOff),
 	)
 	// build tableInfo
 	var (

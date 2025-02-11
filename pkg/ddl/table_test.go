@@ -869,3 +869,24 @@ func TestCreateViewTwice(t *testing.T) {
 	tk.MustExec("create view v as select * from t_raw")
 	wg.Wait()
 }
+
+func TestIssue59238(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t ( a INT, b INT, INDEX idx(b))" +
+		" PARTITION BY RANGE(a) (" +
+		" PARTITION p1 VALUES LESS THAN (10000)," +
+		" PARTITION p2 VALUES LESS THAN (20000)," +
+		" PARTITION p3 VALUES LESS THAN (MAXVALUE))")
+
+	rs := tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").String()
+
+	tk.MustExec("alter table t truncate partition p1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+
+	tk.MustExec("create table t1 (a int, b int, index idx(b))")
+	tk.MustExec("alter table t exchange partition p1 with table t1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+}

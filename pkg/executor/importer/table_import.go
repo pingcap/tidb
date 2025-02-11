@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -936,13 +936,13 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 
 func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
 	backoffWeight := local.DefaultBackoffWeight
-	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+	if val, ok := plan.ImportantSysVars[vardef.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight
 		}
 	}
 	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
-	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+	return se.GetSessionVars().SetSystemVar(vardef.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
 // GetImportRootDir returns the root directory for import.

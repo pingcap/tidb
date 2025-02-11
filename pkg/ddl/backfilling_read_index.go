@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -51,10 +53,11 @@ type readIndexExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	bc          ingest.BackendCtx
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+	backendCfg     *local.BackendConfig
+	backend        *local.Backend
 }
 
 type readIndexSummary struct {
@@ -68,29 +71,32 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *ReorgContext,
-	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
 ) (*readIndexExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
 	return &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
-		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
 	}, nil
 }
 
-func (*readIndexExecutor) Init(_ context.Context) error {
+func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
 	return nil
 }
 
@@ -123,7 +129,15 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return r.onFinished(ctx, subtask)
 	}
 
-	pipe, err := r.buildLocalStorePipeline(opCtx, sm, concurrency)
+	// TODO(tangenta): support checkpoint manager that interact with subtask table.
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
+		WithImportDistributedLock(r.d.etcdCli, sm.TS).
+		Build(r.backendCfg, r.backend)
+	if err != nil {
+		return err
+	}
+	defer bCtx.Close()
+	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -131,13 +145,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
-		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
+		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
 		if err1 != nil {
 			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
 		}
 		return err
 	}
-	err = r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+	err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -152,8 +166,9 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	if r.backend != nil {
+		r.backend.Close()
+	}
 	return nil
 }
 
@@ -217,6 +232,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 
 func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
+	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) (*operator.AsyncPipeline, error) {
@@ -236,7 +252,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		}
 		idxNames.WriteString(index.Name.O)
 	}
-	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
+	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
@@ -249,7 +265,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		opCtx,
 		d.store,
 		d.sessPool,
-		r.bc,
+		backendCtx,
 		engines,
 		r.job.ID,
 		tbl,
@@ -259,7 +275,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
-		nil,
 		rowCntListener,
 	)
 }

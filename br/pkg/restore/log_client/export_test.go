@@ -101,6 +101,10 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 	}
 }
 
+func (rc *LogClient) SetUseCheckpoint() {
+	rc.useCheckpoint = true
+}
+
 func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {
 	return &LogFileManager{
 		startTS:      startTS,

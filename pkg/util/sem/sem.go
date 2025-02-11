@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -72,8 +73,8 @@ var (
 // Dynamic configuration by users may be a security risk.
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
-	variable.SetSysVar(variable.Hostname, variable.DefHostname)
+	variable.SetSysVar(vardef.TiDBEnableEnhancedSecurity, vardef.On)
+	variable.SetSysVar(vardef.Hostname, vardef.DefHostname)
 	// write to log so users understand why some operations are weird.
 	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
@@ -82,9 +83,9 @@ func Enable() {
 // Dynamic configuration by users may be a security risk.
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
+	variable.SetSysVar(vardef.TiDBEnableEnhancedSecurity, vardef.Off)
 	if hostname, err := os.Hostname(); err == nil {
-		variable.SetSysVar(variable.Hostname, hostname)
+		variable.SetSysVar(vardef.Hostname, hostname)
 	}
 }
 
@@ -135,29 +136,29 @@ func IsInvisibleStatusVar(varName string) bool {
 // IsInvisibleSysVar returns true if the sysvar needs to be hidden
 func IsInvisibleSysVar(varNameInLower string) bool {
 	switch varNameInLower {
-	case variable.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
-		variable.TiDBCheckMb4ValueInUTF8,
-		variable.TiDBConfig,
-		variable.TiDBEnableSlowLog,
-		variable.TiDBEnableTelemetry,
-		variable.TiDBExpensiveQueryTimeThreshold,
-		variable.TiDBForcePriority,
-		variable.TiDBGeneralLog,
-		variable.TiDBMetricSchemaRangeDuration,
-		variable.TiDBMetricSchemaStep,
-		variable.TiDBOptWriteRowID,
-		variable.TiDBPProfSQLCPU,
-		variable.TiDBRecordPlanInSlowLog,
-		variable.TiDBRowFormatVersion,
-		variable.TiDBSlowQueryFile,
-		variable.TiDBSlowLogThreshold,
-		variable.TiDBSlowTxnLogThreshold,
-		variable.TiDBEnableCollectExecutionInfo,
-		variable.TiDBMemoryUsageAlarmRatio,
-		variable.TiDBRedactLog,
-		variable.TiDBRestrictedReadOnly,
-		variable.TiDBTopSQLMaxTimeSeriesCount,
-		variable.TiDBTopSQLMaxMetaCount,
+	case vardef.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
+		vardef.TiDBCheckMb4ValueInUTF8,
+		vardef.TiDBConfig,
+		vardef.TiDBEnableSlowLog,
+		vardef.TiDBEnableTelemetry,
+		vardef.TiDBExpensiveQueryTimeThreshold,
+		vardef.TiDBForcePriority,
+		vardef.TiDBGeneralLog,
+		vardef.TiDBMetricSchemaRangeDuration,
+		vardef.TiDBMetricSchemaStep,
+		vardef.TiDBOptWriteRowID,
+		vardef.TiDBPProfSQLCPU,
+		vardef.TiDBRecordPlanInSlowLog,
+		vardef.TiDBRowFormatVersion,
+		vardef.TiDBSlowQueryFile,
+		vardef.TiDBSlowLogThreshold,
+		vardef.TiDBSlowTxnLogThreshold,
+		vardef.TiDBEnableCollectExecutionInfo,
+		vardef.TiDBMemoryUsageAlarmRatio,
+		vardef.TiDBRedactLog,
+		vardef.TiDBRestrictedReadOnly,
+		vardef.TiDBTopSQLMaxTimeSeriesCount,
+		vardef.TiDBTopSQLMaxMetaCount,
 		tidbAuditRetractLog:
 		return true
 	}
