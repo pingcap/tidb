@@ -652,7 +652,7 @@ func TestOpenAsBufio(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObjectWithContext(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			require.Equal(t, (*string)(nil), input.Range)
 			return &s3.GetObjectOutput{
