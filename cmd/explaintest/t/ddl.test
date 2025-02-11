@@ -1,0 +1,9 @@
+# issue 53176
+-- error 1351
+create view sql_mode_view as select @@sql_mode;
+-- error 1351
+create view sql_mode_view as select @@global.sql_mode;
+-- error 1351
+create view sql_mode_view as select @a;
+-- error 1351
+create view sql_mode_view as select 1 where @a = 4;
