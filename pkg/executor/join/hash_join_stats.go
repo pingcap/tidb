@@ -228,7 +228,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxProbe)))
-		buf.WriteString(", fetch_and_wait:")
+		buf.WriteString(", fetch and wait:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.maxProbe)))
 		if e.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
