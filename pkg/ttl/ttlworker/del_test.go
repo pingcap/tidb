@@ -355,12 +355,12 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 	// The global inner limiter should have a default config
 	require.Equal(t, 0, variable.DefTiDBTTLDeleteRateLimit)
 	require.Equal(t, int64(0), variable.TTLDeleteRateLimit.Load())
-	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
-	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.limiter.Limit())
 	// The newDelRateLimiter() should return a default config
 	globalDelRateLimiter = newDelRateLimiter()
-	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
-	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.limiter.Limit())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer func() {
@@ -370,27 +370,21 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 	}()
 
 	variable.TTLDeleteRateLimit.Store(100000)
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
 	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.limiter.Limit())
 	require.Equal(t, int64(100000), globalDelRateLimiter.limit.Load())
 
 	variable.TTLDeleteRateLimit.Store(0)
-<<<<<<< HEAD
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
-	require.Equal(t, rate.Limit(0), globalDelRateLimiter.limiter.Limit())
-	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
-=======
 	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
-	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
-	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
->>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
+	require.Equal(t, rate.Inf, globalDelRateLimiter.limiter.Limit())
+	require.Equal(t, int64(0), globalDelRateLimiter.limit.Load())
 
 	// 0 stands for no limit
-	require.NoError(t, globalDelRateLimiter.Wait(ctx))
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
 	// cancel ctx returns an error
 	cancel()
 	cancel = nil
-	require.EqualError(t, globalDelRateLimiter.Wait(ctx), "context canceled")
+	require.EqualError(t, globalDelRateLimiter.WaitDelToken(ctx), "context canceled")
 }
 
 func TestTTLDeleteTaskWorker(t *testing.T) {

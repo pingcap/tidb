@@ -28,11 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -57,28 +53,18 @@ type delRateLimiter struct {
 	limit atomic.Int64
 }
 
-<<<<<<< HEAD
 func newDelRateLimiter() *delRateLimiter {
 	limiter := &delRateLimiter{}
-	limiter.limiter = rate.NewLimiter(0, 1)
-=======
-func newDelRateLimiter() delRateLimiter {
-	limiter := &defaultDelRateLimiter{}
 	limiter.limiter = rate.NewLimiter(rate.Inf, 1)
->>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
 	limiter.limit.Store(0)
 	return limiter
 }
 
-<<<<<<< HEAD
-func (l *delRateLimiter) Wait(ctx context.Context) error {
-=======
 type beforeWaitLimiterForTestType struct{}
 
 var beforeWaitLimiterForTest = &beforeWaitLimiterForTestType{}
 
-func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
->>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
+func (l *delRateLimiter) WaitDelToken(ctx context.Context) error {
 	limit := l.limit.Load()
 	if variable.TTLDeleteRateLimit.Load() != limit {
 		limit = l.reset()
@@ -159,7 +145,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
-		if err = globalDelRateLimiter.Wait(ctx); err != nil {
+		if err = globalDelRateLimiter.WaitDelToken(ctx); err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
 			return
 		}
