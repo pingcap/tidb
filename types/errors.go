@@ -92,4 +92,6 @@ var (
 	// ErrPartitionColumnStatsMissing is returned when the partition-level column stats is missing and the build global-level stats fails.
 	// Put this error here is to prevent `import cycle not allowed`.
 	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
+	// ErrIncorrectDatetimeValue is returned when the input value is in wrong format for datetime.
+	ErrIncorrectDatetimeValue = dbterror.ClassTypes.NewStd(mysql.ErrIncorrectDatetimeValue)
 )

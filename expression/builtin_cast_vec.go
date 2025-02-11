@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -1764,6 +1765,9 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 		}
 		tm, err := types.ParseTime(stmtCtx, buf.GetString(i), b.tp.GetType(), fsp, nil)
 		if err != nil {
+			if errors.Is(err, strconv.ErrSyntax) {
+				err = types.ErrIncorrectDatetimeValue.GenWithStackByArgs(buf.GetString(i))
+			}
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}

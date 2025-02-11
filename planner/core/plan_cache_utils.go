@@ -515,7 +515,7 @@ type PlanCacheStmt struct {
 	SQLDigest           *parser.Digest
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
-	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
 

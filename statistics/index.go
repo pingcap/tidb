@@ -240,8 +240,10 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
-					continue
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						continue
+					}
 				}
 				count = idx.equalRowCount(lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.

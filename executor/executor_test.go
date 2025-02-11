@@ -4776,7 +4776,7 @@ func TestStaleReadAtFutureTime(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	tk.MustGetErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
+	tk.MustContainErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
 	// TxnReadTS Is not updated if check failed.
 	require.Zero(t, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 }
@@ -5515,6 +5515,10 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
+	tk.MustQuery("SELECT CAST('4#,8?Q' AS DATE);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 8034 Incorrect datetime value: '4#,8?Q'`,
+	))
 }
 
 func TestReadPartitionedTable(t *testing.T) {
