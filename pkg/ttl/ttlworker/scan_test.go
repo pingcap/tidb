@@ -506,7 +506,7 @@ func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cach
 }
 
 // DoScan is an exported version of `doScan` for test.
-func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool sessionPool) *ttlScanTaskExecResult {
 	return t.doScan(ctx, delCh, sessPool)
 }
 

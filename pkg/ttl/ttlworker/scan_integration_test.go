@@ -17,14 +17,13 @@ package ttlworker_test
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/stretchr/testify/require"
@@ -35,12 +34,12 @@ func TestCancelWhileScan(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
-	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	testTable, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	for i := 0; i < 10000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
 	}
-	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
+	testPhysicalTableCache, err := cache.NewPhysicalTable(model.NewCIStr("test"), testTable.Meta(), model.NewCIStr(""))
 	require.NoError(t, err)
 
 	delCh := make(chan *ttlworker.TTLDeleteTask)
@@ -55,9 +54,6 @@ func TestCancelWhileScan(t *testing.T) {
 
 	testStart := time.Now()
 	testDuration := time.Second
-	if testflag.Long() {
-		testDuration = time.Minute
-	}
 	for time.Since(testStart) < testDuration {
 		ctx, cancel := context.WithCancel(context.Background())
 		ttlTask := ttlworker.NewTTLScanTask(ctx, testPhysicalTableCache, &cache.TTLTask{
