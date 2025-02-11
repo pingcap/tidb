@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -50,20 +51,12 @@ const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
 		state = %?
 	WHERE job_id = %? AND scan_id = %? AND status = 'running' AND owner_id = %?`
 
-<<<<<<< HEAD
-func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []interface{}, error) {
-=======
 func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time, ownerID string) (string, []any, error) {
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-<<<<<<< HEAD
-	return setTTLTaskFinishedTemplate, []interface{}{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
-=======
 	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID, ownerID}, nil
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 }
 
 const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
@@ -71,20 +64,12 @@ const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
 		owner_hb_time = %?
     WHERE job_id = %? AND scan_id = %? AND owner_id = %?`
 
-<<<<<<< HEAD
-func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []interface{}, error) {
-=======
 func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState, ownerID string) (string, []any, error) {
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-<<<<<<< HEAD
-	return updateTTLTaskHeartBeatTempalte, []interface{}{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
-=======
 	return updateTTLTaskHeartBeatTempalte, []any{string(stateStr), now.Format(timeFormat), jobID, scanID, ownerID}, nil
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 }
 
 const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
@@ -460,12 +445,8 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 			state.ScanTaskErr = task.result.err.Error()
 		}
 
-<<<<<<< HEAD
-		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
-=======
 		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state, m.id)
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 		if err != nil {
 			return err
 		}
@@ -512,12 +493,8 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 		state.ScanTaskErr = task.result.err.Error()
 	}
 
-<<<<<<< HEAD
-	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now)
-=======
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now, m.id)
->>>>>>> 018ab99b803 (ttl: fix the issue that the task is not cancelled after transfering owners (#57788))
 	if err != nil {
 		return err
 	}
