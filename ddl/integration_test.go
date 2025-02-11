@@ -144,3 +144,21 @@ func TestDDLOnCachedTable(t *testing.T) {
 	tk.MustExec("alter table t nocache;")
 	tk.MustExec("drop table if exists t;")
 }
+
+func TestTooLongDefaultValueForBit(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+
+	tk.MustGetErrCode("create table t(a bit(2) default b'111');", 1067)
+	tk.MustGetErrCode("create table t(a bit(65) default b'111');", 1439)
+	tk.MustExec("create table t(a bit(64) default b'1111111111111111111111111111111111111111111111111111111111111111');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bit(3) default b'111');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bit(3) default b'000111');")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a bit(32) default b'1111111111111111111111111111111');")
+}
