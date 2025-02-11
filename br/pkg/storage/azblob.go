@@ -163,6 +163,29 @@ func urlOfObjectByEndpoint(endpoint, container, object string) (string, error) {
 	return u.String(), nil
 }
 
+type defaultClientBuilder struct {
+	defaultCred *azidentity.DefaultAzureCredential
+
+	accountName string
+	serviceURL  string
+	clientOpts  *azblob.ClientOptions
+}
+
+// GetAccountName implements ClientBuilder.
+func (d *defaultClientBuilder) GetAccountName() string {
+	return d.accountName
+}
+
+// GetServiceClient implements ClientBuilder.
+func (d *defaultClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	return azblob.NewClient(d.serviceURL, d.defaultCred, d.clientOpts)
+}
+
+// GetServiceURL implements ClientBuilder.
+func (d *defaultClientBuilder) GetServiceURL() string {
+	return d.serviceURL
+}
+
 // use shared key to access azure blob storage
 type sharedKeyClientBuilder struct {
 	cred        *azblob.SharedKeyCredential
@@ -315,28 +338,38 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 
 	var sharedKey string
 	val := os.Getenv("AZURE_STORAGE_KEY")
-	if len(val) <= 0 {
-		return nil, errors.New("cannot find any credential info to access azure blob storage")
-	}
-	log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
-	sharedKey = val
+	if len(val) > 0 {
+		log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
+		sharedKey = val
 
-	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
+		cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		}
+		// if BR can only get credential info from environment variable `sharedKey`,
+		// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
+		if opts != nil && opts.SendCredentials {
+			options.AccountName = accountName
+			options.SharedKey = sharedKey
+		}
+		return &sharedKeyClientBuilder{
+			cred,
+			accountName,
+			serviceURL,
+
+			clientOptions,
+		}, nil
+	}
+
+	defaultCred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		return nil, err
 	}
-	// if BR can only get credential info from environment variable `sharedKey`,
-	// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
-	if opts != nil && opts.SendCredentials {
-		options.AccountName = accountName
-		options.SharedKey = sharedKey
-	}
-	return &sharedKeyClientBuilder{
-		cred,
-		accountName,
-		serviceURL,
-
-		clientOptions,
+	return &defaultClientBuilder{
+		defaultCred: defaultCred,
+		accountName: accountName,
+		serviceURL:  serviceURL,
+		clientOpts:  clientOptions,
 	}, nil
 }
 
