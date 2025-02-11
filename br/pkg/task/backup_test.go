@@ -84,7 +84,7 @@ func TestCheckpointConfigAdjust(t *testing.T) {
 		DefineBackupFlags(flags)
 		// in default
 		flags.Parse([]string{""})
-		config.ParseFromFlags(flags)
+		config.ParseFromFlags(flags, false)
 		require.True(t, config.UseCheckpoint)
 		require.False(t, config.UseBackupMetaV2)
 		require.Equal(t, uint64(0), config.LastBackupTS)
@@ -95,7 +95,7 @@ func TestCheckpointConfigAdjust(t *testing.T) {
 		DefineBackupFlags(flags)
 		// use incremental backup feature
 		flags.Parse([]string{"--lastbackupts", "1"})
-		config.ParseFromFlags(flags)
+		config.ParseFromFlags(flags, false)
 		require.False(t, config.UseCheckpoint)
 		require.False(t, config.UseBackupMetaV2)
 		require.Equal(t, uint64(1), config.LastBackupTS)
@@ -106,7 +106,7 @@ func TestCheckpointConfigAdjust(t *testing.T) {
 		DefineBackupFlags(flags)
 		// use backupmeta v2 feature
 		flags.Parse([]string{"--use-backupmeta-v2"})
-		config.ParseFromFlags(flags)
+		config.ParseFromFlags(flags, false)
 		require.False(t, config.UseCheckpoint)
 		require.True(t, config.UseBackupMetaV2)
 		require.Equal(t, uint64(0), config.LastBackupTS)
@@ -117,7 +117,7 @@ func TestCheckpointConfigAdjust(t *testing.T) {
 		DefineBackupFlags(flags)
 		// use both backupmeta v2 feature and incremental backup feature
 		flags.Parse([]string{"--use-backupmeta-v2", "--lastbackupts", "1"})
-		config.ParseFromFlags(flags)
+		config.ParseFromFlags(flags, false)
 		require.False(t, config.UseCheckpoint)
 		require.True(t, config.UseBackupMetaV2)
 		require.Equal(t, uint64(1), config.LastBackupTS)
