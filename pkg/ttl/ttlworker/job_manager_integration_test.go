@@ -1089,12 +1089,28 @@ func TestDelayMetrics(t *testing.T) {
 	require.Zero(t, getMetricCnt())
 	// leader will collect metrics
 	isLeader = true
+	m.SetLastReportDelayMetricsTime(time.Now().Add(-11 * time.Minute))
 	m.ReportMetrics(se)
 	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
-	// when back to non-leader, the metrics will be empty.
+	require.InDelta(t, time.Now().Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
+	// will not collect metrics in 10 minutes
+	lastReportTime := time.Now().Add(-9 * time.Minute)
+	m.SetLastReportDelayMetricsTime(lastReportTime)
+	m.ReportMetrics(se)
+	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
+	require.Equal(t, lastReportTime.Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
+	// when back to non-leader, the metrics will be empty and last report time will not be updated.
 	isLeader = false
+	lastReportTime = time.Now().Add(-11 * time.Minute)
+	m.SetLastReportDelayMetricsTime(lastReportTime)
 	m.ReportMetrics(se)
 	require.Zero(t, getMetricCnt())
+	require.Equal(t, lastReportTime.Unix(), m.GetLastReportDelayMetricsTime().Unix())
+	// when back to leader again, the metrics will be collected.
+	isLeader = true
+	m.ReportMetrics(se)
+	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
+	require.InDelta(t, time.Now().Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
 }
 
 type poolTestWrapper struct {
