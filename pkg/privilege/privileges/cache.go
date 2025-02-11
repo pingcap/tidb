@@ -2071,7 +2071,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// UpdateAll loads all the users' privilege info form kv storage.
+// UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	logutil.BgLogger().Warn("update all called")
 	priv := newMySQLPrivilege()
