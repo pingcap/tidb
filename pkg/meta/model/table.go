@@ -650,11 +650,27 @@ const (
 	TableLockStatePublic
 )
 
+// String implements fmt.Stringer interface.
+func (t TableLockState) String() string {
+	switch t {
+	case TableLockStatePreLock:
+		return "pre-lock"
+	case TableLockStatePublic:
+		return "public"
+	default:
+		return "none"
+	}
+}
+
+// TableModeState is the state for table mode.
 type TableModeState byte
 
 const (
+	// TableModeNormal means the table is in normal mode.
 	TableModeNormal TableModeState = iota
+	// TableModeImport means the table is in import mode.
 	TableModeImport
+	// TableModeRestore means the table is in restore mode.
 	TableModeRestore
 )
 
@@ -669,18 +685,6 @@ func (t TableModeState) String() string {
 		return "ModeRestore"
 	default:
 		return ""
-	}
-}
-
-// String implements fmt.Stringer interface.
-func (t TableLockState) String() string {
-	switch t {
-	case TableLockStatePreLock:
-		return "pre-lock"
-	case TableLockStatePublic:
-		return "public"
-	default:
-		return "none"
 	}
 }
 

@@ -1083,6 +1083,7 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
 }
 
+// AlterTableModeArgs is the argument for AlterTableMode.
 type AlterTableModeArgs struct {
 	TableMode TableModeState
 	SchemaID  int64
