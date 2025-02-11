@@ -18,10 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -35,26 +33,18 @@ func TestDDLHistoryBasic(t *testing.T) {
 	)
 
 	store := testkit.CreateMockStore(t)
-	rs := pools.NewResourcePool(func() (pools.Resource, error) {
-		newTk := testkit.NewTestKit(t, store)
-
-		return newTk.Session(), nil
-	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs, store)
-	sessCtx, err := sessPool.Get()
-	require.NoError(t, err)
-	sess := session.NewSession(sessCtx)
+	sessCtx := testNewContext(store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJobForTest(sessCtx, t, &model.Job{
 			ID: 1,
 		}, false)
 	})
 	require.NoError(t, err)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJobForTest(sessCtx, t, &model.Job{
 			ID: 2,
 		}, false)
 	})
