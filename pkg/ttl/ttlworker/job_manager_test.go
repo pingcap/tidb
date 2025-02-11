@@ -190,6 +190,16 @@ func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, no
 	return m.updateHeartBeat(ctx, se, now)
 }
 
+// SetLastReportDelayMetricsTime sets the lastReportDelayMetricsTime for test
+func (m *JobManager) SetLastReportDelayMetricsTime(t time.Time) {
+	m.lastReportDelayMetricsTime = t
+}
+
+// GetLastReportDelayMetricsTime returns the lastReportDelayMetricsTime for test
+func (m *JobManager) GetLastReportDelayMetricsTime() time.Time {
+	return m.lastReportDelayMetricsTime
+}
+
 // ReportMetrics is an exported version of reportMetrics
 func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
