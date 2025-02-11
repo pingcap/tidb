@@ -484,7 +484,13 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	return nil
 }
 
-func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraphEdgesTable) {
+func findUserAndAllRoles(userList []string, roleGraph map[string]roleGraphEdgesTable) []string {
+	// Including the user list and also their roles
+	all := make(map[string]struct{}, len(userList))
+	for _, user := range userList {
+		all[user] = struct{}{}
+	}
+
 	for {
 		before := len(all)
 
@@ -508,6 +514,13 @@ func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraph
 			break
 		}
 	}
+
+	// Re-generate the user list.
+	userList = userList[:0]
+	for user := range all {
+		userList = append(userList, user)
+	}
+	return userList
 }
 
 func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
@@ -522,16 +535,7 @@ func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userLi
 	}
 
 	// Including the user list and also their roles
-	extendedUserList := make(map[string]struct{}, len(userList))
-	for _, user := range userList {
-		extendedUserList[user] = struct{}{}
-	}
-	findUserAndAllRoles(extendedUserList, p.roleGraph)
-	// Re-generate the user list.
-	userList = userList[:0]
-	for user := range extendedUserList {
-		userList = append(userList, user)
-	}
+	userList = findUserAndAllRoles(userList, p.roleGraph)
 
 	err = p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
 	if err != nil {
@@ -571,84 +575,91 @@ func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userLi
 	return userList, nil
 }
 
-// merge construct a new MySQLPrivilege by merging the data of the two objects;.
+// merge construct a new MySQLPrivilege by merging the data of the two objects.
 func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPrivilege {
 	ret := newMySQLPrivilege()
 	user := p.user.Clone()
 	for _, u := range userList {
-		user.Delete(itemUser{username: u})
+		itm, ok := diff.user.Get(itemUser{username: u})
+		if !ok {
+			user.Delete(itemUser{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareUserRecord)
+			user.ReplaceOrInsert(itm)
+		}
 	}
-	diff.user.Ascend(func(itm itemUser) bool {
-		slices.SortFunc(itm.data, compareUserRecord)
-		user.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.user = user
 
 	db := p.db.Clone()
 	for _, u := range userList {
-		db.Delete(itemDB{username: u})
+		itm, ok := diff.db.Get(itemDB{username: u})
+		if !ok {
+			db.Delete(itemDB{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDBRecord)
+			db.ReplaceOrInsert(itm)
+		}
 	}
-	diff.db.Ascend(func(itm itemDB) bool {
-		slices.SortFunc(itm.data, compareDBRecord)
-		db.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.db = db
 
 	tablesPriv := p.tablesPriv.Clone()
 	for _, u := range userList {
-		tablesPriv.Delete(itemTablesPriv{username: u})
+		itm, ok := diff.tablesPriv.Get(itemTablesPriv{username: u})
+		if !ok {
+			tablesPriv.Delete(itemTablesPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareTablesPrivRecord)
+			tablesPriv.ReplaceOrInsert(itm)
+		}
 	}
-	diff.tablesPriv.Ascend(func(itm itemTablesPriv) bool {
-		slices.SortFunc(itm.data, compareTablesPrivRecord)
-		tablesPriv.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.tablesPriv = tablesPriv
 
 	columnsPriv := p.columnsPriv.Clone()
 	for _, u := range userList {
-		columnsPriv.Delete(itemColumnsPriv{username: u})
+		itm, ok := diff.columnsPriv.Get(itemColumnsPriv{username: u})
+		if !ok {
+			columnsPriv.Delete(itemColumnsPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareColumnsPrivRecord)
+			columnsPriv.ReplaceOrInsert(itm)
+		}
 	}
-	diff.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
-		slices.SortFunc(itm.data, compareColumnsPrivRecord)
-		columnsPriv.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.columnsPriv = columnsPriv
 
 	defaultRoles := p.defaultRoles.Clone()
 	for _, u := range userList {
-		defaultRoles.Delete(itemDefaultRole{username: u})
+		itm, ok := diff.defaultRoles.Get(itemDefaultRole{username: u})
+		if !ok {
+			defaultRoles.Delete(itemDefaultRole{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDefaultRoleRecord)
+			defaultRoles.ReplaceOrInsert(itm)
+		}
 	}
-	diff.defaultRoles.Ascend(func(itm itemDefaultRole) bool {
-		slices.SortFunc(itm.data, compareDefaultRoleRecord)
-		defaultRoles.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.defaultRoles = defaultRoles
 
 	dynamicPriv := p.dynamicPriv.Clone()
 	for _, u := range userList {
-		dynamicPriv.Delete(itemDynamicPriv{username: u})
+		itm, ok := diff.dynamicPriv.Get(itemDynamicPriv{username: u})
+		if !ok {
+			dynamicPriv.Delete(itemDynamicPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDynamicPrivRecord)
+			dynamicPriv.ReplaceOrInsert(itm)
+		}
 	}
-	diff.dynamicPriv.Ascend(func(itm itemDynamicPriv) bool {
-		slices.SortFunc(itm.data, compareDynamicPrivRecord)
-		dynamicPriv.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.dynamicPriv = dynamicPriv
 
 	globalPriv := p.globalPriv.Clone()
 	for _, u := range userList {
-		globalPriv.Delete(itemGlobalPriv{username: u})
+		itm, ok := diff.globalPriv.Get(itemGlobalPriv{username: u})
+		if !ok {
+			globalPriv.Delete(itemGlobalPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareGlobalPrivRecord)
+			globalPriv.ReplaceOrInsert(itm)
+		}
 	}
-	diff.globalPriv.Ascend(func(itm itemGlobalPriv) bool {
-		slices.SortFunc(itm.data, compareGlobalPrivRecord)
-		globalPriv.ReplaceOrInsert(itm)
-		return true
-	})
 	ret.globalPriv = globalPriv
 
 	ret.roleGraph = diff.roleGraph
@@ -2079,19 +2090,30 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
-	if len(userList) > 1024 {
-		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
-		return h.UpdateAll()
-	}
 
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
-	userList, err := priv.loadSomeUsers(h.sctx, userList...)
-	if err != nil {
-		return err
+	if len(userList) < 1024 {
+		userList, err := priv.loadSomeUsers(h.sctx, userList...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		h.merge(priv, userList)
+		h.fullData.Store(false)
+		return nil
 	}
-	h.fullData.Store(false)
+
+	// Use loadSomeUsers construct too long SQL like:
+	// select .. from user where user = 'a' or user = 'b' or user = 'c' or user = 'd ' ...
+	// So just using select ... from user instead.
+	logutil.BgLogger().Warn("active user count > 1024, load all users", zap.Int("len", len(userList)))
+	err := priv.LoadAll(h.sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	userList = findUserAndAllRoles(userList, priv.roleGraph)
 	h.merge(priv, userList)
+	h.fullData.Store(false)
 	return nil
 }
 
