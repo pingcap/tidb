@@ -23,13 +23,17 @@ package workloadbasedlearning
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
 
@@ -67,7 +71,7 @@ func NewWorkloadBasedLearningHandle(pool util.SessionPool) *Handle {
 //
 // 4. Calculate table cost for each table, table cost = table scan time / total scan time + table mem usage / total mem usage
 // 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.workload_values"
-func (handle *Handle) HandleReadTableCost() {
+func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
 	if len(middleMetrics) == 0 {
@@ -75,7 +79,7 @@ func (handle *Handle) HandleReadTableCost() {
 	}
 	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
 	// step3: calculate the total scan time and total memory usage
-	tableNameToMetrics := make(map[string]*ReadTableCostMetrics)
+	tableNameToMetrics := make(map[ast.CIStr]*ReadTableCostMetrics)
 	totalScanTime := 0.0
 	totalMemUsage := 0.0
 	for _, middleMetric := range middleMetrics {
@@ -98,7 +102,7 @@ func (handle *Handle) HandleReadTableCost() {
 		metric.tableCost = metric.tableScanTime/totalScanTime + metric.tableMemUsage/totalMemUsage
 	}
 	// step5: save the table cost metrics to table "mysql.workload_values"
-	handle.saveReadTableCostMetrics(tableNameToMetrics, startTime, endTime)
+	handle.saveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
 }
 
 func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
@@ -115,10 +119,11 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, t
 	return nil, time.Now(), time.Now()
 }
 
+// TODO save the workload job info such as start end time into workload_jobs table
 // table cost metrics, workload-based start and end time, version,
-func (handle *Handle) saveReadTableCostMetrics(metrics map[string]*ReadTableCostMetrics, startTime, endTime time.Time) {
+func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableCostMetrics,
+	startTime, endTime time.Time, infoSchema infoschema.InfoSchema) {
 	// step1: create a new session, context, txn for saving table cost metrics
-	// TODO enable the plan cache
 	se, err := handle.sysSessionPool.Get()
 	if err != nil {
 		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
@@ -126,6 +131,8 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[string]*ReadTableCost
 	}
 	defer handle.sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
+	// enable plan cache
+	sctx.GetSessionVars().EnableNonPreparedPlanCache = true
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		logutil.BgLogger().Warn("get txn failed when saving table cost metrics", zap.Error(err))
@@ -136,47 +143,61 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[string]*ReadTableCost
 
 	// step2: insert new version table cost metrics by batch using one common txn and context
 	version := txn.StartTS()
-	// build insert stringBuilder by batch(1000 tables)
+	// build insert sql by batch(1000 tables)
 	i := 0
-	stringBuilder := new(strings.Builder)
-	stringBuilder.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
-	for tableName, metric := range metrics {
-		stringBuilder.WriteString("(")
-		stringBuilder.WriteString(version)
-		stringBuilder.WriteString(", ")
-		stringBuilder.WriteString(feedbackCategory)
-		stringBuilder.WriteString(", ")
-		stringBuilder.WriteString(tableCostType)
-		stringBuilder.WriteString(", ")
-		// TODO get the table id by table name
-		tableId := 0
-		stringBuilder.WriteString(tableId)
-		stringBuilder.WriteString("', ")
-		// TODO build the value and start end time to json
-		stringBuilder.WriteString(metric)
-		stringBuilder.WriteString(")")
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "insert into mysql.workload_values (version, category, type, table_id, value) values ")
+	for _, metric := range metrics {
+		tbl, err := infoSchema.TableByName(ctx, metric.dbName, metric.tableName)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to save this table cost metrics due to table id not found in info schema",
+				zap.String("db_name", metric.dbName.String()),
+				zap.String("table_name", metric.tableName.String()),
+				zap.Float64("table_scan_time", metric.tableScanTime),
+				zap.Float64("table_mem_usage", metric.tableMemUsage),
+				zap.Int64("read_frequency", metric.readFrequency),
+				zap.Float64("table_cost", metric.tableCost),
+				zap.Error(err))
+			continue
+		}
+		metricBytes, err := json.Marshal(metric)
+		if err != nil {
+			logutil.BgLogger().Warn("Marshal table cost metrics failed",
+				zap.String("db_name", metric.dbName.String()),
+				zap.String("table_name", metric.tableName.String()),
+				zap.Float64("table_scan_time", metric.tableScanTime),
+				zap.Float64("table_mem_usage", metric.tableMemUsage),
+				zap.Int64("read_frequency", metric.readFrequency),
+				zap.Float64("table_cost", metric.tableCost),
+				zap.Error(err))
+			continue
+		}
+		sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)",
+			version, feedbackCategory, tableCostType, tbl.Meta().ID, json.RawMessage(metricBytes))
+		// TODO check the txn record limit
 		if i%batchInsertSize == batchInsertSize-1 {
-			_, _, err := exec.ExecRestrictedSQL(ctx, nil, stringBuilder.String())
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				logutil.BgLogger().Warn("insert new version table cost metrics failed", zap.Error(err))
 				return
 			}
-			stringBuilder.Reset()
-			stringBuilder.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
+			sql.Reset()
+			sql.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
 		} else {
-			stringBuilder.WriteString(", ")
+			sql.WriteString(", ")
 		}
 		i++
 	}
 	// insert the last batch
-	if stringBuilder.Len() != 0 {
+	if sql.Len() != 0 {
 		// remove the tail comma
-		sql := stringBuilder.String()[:stringBuilder.Len()-2]
+		sql := sql.String()[:sql.Len()-2]
 		_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 		if err != nil {
 			logutil.BgLogger().Warn("insert new version table cost metrics failed", zap.Error(err))
 			return
 		}
 	}
-
+	// step3: commit the txn, finish the save
+	sctx.CommitTxn(ctx)
 }

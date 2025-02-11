@@ -770,6 +770,18 @@ const (
         status varchar(128),
         description text,
         primary key(module, name))`
+
+	// Workload-based learning system tables
+	// CreateWorkloadValuesTable is a table to store workload-based learning values for tidb.
+	CreateWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
+		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		version bigint(20) NOT NULL,
+		category varchar(64) NOT NULL,
+		type varchar(64) NOT NULL,
+		table_id bigint(20) NOT NULL,
+		value json NOT NULL,
+		index idx_version_category_type (version, category, type),
+		index idx_table_id (table_id))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1242,11 +1254,14 @@ const (
 
 	// Add index on user field for some mysql tables.
 	version241 = 241
+
+	// Add workload-based learning system tables
+	version242 = 242
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version242
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1423,6 +1438,7 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
 	}
 )
 
@@ -3318,6 +3334,13 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+	mustExecute(s, CreateWorkloadValuesTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3472,6 +3495,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.workload_values
+	mustExecute(s, CreateWorkloadValuesTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

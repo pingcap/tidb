@@ -14,10 +14,13 @@
 
 package workloadbasedlearning
 
+import "github.com/pingcap/tidb/pkg/parser/ast"
+
 // ReadTableCostMetrics is used to indicate the intermediate status and results analyzed through read workload
 // for function "HandleReadTableCost".
 type ReadTableCostMetrics struct {
-	tableName string
+	dbName    ast.CIStr
+	tableName ast.CIStr
 	// tableScanTime[t] = sum(scan-time * readFrequency) of all records in statement_summary where table-name = t
 	tableScanTime float64
 	// tableMemUsage[t] = sum(mem-usage * readFrequency) of all records in statement_summary where table-name = t
