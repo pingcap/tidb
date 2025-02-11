@@ -370,7 +370,7 @@ func makeParquetFileRegion(
 	var err error
 	// for safety
 	if numberRows <= 0 {
-		numberRows, _, err = ReadParquetRowCountAndSizeByFile(ctx, cfg.Store, dataFile.FileMeta, false)
+		numberRows, err = ReadParquetFileRowCount(ctx, cfg.Store, dataFile.FileMeta)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -615,17 +615,24 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 	}
 
 	switch res.Type {
-	case SourceTypeSchemaSchema, SourceTypeTableSchema, SourceTypeViewSchema:
-		return info, nil
 	case SourceTypeSQL, SourceTypeCSV:
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
-		return info, nil
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
 
 		// Only sample once for each table
 		_, loaded := s.sampledParquetRowSizes.LoadOrStore(tableName, 0)
-		totalRowCount, rowSize, err := ReadParquetRowCountAndSizeByFile(ctx, s.loader.GetStore(), info.FileMeta, !loaded)
+		var (
+			totalRowCount int64
+			rowSize       float64
+		)
+
+		if !loaded {
+			totalRowCount, rowSize, err = ReadParquetRowCountAndSizeByFile(ctx, s.loader.GetStore(), info.FileMeta)
+		} else {
+			totalRowCount, err = ReadParquetFileRowCount(ctx, s.loader.GetStore(), info.FileMeta)
+		}
+
 		if err != nil {
 			logger.Error("fail to get file total row count", zap.String("category", "loader"),
 				zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -634,6 +641,12 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		}
 
 		if !loaded {
+			logger.Debug("get row size of parquet",
+				zap.String("schema", res.Schema),
+				zap.String("table", res.Name),
+				zap.Stringer("type", res.Type),
+				zap.Float64("row size", rowSize),
+			)
 			s.sampledParquetRowSizes.Store(tableName, rowSize)
 		}
 
@@ -641,13 +654,12 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 		}
-		return info, nil
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
 		zap.String("table", res.Name), zap.Stringer("type", res.Type))
 
-	return nil, nil
+	return info, nil
 }
 
 func (l *MDLoader) shouldSkip(table *filter.Table) bool {

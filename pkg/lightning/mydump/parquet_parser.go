@@ -160,21 +160,24 @@ func OpenParquetReader(
 	}, nil
 }
 
-// readParquetFileRowCount reads the parquet file row count.
+// ReadParquetFileRowCount reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func readParquetFileRowCount(
+func ReadParquetFileRowCount(
 	ctx context.Context,
 	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
+	fileMeta SourceFileMeta,
 ) (int64, error) {
+	r, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
 	wrapper := &readerWrapper{
 		ReadSeekCloser: r,
 		store:          store,
 		ctx:            ctx,
-		path:           path,
+		path:           fileMeta.Path,
 	}
-	var err error
 	res := new(preader.ParquetReader)
 	res.NP = 1
 	res.PFile = wrapper
@@ -193,7 +196,6 @@ func ReadParquetRowCountAndSizeByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	fileMeta SourceFileMeta,
-	sampleRowSize bool,
 ) (numberRows int64, rowSize float64, err error) {
 	reader, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
@@ -208,7 +210,7 @@ func ReadParquetRowCountAndSizeByFile(
 	}()
 
 	numberRows = parser.Reader.Footer.NumRows
-	if !sampleRowSize || numberRows == 0 {
+	if numberRows == 0 {
 		return numberRows, 0, nil
 	}
 
