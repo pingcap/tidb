@@ -453,15 +453,18 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 	// Post process all data stored in sync.Map
 	s.dbSchemasMap.Range(func(_, value interface{}) bool {
-		s.dbSchemas = append(s.dbSchemas, value.(FileInfo))
+		info, _ := value.(FileInfo)
+		s.dbSchemas = append(s.dbSchemas, info)
 		return true
 	})
 	s.tableSchemasMap.Range(func(_, value interface{}) bool {
-		s.tableSchemas = append(s.tableSchemas, value.(FileInfo))
+		info, _ := value.(FileInfo)
+		s.tableSchemas = append(s.tableSchemas, info)
 		return true
 	})
 	s.viewSchemasMap.Range(func(_, value interface{}) bool {
-		s.viewSchemas = append(s.viewSchemas, value.(FileInfo))
+		info, _ := value.(FileInfo)
+		s.viewSchemas = append(s.viewSchemas, info)
 		return true
 	})
 	s.tableDatasMap.Range(func(_, value interface{}) bool {
@@ -568,7 +571,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	return errors.Trace(err)
 }
 
-func (s *mdLoaderSetup) collectFiles(ctx context.Context, path string, size int64) error {
+func (s *mdLoaderSetup) collectFiles(_ context.Context, path string, size int64) error {
 	s.allFiles = append(s.allFiles, RawFile{path, size})
 	return nil
 }
