@@ -17,7 +17,7 @@
 set -euE
 
 # Set the failpoint to kill the lightning instance as soon as one batch data is written
-PKG="github.com/pingcap/tidb/br/pkg/lightning/importer"
+PKG="github.com/pingcap/tidb/lightning/pkg/importer"
 export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
 
 # Start importing the tables.
@@ -32,7 +32,7 @@ check_contains "sum(id): 1"
 
 # check chunk offset and update checkpoint current row id to a higher value so that
 # if parse read from start, the generated rows will be different
-run_sql "UPDATE checkpoint_test_parquet.chunk_v5 SET prev_rowid_max = prev_rowid_max + 1000, rowid_max = rowid_max + 1000;"
+run_sql "UPDATE checkpoint_test_orc.chunk_v5 SET prev_rowid_max = prev_rowid_max + 1000, rowid_max = rowid_max + 1000;"
 
 # restart lightning from checkpoint, the second line should be written successfully
 export GO_FAILPOINTS=

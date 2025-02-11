@@ -3,7 +3,7 @@ region-concurrency = 1
 
 [checkpoint]
 enable = true
-schema = "checkpoint_test_parquet"
+schema = "checkpoint_test_orc"
 driver = "mysql"
 keep-after-success = true
 
