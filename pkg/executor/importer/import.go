@@ -1092,7 +1092,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Compression: compressTp,
 			Type:        sourceType,
 		}
-		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1106,7 +1106,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
-		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+
+		allFiles := make([]mydump.RawFile, 0, 16)
+		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1114,39 +1116,39 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
-				fileMeta := mydump.SourceFileMeta{
-					Path:        remotePath,
-					FileSize:    size,
-					Compression: compressTp,
-					Type:        sourceType,
-				}
-				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
-				dataFiles = append(dataFiles, &fileMeta)
+				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
 				return nil
-			})
-		if err != nil {
+			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
+
+		var dataFileMap sync.Map
+		if err := mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt, func(ctx context.Context, path string, size int64) error {
+			compressTp := mydump.ParseCompressionOnFileExtension(path)
+			fileMeta := mydump.SourceFileMeta{
+				Path:        path,
+				FileSize:    size,
+				Compression: compressTp,
+				Type:        sourceType,
+			}
+			fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+			dataFileMap.Store(path, &fileMeta)
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		dataFileMap.Range(func(_, value interface{}) bool {
+			info, _ := value.(*mydump.SourceFileMeta)
+			dataFiles = append(dataFiles, info)
+			return true
+		})
 	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
-}
-
-func (e *LoadDataController) getFileRealSize(ctx context.Context,
-	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
-	if fileMeta.Compression == mydump.CompressionNone {
-		return fileMeta.FileSize
-	}
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
-	if err != nil {
-		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
-		return fileMeta.FileSize
-	}
-	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {

@@ -18,8 +18,10 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -31,6 +33,7 @@ import (
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // sampleCompressedFileSize represents how many bytes need to be sampled for compressed files
@@ -235,6 +238,12 @@ type MDLoader struct {
 	charSet    string
 }
 
+// RawFile store the path and size of a file.
+type RawFile struct {
+	Path string
+	Size int64
+}
+
 type mdLoaderSetup struct {
 	sourceID      string
 	loader        *MDLoader
@@ -246,7 +255,13 @@ type mdLoaderSetup struct {
 	tableIndexMap map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
 
-	sampledParquetRowSizes map[string]float64
+	// store all file infos from parallel reading
+	allFiles               []RawFile
+	dbSchemasMap           sync.Map
+	tableSchemasMap        sync.Map
+	viewSchemasMap         sync.Map
+	tableDatasMap          sync.Map
+	sampledParquetRowSizes sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -323,8 +338,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
-
-		sampledParquetRowSizes: make(map[string]float64),
+		allFiles:      make([]RawFile, 0, 16),
 	}
 
 	if err := setup.setup(ctx); err != nil {
@@ -371,6 +385,29 @@ type ExtendColumnData struct {
 	Values  []string
 }
 
+// ParallelProcess is a helper function to parallel process files, used for both lightning and IMPORT INTO.
+func ParallelProcess(ctx context.Context, files []RawFile, workerCount int, hdl func(ctx context.Context, path string, size int64) error) error {
+	fileChan := make(chan RawFile, len(files))
+	for _, file := range files {
+		fileChan <- file
+	}
+	close(fileChan)
+
+	// Parallel process all files
+	eg, ctx := errgroup.WithContext(ctx)
+	for i := 0; i < max(workerCount, 1); i++ {
+		eg.Go(func() error {
+			for f := range fileChan {
+				if err := hdl(ctx, f.Path, f.Size); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
 //
 // The database and tables are inserted in a consistent order, so creating an
@@ -397,12 +434,47 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if fileIter == nil {
 		return errors.New("file iterator is not defined")
 	}
-	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
+
+	// First collect all file paths
+	if err := fileIter.IterateFiles(ctx, s.collectFiles); err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
 	}
+
+	// Parallel process all files
+	if err := ParallelProcess(ctx, s.allFiles, runtime.NumCPU()*2, s.constructFileInfo); err != nil {
+		if !s.setupCfg.ReturnPartialResultOnError {
+			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+		}
+		gerr = err
+	}
+
+	// Post process all data stored in sync.Map
+	s.dbSchemasMap.Range(func(_, value interface{}) bool {
+		s.dbSchemas = append(s.dbSchemas, value.(FileInfo))
+		return true
+	})
+	s.tableSchemasMap.Range(func(_, value interface{}) bool {
+		s.tableSchemas = append(s.tableSchemas, value.(FileInfo))
+		return true
+	})
+	s.viewSchemasMap.Range(func(_, value interface{}) bool {
+		s.viewSchemas = append(s.viewSchemas, value.(FileInfo))
+		return true
+	})
+	s.tableDatasMap.Range(func(_, value interface{}) bool {
+		info, _ := value.(FileInfo)
+		s.tableDatas = append(s.tableDatas, info)
+		if info.FileMeta.Type == SourceTypeParquet {
+			v, _ := s.sampledParquetRowSizes.Load(info.TableName.String())
+			avgRowSize, _ := v.(float64)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.Rows) * avgRowSize)
+		}
+		return true
+	})
+
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
 	}
@@ -496,6 +568,11 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	return errors.Trace(err)
 }
 
+func (s *mdLoaderSetup) collectFiles(ctx context.Context, path string, size int64) error {
+	s.allFiles = append(s.allFiles, RawFile{path, size})
+	return nil
+}
+
 func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size int64) error {
 	logger := log.FromContext(ctx).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
@@ -520,49 +597,37 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 
 	switch res.Type {
 	case SourceTypeSchemaSchema:
-		s.dbSchemas = append(s.dbSchemas, info)
+		s.dbSchemasMap.Store(path, info)
 	case SourceTypeTableSchema:
-		s.tableSchemas = append(s.tableSchemas, info)
+		s.tableSchemasMap.Store(path, info)
 	case SourceTypeViewSchema:
-		s.viewSchemas = append(s.viewSchemas, info)
+		s.viewSchemasMap.Store(path, info)
 	case SourceTypeSQL, SourceTypeCSV:
-		if info.FileMeta.Compression != CompressionNone {
-			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
-			if err2 != nil {
-				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err2))
-			} else {
-				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
-			}
-		}
-		s.tableDatas = append(s.tableDatas, info)
+		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
+		s.tableDatasMap.Store(path, info)
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
-		if s.sampledParquetRowSizes[tableName] == 0 {
-			s.sampledParquetRowSizes[tableName], err = SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
-			if err != nil {
-				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err))
-				return errors.Trace(err)
-			}
+
+		// Only sample once for each table
+		_, loaded := s.sampledParquetRowSizes.LoadOrStore(tableName, 0)
+		totalRowCount, rowSize, err := ReadParquetRowCountAndSizeByFile(ctx, s.loader.GetStore(), info.FileMeta, !loaded)
+		if err != nil {
+			logger.Error("fail to get file total row count", zap.String("category", "loader"),
+				zap.String("schema", res.Schema), zap.String("table", res.Name),
+				zap.Stringer("type", res.Type), zap.Error(err))
+			return errors.Trace(err)
 		}
-		if s.sampledParquetRowSizes[tableName] != 0 {
-			totalRowCount, err := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
-			if err != nil {
-				logger.Error("fail to get file total row count", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name),
-					zap.Stringer("type", res.Type), zap.Error(err))
-				return errors.Trace(err)
-			}
-			info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
-			info.FileMeta.Rows = totalRowCount
-			if m, ok := metric.FromContext(ctx); ok {
-				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
-			}
+
+		if !loaded {
+			s.sampledParquetRowSizes.Store(tableName, rowSize)
 		}
-		s.tableDatas = append(s.tableDatas, info)
+
+		info.FileMeta.Rows = totalRowCount
+		if m, ok := metric.FromContext(ctx); ok {
+			m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
+		}
+
+		s.tableDatasMap.Store(path, info)
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
@@ -810,7 +875,26 @@ func calculateFileBytes(ctx context.Context,
 	return tot, offset, nil
 }
 
-// SampleFileCompressRatio samples the compress ratio of the compressed file.
+// EstimateRealSizeForFile estimate the real size for the file.
+// If the file is not compressed, the real size is the same as the file size.
+// If the file is compressed, the real size is the estimated uncompressed size.
+func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) int64 {
+	if fileMeta.Compression == CompressionNone {
+		return fileMeta.FileSize
+	}
+	compressRatio, err := SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		log.FromContext(ctx).Error("fail to calculate data file compress ratio",
+			zap.String("category", "loader"),
+			zap.String("path", fileMeta.Path),
+			zap.Stringer("type", fileMeta.Type), zap.Error(err),
+		)
+		return fileMeta.FileSize
+	}
+	return int64(compressRatio * float64(fileMeta.FileSize))
+}
+
+// SampleFileCompressRatio samples the compress ratio of the compressed file. Exported for test.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
 	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
 		switch v := val.(type) {
@@ -844,47 +928,4 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 		return 0, err
 	}
 	return float64(tot) / float64(pos), nil
-}
-
-// SampleParquetRowSize samples row size of the parquet file.
-func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
-	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
-	if totalRowCount == 0 || err != nil {
-		return 0, err
-	}
-
-	reader, err := store.Open(ctx, fileMeta.Path, nil)
-	if err != nil {
-		return 0, err
-	}
-	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
-	if err != nil {
-		//nolint: errcheck
-		reader.Close()
-		return 0, err
-	}
-	//nolint: errcheck
-	defer parser.Close()
-
-	var (
-		rowSize  int64
-		rowCount int64
-	)
-	for {
-		err = parser.ReadRow()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				break
-			}
-			return 0, err
-		}
-		lastRow := parser.LastRow()
-		rowCount++
-		rowSize += int64(lastRow.Length)
-		parser.RecycleRow(lastRow)
-		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
-			break
-		}
-	}
-	return float64(rowSize) / float64(rowCount), nil
 }

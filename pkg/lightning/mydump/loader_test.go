@@ -25,10 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -1108,6 +1110,21 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
+func TestEstimateFileSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	fileMeta.Compression = mydump.CompressionGZ
+	require.Equal(t, int64(250), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
@@ -1159,13 +1176,9 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
+	rowCount, rowSize, err := md.ReadParquetRowCountAndSizeByFile(ctx, store, md.SourceFileMeta{
 		Path: fileName,
-	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
+	}, true)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
