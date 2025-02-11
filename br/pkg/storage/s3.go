@@ -953,7 +953,11 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
-	readFn := r.reader.Read
+	// because r.reader may change when `recreateConn`, so we should use closure to
+	// capture `r` instead of directly using function pointer `r.reader.Read`.
+	readFn := func(p []byte) (int, error) {
+		return r.reader.Read(p)
+	}
 	if r.recreateWhenSlow {
 		readFn = r.readSlowConn
 	}

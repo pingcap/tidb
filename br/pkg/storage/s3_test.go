@@ -895,7 +895,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	readAndCheck(25, 50)
 	readAndCheck(20, 75)
 
-	// there only remains 10 bytes
+	// there only remains 5 bytes
 	n, err = reader.Read(slice)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
