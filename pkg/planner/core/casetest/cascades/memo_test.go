@@ -103,17 +103,15 @@ func TestDeriveStats(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
 				}
-				sb.WriteString(", ")
-				if logicProp.Schema == nil {
-					sb.WriteString("fd:nil")
+				if logicProp.FD == nil {
+					sb.WriteString(", fd:nil")
 				} else {
-					sb.WriteString("fd:{" + logicProp.FD.String() + "}")
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}
@@ -201,17 +199,15 @@ func TestGroupNDVCols(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.FD == nil {
-					sb.WriteString("fd:nil")
+					sb.WriteString(", fd:nil")
 				} else {
-					sb.WriteString("fd:{" + logicProp.FD.String() + "}")
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}
