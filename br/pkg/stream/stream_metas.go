@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -306,7 +307,7 @@ func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bo
 
 	for _, ds := range m.FileGroups {
 		for _, d := range ds.DataFilesInfo {
-			if d.Cf == DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			if d.Cf == consts.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {
