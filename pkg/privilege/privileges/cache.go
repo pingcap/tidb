@@ -947,9 +947,9 @@ func parseHostIPNet(s string) *net.IPNet {
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.ResultField) {
 	switch f.ColumnAsName.L {
 	case "user":
-		record.User = row.GetString(i)
+		record.User = strings.Clone(row.GetString(i))
 	case "host":
-		record.Host = row.GetString(i)
+		record.Host = strings.Clone(row.GetString(i))
 		record.patChars, record.patTypes = stringutil.CompilePatternBinary(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
@@ -970,19 +970,19 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "authentication_string":
-			value.AuthenticationString = row.GetString(i)
+			value.AuthenticationString = strings.Clone(row.GetString(i))
 		case f.ColumnAsName.L == "account_locked":
 			if row.GetEnum(i).String() == "Y" {
 				value.AccountLocked = true
 			}
 		case f.ColumnAsName.L == "plugin":
 			if row.GetString(i) != "" {
-				value.AuthPlugin = row.GetString(i)
+				value.AuthPlugin = strings.Clone(row.GetString(i))
 			} else {
 				value.AuthPlugin = defaultAuthPlugin
 			}
 		case f.ColumnAsName.L == "token_issuer":
-			value.AuthTokenIssuer = row.GetString(i)
+			value.AuthTokenIssuer = strings.Clone(row.GetString(i))
 		case f.ColumnAsName.L == "user_attributes":
 			if row.IsNull(i) {
 				continue
@@ -997,7 +997,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 				if err != nil {
 					return err
 				}
-				value.Email = email
+				value.Email = strings.Clone(email)
 			}
 			pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
 			if err != nil {
@@ -1008,7 +1008,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 				if err != nil {
 					return err
 				}
-				value.ResourceGroup = resourceGroup
+				value.ResourceGroup = strings.Clone(resourceGroup)
 			}
 			passwordLocking := PasswordLocking{}
 			if err := passwordLocking.ParseJSON(bj); err != nil {
@@ -1072,10 +1072,10 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.R
 					value.Broken = true
 				} else {
 					value.Priv.SSLType = privValue.SSLType
-					value.Priv.SSLCipher = privValue.SSLCipher
-					value.Priv.X509Issuer = privValue.X509Issuer
-					value.Priv.X509Subject = privValue.X509Subject
-					value.Priv.SAN = privValue.SAN
+					value.Priv.SSLCipher = strings.Clone(privValue.SSLCipher)
+					value.Priv.X509Issuer = strings.Clone(privValue.X509Issuer)
+					value.Priv.X509Subject = strings.Clone(privValue.X509Subject)
+					value.Priv.SAN = strings.Clone(privValue.SAN)
 					if len(value.Priv.SAN) > 0 {
 						value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
 						if err != nil {
