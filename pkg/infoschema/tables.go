@@ -1191,6 +1191,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
+	{name: "CLUSTER_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{

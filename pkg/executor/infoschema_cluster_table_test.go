@@ -247,6 +247,8 @@ func TestTiDBClusterInfo(t *testing.T) {
 	tk.MustQuery("select type, instance from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows(
 		row("tikv", "store1"),
 	))
+	// The cluster_id of TiDB, TiKV and PD are all 1. 1 is the cluster_id of the mock pd.
+	tk.MustQuery("select cluster_id from information_schema.cluster_info").Check(testkit.Rows("1", "1", "1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))
 	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())

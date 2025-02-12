@@ -156,7 +156,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(ctx, sctx)
 		case infoschema.TableClusterInfo:
-			err = e.dataForTiDBClusterInfo(sctx)
+			err = e.dataForTiDBClusterInfo(ctx, sctx)
 		case infoschema.TableAnalyzeStatus:
 			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:
@@ -1775,13 +1775,15 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	e.rows = rows
 }
 
-func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error {
-	servers, err := infoschema.GetClusterServerInfo(ctx)
+func (e *memtableRetriever) dataForTiDBClusterInfo(ctx context.Context, sctx sessionctx.Context) error {
+	servers, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		e.rows = nil
 		return err
 	}
 	rows := make([][]types.Datum, 0, len(servers))
+
+	clusterID := sctx.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
 	for _, server := range servers {
 		upTimeStr := ""
 		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
@@ -1803,10 +1805,11 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			startTimeNative,
 			upTimeStr,
 			server.ServerID,
+			clusterID,
 		)
 		if sem.IsEnabled() {
-			checker := privilege.GetPrivilegeManager(ctx)
-			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+			checker := privilege.GetPrivilegeManager(sctx)
+			if checker == nil || !checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
 				row[1].SetString(strconv.FormatUint(server.ServerID, 10), mysql.DefaultCollationName)
 				row[2].SetNull()
 				row[5].SetNull()
