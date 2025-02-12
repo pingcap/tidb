@@ -919,8 +919,8 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-// Set the skip cache to false when the caller will not change the logical plan tree
-// it is currently closed only by pkg/planner/core.ExtractNotNullFromConds
+// Set the skip cache to false when the caller will not change the logical plan tree.
+// it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
 	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
