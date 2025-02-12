@@ -23,9 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type RestoreKeyType = int64
@@ -116,70 +113,10 @@ func AppendRangesForRestore(
 	})
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
-// and return the total time cost in the past executions
-func LoadCheckpointDataForSstRestore[K KeyType, V ValueType](
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-	dbName string,
-	fn func(K, V),
-) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, dbName, fn)
-}
-
-func LoadCheckpointChecksumForRestore(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (map[int64]*ChecksumItem, time.Duration, error) {
-	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
-}
-
 type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
 
 	RestoreUUID uuid.UUID `json:"restore-uuid"`
-}
-
-func LoadCheckpointMetadataForSnapshotRestore(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointMetadataForSnapshotRestore, error) {
-	m := &CheckpointMetadataForSnapshotRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
-	return m, err
-}
-
-func SaveCheckpointMetadataForSstRestore(
-	ctx context.Context,
-	se glue.Session,
-	dbName string,
-	meta *CheckpointMetadataForSnapshotRestore,
-) error {
-	err := initCheckpointTable(ctx, se, dbName,
-		[]string{checkpointDataTableName, checkpointChecksumTableName})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if meta != nil {
-		return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
-	}
-	return nil
-}
-
-func ExistsSstRestoreCheckpoint(
-	ctx context.Context,
-	dom *domain.Domain,
-	dbName string,
-) bool {
-	// we only check the existence of the checkpoint data table
-	// because the checkpoint metadata is not used for restore
-	return dom.InfoSchema().
-		TableExists(ast.NewCIStr(dbName), ast.NewCIStr(checkpointDataTableName))
-}
-
-func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {
-	return dropCheckpointTables(ctx, dom, se, dbName,
-		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
 }

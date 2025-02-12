@@ -81,6 +81,9 @@ const (
 	// FlagKeyspaceName corresponds to tidb config keyspace-name
 	FlagKeyspaceName = "keyspace-name"
 
+	// flagCheckpointStorage use
+	flagCheckpointStorage = "checkpoint-storage"
+
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
@@ -116,6 +119,11 @@ const (
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
 	TxnRestoreCmd   = "Txn Restore"
+)
+
+type (
+	snapshotCheckpointMetaManagerT = checkpoint.MetaManager[checkpoint.RestoreKeyType, checkpoint.RestoreValueType, checkpoint.CheckpointMetadataForSnapshotRestore]
+	logCheckpointMetaManagerT      = checkpoint.MetaManager[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType, checkpoint.CheckpointMetadataForLogRestore]
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -261,9 +269,13 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
-	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
-	upstreamClusterID uint64 `json:"-" toml:"-"`
-	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	UseCheckpoint                 bool                           `json:"use-checkpoint" toml:"use-checkpoint"`
+	CheckpointStorage             string                         `json:"checkpoint-storage" toml:"checkpoint-storage"`
+	upstreamClusterID             uint64                         `json:"-" toml:"-"`
+	snapshotCheckpointMetaManager snapshotCheckpointMetaManagerT `json:"-" toml:"-"`
+	logCheckpointMetaManager      logCheckpointMetaManagerT      `json:"-" toml:"-"`
+
+	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -295,6 +307,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
@@ -416,7 +430,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
-
+	cfg.CheckpointStorage, err = flags.GetString(flagCheckpointStorage)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagCheckpointStorage)
+	}
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)

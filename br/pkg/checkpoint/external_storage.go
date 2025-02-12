@@ -31,6 +31,35 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	CheckpointRestoreDirFormat                = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat         = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat     = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat        = CheckpointRestoreDirFormat + "/checkpoint.meta"
+	CheckpointProgressPathForRestoreFormat    = CheckpointRestoreDirFormat + "/progress.meta"
+	CheckpointIngestIndexPathForRestoreFormat = CheckpointRestoreDirFormat + "/ingest_index.meta"
+)
+
+func getCheckpointMetaPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
+}
+
+func getCheckpointDataDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointDataDirForRestoreFormat, taskName)
+}
+
+func getCheckpointChecksumDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName)
+}
+
+func getCheckpointProgressPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointProgressPathForRestoreFormat, taskName)
+}
+
+func getCheckpointIngestIndexPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointIngestIndexPathForRestoreFormat, taskName)
+}
+
 type externalCheckpointStorage struct {
 	flushPosition
 	storage storage.ExternalStorage

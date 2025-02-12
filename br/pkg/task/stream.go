@@ -1361,7 +1361,7 @@ func restoreStream(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
-	taskInfo *checkpoint.CheckpointTaskInfoForLogRestore,
+	taskInfo *checkpoint.TaskInfoForLogRestore,
 ) (err error) {
 	var (
 		totalKVCount           uint64
@@ -1971,7 +1971,7 @@ func checkPiTRRequirements(mgr *conn.Mgr) error {
 }
 
 type PiTRTaskInfo struct {
-	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
+	CheckpointInfo      *checkpoint.TaskInfoForLogRestore
 	NeedFullRestore     bool
 	FullRestoreCheckErr error
 }
@@ -1984,7 +1984,7 @@ func checkPiTRTaskInfo(
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
-		curTaskInfo   *checkpoint.CheckpointTaskInfoForLogRestore
+		curTaskInfo   *checkpoint.TaskInfoForLogRestore
 	)
 	checkInfo := &PiTRTaskInfo{}
 

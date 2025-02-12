@@ -539,7 +539,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

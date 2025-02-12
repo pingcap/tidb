@@ -112,17 +112,9 @@ func StartCheckpointLogRestoreRunnerForTest(
 // Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForLogRestore(
 	ctx context.Context,
-	se glue.Session,
+	manager MetaManager[LogRestoreKeyType, LogRestoreValueType, CheckpointMetadataForLogRestore],
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
-	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
-		nil, valueMarshalerForLogRestore)
-
-	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(
-		ctx,
-		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
-	return runner, nil
+	return manager.StartCheckpointRunner(ctx, valueMarshalerForLogRestore)
 }
 
 func AppendRangeForLogRestore(
@@ -163,27 +155,6 @@ type CheckpointMetadataForLogRestore struct {
 	GcRatio           string `json:"gc-ratio"`
 	// tiflash recorder items with snapshot restore records
 	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
-}
-
-func LoadCheckpointMetadataForLogRestore(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointMetadataForLogRestore, error) {
-	m := &CheckpointMetadataForLogRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
-	return m, err
-}
-
-func SaveCheckpointMetadataForLogRestore(
-	ctx context.Context,
-	se glue.Session,
-	meta *CheckpointMetadataForLogRestore,
-) error {
-	err := initCheckpointTable(ctx, se, LogRestoreCheckpointDatabaseName, []string{checkpointDataTableName})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
 }
 
 func ExistsLogRestoreCheckpointMetadata(
@@ -229,34 +200,9 @@ type CheckpointProgress struct {
 	Progress RestoreProgress `json:"progress"`
 }
 
-func LoadCheckpointProgress(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointProgress, error) {
-	m := &CheckpointProgress{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, m)
-	return m, errors.Trace(err)
-}
-
-func SaveCheckpointProgress(
-	ctx context.Context,
-	se glue.Session,
-	meta *CheckpointProgress,
-) error {
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, meta)
-}
-
-func ExistsCheckpointProgress(
-	ctx context.Context,
-	dom *domain.Domain,
-) bool {
-	return dom.InfoSchema().
-		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointProgressTableName))
-}
-
 // CheckpointTaskInfo is unique information within the same cluster id. It represents the last
 // restore task executed for this cluster.
-type CheckpointTaskInfoForLogRestore struct {
+type TaskInfoForLogRestore struct {
 	Metadata            *CheckpointMetadataForLogRestore
 	HasSnapshotMetadata bool
 	// the progress for this task
@@ -265,32 +211,38 @@ type CheckpointTaskInfoForLogRestore struct {
 
 func TryToGetCheckpointTaskInfo(
 	ctx context.Context,
-	dom *domain.Domain,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointTaskInfoForLogRestore, error) {
+	snapshotManager MetaManager[RestoreKeyType, RestoreValueType, CheckpointMetadataForSnapshotRestore],
+	logManager MetaManager[LogRestoreKeyType, LogRestoreValueType, CheckpointMetadataForLogRestore],
+) (*TaskInfoForLogRestore, error) {
 	var (
 		metadata *CheckpointMetadataForLogRestore
 		progress RestoreProgress
-		err      error
 	)
 	// get the progress
-	if ExistsCheckpointProgress(ctx, dom) {
-		checkpointProgress, err := LoadCheckpointProgress(ctx, execCtx)
+	if exists, err := logManager.ExistsCheckpointProgress(ctx); err != nil {
+		return nil, errors.Trace(err)
+	} else if exists {
+		checkpointProgress, err := logManager.LoadCheckpointProgress(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		progress = checkpointProgress.Progress
 	}
 	// get the checkpoint metadata
-	if ExistsLogRestoreCheckpointMetadata(ctx, dom) {
-		metadata, err = LoadCheckpointMetadataForLogRestore(ctx, execCtx)
+	if exists, err := logManager.ExistsCheckpointMetadata(ctx); err != nil {
+		return nil, errors.Trace(err)
+	} else if exists {
+		metadata, err = logManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
+	hasSnapshotMetadata, err := snapshotManager.ExistsCheckpointMetadata(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	return &CheckpointTaskInfoForLogRestore{
+	return &TaskInfoForLogRestore{
 		Metadata:            metadata,
 		HasSnapshotMetadata: hasSnapshotMetadata,
 		Progress:            progress,
@@ -308,31 +260,4 @@ type CheckpointIngestIndexRepairSQL struct {
 
 type CheckpointIngestIndexRepairSQLs struct {
 	SQLs []CheckpointIngestIndexRepairSQL
-}
-
-func LoadCheckpointIngestIndexRepairSQLs(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointIngestIndexRepairSQLs, error) {
-	m := &CheckpointIngestIndexRepairSQLs{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, m)
-	return m, errors.Trace(err)
-}
-
-func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
-	return dom.InfoSchema().
-		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointIngestTableName))
-}
-
-func SaveCheckpointIngestIndexRepairSQLs(
-	ctx context.Context,
-	se glue.Session,
-	meta *CheckpointIngestIndexRepairSQLs,
-) error {
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, meta)
-}
-
-func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
-	return dropCheckpointTables(ctx, dom, se, LogRestoreCheckpointDatabaseName,
-		[]string{checkpointDataTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
 }
