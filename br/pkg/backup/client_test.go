@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -30,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
+	"go.uber.org/multierr"
 )
 
 type testBackup struct {
@@ -364,4 +367,12 @@ func TestFindTargetPeer(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer")
+}
+
+func TestErr(t *testing.T) {
+	serr := backup.MakeStoreBasedErr(42, multierr.Combine(
+		errors.Annotate(berrors.ErrFailedToConnect, "oops"),
+		berrors.ErrFailedToConnect.GenWithStack("whoa")))
+	require.True(t, berrors.Is(serr, berrors.ErrFailedToConnect))
+	require.False(t, berrors.Is(serr, berrors.ErrUnknown))
 }
