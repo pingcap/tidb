@@ -706,7 +706,14 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	p.buildDBMap()
+=======
+	p.db.Ascend(func(itm itemDB) bool {
+		slices.SortFunc(itm.data, compareDBRecord)
+		return true
+	})
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 	return nil
 }
 
@@ -1821,6 +1828,11 @@ type Handle struct {
 	// Only load the active user's data to save memory
 	// username => struct{}
 	activeUsers sync.Map
+<<<<<<< HEAD
+=======
+	fullData    atomic.Bool
+	globalVars  variable.GlobalVarAccessor
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 }
 
 // NewHandle returns a Handle.
@@ -1833,7 +1845,20 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
+<<<<<<< HEAD
 func (h *Handle) ensureActiveUser(user string) error {
+=======
+func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
+	if p := ctx.Value("mock"); p != nil {
+		visited := p.(*bool)
+		*visited = true
+	}
+	if h.fullData.Load() {
+		// All users data are in-memory, nothing to do
+		return nil
+	}
+
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 	_, exist := h.activeUsers.Load(user)
 	if exist {
 		return nil
@@ -1862,6 +1887,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
+<<<<<<< HEAD
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update() error {
 	var priv MySQLPrivilege
@@ -1871,5 +1897,67 @@ func (h *Handle) Update() error {
 	}
 
 	h.priv.Store(&priv)
+=======
+// UpdateAll loads all the users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	logutil.BgLogger().Warn("update all called")
+	priv := newMySQLPrivilege()
+	err := priv.LoadAll(h.sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.priv.Store(priv)
+	h.fullData.Store(true)
+	return nil
+}
+
+// UpdateAllActive loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAllActive() error {
+	h.fullData.Store(false)
+	userList := make([]string, 0, 20)
+	h.activeUsers.Range(func(key, _ any) bool {
+		userList = append(userList, key.(string))
+		return true
+	})
+	if len(userList) > 1024 {
+		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
+		return h.UpdateAll()
+	}
+
+	priv := newMySQLPrivilege()
+	priv.globalVars = h.globalVars
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
+	if err != nil {
+		return err
+	}
+	h.merge(priv, userList)
+	return nil
+}
+
+// Update loads the privilege info from kv storage for the list of users.
+func (h *Handle) Update(userList []string) error {
+	h.fullData.Store(false)
+	if len(userList) > 100 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
+	needReload := false
+	for _, user := range userList {
+		if _, ok := h.activeUsers.Load(user); ok {
+			needReload = true
+			break
+		}
+	}
+	if !needReload {
+		return nil
+	}
+
+	priv := newMySQLPrivilege()
+	priv.globalVars = h.globalVars
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
+	if err != nil {
+		return err
+	}
+	h.merge(priv, userList)
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 	return nil
 }

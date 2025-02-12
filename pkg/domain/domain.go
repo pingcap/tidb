@@ -1883,6 +1883,21 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	switch {
+	case !vardef.AccelerateUserCreationUpdate.Load():
+		err = h.UpdateAll()
+	case event.All:
+		err = h.UpdateAllActive()
+	default:
+		err = h.Update(event.UserList)
+	}
+	return
+}
+
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
@@ -2839,7 +2854,11 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
+<<<<<<< HEAD
 	return do.PrivilegeHandle().Update()
+=======
+	return privReloadEvent(do.PrivilegeHandle(), &event)
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB

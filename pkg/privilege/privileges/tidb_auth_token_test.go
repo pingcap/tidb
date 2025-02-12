@@ -445,3 +445,12 @@ func (p *immutable) DefaultRoles() []defaultRoleRecord {
 func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
 	return p.roleGraph
 }
+<<<<<<< HEAD
+=======
+
+func (h *Handle) CheckFullData(t *testing.T, value bool) {
+	require.True(t, h.fullData.Load() == value)
+}
+
+var NewMySQLPrivilege = newMySQLPrivilege
+>>>>>>> 397b0f228a9 (*: add sql variable @@tidb_accelerate_user_creation_update (#58512))
