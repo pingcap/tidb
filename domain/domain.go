@@ -224,6 +224,16 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 
+	// add failpoint to simulate long-running schema loading scenario
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep, but not sure if there is a better way
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
+		}
+	})
+
+	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -1109,6 +1119,11 @@ func (do *Domain) Init(
 	}
 
 	return nil
+}
+
+// IsLeaseExpired returns whether lease has expired
+func (do *Domain) IsLeaseExpired() bool {
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // SetOnClose used to set do.onClose func.
