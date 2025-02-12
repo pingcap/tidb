@@ -1511,3 +1511,34 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 		fmt.Sprintf("%d %s", testTable1.Meta().ID, now.Add(-2*time.Hour).Format(time.DateTime)),
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.Format(time.DateTime))))
 }
+
+func TestIterationOfRunningJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	sessionFactory := sessionFactory(t, store)
+
+	tk := testkit.NewTestKit(t, store)
+	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
+
+	se := sessionFactory()
+	defer se.Close()
+	for tableID := int64(0); tableID < 100; tableID++ {
+		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+		m.InfoSchemaCache().Tables[testTable.ID] = testTable
+
+		jobID := uuid.NewString()
+		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+		require.NoError(t, err)
+		tk.MustQuery("SELECT current_job_id, current_job_owner_id FROM mysql.tidb_ttl_table_status WHERE table_id = ?", tableID).Check(testkit.Rows(fmt.Sprintf("%s %s", jobID, m.ID())))
+
+		// update the owner id
+		tk.MustExec("UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = ?", jobID)
+	}
+	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+
+	require.Len(t, m.RunningJobs(), 100)
+	m.CheckNotOwnJob()
+
+	// Now all the jobs should have been removed
+	require.Len(t, m.RunningJobs(), 0)
+}

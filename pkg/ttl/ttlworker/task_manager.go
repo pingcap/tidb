@@ -49,27 +49,27 @@ const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
 	SET status = 'finished',
 		status_update_time = %?,
 		state = %?
-	WHERE job_id = %? AND scan_id = %?`
+	WHERE job_id = %? AND scan_id = %? AND status = 'running' AND owner_id = %?`
 
-func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []interface{}, error) {
+func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time, ownerID string) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return setTTLTaskFinishedTemplate, []interface{}{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
+	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID, ownerID}, nil
 }
 
 const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
     SET state = %?,
 		owner_hb_time = %?
-    WHERE job_id = %? AND scan_id = %?`
+    WHERE job_id = %? AND scan_id = %? AND owner_id = %?`
 
-func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []interface{}, error) {
+func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState, ownerID string) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return updateTTLTaskHeartBeatTempalte, []interface{}{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
+	return updateTTLTaskHeartBeatTempalte, []any{string(stateStr), now.Format(timeFormat), jobID, scanID, ownerID}, nil
 }
 
 const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
@@ -454,7 +454,7 @@ func (m *taskManager) updateHeartBeatForTask(ctx context.Context, se session.Ses
 	}
 
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
+	sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state, m.id)
 	if err != nil {
 		return err
 	}
@@ -501,7 +501,8 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 		state.ScanTaskErr = task.result.err.Error()
 	}
 
-	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now)
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
+	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now, m.id)
 	if err != nil {
 		return err
 	}
@@ -513,6 +514,10 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 	if err != nil {
 		return err
 	}
+	if se.GetSessionVars().StmtCtx.AffectedRows() != 1 {
+		return errors.Errorf("fail to update task status, maybe the owner is not myself (%s) or task is not running, affected rows: %d",
+			m.id, se.GetSessionVars().StmtCtx.AffectedRows())
+	}
 
 	return nil
 }
@@ -523,31 +528,37 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 	ownRunningTask := make([]*runningScanTask, 0, len(m.runningTasks))
 
 	for _, task := range m.runningTasks {
+		logger := logutil.Logger(m.ctx).With(zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
+
 		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
 
 		timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 		rows, err := se.ExecuteSQL(timeoutCtx, sql, args...)
 		cancel()
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			logger.Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
 			task.cancel()
 			continue
 		}
 		if len(rows) == 0 {
-			logutil.Logger(m.ctx).Warn("didn't find task", zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
+			logger.Warn("didn't find task")
 			task.cancel()
 			continue
 		}
 		t, err := cache.RowToTTLTask(se, rows[0])
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to get task", zap.Error(err))
+			logger.Warn("fail to get task", zap.Error(err))
 			task.cancel()
 			continue
 		}
 
-		if t.OwnerID == m.id {
-			ownRunningTask = append(ownRunningTask, task)
+		if t.OwnerID != m.id {
+			logger.Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
+			task.cancel()
+			continue
 		}
+
+		ownRunningTask = append(ownRunningTask, task)
 	}
 
 	m.runningTasks = ownRunningTask

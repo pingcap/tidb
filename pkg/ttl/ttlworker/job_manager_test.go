@@ -204,6 +204,16 @@ func (m *JobManager) CheckFinishedJob(se session.Session) {
 	m.checkFinishedJob(se)
 }
 
+// ID exports the id of job manager for test
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
+}
+
 func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) error {
 	return j.finish(se, now, summary)
 }
