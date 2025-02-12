@@ -2076,6 +2076,7 @@ func (h *Handle) merge(data *MySQLPrivilege, userList []string) {
 			break
 		}
 	}
+	h.fullData.Store(false)
 	for _, user := range userList {
 		h.activeUsers.Store(user, struct{}{})
 	}
@@ -2106,11 +2107,6 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
-	if len(userList) > 1024 {
-		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
-		return h.UpdateAll()
-	}
-
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
 	if len(userList) < 1024 {
@@ -2119,13 +2115,12 @@ func (h *Handle) UpdateAllActive() error {
 			return errors.Trace(err)
 		}
 		h.merge(priv, userList)
-		h.fullData.Store(false)
 		return nil
 	}
 
-	// Use loadSomeUsers construct too long SQL like:
+	// Avoid loadSomeUsers constructing too long SQL like:
 	// select .. from user where user = 'a' or user = 'b' or user = 'c' or user = 'd ' ...
-	// So just using select ... from user instead.
+	// Just using select ... from user instead.
 	logutil.BgLogger().Warn("active user count > 1024, load all users", zap.Int("len", len(userList)))
 	err := priv.LoadAll(h.sctx)
 	if err != nil {
@@ -2133,7 +2128,6 @@ func (h *Handle) UpdateAllActive() error {
 	}
 	userList = findUserAndAllRoles(userList, priv.roleGraph)
 	h.merge(priv, userList)
-	h.fullData.Store(false)
 	return nil
 }
 
@@ -2159,7 +2153,6 @@ func (h *Handle) Update(userList []string) error {
 	if err != nil {
 		return err
 	}
-	h.fullData.Store(false)
 	h.merge(priv, userList)
 	return nil
 }
