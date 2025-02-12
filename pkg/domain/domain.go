@@ -1945,6 +1945,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
 	switch {
+	case !vardef.AccelerateUserCreationUpdate.Load():
+		err = h.UpdateAll()
 	case event.All:
 		err = h.UpdateAllActive()
 	default:
@@ -2940,10 +2942,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		return nil
 	}
 
-	if event.All {
-		return do.PrivilegeHandle().UpdateAll()
-	}
-	return do.PrivilegeHandle().Update(event.UserList)
+	return privReloadEvent(do.PrivilegeHandle(), &event)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB

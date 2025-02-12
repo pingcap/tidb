@@ -3435,6 +3435,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(vardef.DefTiDBAccelerateUserCreationUpdate), Type: vardef.TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
