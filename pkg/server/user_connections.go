@@ -89,19 +89,19 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		return err
 	}
 
-	if connections == 0 && vardef.MaxUserConnectionsCount.Load() == 0 {
+	if connections == 0 && vardef.MaxUserConnectionsValue.Load() == 0 {
 		return nil
 	}
 
 	targetUser := authUser.Username + authUser.Hostname
 	conns := int64(cc.getUserConnectionsCounter(targetUser))
 
-	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsCount.Load())) {
+	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsValue.Load())) {
 		var count uint32
 		if connections > 0 {
 			count = uint32(connections)
 		} else {
-			count = vardef.MaxUserConnectionsCount.Load()
+			count = vardef.MaxUserConnectionsValue.Load()
 		}
 		logutil.BgLogger().Error("The current user has too many connections",
 			zap.Uint32("max user connections", count), zap.Error(servererr.ErrConCount))

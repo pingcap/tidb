@@ -1677,7 +1677,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
-	MaxUserConnectionsCount         = atomic.NewUint32(DefMaxUserConnections)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
