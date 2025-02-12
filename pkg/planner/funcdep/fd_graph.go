@@ -529,18 +529,6 @@ func (s *FDSet) EquivalenceCols() (eqs []*intset.FastIntSet) {
 	return eqs
 }
 
-// AreColsEquiv is used to judge whether two col uniqueID are equivalent.
-func (s *FDSet) AreColsEquiv(col1, col2 int) bool {
-	for i := 0; i < len(s.fdEdges); i++ {
-		if s.fdEdges[i].isEquivalence() {
-			if s.fdEdges[i].from.Has(col1) || s.fdEdges[i].from.Has(col2) {
-				return s.fdEdges[i].from.Has(col1) && s.fdEdges[i].from.Has(col2)
-			}
-		}
-	}
-	return false
-}
-
 // MakeNotNull modify the FD set based the listed column with NOT NULL flags.
 // Most of the case is used in the derived process after predicate evaluation,
 // which can upgrade lax FDs to strict ones.
