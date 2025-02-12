@@ -297,7 +297,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	})
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
-		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
+		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.String("error stack", fmt.Sprintf("error stack: %+v", err)))
 		return err
 	}
 	return nil
