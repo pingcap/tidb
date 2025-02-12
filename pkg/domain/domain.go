@@ -1953,6 +1953,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 }
 
 func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	logutil.BgLogger().Info("privReloadEvent", zap.Bool("all", event.All), zap.Strings("userlist", event.UserList))
 	switch {
 	case !variable.AccelerateUserCreationUpdate.Load():
 		err = h.UpdateAll()

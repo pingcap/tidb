@@ -525,7 +525,7 @@ func findUserAndAllRoles(userList []string, roleGraph map[string]roleGraphEdgesT
 
 func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
 	if len(userList) > 512 {
-		logutil.BgLogger().Warn("loadSomeUsers called with a long user list", zap.Int("len", len(userList)))
+		logutil.BgLogger().Warn("loadSomeUsers() called with a long user list", zap.Int("len", len(userList)))
 	}
 	// Load the full role edge table first.
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
