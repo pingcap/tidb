@@ -2673,12 +2673,24 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *func
 		}
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
 		equal := getEqualConditions(t)
-		if fd != nil && len(equal) != 0 {
+		if fd != nil && len(equal) != 0 && len(t.hashCols) != 0 {
+			// if all partition cols are in the same equivalence class with hashCols, then no need to enforce exchange.
 			mppPartitionCols := slices.Clone(prop.MPPPartitionCols)
 			equivalence := util.ExtractEquivalenceCols(equal, t.p.SCtx(), fd)
 			result := make([]intset.FastIntSet, 0, 2)
 			for _, col := range equivalence {
+				// according to the equal condition, we can get the equivalence class with hashCols.
+				hashEquivCol := make([]intset.FastIntSet, 0, len(col))
 				for _, c := range col {
+					for _, hashCol := range t.hashCols {
+						if c.Has(int(hashCol.Col.UniqueID)) {
+							hashEquivCol = append(hashEquivCol, col...)
+							break
+						}
+					}
+				}
+				// according to the func dependency, we can get the equivalence class of the hashEquivCol.
+				for _, c := range hashEquivCol {
 					result = append(result, fd.ClosureOfStrict(c))
 				}
 				// if all partition cols are in the same equivalence class, then no need to enforce exchange.
