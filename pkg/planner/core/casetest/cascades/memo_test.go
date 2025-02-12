@@ -109,6 +109,12 @@ func TestDeriveStats(t *testing.T) {
 				} else {
 					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
 				}
+				sb.WriteString(", ")
+				if logicProp.Schema == nil {
+					sb.WriteString("fd:nil")
+				} else {
+					sb.WriteString("fd:{" + logicProp.FD.String() + "}")
+				}
 				sb.WriteString("}")
 			}
 			sb.Flush()
@@ -200,6 +206,12 @@ func TestGroupNDVCols(t *testing.T) {
 					sb.WriteString("schema:nil")
 				} else {
 					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+				}
+				sb.WriteString(", ")
+				if logicProp.FD == nil {
+					sb.WriteString("fd:nil")
+				} else {
+					sb.WriteString("fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}

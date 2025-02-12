@@ -187,8 +187,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
-	// just add this mock for a mocked logical-plan which is with the id less than 0.
-	//  todo: functional dependency
+	tmpFD := e.LogicalPlan.ExtractFD()
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
 	// the leaves node may have already had their stats in join reorder est phase, while
@@ -204,8 +203,10 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		if err != nil {
 			return err
 		}
+		tmpFD = e.LogicalPlan.ExtractFD()
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	e.GetGroup().GetLogicalProperty().FD = tmpFD
 	return nil
 }
