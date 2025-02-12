@@ -778,6 +778,7 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
+	recreateWhenSlow := false
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -786,21 +787,27 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 			end = *o.EndOffset
 		}
 		prefetchSize = o.PrefetchSize
+		recreateWhenSlow = o.RecreateWhenSlow
 	}
-	reader, r, err := rs.open(ctx, path, start, end)
+	readerCtx, readerCancel := context.WithCancel(ctx)
+	reader, r, err := rs.open(readerCtx, path, start, end)
 	if err != nil {
+		readerCancel()
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
 		reader = prefetch.NewReader(reader, o.PrefetchSize)
 	}
 	return &s3ObjectReader{
-		storage:      rs,
-		name:         path,
-		reader:       reader,
-		ctx:          ctx,
-		rangeInfo:    r,
-		prefetchSize: prefetchSize,
+		storage:          rs,
+		name:             path,
+		reader:           reader,
+		parentCtx:        ctx,
+		readerCtx:        readerCtx,
+		readerCancel:     readerCancel,
+		rangeInfo:        r,
+		prefetchSize:     prefetchSize,
+		recreateWhenSlow: recreateWhenSlow,
 	}, nil
 }
 
@@ -929,8 +936,11 @@ type s3ObjectReader struct {
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
-	ctx          context.Context
-	prefetchSize int
+	parentCtx        context.Context
+	readerCtx        context.Context
+	readerCancel     context.CancelFunc
+	prefetchSize     int
+	recreateWhenSlow bool
 }
 
 // Read implement the io.Reader interface.
@@ -943,7 +953,16 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
-	n, err = r.reader.Read(p[:maxCnt])
+	// because r.reader may change when `recreateConn`, so we should use closure to
+	// capture `r` instead of directly using function pointer `r.reader.Read`.
+	readFn := func(p []byte) (int, error) {
+		return r.reader.Read(p)
+	}
+	if r.recreateWhenSlow {
+		readFn = r.readSlowConn
+	}
+
+	n, err = readFn(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
@@ -954,27 +973,80 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 			zap.Error(err),
 		)
 		// if can retry, reopen a new reader and try read again
-		end := r.rangeInfo.End + 1
-		if end == r.rangeInfo.Size {
-			end = 0
-		}
-		_ = r.reader.Close()
-
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
-		if err1 != nil {
-			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
-			return
-		}
-		r.reader = newReader
-		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		if err = r.recreateConn(); err != nil {
+			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err))
+			return 0, err
 		}
 		retryCnt++
-		n, err = r.reader.Read(p[:maxCnt])
+		n, err = readFn(p[:maxCnt])
 	}
 
 	r.pos += int64(n)
 	return
+}
+
+func (r *s3ObjectReader) readSlowConn(p []byte) (n int, err error) {
+	// sometimes reading S3 will become very slow when the S3 connection has
+	// no progress for a long time.
+
+	// ~1 MB/s. Even a cold object can provide the throughput of ~18MB/s. Here 1MB/s
+	// threshold is very conservative.
+	expectedBytesPerMilliSec := 1000
+	expectedDuration := time.Duration(len(p)/expectedBytesPerMilliSec) * time.Millisecond
+	// leave some room for RTT. And in the loop, we will double the expectedDuration.
+	expectedDuration = max(expectedDuration, 10*time.Millisecond)
+	for {
+		done := make(chan struct{})
+		go func() {
+			n, err = r.reader.Read(p)
+			close(done)
+		}()
+		select {
+		case <-done:
+			return
+		case <-time.After(expectedDuration):
+			log.Warn("read s3 object is slow, will retry",
+				zap.String("file", r.name),
+				zap.Int64("pos", r.pos),
+				zap.Duration("expectedDuration", expectedDuration))
+			// wait above goroutine exit
+			r.readerCancel()
+			select {
+			case <-r.parentCtx.Done():
+				return 0, r.parentCtx.Err()
+			case <-done:
+			}
+
+			if err = r.recreateConn(); err != nil {
+				log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err))
+				return 0, err
+			}
+		}
+		expectedDuration *= 2
+	}
+}
+
+func (r *s3ObjectReader) recreateConn() error {
+	end := r.rangeInfo.End + 1
+	if end == r.rangeInfo.Size {
+		end = 0
+	}
+	_ = r.reader.Close()
+
+	readerCtx, readerCancel := context.WithCancel(r.parentCtx)
+	r.readerCancel()
+	r.readerCtx = readerCtx
+	r.readerCancel = readerCancel
+
+	newReader, _, err := r.storage.open(r.readerCtx, r.name, r.pos, end)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
+	return nil
 }
 
 // Close implement the io.Closer interface.
@@ -1033,7 +1105,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	newReader, info, err := r.storage.open(r.ctx, r.name, realOffset, 0)
+	newReader, info, err := r.storage.open(r.readerCtx, r.name, realOffset, 0)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
