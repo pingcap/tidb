@@ -1056,7 +1056,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		for _, table := range createdTables {
 			tableIDs = append(tableIDs, table.Table.ID)
 		}
-		undoRemoveScheduler, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, rewriteRules, cfg.Online, true)
+		undoRemoveScheduler, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, tableIDs, cfg.Online, true)
 	}
 	
 	if err != nil {

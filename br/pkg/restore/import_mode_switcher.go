@@ -223,13 +223,13 @@ func FineGrainedRestorePreWork(
 		}
 	}
 
-	// handle config
+	// pause config
 	originCfg, _, err := mgr.RemoveSchedulersConfig(ctx)
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
 
-	// handle scheduler
+	// pause scheduler
 	keyRange := calSortedKeyRanges(tableIDs)
 	mgr.RemoveSchedulersOnRegion(ctx, keyRange)
 
