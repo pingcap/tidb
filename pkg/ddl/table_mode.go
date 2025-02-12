@@ -64,6 +64,15 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 			return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
 		}
 	}
+
+	if args.TableMode == model.TableModeRestore {
+		// Currently this branch will never be executed except for testing.
+		// only transition from ModeNormal to ModeRestore is allowed
+		if tbInfo.TableMode != model.TableModeNormal {
+			return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+		}
+	}
+
 	tbInfo.TableMode = args.TableMode
 	return nil
 }
