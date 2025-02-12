@@ -759,7 +759,7 @@ const (
        extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
        index idx_create(created_at),
        index idx_update(updated_at),
-       unique index idx(schema_name, table_name, index_columns))`
+       unique index idx(schema_name, table_name, index_columns));`
 
 	// CreateKernelOptionsTable is a table to store kernel options for tidb.
 	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
@@ -769,7 +769,7 @@ const (
         updated_at datetime,
         status varchar(128),
         description text,
-        primary key(module, name))`
+        primary key(module, name));`
 
 	// CreateWorkloadValuesTable is a table to store workload-based learning values for tidb.
 	CreateWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
@@ -780,7 +780,7 @@ const (
 		table_id bigint(20) NOT NULL,
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
-		index idx_table_id (table_id))`
+		index idx_table_id (table_id));`
 )
 
 // CreateTimers is a table to store all timers for tidb
