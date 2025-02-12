@@ -45,7 +45,8 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 // Reason is that null filtering through evaluation by isNullRejectedSimpleExpr
 // has problems with IN list. For example, constant in (outer-table.col1, inner-table.col2)
 // is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
-func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction, innerSchema *expression.Schema, notSkipPlanCache bool) bool {
+func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
+	innerSchema *expression.Schema, notSkipPlanCache bool) bool {
 	for i, arg := range expr.GetArgs() {
 		if i > 0 {
 			newArgs := make([]expression.Expression, 0, 2)
@@ -67,7 +68,8 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected takes care of complex predicates like this:
 // IsNullRejected(A OR B) = IsNullRejected(A) AND IsNullRejected(B)
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
-func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, notSkipPlanCache bool) bool {
+func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
+	notSkipPlanCache bool) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
@@ -99,7 +101,8 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table (null producing side) that evaluates
 // to UNKNOWN or FALSE when one of its arguments is NULL.
-func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression, notSkipPlanCache bool) bool {
+func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression,
+	notSkipPlanCache bool) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false
