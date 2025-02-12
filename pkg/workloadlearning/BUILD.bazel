@@ -1,12 +1,12 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "workloadbasedlearning",
+    name = "workloadlearning",
     srcs = [
         "handle.go",
         "metrics.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/workloadbasedlearning",
+    importpath = "github.com/pingcap/tidb/pkg/workloadlearning",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",

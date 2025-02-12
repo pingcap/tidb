@@ -99,7 +99,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tidb/pkg/workloadbasedlearning"
+	"github.com/pingcap/tidb/pkg/workloadlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -3394,7 +3394,7 @@ func (do *Domain) planCacheEvictTrigger() {
 
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
-	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle(do.sysSessionPool)
+	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
@@ -3406,7 +3406,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())

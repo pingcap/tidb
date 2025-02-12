@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package workloadbasedlearning implements the Workload-Based Learning Optimizer.
+// Package workloadlearning implements the Workload-Based Learning Optimizer.
 // The Workload-Based Learning Optimizer introduces a new module in TiDB that leverages captured workload history to
 // enhance the database query optimizer.
 // By learning from historical data, this module helps the optimizer make smarter decisions, such as identify hot and cold tables,
 // analyze resource consumption, etc.
 // The workload analysis results can be used to directly suggest a better path,
 // or to indirectly influence the cost model and stats so that the optimizer can select the best plan more intelligently and adaptively.
-package workloadbasedlearning
+package workloadlearning
 
 import (
 	"context"
@@ -52,9 +52,9 @@ type Handle struct {
 	sysSessionPool util.SessionPool
 }
 
-// NewWorkloadBasedLearningHandle Create a new WorkloadBasedLearningHandle
-// WorkloadBasedLearningHandle is Singleton pattern
-func NewWorkloadBasedLearningHandle(pool util.SessionPool) *Handle {
+// NewWorkloadLearningHandle Create a new WorkloadLearningHandle
+// WorkloadLearningHandle is Singleton pattern
+func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
 	return &Handle{pool}
 }
 
