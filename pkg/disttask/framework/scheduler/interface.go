@@ -107,7 +107,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, nextStep proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
@@ -131,6 +131,12 @@ type Extension interface {
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// ModifyMeta is used to modify the task meta when the task is in modifying
+	// state, it should return new meta after applying the modifications to the
+	// old meta.
+	// Note: the application side only need to modify meta, no need to do notify,
+	// task executor will do it later.
+	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
 // Param is used to pass parameters when creating scheduler.

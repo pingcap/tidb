@@ -45,6 +45,14 @@ func reduceRetrySQLTimes(t *testing.T, target int) {
 	scheduler.RetrySQLTimes = target
 }
 
+func setDetectParamModifyInterval(t *testing.T, newInterval time.Duration) {
+	bak := DetectParamModifyInterval
+	t.Cleanup(func() {
+		DetectParamModifyInterval = bak
+	})
+	DetectParamModifyInterval = newInterval
+}
+
 // StepExecWrap wraps mock step executor and StepExecFrameworkInfo, so we can
 // check modified resource.
 type stepExecWrap struct {
@@ -78,6 +86,13 @@ type taskExecutorRunEnv struct {
 }
 
 func newTaskExecutorRunEnv(t *testing.T) *taskExecutorRunEnv {
+	env := newTaskExecutorRunEnv0(t)
+	// DetectParamModify loop is harder to mock for Run, so we prevent it from running.
+	setDetectParamModifyInterval(t, time.Hour)
+	return env
+}
+
+func newTaskExecutorRunEnv0(t *testing.T) *taskExecutorRunEnv {
 	ctrl := gomock.NewController(t)
 	taskTable := mock.NewMockTaskTable(ctrl)
 	stepExecutor := mockexecute.NewMockStepExecutor(ctrl)
@@ -326,7 +341,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		})
-		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 		// keep running next subtask
 		nextSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
 			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
@@ -740,7 +754,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&newMetaTask1, nil)
 		e.stepExecutor.EXPECT().GetStep().Return(e.task1.Step)
-		e.stepExecutor.EXPECT().TaskMetaModified(&newMetaTask1).Return(errors.New("some error"))
+		e.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), newMetaTask1.Meta).Return(errors.New("some error"))
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).DoAndReturn(func(context.Context) error {
 			// still the old one
 			require.Equal(t, 10, e.taskExecutor.GetTaskBase().Concurrency)
@@ -793,7 +807,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&newMetaTask1, nil)
 		e.stepExecutor.EXPECT().GetStep().Return(e.task1.Step)
-		e.stepExecutor.EXPECT().TaskMetaModified(&newMetaTask1).Return(nil)
+		e.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), newMetaTask1.Meta).Return(nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(subtask2, nil)
 		e.stepExecutor.EXPECT().GetStep().Return(e.task1.Step)
@@ -858,6 +872,247 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
+	})
+}
+
+func TestDetectAndHandleParamModify(t *testing.T) {
+	newTestEnv := func(t *testing.T, dur time.Duration) *taskExecutorRunEnv {
+		env := newTaskExecutorRunEnv0(t)
+		setDetectParamModifyInterval(t, dur)
+		return env
+	}
+
+	t.Run("loop: break on context cancel", func(t *testing.T) {
+		env := newTestEnv(t, time.Hour)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		env.taskExecutor.detectAndHandleParamModifyLoop(ctx)
+	})
+
+	t.Run("loop: retry on get task fail", func(t *testing.T) {
+		env := newTestEnv(t, time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		for i := 0; i < 3; i++ {
+			env.taskTable.EXPECT().GetTaskByID(gomock.Any(), env.task1.ID).Return(nil, errors.New("some err"))
+		}
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), env.task1.ID).DoAndReturn(func(context.Context, int64) (*proto.Task, error) {
+			cancel()
+			return nil, ctx.Err()
+		})
+		env.taskExecutor.detectAndHandleParamModifyLoop(ctx)
+	})
+
+	t.Run("no param modify", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), env.task1.ID).Return(env.task1, nil)
+		oldTask := env.taskExecutor.task.Load()
+		require.NoError(t, env.taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, oldTask, env.taskExecutor.task.Load())
+	})
+
+	t.Run("concurrency become smaller, but failed to reduce resource usage", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 4
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("concurrency become smaller, apply successfully", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 4
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, 12, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("concurrency become larger, but not enough slots for exchange", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 14
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("concurrency become larger, but failed to notify application", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("concurrency become larger, apply successfully", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("task meta modified, but failed to notify", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), latestTask.Meta).Return(errors.New("some error"))
+		require.ErrorContains(t, taskExecutor.detectAndHandleParamModify(context.Background()), "failed to apply task param modification")
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+	})
+
+	t.Run("task meta modified, apply successfully", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), latestTask.Meta).Return(nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, &latestTask, taskExecutor.task.Load())
+	})
+
+	t.Run("both meta and concurrency modified, both failed to apply", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		require.ErrorContains(t, taskExecutor.detectAndHandleParamModify(context.Background()), "failed to apply task param modification")
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("both meta and concurrency modified, apply concurrency success, but failed to apply meta", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		require.ErrorContains(t, taskExecutor.detectAndHandleParamModify(context.Background()), "failed to apply task param modification")
+		require.Equal(t, latestTask.Concurrency, taskExecutor.task.Load().Concurrency)
+		require.Empty(t, taskExecutor.task.Load().Meta)
+		oldTask.Concurrency = latestTask.Concurrency
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("both meta and concurrency modified, apply meta success, but failed to apply concurrency", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, []byte("modified"), taskExecutor.task.Load().Meta)
+		require.Equal(t, oldTask.Concurrency, taskExecutor.task.Load().Concurrency)
+		oldTask.Meta = latestTask.Meta
+		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+	})
+
+	t.Run("both meta and concurrency modified, both apply success", func(t *testing.T) {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		taskExecutor.stepExec = env.stepExecutor
+		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
+		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
+		taskExecutor.slotMgr.alloc(&proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
+			Type: proto.TaskTypeExample, ID: 2, Concurrency: 4})
+		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
+		oldTask := taskExecutor.task.Load()
+		latestTask := *oldTask
+		latestTask.Concurrency = 12
+		latestTask.Meta = []byte("modified")
+		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
+		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
+		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(nil)
+		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
+		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
 	})
 }
 

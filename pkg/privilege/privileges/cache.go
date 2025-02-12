@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -327,6 +328,18 @@ func compareItemDynamicPriv(a, b itemDynamicPriv) bool {
 	return a.username < b.username
 }
 
+type bTree[T any] struct {
+	*btree.BTreeG[T]
+	sync.Mutex
+}
+
+// Clone provides the concurrent-safe operation by wraping the original Clone.
+func (bt *bTree[T]) Clone() *btree.BTreeG[T] {
+	bt.Lock()
+	defer bt.Unlock()
+	return bt.BTreeG.Clone()
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	globalVars variable.GlobalVarAccessor
@@ -341,26 +354,26 @@ type MySQLPrivilege struct {
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
 
-	user         *btree.BTreeG[itemUser]
-	db           *btree.BTreeG[itemDB]
-	tablesPriv   *btree.BTreeG[itemTablesPriv]
-	columnsPriv  *btree.BTreeG[itemColumnsPriv]
-	defaultRoles *btree.BTreeG[itemDefaultRole]
+	user         bTree[itemUser]
+	db           bTree[itemDB]
+	tablesPriv   bTree[itemTablesPriv]
+	columnsPriv  bTree[itemColumnsPriv]
+	defaultRoles bTree[itemDefaultRole]
 
-	globalPriv  *btree.BTreeG[itemGlobalPriv]
-	dynamicPriv *btree.BTreeG[itemDynamicPriv]
+	globalPriv  bTree[itemGlobalPriv]
+	dynamicPriv bTree[itemDynamicPriv]
 	roleGraph   map[string]roleGraphEdgesTable
 }
 
 func newMySQLPrivilege() *MySQLPrivilege {
 	var p MySQLPrivilege
-	p.user = btree.NewG(8, compareItemUser)
-	p.db = btree.NewG(8, compareItemDB)
-	p.tablesPriv = btree.NewG(8, compareItemTablesPriv)
-	p.columnsPriv = btree.NewG(8, compareItemColumnsPriv)
-	p.defaultRoles = btree.NewG(8, compareItemDefaultRole)
-	p.globalPriv = btree.NewG(8, compareItemGlobalPriv)
-	p.dynamicPriv = btree.NewG(8, compareItemDynamicPriv)
+	p.user = bTree[itemUser]{BTreeG: btree.NewG(8, compareItemUser)}
+	p.db = bTree[itemDB]{BTreeG: btree.NewG(8, compareItemDB)}
+	p.tablesPriv = bTree[itemTablesPriv]{BTreeG: btree.NewG(8, compareItemTablesPriv)}
+	p.columnsPriv = bTree[itemColumnsPriv]{BTreeG: btree.NewG(8, compareItemColumnsPriv)}
+	p.defaultRoles = bTree[itemDefaultRole]{BTreeG: btree.NewG(8, compareItemDefaultRole)}
+	p.globalPriv = bTree[itemGlobalPriv]{BTreeG: btree.NewG(8, compareItemGlobalPriv)}
+	p.dynamicPriv = bTree[itemDynamicPriv]{BTreeG: btree.NewG(8, compareItemDynamicPriv)}
 	return &p
 }
 
@@ -588,7 +601,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			user.ReplaceOrInsert(itm)
 		}
 	}
-	ret.user = user
+	ret.user.BTreeG = user
 
 	db := p.db.Clone()
 	for _, u := range userList {
@@ -600,7 +613,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			db.ReplaceOrInsert(itm)
 		}
 	}
-	ret.db = db
+	ret.db.BTreeG = db
 
 	tablesPriv := p.tablesPriv.Clone()
 	for _, u := range userList {
@@ -612,7 +625,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			tablesPriv.ReplaceOrInsert(itm)
 		}
 	}
-	ret.tablesPriv = tablesPriv
+	ret.tablesPriv.BTreeG = tablesPriv
 
 	columnsPriv := p.columnsPriv.Clone()
 	for _, u := range userList {
@@ -624,7 +637,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			columnsPriv.ReplaceOrInsert(itm)
 		}
 	}
-	ret.columnsPriv = columnsPriv
+	ret.columnsPriv.BTreeG = columnsPriv
 
 	defaultRoles := p.defaultRoles.Clone()
 	for _, u := range userList {
@@ -636,7 +649,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			defaultRoles.ReplaceOrInsert(itm)
 		}
 	}
-	ret.defaultRoles = defaultRoles
+	ret.defaultRoles.BTreeG = defaultRoles
 
 	dynamicPriv := p.dynamicPriv.Clone()
 	for _, u := range userList {
@@ -648,7 +661,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			dynamicPriv.ReplaceOrInsert(itm)
 		}
 	}
-	ret.dynamicPriv = dynamicPriv
+	ret.dynamicPriv.BTreeG = dynamicPriv
 
 	globalPriv := p.globalPriv.Clone()
 	for _, u := range userList {
@@ -660,7 +673,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList []string) *MySQLPr
 			globalPriv.ReplaceOrInsert(itm)
 		}
 	}
-	ret.globalPriv = globalPriv
+	ret.globalPriv.BTreeG = globalPriv
 
 	ret.roleGraph = diff.roleGraph
 	return ret
@@ -804,7 +817,7 @@ func compareHost(x, y string) int {
 }
 
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
-func (p MySQLPrivilege) SortUserTable() {
+func (p *MySQLPrivilege) SortUserTable() {
 	p.user.Ascend(func(itm itemUser) bool {
 		slices.SortFunc(itm.data, compareUserRecord)
 		return true
@@ -833,6 +846,10 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err != nil {
 		return err
 	}
+	p.db.Ascend(func(itm itemDB) bool {
+		slices.SortFunc(itm.data, compareDBRecord)
+		return true
+	})
 	return nil
 }
 
@@ -959,7 +976,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultF
 	var value UserRecord
 	defaultAuthPlugin := ""
 	if p.globalVars != nil {
-		val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
+		val, err := p.globalVars.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 		if err == nil {
 			defaultAuthPlugin = val
 		}
@@ -1335,7 +1352,7 @@ func (p *MySQLPrivilege) matchIdentity(sctx sqlexec.RestrictedSQLExecutor, user,
 	// If skip-name resolve is not enabled, and the host is not localhost
 	// we can fallback and try to resolve with all addrs that match.
 	// TODO: this is imported from previous code in session.Auth(), and can be improved in future.
-	if !skipNameResolve && host != variable.DefHostname {
+	if !skipNameResolve && host != vardef.DefHostname {
 		addrs, err := net.LookupAddr(host)
 		if err != nil {
 			logutil.BgLogger().Warn(
@@ -2011,9 +2028,8 @@ type Handle struct {
 	// Only load the active user's data to save memory
 	// username => struct{}
 	activeUsers sync.Map
-
-	globalVars variable.GlobalVarAccessor
 	fullData    atomic.Bool
+	globalVars  variable.GlobalVarAccessor
 }
 
 // NewHandle returns a Handle.
@@ -2070,7 +2086,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// UpdateAll loads all the users' privilege info form kv storage.
+// UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	logutil.BgLogger().Warn("update all called")
 	priv := newMySQLPrivilege()
@@ -2090,6 +2106,10 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
+	if len(userList) > 1024 {
+		logutil.BgLogger().Warn("active user count > 1024, revert to update all", zap.Int("len", len(userList)))
+		return h.UpdateAll()
+	}
 
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
@@ -2119,7 +2139,7 @@ func (h *Handle) UpdateAllActive() error {
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
-	if len(userList) > 200 {
+	if len(userList) > 100 {
 		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
 	}
 	needReload := false
@@ -2133,13 +2153,13 @@ func (h *Handle) Update(userList []string) error {
 		return nil
 	}
 
-	h.fullData.Store(false)
 	priv := newMySQLPrivilege()
 	priv.globalVars = h.globalVars
 	userList, err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err
 	}
+	h.fullData.Store(false)
 	h.merge(priv, userList)
 	return nil
 }

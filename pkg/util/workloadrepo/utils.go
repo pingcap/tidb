@@ -16,7 +16,6 @@ package workloadrepo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,11 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func generatePartitionDef(sb *strings.Builder, col string, now time.Time) {
+func generatePartitionDef(sb *strings.Builder, col string, now time.Time) error {
 	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
 	// tbInfo is nil, retval must be false
-	_, _ = generatePartitionRanges(sb, nil, now)
+	allExisted, err := generatePartitionRanges(sb, nil, now)
+	if err != nil {
+		return err
+	}
+	if allExisted {
+		return fmt.Errorf("could not generate partition ranges")
+	}
+
 	fmt.Fprintf(sb, ")")
+	return nil
 }
 
 func generatePartitionName(t time.Time) string {
@@ -80,7 +87,7 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now t
 func (w *worker) setRetentionDays(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
 	if err != nil {
-		return err
+		return errWrongValueForVar.GenWithStackByArgs(repositoryRetentionDays, d)
 	}
 	w.Lock()
 	defer w.Unlock()
@@ -92,7 +99,7 @@ func validateDest(orig string) (string, error) {
 	// validate S3 URL, etc...
 	orig = strings.ToLower(orig)
 	if orig != "" && orig != "table" {
-		return "", errors.New("invalid repository destination")
+		return "", errWrongValueForVar.GenWithStack("Variable '%-.64s' can't be set to the value of '%-.200s': valid values are '' and 'table'", repositoryDest, orig)
 	}
 	return orig, nil
 }

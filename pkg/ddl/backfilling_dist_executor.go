@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -27,9 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -59,7 +56,9 @@ type BackfillSubTaskMeta struct {
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
-	TS             uint64   `json:"ts,omitempty"`
+	// TS is used to make sure subtasks are idempotent.
+	// TODO(tangenta): support local sort.
+	TS uint64 `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
@@ -124,53 +123,18 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
-}
-
-func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
-	job := &s.taskMeta.Job
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, err
-	}
-	ddlObj := s.d
-	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-
-	return ingest.LitBackCtxMgr.Register(
-		s.BaseTaskExecutor.Ctx(),
-		job.ID, hasUnique,
-		ddlObj.etcdCli,
-		discovery,
-		job.ReorgMeta.ResourceGroupName,
-		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
-		job.ReorgMeta.GetMaxWriteSpeedOrDefault(),
-		job.RealStartTS,
-	)
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 type backfillDistExecutor struct {

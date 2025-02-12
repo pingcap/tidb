@@ -35,7 +35,6 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -1053,8 +1052,8 @@ var defaultConf = Config{
 	Enable32BitsConnectionID:             true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
-	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
-	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	TiFlashComputeAutoScalerType:         DefASStr,
+	TiFlashComputeAutoScalerAddr:         DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
@@ -1377,9 +1376,9 @@ func (c *Config) Valid() error {
 
 	// Check tiflash_compute topo fetch is valid.
 	if c.DisaggregatedTiFlash && c.UseAutoScaler {
-		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
+		if !IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
 			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
-				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+				MockASStr, AWSASStr, GCPASStr, c.TiFlashComputeAutoScalerType)
 		}
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")

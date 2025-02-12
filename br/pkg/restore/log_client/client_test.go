@@ -16,6 +16,7 @@ package logclient_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
@@ -27,10 +28,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -39,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -49,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/rawkv"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -1659,11 +1666,11 @@ func TestCompactedSplitStrategy(t *testing.T) {
 	}
 
 	cases := []struct {
-		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
 		ExpectRegionEndKeys  [][]byte
 	}{
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
@@ -1678,7 +1685,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
@@ -1694,7 +1701,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1719,7 +1726,7 @@ func TestCompactedSplitStrategy(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
 			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
 		}
 
@@ -1774,14 +1781,14 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 	}
 
 	cases := []struct {
-		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
 		CheckpointSet        map[string]struct{}
 		ProcessedKVCount     int
 		ProcessedSize        int
 		ExpectRegionEndKeys  [][]byte
 	}{
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
@@ -1801,7 +1808,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
@@ -1820,7 +1827,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1843,7 +1850,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1866,7 +1873,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 			},
 		},
 		{
-			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+			iter.FromSlice([]logclient.SSTs{
 				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
 				fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200),
 				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
@@ -1897,7 +1904,7 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 		mockPDCli.SetRegions(oriRegions)
 
 		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
 			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
 		}
 		totalSize := 0
@@ -1929,8 +1936,8 @@ func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
 	}
 }
 
-func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
-	return &backuppb.LogFileSubcompaction{
+func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
 		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
@@ -1950,10 +1957,10 @@ func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uin
 				TotalKvs: num,
 			},
 		},
-	}
+	}}
 }
-func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
-	return &backuppb.LogFileSubcompaction{
+func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
 		Meta: &backuppb.LogFileSubcompactionMeta{
 			TableId: tableID,
 		},
@@ -1966,7 +1973,7 @@ func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64
 				TotalKvs: num,
 			},
 		},
-	}
+	}}
 }
 
 func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
@@ -1985,4 +1992,250 @@ func fakeRowKey(tableID, rowID int64) kv.Key {
 
 func fakeRowRawKey(tableID, rowID int64) kv.Key {
 	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
+}
+
+type mockRawKVClient struct {
+	rawkv.Client
+	putCount     int
+	errThreshold int
+}
+
+func (m *mockRawKVClient) BatchPut(ctx context.Context, keys, values [][]byte, options ...rawkv.RawOption) error {
+	m.putCount += 1
+	if m.errThreshold >= m.putCount {
+		return errors.New("rpcClient is idle")
+	}
+	return nil
+}
+
+func TestPutRawKvWithRetry(t *testing.T) {
+	tests := []struct {
+		name         string
+		errThreshold int
+		cancelAfter  time.Duration
+		wantErr      string
+		wantPuts     int
+	}{
+		{
+			name:         "success on first try",
+			errThreshold: 0,
+			wantPuts:     1,
+		},
+		{
+			name:         "success on after failure",
+			errThreshold: 2,
+			wantPuts:     3,
+		},
+		{
+			name:         "fails all retries",
+			errThreshold: 5,
+			wantErr:      "failed to put raw kv after retry",
+			wantPuts:     5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRawClient := &mockRawKVClient{
+				errThreshold: tt.errThreshold,
+			}
+			client := rawclient.NewRawKVBatchClient(mockRawClient, 1)
+
+			ctx := context.Background()
+			if tt.cancelAfter > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.cancelAfter)
+				defer cancel()
+			}
+
+			err := logclient.PutRawKvWithRetry(ctx, client, []byte("key"), []byte("value"), 1)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
+		})
+	}
+}
+
+func TestRepairIngestIndex(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeLitMerge,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: ast.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: ast.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	{
+		infoschema := s.Mock.InfoSchema()
+		table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+		require.NoError(t, err)
+		tableInfo := table.Meta()
+		indexIDi1 := int64(0)
+		indexIDi2 := int64(0)
+		for _, indexInfo := range tableInfo.Indices {
+			switch indexInfo.Name.L {
+			case "i1":
+				indexIDi1 = indexInfo.ID
+			case "i2":
+				indexIDi2 = indexInfo.ID
+			}
+		}
+		require.NotEqual(t, int64(0), indexIDi1)
+		require.NotEqual(t, int64(0), indexIDi2)
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "repair_index_t1", tableInfo.ID, indexIDi1, "i1", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
+		), false))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		infoschema = s.Mock.InfoSchema()
+		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+		require.NoError(t, err)
+		tableInfo2 := table2.Meta()
+		existsCount := 0
+		for _, indexInfo2 := range tableInfo2.Indices {
+			switch indexInfo2.Name.L {
+			case "i1":
+				require.Less(t, indexIDi1, indexInfo2.ID)
+				existsCount++
+			case "i2":
+				require.Less(t, indexIDi2, indexInfo2.ID)
+				existsCount++
+			}
+		}
+		require.Equal(t, 2, existsCount)
+	}
+}
+
+func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.Exec("CREATE TABLE test.repair_index_t1(id int, a int, b int, key i1(id), key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+
+	infoschema := s.Mock.InfoSchema()
+	table, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	indexIDi1 := int64(0)
+	indexIDi2 := int64(0)
+	for _, indexInfo := range tableInfo.Indices {
+		switch indexInfo.Name.L {
+		case "i1":
+			indexIDi1 = indexInfo.ID
+		case "i2":
+			indexIDi2 = indexInfo.ID
+		}
+	}
+	require.NotEqual(t, int64(0), indexIDi1)
+	require.NotEqual(t, int64(0), indexIDi2)
+
+	// add checkpoint
+	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+	require.NoError(t, err)
+	defer func() {
+		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+		require.NoError(t, err)
+	}()
+	require.NoError(t, checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
+			{
+				// from checkpoint and old index (i1) id is found
+				IndexID:    indexIDi1,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i1",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i1", "id"},
+			},
+			{
+				// from checkpoint and the index (i2) is repaired
+				IndexID:    indexIDi2 + 99,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i2",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i2", "a"},
+			},
+			{
+				// from checkpoint and old index (i3) id is not found
+				IndexID:    indexIDi2 + 100,
+				SchemaName: ast.NewCIStr("test"),
+				TableName:  ast.NewCIStr("repair_index_t1"),
+				IndexName:  "i3",
+				AddSQL:     "ALTER TABLE %n.%n ADD INDEX %n(%n) USING BTREE VISIBLE",
+				AddArgs:    []any{"test", "repair_index_t1", "i3", "b"},
+			},
+		},
+	}))
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+	infoschema = s.Mock.InfoSchema()
+	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
+	require.NoError(t, err)
+	tableInfo2 := table2.Meta()
+	existsCount := 0
+	for _, indexInfo2 := range tableInfo2.Indices {
+		switch indexInfo2.Name.L {
+		case "i1":
+			require.Less(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		case "i2":
+			require.Equal(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		case "i3":
+			require.Less(t, indexIDi2, indexInfo2.ID)
+			existsCount++
+		}
+	}
+	require.Equal(t, 3, existsCount)
 }

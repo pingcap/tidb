@@ -32,6 +32,60 @@ func NewWorkloadBasedLearningHandle() *Handle {
 }
 
 // HandleReadTableCost Start a new round of analysis of all historical read queries.
-func (Handle *Handle) HandleReadTableCost() {
+// According to abstracted table cost metrics, calculate the percentage of read scan time and memory usage for each table.
+// The result will be saved to the table "mysql.workload_values".
+// Dataflow
+//  1. Abstract middle table cost metrics(scan time, memory usage, read frequency)
+//     from every record in statement_summary/statement_stats
+//
+// 2,3. Group by tablename, get the total scan time, total memory usage, and every table scan time, memory usage,
+//
+//	read frequency
+//
+// 4. Calculate table cost for each table, table cost = table scan time / total scan time + table mem usage / total mem usage
+// 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.workload_values"
+func (handle *Handle) HandleReadTableCost() {
+	// step1: abstract middle table cost metrics from every record in statement_summary
+	middleMetrics := handle.analyzeBasedOnStatementSummary()
+	if len(middleMetrics) == 0 {
+		return
+	}
+	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
+	// step3: calculate the total scan time and total memory usage
+	tableNameToMetrics := make(map[string]*ReadTableCostMetrics)
+	totalScanTime := 0.0
+	totalMemUsage := 0.0
+	for _, middleMetric := range middleMetrics {
+		metric, ok := tableNameToMetrics[middleMetric.tableName]
+		if !ok {
+			tableNameToMetrics[middleMetric.tableName] = middleMetric
+		} else {
+			metric.tableScanTime += middleMetric.tableScanTime * float64(middleMetric.readFrequency)
+			metric.tableMemUsage += middleMetric.tableMemUsage * float64(middleMetric.readFrequency)
+			metric.readFrequency += middleMetric.readFrequency
+		}
+		totalScanTime += middleMetric.tableScanTime
+		totalMemUsage += middleMetric.tableMemUsage
+	}
+	if totalScanTime == 0 || totalMemUsage == 0 {
+		return
+	}
+	// step4: calculate the percentage of scan time and memory usage for each table
+	for _, metric := range tableNameToMetrics {
+		metric.tableCost = metric.tableScanTime/totalScanTime + metric.tableMemUsage/totalMemUsage
+	}
+	// TODO step5: save the table cost metrics to table "mysql.workload_values"
+}
 
+func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
+	// step1: get all record from statement_summary
+	// step2: abstract table cost metrics from each record
+	return nil
+}
+
+// TODO
+func (handle *Handle) analyzeBasedOnStatementStats() []*ReadTableCostMetrics {
+	// step1: get all record from statement_stats
+	// step2: abstract table cost metrics from each record
+	return nil
 }

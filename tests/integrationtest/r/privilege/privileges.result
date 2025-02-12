@@ -615,6 +615,15 @@ GRANT UPDATE ON `role`.* TO 'joe'@'%'
 GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
 GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
 set global tidb_enable_resource_control = default;
+CREATE USER traffic_test;
+traffic capture to '/tmp' duration='1s';
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or TRAFFIC_CAPTURE_ADMIN privilege(s) for this operation
+traffic replay from '/tmp' user='traffic_test';
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or TRAFFIC_REPLAY_ADMIN privilege(s) for this operation
+cancel traffic jobs;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER, TRAFFIC_CAPTURE_ADMIN or TRAFFIC_REPLAY_ADMIN privilege(s) for this operation
+show traffic jobs;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER, TRAFFIC_CAPTURE_ADMIN or TRAFFIC_REPLAY_ADMIN privilege(s) for this operation
 create table privilege__privileges.admin(a int, KEY idx_a (`a`));
 create user without_super;
 admin set bdr role primary;

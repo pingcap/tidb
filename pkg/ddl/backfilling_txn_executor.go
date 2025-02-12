@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -46,8 +46,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// backfillScheduler is used to manage the lifetime of backfill workers.
-type backfillScheduler interface {
+// backfillExecutor is used to manage the lifetime of backfill workers.
+type backfillExecutor interface {
 	setupWorkers() error
 	close(force bool)
 
@@ -59,12 +59,12 @@ type backfillScheduler interface {
 }
 
 var (
-	_ backfillScheduler = &txnBackfillScheduler{}
+	_ backfillExecutor = &txnBackfillExecutor{}
 )
 
 const maxBackfillWorkerSize = 16
 
-type txnBackfillScheduler struct {
+type txnBackfillExecutor struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
 	sessPool     *sess.Pool
@@ -81,15 +81,15 @@ type txnBackfillScheduler struct {
 	closed   bool
 }
 
-func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
+func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
-	jobCtx *ReorgContext) (backfillScheduler, error) {
+	jobCtx *ReorgContext) (backfillExecutor, error) {
 	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
-	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	return &txnBackfillScheduler{
+	workerCnt := info.ReorgMeta.GetConcurrency()
+	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
 		sessPool:     sessPool,
@@ -103,11 +103,11 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 	}, nil
 }
 
-func (b *txnBackfillScheduler) setupWorkers() error {
+func (b *txnBackfillExecutor) setupWorkers() error {
 	return b.adjustWorkerSize()
 }
 
-func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
+func (b *txnBackfillExecutor) sendTask(task *reorgBackfillTask) error {
 	select {
 	case <-b.ctx.Done():
 		return b.ctx.Err()
@@ -116,7 +116,7 @@ func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
 	}
 }
 
-func (b *txnBackfillScheduler) resultChan() <-chan *backfillResult {
+func (b *txnBackfillExecutor) resultChan() <-chan *backfillResult {
 	return b.resultCh
 }
 
@@ -163,20 +163,20 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		WarnHandler:                          warnHandler,
 		Client:                               kvClient,
 		EnableChunkRPC:                       true,
-		EnabledRateLimitAction:               variable.DefTiDBEnableRateLimitAction,
+		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
 		CPUUsage:                             &cpuUsages,
 		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
-		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(variable.DefTiFlashReplicaRead),
-		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
-		TiFlashMaxBytesBeforeExternalJoin:    variable.DefTiFlashMaxBytesBeforeExternalJoin,
-		TiFlashMaxBytesBeforeExternalGroupBy: variable.DefTiFlashMaxBytesBeforeExternalGroupBy,
-		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
-		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
-		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(vardef.DefTiFlashReplicaRead),
+		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
+		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
 		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
 	}
@@ -202,8 +202,8 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 
 	// Set the row encode format version.
-	rowFormat := variable.GetDDLReorgRowFormat()
-	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
+	rowFormat := vardef.GetDDLReorgRowFormat()
+	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != vardef.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
 	sqlMode := reorgMeta.SQLMode
 	sessCtx.GetSessionVars().SQLMode = sqlMode
@@ -247,16 +247,16 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	}
 }
 
-func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
-	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+func (b *txnBackfillExecutor) expectedWorkerSize() (size int) {
+	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrency()
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 
-func (b *txnBackfillScheduler) currentWorkerSize() int {
+func (b *txnBackfillExecutor) currentWorkerSize() int {
 	return len(b.workers)
 }
 
-func (b *txnBackfillScheduler) adjustWorkerSize() error {
+func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
@@ -332,7 +332,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
 
-func (b *txnBackfillScheduler) close(force bool) {
+func (b *txnBackfillExecutor) close(force bool) {
 	if b.closed {
 		return
 	}
