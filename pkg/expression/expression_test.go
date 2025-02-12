@@ -48,14 +48,14 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerIfNull)
 	require.NoError(t, err)
 
-	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull, false)
 	require.Nil(t, err)
 	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
 	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
 	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull, false)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewOne()))
 }
@@ -75,10 +75,10 @@ func TestEvaluateExprWithNullMeetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// the inner function has an error
-	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, false)
 	require.NotNil(t, err)
 	// check in NullRejectCheck ctx
-	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull)
+	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull, false)
 	require.NotNil(t, err)
 }
 
@@ -93,7 +93,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
-	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
+	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam, false)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
@@ -101,7 +101,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
-	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam)
+	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam, false)
 	require.Nil(t, err)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
@@ -127,7 +127,7 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 
 	// after EvaluateExprWithNull, this flag should be still false
-	EvaluateExprWithNull(ctx, schema, eq)
+	EvaluateExprWithNull(ctx, schema, eq, false)
 	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 }
