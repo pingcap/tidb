@@ -159,6 +159,12 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
 	}
+	if ds.AccessPathMinRowCount <= 0 {
+		ds.AccessPathMinRowCount = ds.StatsInfo().RowCount
+	} else {
+		ds.AccessPathMinRowCount = min(ds.StatsInfo().RowCount, ds.AccessPathMinRowCount)
+	}
+
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 	if indexForce {
@@ -246,14 +252,23 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
 		} else {
-			accessSelectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
-			countAfterAccess := path.CountAfterAccess
-			if selectivity < accessSelectivity {
-				countAfterAccess = math.Sqrt(accessSelectivity) * float64(ds.StatisticTable.RealtimeCount)
-			} else {
-				selectivity = math.Sqrt(selectivity)
-			}
-			path.CountAfterIndex = math.Max(countAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			// XXXX Adjust CountAfterIndex to use an expBackoff
+			//idx := ds.StatisticTable.HistColl.GetIdx(path.Index.ID)
+			//ndv := float64(ds.StatisticTable.RealtimeCount)
+			//if idx != nil {
+			// Get NDV from index histogram
+			//	ndv = float64(idx.NDV)
+			//}
+			//accessSelectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+			//countAfterAccess := path.CountAfterAccess
+			//if selectivity < accessSelectivity {
+			//	countAfterAccess = math.Sqrt(accessSelectivity) * float64(ds.StatisticTable.RealtimeCount)
+			//} else {
+			//	selectivity = math.Sqrt(selectivity)
+			//}
+			//selectivity = max(selectivity, 1/ndv)
+			//path.CountAfterIndex = math.Max(countAfterAccess*selectivity, ds.StatsInfo().RowCount)
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess

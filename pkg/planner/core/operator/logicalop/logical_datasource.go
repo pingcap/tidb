@@ -113,6 +113,12 @@ type DataSource struct {
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
 
+	// AccessPathMinRowCount is the minimum row count for all plans for this data source.
+	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
+	// It's purpose is to track whether competing index or table scan plans produce different RowCount
+	// estimates because of different assumptions of correlation or independence of predicates.
+	AccessPathMinRowCount float64
+
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
 }
