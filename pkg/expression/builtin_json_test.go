@@ -712,7 +712,6 @@ func TestJSONKeys(t *testing.T) {
 		expected any
 		success  bool
 	}{
-
 		// Tests nil arguments
 		{[]any{nil}, nil, true},
 		{[]any{nil, "$.c"}, nil, true},
@@ -749,6 +748,11 @@ func TestJSONKeys(t *testing.T) {
 		{[]any{`{"a": 1}`, "$.b"}, nil, true},
 		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.c"}, nil, true},
 		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.a.d"}, nil, true},
+
+		// Tests path expression contains any square bracket
+		{[]any{`[{"A1": 1, "B1": 2, "C1": 3}, {"A2": 10, "B2": 20, "C2": {"D": 4}}, {"A3": 1, "B3": 2, "C3": 6}]`, "$[1]"}, `["A2", "B2", "C2"]`, true},
+		{[]any{`[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]`, `$[last].C`}, nil, true},
+		{[]any{`[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]`, `$[last].C[1]`}, `["E"]`, true},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
