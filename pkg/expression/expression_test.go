@@ -75,7 +75,7 @@ func TestEvaluateExprWithNullMeetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// the inner function has an error
-	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
+	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, false)
 	require.NotNil(t, err)
 	// check in NullRejectCheck ctx
 	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull, false)
