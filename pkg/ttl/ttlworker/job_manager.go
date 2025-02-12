@@ -1011,17 +1011,13 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 }
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
-<<<<<<< HEAD
 func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
-=======
-func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time) {
 	if !m.isLeader() {
 		// only the leader can do the GC to reduce the performance impact
 		return
 	}
 
 	logutil.Logger(m.ctx).Info("TTL leader to DoGC")
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
 	// Remove the table not exist in info schema cache.
 	// Delete the table status before deleting the tasks. Therefore the related tasks
 	if err := m.updateInfoSchemaCache(se); err == nil {

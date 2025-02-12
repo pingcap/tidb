@@ -30,11 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/meta/model"
 	metrics2 "github.com/pingcap/tidb/pkg/metrics"
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	dbsession "github.com/pingcap/tidb/pkg/session"
@@ -50,11 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/prometheus/client_golang/prometheus"
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -828,15 +820,11 @@ func TestGCScanTasks(t *testing.T) {
 		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
-<<<<<<< HEAD
-	m.DoGC(context.TODO(), se)
-=======
 	// only leader can do GC
-	m.DoGC(context.TODO(), se, se.Now())
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task").Check(testkit.Rows("6"))
 	isLeader = true
-	m.DoGC(context.TODO(), se, se.Now())
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
 }
 
@@ -856,15 +844,11 @@ func TestGCTableStatus(t *testing.T) {
 		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
-<<<<<<< HEAD
-	m.DoGC(context.TODO(), se)
-=======
 	// only leader can do GC
-	m.DoGC(context.TODO(), se, se.Now())
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_table_status").Check(testkit.Rows("1"))
 	isLeader = true
-	m.DoGC(context.TODO(), se, se.Now())
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select * from mysql.tidb_ttl_table_status").Check(nil)
 
 	// insert a running table status without corresponding table
@@ -926,15 +910,11 @@ func TestGCTTLHistory(t *testing.T) {
 		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
-<<<<<<< HEAD
 	m.DoGC(context.TODO(), se)
-=======
-	m.DoGC(context.TODO(), se, se.Now())
 	// only leader can go GC
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_job_history").Check(testkit.Rows("7"))
 	isLeader = true
-	m.DoGC(context.TODO(), se, se.Now())
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
@@ -1590,7 +1570,6 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 
 	ctx := context.Background()
 	m1 := ttlworker.NewJobManager("test-ttl-job-manager-1", nil, store, nil, nil)
-<<<<<<< HEAD
 	require.NoError(t, m1.InfoSchemaCache().Update(se))
 	require.NoError(t, m1.TableStatusCache().Update(ctx, se))
 
@@ -1611,12 +1590,6 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 	require.NoError(t, m2.InfoSchemaCache().Update(se))
 	require.NoError(t, m2.TableStatusCache().Update(ctx, se))
 	m2.RescheduleJobs(se, now)
-=======
-	m2 := ttlworker.NewJobManager("test-ttl-job-manager-2", nil, store, nil, func() bool {
-		return true
-	})
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
-
 	// the job should have been cancelled
 	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
 }
