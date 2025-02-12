@@ -393,7 +393,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x)
+			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x, false)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
