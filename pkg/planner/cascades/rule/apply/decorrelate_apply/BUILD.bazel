@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "decorrelate_apply",
+    srcs = ["xf_decorrelate_apply.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/pattern",
+        "//pkg/planner/cascades/rule",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util/coreusage",
+        "//pkg/util/intest",
+        "//pkg/util/plancodec",
+    ],
+)

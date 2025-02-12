@@ -84,6 +84,10 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
+// session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
+// at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
+const defaultRepairIndexSessionCount uint = 10
+
 // LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
 // including concurrency management, checkpoint handling, and file importing for efficient log processing.
 type LogRestoreManager struct {
@@ -270,7 +274,7 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
-func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
 	if r, ok := sst.(RewrittenSSTs); ok {
 		rewritten := r.RewrittenTo()
 		if rewritten != sst.TableID() {
@@ -286,6 +290,10 @@ func rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.
 			log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", sst.TableID()), zap.Int64("rewritten_to", rewritten))
 			return rewriteRules, nil
 		}
+	}
+	// Need to set ts range for compacted sst to filter out irrelevant data.
+	if sst.Type() == CompactedSSTsType && !rules.HasSetTs() {
+		rules.SetTsRange(rc.shiftStartTS, rc.startTS, rc.restoreTS)
 	}
 	return rules, nil
 }
@@ -318,7 +326,7 @@ func (rc *LogClient) RestoreSSTFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
-		newRules, err := rewriteRulesFor(i, rewriteRules)
+		newRules, err := rc.rewriteRulesFor(i, rewriteRules)
 		if err != nil {
 			return err
 		}
@@ -452,16 +460,48 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.logRestoreManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
+func createSession(ctx context.Context, g glue.Glue, store kv.Storage) (glue.Session, error) {
+	unsafeSession, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Set SQL mode to None for avoiding SQL compatibility problem
+	err = unsafeSession.Execute(ctx, "set @@sql_mode=''")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return unsafeSession, nil
+}
+
+func createSessions(ctx context.Context, g glue.Glue, store kv.Storage, count uint) (createdUnsafeSessions []glue.Session, createErr error) {
+	unsafeSessions := make([]glue.Session, 0, count)
+	defer func() {
+		if createErr != nil {
+			closeSessions(unsafeSessions)
+		}
+	}()
+	for range count {
+		unsafeSession, err := createSession(ctx, g, store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		unsafeSessions = append(unsafeSessions, unsafeSession)
+	}
+	return unsafeSessions, nil
+}
+
+func closeSessions(sessions []glue.Session) {
+	for _, session := range sessions {
+		if session != nil {
+			session.Close()
+		}
+	}
+}
+
 // Init create db connection and domain for storage.
 func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.unsafeSession, err = g.CreateSession(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Set SQL mode to None for avoiding SQL compatibility problem
-	err = rc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
+	rc.unsafeSession, err = createSession(ctx, g, store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1493,7 +1533,7 @@ func (rc *LogClient) restoreMetaKvEntries(
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
 		})
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
+		if err := PutRawKvWithRetry(ctx, rc.rawKVClient, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
@@ -1761,39 +1801,60 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 
 	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
-NEXTSQL:
-	for _, sql := range sqls {
-		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
-
+	for i, sql := range sqls {
 		tableInfo, err := info.TableByName(ctx, sql.SchemaName, sql.TableName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		oldIndexIDFound := false
+		sqls[i].OldIndexIDFound = false
+		sqls[i].IndexRepaired = false
 		if fromCheckpoint {
 			for _, idx := range tableInfo.Indices() {
 				indexInfo := idx.Meta()
 				if indexInfo.ID == sql.IndexID {
 					// the original index id is not dropped
-					oldIndexIDFound = true
+					sqls[i].OldIndexIDFound = true
 					break
 				}
 				// what if index's state is not public?
 				if indexInfo.Name.O == sql.IndexName {
+					progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
 					// find the same name index, but not the same index id,
 					// which means the repaired index id is created
 					if _, err := fmt.Fprintf(console.Out(), "%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE")); err != nil {
 						return errors.Trace(err)
 					}
-					continue NEXTSQL
+					sqls[i].IndexRepaired = true
+					break
 				}
 			}
 		}
+	}
 
-		if err := func(sql checkpoint.CheckpointIngestIndexRepairSQL) error {
-			w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
-			defer w.Close()
+	sessionCount := defaultRepairIndexSessionCount
+	indexSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeSessions(indexSessions)
+	}()
+	workerpool := tidbutil.NewWorkerPool(sessionCount, "repair ingest index")
+	eg, ectx := errgroup.WithContext(ctx)
+	mp := console.StartMultiProgress()
+	for _, sql := range sqls {
+		if sql.IndexRepaired {
+			continue
+		}
+		if ectx.Err() != nil {
+			break
+		}
+		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
+		w := mp.AddTextBar(progressTitle, 1)
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			defer w.Done()
 
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
 			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
 			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
 			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
@@ -1804,8 +1865,8 @@ NEXTSQL:
 			// restored metakv and then skips repairing it.
 
 			// only when first execution or old index id is not dropped
-			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+			if !fromCheckpoint || sql.OldIndexIDFound {
+				if err := indexSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1815,17 +1876,15 @@ NEXTSQL:
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
-			w.Inc()
-			if err := w.Wait(ctx); err != nil {
-				return errors.Trace(err)
-			}
+			w.Increment()
 			return nil
-		}(sql); err != nil {
-			return errors.Trace(err)
-		}
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -2052,4 +2111,14 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
+}
+
+func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key, value []byte, originTs uint64) error {
+	err := utils.WithRetry(ctx, func() error {
+		return client.Put(ctx, key, value, originTs)
+	}, utils.NewRawClientBackoffStrategy())
+	if err != nil {
+		return errors.Errorf("failed to put raw kv after retry")
+	}
+	return nil
 }

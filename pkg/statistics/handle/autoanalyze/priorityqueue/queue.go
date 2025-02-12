@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -203,7 +204,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
-		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		// Query locked tables once to minimize overhead.
@@ -394,7 +395,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return nil
 	}
 
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {

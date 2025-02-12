@@ -314,7 +314,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 
 	// test normal table should not be allowed
 	val, err = getSessionKey(ctx, normalTb.Meta(), retriever, encodeTableKey(1))
-	require.Error(t, err, "Cannot get normal table key from session")
+	require.ErrorContains(t, err, "Cannot get normal table key from session")
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 

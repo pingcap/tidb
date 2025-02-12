@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -181,7 +180,7 @@ func NewAddIndexIngestPipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm, backendCtx)
+		reorgMeta.GetBatchSize(), rm, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
@@ -247,7 +246,7 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), nil, nil)
+		reorgMeta.GetBatchSize(), nil, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
@@ -276,7 +275,7 @@ func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *syn
 	return &sync.Pool{
 		New: func() any {
 			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
-				reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+				reorgMeta.GetBatchSize())
 		},
 	}
 }
@@ -601,7 +600,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	targetCap := ingest.CopReadBatchSize(w.hintBatchSize)
 	if w.reorgMeta != nil {
-		targetCap = ingest.CopReadBatchSize(w.reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		targetCap = ingest.CopReadBatchSize(w.reorgMeta.GetBatchSize())
 	}
 	chk := w.srcChkPool.Get().(*chunk.Chunk)
 	if chk.Capacity() != targetCap {

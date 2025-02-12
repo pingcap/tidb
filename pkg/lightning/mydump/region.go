@@ -467,7 +467,7 @@ func SplitLargeCSV(
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
-					zap.String("terminator", cfg.CSV.Terminator))
+					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos

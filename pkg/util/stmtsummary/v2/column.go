@@ -32,121 +32,121 @@ import (
 
 // Statements summary table column name.
 const (
-	ClusterTableInstanceColumnNameStr      = "INSTANCE"
-	SummaryBeginTimeStr                    = "SUMMARY_BEGIN_TIME"
-	SummaryEndTimeStr                      = "SUMMARY_END_TIME"
-	StmtTypeStr                            = "STMT_TYPE"
-	SchemaNameStr                          = "SCHEMA_NAME"
-	DigestStr                              = "DIGEST"
-	DigestTextStr                          = "DIGEST_TEXT"
-	TableNamesStr                          = "TABLE_NAMES"
-	IndexNamesStr                          = "INDEX_NAMES"
-	SampleUserStr                          = "SAMPLE_USER"
-	ExecCountStr                           = "EXEC_COUNT"
-	SumErrorsStr                           = "SUM_ERRORS"
-	SumWarningsStr                         = "SUM_WARNINGS"
-	SumLatencyStr                          = "SUM_LATENCY"
-	MaxLatencyStr                          = "MAX_LATENCY"
-	MinLatencyStr                          = "MIN_LATENCY"
-	AvgLatencyStr                          = "AVG_LATENCY"
-	AvgParseLatencyStr                     = "AVG_PARSE_LATENCY"
-	MaxParseLatencyStr                     = "MAX_PARSE_LATENCY"
-	AvgCompileLatencyStr                   = "AVG_COMPILE_LATENCY"
-	MaxCompileLatencyStr                   = "MAX_COMPILE_LATENCY"
-	SumCopTaskNumStr                       = "SUM_COP_TASK_NUM"
-	MaxCopProcessTimeStr                   = "MAX_COP_PROCESS_TIME"
-	MaxCopProcessAddressStr                = "MAX_COP_PROCESS_ADDRESS"
-	MaxCopWaitTimeStr                      = "MAX_COP_WAIT_TIME"    // #nosec G101
-	MaxCopWaitAddressStr                   = "MAX_COP_WAIT_ADDRESS" // #nosec G101
-	AvgProcessTimeStr                      = "AVG_PROCESS_TIME"
-	MaxProcessTimeStr                      = "MAX_PROCESS_TIME"
-	AvgWaitTimeStr                         = "AVG_WAIT_TIME"
-	MaxWaitTimeStr                         = "MAX_WAIT_TIME"
-	AvgBackoffTimeStr                      = "AVG_BACKOFF_TIME"
-	MaxBackoffTimeStr                      = "MAX_BACKOFF_TIME"
-	AvgTotalKeysStr                        = "AVG_TOTAL_KEYS"
-	MaxTotalKeysStr                        = "MAX_TOTAL_KEYS"
-	AvgProcessedKeysStr                    = "AVG_PROCESSED_KEYS"
-	MaxProcessedKeysStr                    = "MAX_PROCESSED_KEYS"
-	AvgRocksdbDeleteSkippedCountStr        = "AVG_ROCKSDB_DELETE_SKIPPED_COUNT"
-	MaxRocksdbDeleteSkippedCountStr        = "MAX_ROCKSDB_DELETE_SKIPPED_COUNT"
-	AvgRocksdbKeySkippedCountStr           = "AVG_ROCKSDB_KEY_SKIPPED_COUNT"
-	MaxRocksdbKeySkippedCountStr           = "MAX_ROCKSDB_KEY_SKIPPED_COUNT"
-	AvgRocksdbBlockCacheHitCountStr        = "AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
-	MaxRocksdbBlockCacheHitCountStr        = "MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
-	AvgRocksdbBlockReadCountStr            = "AVG_ROCKSDB_BLOCK_READ_COUNT"
-	MaxRocksdbBlockReadCountStr            = "MAX_ROCKSDB_BLOCK_READ_COUNT"
-	AvgRocksdbBlockReadByteStr             = "AVG_ROCKSDB_BLOCK_READ_BYTE"
-	MaxRocksdbBlockReadByteStr             = "MAX_ROCKSDB_BLOCK_READ_BYTE"
-	AvgPrewriteTimeStr                     = "AVG_PREWRITE_TIME"
-	MaxPrewriteTimeStr                     = "MAX_PREWRITE_TIME"
-	AvgCommitTimeStr                       = "AVG_COMMIT_TIME"
-	MaxCommitTimeStr                       = "MAX_COMMIT_TIME"
-	AvgGetCommitTsTimeStr                  = "AVG_GET_COMMIT_TS_TIME"
-	MaxGetCommitTsTimeStr                  = "MAX_GET_COMMIT_TS_TIME"
-	AvgCommitBackoffTimeStr                = "AVG_COMMIT_BACKOFF_TIME"
-	MaxCommitBackoffTimeStr                = "MAX_COMMIT_BACKOFF_TIME"
-	AvgResolveLockTimeStr                  = "AVG_RESOLVE_LOCK_TIME"
-	MaxResolveLockTimeStr                  = "MAX_RESOLVE_LOCK_TIME"
-	AvgLocalLatchWaitTimeStr               = "AVG_LOCAL_LATCH_WAIT_TIME"
-	MaxLocalLatchWaitTimeStr               = "MAX_LOCAL_LATCH_WAIT_TIME"
-	AvgWriteKeysStr                        = "AVG_WRITE_KEYS"
-	MaxWriteKeysStr                        = "MAX_WRITE_KEYS"
-	AvgWriteSizeStr                        = "AVG_WRITE_SIZE"
-	MaxWriteSizeStr                        = "MAX_WRITE_SIZE"
-	AvgPrewriteRegionsStr                  = "AVG_PREWRITE_REGIONS"
-	MaxPrewriteRegionsStr                  = "MAX_PREWRITE_REGIONS"
-	AvgTxnRetryStr                         = "AVG_TXN_RETRY"
-	MaxTxnRetryStr                         = "MAX_TXN_RETRY"
-	SumExecRetryStr                        = "SUM_EXEC_RETRY"
-	SumExecRetryTimeStr                    = "SUM_EXEC_RETRY_TIME"
-	SumBackoffTimesStr                     = "SUM_BACKOFF_TIMES"
-	BackoffTypesStr                        = "BACKOFF_TYPES"
-	AvgMemStr                              = "AVG_MEM"
-	MaxMemStr                              = "MAX_MEM"
-	AvgDiskStr                             = "AVG_DISK"
-	MaxDiskStr                             = "MAX_DISK"
-	AvgKvTimeStr                           = "AVG_KV_TIME"
-	AvgPdTimeStr                           = "AVG_PD_TIME"
-	AvgBackoffTotalTimeStr                 = "AVG_BACKOFF_TOTAL_TIME"
-	AvgWriteSQLRespTimeStr                 = "AVG_WRITE_SQL_RESP_TIME"
-	AvgTidbCPUTimeStr                      = "AVG_TIDB_CPU_TIME"
-	AvgTikvCPUTimeStr                      = "AVG_TIKV_CPU_TIME"
-	MaxResultRowsStr                       = "MAX_RESULT_ROWS"
-	MinResultRowsStr                       = "MIN_RESULT_ROWS"
-	AvgResultRowsStr                       = "AVG_RESULT_ROWS"
-	PreparedStr                            = "PREPARED"
-	AvgAffectedRowsStr                     = "AVG_AFFECTED_ROWS"
-	FirstSeenStr                           = "FIRST_SEEN"
-	LastSeenStr                            = "LAST_SEEN"
-	PlanInCacheStr                         = "PLAN_IN_CACHE"
-	PlanCacheHitsStr                       = "PLAN_CACHE_HITS"
-	PlanCacheUnqualifiedStr                = "PLAN_CACHE_UNQUALIFIED"
-	PlanCacheUnqualifiedLastReasonStr      = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
-	PlanInBindingStr                       = "PLAN_IN_BINDING"
-	QuerySampleTextStr                     = "QUERY_SAMPLE_TEXT"
-	PrevSampleTextStr                      = "PREV_SAMPLE_TEXT"
-	PlanDigestStr                          = "PLAN_DIGEST"
-	PlanStr                                = "PLAN"
-	BinaryPlan                             = "BINARY_PLAN"
-	Charset                                = "CHARSET"
-	Collation                              = "COLLATION"
-	PlanHint                               = "PLAN_HINT"
-	AvgRequestUnitRead                     = "AVG_REQUEST_UNIT_READ"
-	MaxRequestUnitRead                     = "MAX_REQUEST_UNIT_READ"
-	AvgRequestUnitWrite                    = "AVG_REQUEST_UNIT_WRITE"
-	MaxRequestUnitWrite                    = "MAX_REQUEST_UNIT_WRITE"
-	AvgQueuedRcTimeStr                     = "AVG_QUEUED_RC_TIME"
-	MaxQueuedRcTimeStr                     = "MAX_QUEUED_RC_TIME"
-	ResourceGroupName                      = "RESOURCE_GROUP"
-	SumUnpackedBytesSentKVTotalStr         = "SUM_UNPACKED_BYTES_SENT_KV_TOTAL"
-	SumUnpackedBytesReceivedKVTotalStr     = "SUM_UNPACKED_BYTES_RECEIVED_KV_TOTAL"
-	SumUnpackedBytesSentKVCrossZoneStr     = "SUM_UNPACKED_BYTES_SENT_KV_CROSS_ZONE"
-	SumUnpackedBytesReceivedKVCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_KV_CROSS_ZONE"
-	SumUnpackedBytesSentMPPTotalStr        = "SUM_UNPACKED_BYTES_SENT_MPP_TOTAL"
-	SumUnpackedBytesReceivedMPPTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_MPP_TOTAL"
-	SumUnpackedBytesSentMPPCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_MPP_CROSS_ZONE"
-	SumUnpackedBytesReceiveMPPCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_MPP_CROSS_ZONE"
+	ClusterTableInstanceColumnNameStr          = "INSTANCE"
+	SummaryBeginTimeStr                        = "SUMMARY_BEGIN_TIME"
+	SummaryEndTimeStr                          = "SUMMARY_END_TIME"
+	StmtTypeStr                                = "STMT_TYPE"
+	SchemaNameStr                              = "SCHEMA_NAME"
+	DigestStr                                  = "DIGEST"
+	DigestTextStr                              = "DIGEST_TEXT"
+	TableNamesStr                              = "TABLE_NAMES"
+	IndexNamesStr                              = "INDEX_NAMES"
+	SampleUserStr                              = "SAMPLE_USER"
+	ExecCountStr                               = "EXEC_COUNT"
+	SumErrorsStr                               = "SUM_ERRORS"
+	SumWarningsStr                             = "SUM_WARNINGS"
+	SumLatencyStr                              = "SUM_LATENCY"
+	MaxLatencyStr                              = "MAX_LATENCY"
+	MinLatencyStr                              = "MIN_LATENCY"
+	AvgLatencyStr                              = "AVG_LATENCY"
+	AvgParseLatencyStr                         = "AVG_PARSE_LATENCY"
+	MaxParseLatencyStr                         = "MAX_PARSE_LATENCY"
+	AvgCompileLatencyStr                       = "AVG_COMPILE_LATENCY"
+	MaxCompileLatencyStr                       = "MAX_COMPILE_LATENCY"
+	SumCopTaskNumStr                           = "SUM_COP_TASK_NUM"
+	MaxCopProcessTimeStr                       = "MAX_COP_PROCESS_TIME"
+	MaxCopProcessAddressStr                    = "MAX_COP_PROCESS_ADDRESS"
+	MaxCopWaitTimeStr                          = "MAX_COP_WAIT_TIME"    // #nosec G101
+	MaxCopWaitAddressStr                       = "MAX_COP_WAIT_ADDRESS" // #nosec G101
+	AvgProcessTimeStr                          = "AVG_PROCESS_TIME"
+	MaxProcessTimeStr                          = "MAX_PROCESS_TIME"
+	AvgWaitTimeStr                             = "AVG_WAIT_TIME"
+	MaxWaitTimeStr                             = "MAX_WAIT_TIME"
+	AvgBackoffTimeStr                          = "AVG_BACKOFF_TIME"
+	MaxBackoffTimeStr                          = "MAX_BACKOFF_TIME"
+	AvgTotalKeysStr                            = "AVG_TOTAL_KEYS"
+	MaxTotalKeysStr                            = "MAX_TOTAL_KEYS"
+	AvgProcessedKeysStr                        = "AVG_PROCESSED_KEYS"
+	MaxProcessedKeysStr                        = "MAX_PROCESSED_KEYS"
+	AvgRocksdbDeleteSkippedCountStr            = "AVG_ROCKSDB_DELETE_SKIPPED_COUNT"
+	MaxRocksdbDeleteSkippedCountStr            = "MAX_ROCKSDB_DELETE_SKIPPED_COUNT"
+	AvgRocksdbKeySkippedCountStr               = "AVG_ROCKSDB_KEY_SKIPPED_COUNT"
+	MaxRocksdbKeySkippedCountStr               = "MAX_ROCKSDB_KEY_SKIPPED_COUNT"
+	AvgRocksdbBlockCacheHitCountStr            = "AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
+	MaxRocksdbBlockCacheHitCountStr            = "MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
+	AvgRocksdbBlockReadCountStr                = "AVG_ROCKSDB_BLOCK_READ_COUNT"
+	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
+	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
+	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	AvgPrewriteTimeStr                         = "AVG_PREWRITE_TIME"
+	MaxPrewriteTimeStr                         = "MAX_PREWRITE_TIME"
+	AvgCommitTimeStr                           = "AVG_COMMIT_TIME"
+	MaxCommitTimeStr                           = "MAX_COMMIT_TIME"
+	AvgGetCommitTsTimeStr                      = "AVG_GET_COMMIT_TS_TIME"
+	MaxGetCommitTsTimeStr                      = "MAX_GET_COMMIT_TS_TIME"
+	AvgCommitBackoffTimeStr                    = "AVG_COMMIT_BACKOFF_TIME"
+	MaxCommitBackoffTimeStr                    = "MAX_COMMIT_BACKOFF_TIME"
+	AvgResolveLockTimeStr                      = "AVG_RESOLVE_LOCK_TIME"
+	MaxResolveLockTimeStr                      = "MAX_RESOLVE_LOCK_TIME"
+	AvgLocalLatchWaitTimeStr                   = "AVG_LOCAL_LATCH_WAIT_TIME"
+	MaxLocalLatchWaitTimeStr                   = "MAX_LOCAL_LATCH_WAIT_TIME"
+	AvgWriteKeysStr                            = "AVG_WRITE_KEYS"
+	MaxWriteKeysStr                            = "MAX_WRITE_KEYS"
+	AvgWriteSizeStr                            = "AVG_WRITE_SIZE"
+	MaxWriteSizeStr                            = "MAX_WRITE_SIZE"
+	AvgPrewriteRegionsStr                      = "AVG_PREWRITE_REGIONS"
+	MaxPrewriteRegionsStr                      = "MAX_PREWRITE_REGIONS"
+	AvgTxnRetryStr                             = "AVG_TXN_RETRY"
+	MaxTxnRetryStr                             = "MAX_TXN_RETRY"
+	SumExecRetryStr                            = "SUM_EXEC_RETRY"
+	SumExecRetryTimeStr                        = "SUM_EXEC_RETRY_TIME"
+	SumBackoffTimesStr                         = "SUM_BACKOFF_TIMES"
+	BackoffTypesStr                            = "BACKOFF_TYPES"
+	AvgMemStr                                  = "AVG_MEM"
+	MaxMemStr                                  = "MAX_MEM"
+	AvgDiskStr                                 = "AVG_DISK"
+	MaxDiskStr                                 = "MAX_DISK"
+	AvgKvTimeStr                               = "AVG_KV_TIME"
+	AvgPdTimeStr                               = "AVG_PD_TIME"
+	AvgBackoffTotalTimeStr                     = "AVG_BACKOFF_TOTAL_TIME"
+	AvgWriteSQLRespTimeStr                     = "AVG_WRITE_SQL_RESP_TIME"
+	AvgTidbCPUTimeStr                          = "AVG_TIDB_CPU_TIME"
+	AvgTikvCPUTimeStr                          = "AVG_TIKV_CPU_TIME"
+	MaxResultRowsStr                           = "MAX_RESULT_ROWS"
+	MinResultRowsStr                           = "MIN_RESULT_ROWS"
+	AvgResultRowsStr                           = "AVG_RESULT_ROWS"
+	PreparedStr                                = "PREPARED"
+	AvgAffectedRowsStr                         = "AVG_AFFECTED_ROWS"
+	FirstSeenStr                               = "FIRST_SEEN"
+	LastSeenStr                                = "LAST_SEEN"
+	PlanInCacheStr                             = "PLAN_IN_CACHE"
+	PlanCacheHitsStr                           = "PLAN_CACHE_HITS"
+	PlanCacheUnqualifiedStr                    = "PLAN_CACHE_UNQUALIFIED"
+	PlanCacheUnqualifiedLastReasonStr          = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
+	PlanInBindingStr                           = "PLAN_IN_BINDING"
+	QuerySampleTextStr                         = "QUERY_SAMPLE_TEXT"
+	PrevSampleTextStr                          = "PREV_SAMPLE_TEXT"
+	PlanDigestStr                              = "PLAN_DIGEST"
+	PlanStr                                    = "PLAN"
+	BinaryPlan                                 = "BINARY_PLAN"
+	Charset                                    = "CHARSET"
+	Collation                                  = "COLLATION"
+	PlanHint                                   = "PLAN_HINT"
+	AvgRequestUnitRead                         = "AVG_REQUEST_UNIT_READ"
+	MaxRequestUnitRead                         = "MAX_REQUEST_UNIT_READ"
+	AvgRequestUnitWrite                        = "AVG_REQUEST_UNIT_WRITE"
+	MaxRequestUnitWrite                        = "MAX_REQUEST_UNIT_WRITE"
+	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
+	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
+	ResourceGroupName                          = "RESOURCE_GROUP"
+	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
+	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
+	SumUnpackedBytesSentTiKVCrossZoneStr       = "SUM_UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE"
+	SumUnpackedBytesReceivedTiKVCrossZoneStr   = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE"
+	SumUnpackedBytesSentTiFlashTotalStr        = "SUM_UNPACKED_BYTES_SENT_TIFLASH_TOTAL"
+	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
+	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
+	SumUnpackedBytesReceiveTiFlashCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE"
 )
 
 type columnInfo interface {
@@ -506,29 +506,29 @@ var columnFactoryMap = map[string]columnFactory{
 	PlanCacheUnqualifiedLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheUnqualifiedLastReason
 	},
-	SumUnpackedBytesSentKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentKVTotal
+	SumUnpackedBytesSentTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiKVTotal
 	},
-	SumUnpackedBytesReceivedKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedKVTotal
+	SumUnpackedBytesReceivedTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiKVTotal
 	},
-	SumUnpackedBytesSentKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentKVCrossZone
+	SumUnpackedBytesSentTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiKVCrossZone
 	},
-	SumUnpackedBytesReceivedKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedKVCrossZone
+	SumUnpackedBytesReceivedTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiKVCrossZone
 	},
-	SumUnpackedBytesSentMPPTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentMPPTotal
+	SumUnpackedBytesSentTiFlashTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiFlashTotal
 	},
-	SumUnpackedBytesReceivedMPPTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedMPPTotal
+	SumUnpackedBytesReceivedTiFlashTotalStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiFlashTotal
 	},
-	SumUnpackedBytesSentMPPCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentMPPCrossZone
+	SumUnpackedBytesSentTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesSentTiFlashCrossZone
 	},
-	SumUnpackedBytesReceiveMPPCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedMPPCrossZone
+	SumUnpackedBytesReceiveTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.UnpackedBytesReceivedTiFlashCrossZone
 	},
 }
 

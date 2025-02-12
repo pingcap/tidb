@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/bitmap"
@@ -1078,7 +1078,7 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 	rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	rowContainer.GetDiskTracker().AttachTo(w.HashJoinCtx.diskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		actionSpill := rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {

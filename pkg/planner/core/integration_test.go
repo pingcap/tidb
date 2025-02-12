@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1035,7 +1035,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
@@ -1043,7 +1043,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// Disabled when tiflash_fine_grained_shuffle_stream_count is -1.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")

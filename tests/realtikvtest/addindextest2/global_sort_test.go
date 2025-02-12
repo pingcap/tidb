@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -98,7 +98,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -272,7 +272,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")

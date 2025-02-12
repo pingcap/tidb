@@ -478,7 +478,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
 	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
-		_, err := node.RecursiveDeriveStats(nil)
+		_, _, err := node.RecursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}

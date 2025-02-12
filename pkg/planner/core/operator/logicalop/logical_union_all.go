@@ -148,9 +148,13 @@ func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *op
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	reload := false
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		ColNDVs: make(map[int64]float64, selfSchema.Len()),
@@ -161,7 +165,7 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 			p.StatsInfo().ColNDVs[col.UniqueID] += childProfile.ColNDVs[col.UniqueID]
 		}
 	}
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

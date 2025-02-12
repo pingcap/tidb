@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -321,7 +321,7 @@ func (c *checksumContext) handleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBChecksumTableConcurrency)
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}

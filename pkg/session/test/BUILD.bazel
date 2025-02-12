@@ -21,6 +21,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/tablecodec",

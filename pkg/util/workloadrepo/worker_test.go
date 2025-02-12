@@ -23,12 +23,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -504,18 +506,16 @@ func TestSettingSQLVariables(t *testing.T) {
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(365) == wrk.retentionDays })
 
-	// Test invalid value for sampling interval
-	err := tk.ExecToErr("set @@global." + repositorySamplingInterval + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
+	// Test invalid values for intervals
+	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
-	err = tk.ExecToErr("set @@global." + repositorySnapshotInterval + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
-
-	err = tk.ExecToErr("set @@global." + repositoryRetentionDays + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
+	// Test that if the strconv.Atoi call fails that the error is correctly handled.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
+	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
+	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
 
 	trueWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	trueWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -530,9 +530,7 @@ func TestSettingSQLVariables(t *testing.T) {
 	eventuallyWithLock(t, wrk, func() bool { return !wrk.enabled })
 
 	// Test invalid value for repository destination
-	err = tk.ExecToErr("set @@global." + repositoryDest + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid repository destination")
+	tk.MustGetDBError("set @@global."+repositoryDest+" = 'invalid'", errWrongValueForVar)
 }
 
 func getTable(t *testing.T, tableName string, wrk *worker) *repositoryTable {

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"go.uber.org/atomic"
 )
 
@@ -80,12 +81,12 @@ type DDLReorgMeta struct {
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
-// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,
-// pass the default value in case of the reorg meta coming from old cluster and Concurrency is 0.
-func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
+// GetConcurrency gets the concurrency from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetConcurrency() int {
 	concurrency := dm.Concurrency.Load()
 	if concurrency == 0 {
-		return defaultVal
+		// when the job coming from old cluster, concurrency might not set
+		return int(vardef.GetDDLReorgWorkerCounter())
 	}
 	return int(concurrency)
 }
@@ -95,11 +96,12 @@ func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
 	dm.Concurrency.Store(int64(concurrency))
 }
 
-// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta.
-func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
+// GetBatchSize gets the batch size from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetBatchSize() int {
 	batchSize := dm.BatchSize.Load()
 	if batchSize == 0 {
-		return defaultVal
+		// when the job coming from old cluster, batch-size might not set
+		return int(vardef.GetDDLReorgBatchSize())
 	}
 	return int(batchSize)
 }
@@ -109,9 +111,10 @@ func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
 	dm.BatchSize.Store(int64(batchSize))
 }
 
-// GetMaxWriteSpeedOrDefault gets the max write speed from DDLReorgMeta.
+// GetMaxWriteSpeed gets the max write speed from DDLReorgMeta.
 // 0 means no limit.
-func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault() int {
+func (dm *DDLReorgMeta) GetMaxWriteSpeed() int {
+	// 0 means no limit, so it's ok even when the job coming from old cluster
 	return int(dm.MaxWriteSpeed.Load())
 }
 

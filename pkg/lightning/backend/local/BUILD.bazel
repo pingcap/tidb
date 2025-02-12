@@ -51,7 +51,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
