@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1601,6 +1602,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				if err != nil {
+					strBuilder := strings.Builder{}
+					strBuilder.WriteString("merge buffer: ")
+					for i, bkt := range mergeBuffer {
+						str := types.DatumsToStrNoErr([]types.Datum{*bkt.lower, *bkt.upper})
+						strBuilder.WriteString(str)
+						if i != len(mergeBuffer)-1 {
+							strBuilder.WriteString(", ")
+						}
+					}
+					logutil.BgLogger().Warn("failed to merge partition buckets", zap.String("merge buffer", strBuilder.String()))
 					return nil, err
 				}
 				for _, bkt := range cutAndFixBuffer {
