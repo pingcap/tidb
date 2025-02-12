@@ -688,22 +688,6 @@ func TestTooLargeRow(t *testing.T) {
 			Delimiter: `"`,
 		},
 	}
-<<<<<<< HEAD:br/pkg/lightning/mydump/csv_parser_test.go
-	var testCase bytes.Buffer
-	testCase.WriteString("a,b,c,d")
-	// WARN: will take up 10KB memory here.
-	mydump.LargestEntryLimit = 10 * 1024
-	for i := 0; i < mydump.LargestEntryLimit; i++ {
-		testCase.WriteByte('d')
-	}
-	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-	require.NoError(t, err)
-	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
-	require.NoError(t, err)
-	e := parser.ReadRow()
-	require.Error(t, e)
-	require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
-=======
 	bak := mydump.LargestEntryLimit
 	t.Cleanup(func() {
 		mydump.LargestEntryLimit = bak
@@ -718,7 +702,7 @@ func TestTooLargeRow(t *testing.T) {
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		require.NoError(t, err)
-		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
 		require.NoError(t, err)
 		e := parser.ReadRow()
 		require.Error(t, e)
@@ -741,13 +725,12 @@ func TestTooLargeRow(t *testing.T) {
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		require.NoError(t, err)
-		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
 		require.NoError(t, err)
 		e := parser.ReadRow()
 		require.Error(t, e)
 		require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
 	})
->>>>>>> b71ad38bcd9 (importinto/lightning: check max row size when parsing csv to avoid OOM (#58592)):pkg/lightning/mydump/csv_parser_test.go
 }
 
 func TestSpecialChars(t *testing.T) {
