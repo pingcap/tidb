@@ -188,8 +188,10 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *fd.FDSet
-	if _, ok := p.Self().(*logicalop.LogicalJoin); ok {
-		fd = p.ExtractFD()
+	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+		if joinP.JoinType == logicalop.InnerJoin {
+			fd = p.ExtractFD()
+		}
 	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
