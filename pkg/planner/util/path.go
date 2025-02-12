@@ -45,6 +45,8 @@ type AccessPath struct {
 	// CorrCountAfterAccess is the row count after only applying the most filtering index columns.
 	// against the index. This is used when we don't have a full index statistics
 	// and we need to use the exponential backoff to estimate the row count.
+	// Case CorrCountAfterAccess > 0 : we use the exponential backoff to estimate the row count (such as we don't have a full index statistics)
+	// Default CorrCountAfterAccess = 0 : we use index of table estimate row coun directly (such as table full scan, point get etc)
 	CorrCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
