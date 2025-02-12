@@ -921,15 +921,15 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 // When to extract functional dependencies, we need to close thie skipPlanCache.
 // so it only is closed by pkg/planner/core.ExtractNotNullFromConds
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
-	if skipPlanCache && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
 		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return res, err
 	}
-	return evaluateExprWithNull(ctx, schema, expr, skipPlanCache)
+	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
 }
 
 func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, notSkipPlanCache bool) (Expression, error) {
