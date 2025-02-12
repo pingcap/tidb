@@ -6,17 +6,11 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
-
-func encodeTxnMetaKey(key []byte, field []byte, ts uint64) []byte {
-	k := tablecodec.EncodeMetaKey(key, field)
-	txnKey := codec.EncodeBytes(nil, k)
-	return codec.EncodeUintDesc(txnKey, ts)
-}
 
 func TestRawMetaKeyForDB(t *testing.T) {
 	var (
@@ -25,7 +19,7 @@ func TestRawMetaKeyForDB(t *testing.T) {
 		mDbs        = []byte("DBs")
 	)
 
-	txnKey := encodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
+	txnKey := utils.EncodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
 
 	rawMetaKey, err := ParseTxnMetaKeyFrom(txnKey)
 	require.NoError(t, err)
@@ -44,7 +38,7 @@ func TestRawMetaKeyForTable(t *testing.T) {
 		tableID int64  = 57
 		ts      uint64 = 400036290571534337
 	)
-	txnKey := encodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
+	txnKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
 
 	rawMetakey, err := ParseTxnMetaKeyFrom(txnKey)
 	require.NoError(t, err)
