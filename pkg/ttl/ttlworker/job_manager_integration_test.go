@@ -47,11 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/prometheus/client_golang/prometheus"
->>>>>>> 75154399927 (ttl: only gc in leader to save performance (#59358))
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
