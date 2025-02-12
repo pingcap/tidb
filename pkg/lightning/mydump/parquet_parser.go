@@ -130,6 +130,8 @@ func (dump *columnDumper) SetReader(colReader file.ColumnChunkReader) {
 	dump.reader = colReader
 	dump.valueOffset = 0
 	dump.levelOffset = 0
+	dump.levelsBuffered = 0
+	dump.valuesBuffered = 0
 }
 
 func (dump *columnDumper) readNextBatch() int {
@@ -804,7 +806,9 @@ func (pp *ParquetParser) Close() error {
 	if a, ok := pp.alloc.(interface{ Close() }); ok {
 		a.Close()
 	}
-	pp.memLimiter.Release(pp.memoryUsage)
+	if pp.memLimiter != nil {
+		pp.memLimiter.Release(pp.memoryUsage)
+	}
 	return nil
 }
 

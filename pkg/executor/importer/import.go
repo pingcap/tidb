@@ -540,9 +540,6 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
 	}
-	if p.Format == DataFormatParquet {
-		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.25))
-	}
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
@@ -1153,7 +1150,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// Adjust thread count for parquet
 		memTotal, err := memory.MemTotal()
 		if err == nil {
-			limit := min(int(memTotal)*50/100/int(e.dataFiles[0].ParquetMeta.MemoryUsage), e.Plan.ThreadCnt)
+			limit := min(int(memTotal)*50/100/int(dataFiles[0].ParquetMeta.MemoryUsage), e.Plan.ThreadCnt)
 			limit = max(limit, 1)
 			log.L().Info("adjust IMPORT INTO thread count for parquet",
 				zap.Int("thread count", e.Plan.ThreadCnt), zap.Int("after", limit))
