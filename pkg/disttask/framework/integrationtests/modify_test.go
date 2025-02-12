@@ -392,4 +392,36 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		require.Equal(t, "modify_max_write_speed=123", string(*runtimeInfo.currTaskMeta.Load()))
 		require.Equal(t, int64(7), runtimeInfo.currTaskConcurrency.Load())
 	})
+
+	t.Run("modify meta and decrease concurrency when subtask is running, and apply success", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		defer testModifyWhenSubtaskRun.Store(false)
+		testModifyWhenSubtaskRun.Store(true)
+		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, 9, "", []byte("init"))
+		require.NoError(t, err)
+		require.Equal(t, 9, task.Concurrency)
+		require.EqualValues(t, []byte("init"), task.Meta)
+		modifyWaitCh <- struct{}{}
+		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 5},
+				{Type: proto.ModifyMaxWriteSpeed, To: 456},
+			},
+		}))
+		require.Eventually(t, func() bool {
+			return "modify_max_write_speed=456" == string(*runtimeInfo.currTaskMeta.Load()) &&
+				runtimeInfo.currTaskConcurrency.Load() == 5
+		}, 10*time.Second, 100*time.Millisecond)
+		testModifyWhenSubtaskRun.Store(false)
+		modifyWaitCh <- struct{}{}
+		// finish subtasks
+		for i := 0; i < 5; i++ {
+			subtaskCh <- struct{}{}
+		}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+		require.Equal(t, "modify_max_write_speed=456", string(*runtimeInfo.currTaskMeta.Load()))
+		require.Equal(t, int64(5), runtimeInfo.currTaskConcurrency.Load())
+	})
 }
