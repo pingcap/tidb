@@ -71,6 +71,7 @@ func TestDeriveStats(t *testing.T) {
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
 		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
@@ -168,6 +169,7 @@ func TestGroupNDVCols(t *testing.T) {
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
 		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
