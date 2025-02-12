@@ -469,6 +469,9 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return err
 	}
 	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
+		// calculate the number of subtasks, so we need to do this before
+		// filtering nodes by available slots in scheduleSubtask.
 		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
 	}
 

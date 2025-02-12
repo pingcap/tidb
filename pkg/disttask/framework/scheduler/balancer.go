@@ -98,17 +98,14 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	if err != nil {
 		return err
 	}
-	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
-		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
-	}
 	if len(eligibleNodes) == 0 {
 		return errors.New("no eligible nodes to balance subtasks")
 	}
-	return b.doBalanceSubtasks(ctx, task.ID, eligibleNodes)
+	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
-func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligibleNodes []string) (err error) {
-	subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, taskID)
+func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, eligibleNodes []string) (err error) {
+	subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, task.ID)
 	if err != nil {
 		return err
 	}
@@ -123,6 +120,9 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
 		adjustedNodes = []string{}
 	})
+	if task.MaxNodeCount > 0 && len(adjustedNodes) > task.MaxNodeCount {
+		adjustedNodes = adjustedNodes[:task.MaxNodeCount]
+	}
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.
@@ -164,7 +164,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	for node, sts := range executorSubtasks {
 		if _, ok := adjustedNodeMap[node]; !ok {
 			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
-				zap.Int64("task-id", taskID),
+				zap.Int64("task-id", task.ID),
 				zap.String("node", node),
 				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
 				zap.Int("used-slots", b.currUsedSlots[node]))

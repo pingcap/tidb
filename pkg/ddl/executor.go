@@ -4954,7 +4954,6 @@ func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
 
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
-	defaultMaxNodeCnt := 0
 
 	setReorgParam := func() {
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -4972,10 +4971,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
 			if m.MaxNodeCount == -1 { // -1 means calculate automatically
-				if defaultMaxNodeCnt == 0 {
-					defaultMaxNodeCnt = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
-				}
-				m.MaxNodeCount = defaultMaxNodeCnt
+				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
 			}
 		}
 		if hasSysDB(job) {
