@@ -212,23 +212,9 @@ func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
 	}
 	res.MakeNotNull(notNullCols)
 	// check the equivalency between children.
-	for i := 0; i < p.Schema().Len(); i++ {
-		for j := i + 1; j < p.Schema().Len(); j++ {
-			// detect the equivalency between the i-th and j-th column.
-			flag := true
-			iID := int(p.schema.Columns[i].UniqueID)
-			jID := int(p.schema.Columns[j].UniqueID)
-			for _, childFD := range childFDs {
-				// once we find the i-th and j-th column are not equivalent in one child, we can break the loop.
-				if !childFD.AreColsEquiv(iID, jID) {
-					flag = false
-					break
-				}
-			}
-			if flag {
-				res.AddEquivalence(intset.NewFastIntSet(iID), intset.NewFastIntSet(jID))
-			}
-		}
+	equivs := fd.FindCommonEquivClasses(childFDs)
+	for _, equiv := range equivs {
+		res.AddEquivalenceUnion(equiv)
 	}
 	p.fdSet = res
 	return res
