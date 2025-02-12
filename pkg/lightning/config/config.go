@@ -849,18 +849,6 @@ type CSVConfig struct {
 }
 
 func (csv *CSVConfig) adjust() error {
-	csv.FieldsEncodedBy = FieldEncodeType(strings.ToLower(string(csv.FieldsEncodedBy)))
-	if csv.FieldsEncodedBy == FieldEncodeBase64 {
-		if csv.Header {
-			return common.ErrInvalidConfig.GenWithStack("`header` must be false when `encoded-by` is 'base64'")
-		}
-		if csv.FieldsEnclosedBy != "" {
-			return common.ErrInvalidConfig.GenWithStack("`enclosed-by` must be empty when `encoded-by` is 'base64'")
-		}
-		if csv.FieldsEscapedBy != "" {
-			return common.ErrInvalidConfig.GenWithStack("`escaped-by` must be empty when `encoded-by` is 'base64'")
-		}
-	}
 	if len(csv.FieldsTerminatedBy) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
 	}
@@ -894,6 +882,20 @@ func (csv *CSVConfig) adjust() error {
 		if csv.LinesTerminatedBy == csv.FieldsEscapedBy {
 			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.FieldsEscapedBy)
 		}
+	}
+	csv.FieldsEncodedBy = FieldEncodeType(strings.ToLower(string(csv.FieldsEncodedBy)))
+	if csv.FieldsEncodedBy == FieldEncodeBase64 {
+		if csv.Header {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.header` must be false when `encoded-by` is 'base64'")
+		}
+		if csv.FieldsEnclosedBy != "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.delimiter` must be empty when `encoded-by` is 'base64'")
+		}
+		if csv.FieldsEscapedBy != "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty when `encoded-by` is 'base64'")
+		}
+	} else if csv.FieldsEncodedBy != FieldEncodeNone {
+		return common.ErrInvalidConfig.GenWithStack("unsupported `encoded-by` value '%s'", csv.FieldsEncodedBy)
 	}
 	return nil
 }
