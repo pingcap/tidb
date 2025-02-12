@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -633,8 +634,8 @@ func (p *PdController) RemoveSchedulersConfig(
 	return originCfg, removedCfg, nil
 }
 
-func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, originCfg, removedCfg *ClusterConfig) (err error) {
-
+func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (err error) {
+	pauseSchedulerByKeyRangeWithTTL(ctx, p.pdHTTPCli, keyRange, pauseTimeout)
 	return nil
 }
 
@@ -726,7 +727,7 @@ func PauseSchedulersByKeyRange(
 	pdHTTPCli pdhttp.Client,
 	startKey, endKey []byte,
 ) (done <-chan struct{}, err error) {
-	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][]kv.Key{{startKey, endKey}}, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
@@ -738,9 +739,16 @@ func PauseSchedulersByKeyRange(
 func pauseSchedulerByKeyRangeWithTTL(
 	ctx context.Context,
 	pdHTTPCli pdhttp.Client,
-	startKey, endKey []byte,
+	keyRange [][]kv.Key,
 	ttl time.Duration,
 ) (<-chan struct{}, error) {
+	var encodedKeyRangeRule []KeyRangeRule
+	for _, keyPair := range keyRange {
+		var rule KeyRangeRule
+		rule.StartKeyHex = hex.EncodeToString(keyPair[0])
+		rule.EndKeyHex = hex.EncodeToString(keyPair[1])
+		encodedKeyRangeRule = append(encodedKeyRangeRule, rule)
+	}
 	rule := &pdhttp.LabelRule{
 		ID: uuid.New().String(),
 		Labels: []pdhttp.RegionLabel{{
@@ -751,10 +759,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 		RuleType: "key-range",
 		// Data should be a list of KeyRangeRule when rule type is key-range.
 		// See https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L169.
-		Data: []KeyRangeRule{{
-			StartKeyHex: hex.EncodeToString(startKey),
-			EndKeyHex:   hex.EncodeToString(endKey),
-		}},
+		Data: encodedKeyRangeRule,
 	}
 	done := make(chan struct{})
 

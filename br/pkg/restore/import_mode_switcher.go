@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -205,7 +207,7 @@ func FineGrainedRestorePreWork(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	switcher *ImportModeSwitcher,
-	rewriteRule []*utils.RewriteRules,
+	tableIDs []int64,
 	isOnline bool,
 	switchToImport bool,
 ) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
@@ -222,17 +224,60 @@ func FineGrainedRestorePreWork(
 	}
 
 	// handle config
-	originCfg, removedCfg, err := mgr.RemoveSchedulersConfig(ctx)
+	originCfg, _, err := mgr.RemoveSchedulersConfig(ctx)
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
 
 	// handle scheduler
-	mgr.RemoveSchedulersOnRegion(ctx, &originCfg, &removedCfg)
+	keyRange := calSortedKeyRanges(tableIDs)
+	mgr.RemoveSchedulersOnRegion(ctx, keyRange)
 
 	// handle undo
 	undo := mgr.MakeUndoFunctionByConfig(pdutil.ClusterConfig{Schedulers: originCfg.Schedulers, ScheduleCfg: originCfg.ScheduleCfg})
 	return undo, &originCfg, errors.Trace(err)
+}
+
+func calSortedKeyRanges(ids []int64) [][]kv.Key {
+	idRanges := calSortedTableIds(ids)
+	if len(idRanges) == 0 {
+		return [][]kv.Key{}
+	}
+	var keyRanges [][]kv.Key
+	for i :=0; i < len(idRanges); i++{
+		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
+		endKey := tablecodec.EncodeTablePrefix(idRanges[i][1])
+		keyRanges = append(keyRanges, []kv.Key{startKey,endKey})
+	}
+	return keyRanges
+}
+
+func calSortedTableIds(ids []int64) ([][]int64){
+	if len(ids) == 0 {
+		return [][]int64{}
+	}
+
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+
+	var idRanges [][]int64
+
+	start := ids[0]
+	end := start + 1
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i] == ids[i-1]+1 {
+			end = ids[i] + 1
+		} else {
+			idRanges = append(idRanges, []int64{start, end})
+			start = ids[i]
+			end = start + 1
+		}
+	}
+	idRanges = append(idRanges, []int64{start, end})
+
+	return idRanges
 }
 
 // RestorePostWork executes some post work after restore.

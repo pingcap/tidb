@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -1053,9 +1052,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if isFullRestore(cmdName) {
 		undoRemoveScheduler, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
-		var rewriteRules []*restoreutils.RewriteRules
+		var tableIDs []int64
 		for _, table := range createdTables {
-			rewriteRules = append(rewriteRules, table.RewriteRule)
+			tableIDs = append(tableIDs, table.Table.ID)
 		}
 		undoRemoveScheduler, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, rewriteRules, cfg.Online, true)
 	}
