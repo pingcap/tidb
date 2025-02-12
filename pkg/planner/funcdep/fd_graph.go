@@ -406,6 +406,12 @@ func (s *FDSet) AddEquivalence(from, to intset.FastIntSet) {
 	s.addEquivalence(from.Union(to))
 }
 
+// AddEquivalenceUnion add an equivalence union to fdSet.
+func (s *FDSet) AddEquivalenceUnion(union intset.FastIntSet) {
+	// no check for trivial equivalence, since it's a union of multiple equivalent columns.
+	s.addEquivalence(union)
+}
+
 // AddConstants adds a strict FD to the source which indicates that each of the given column
 // have the same constant value for all rows, or same null value for all rows if it's nullable.
 //
