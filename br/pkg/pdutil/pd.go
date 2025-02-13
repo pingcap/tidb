@@ -356,6 +356,10 @@ func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string)
 	if err != nil {
 		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
 	}
+	if len(ruleRet) == 0 {
+		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
+		return nil
+	}
 	rule := ruleRet[0]
 	// Set ttl to 0 to remove the rule.
 	rule.Labels[0].TTL = time.Duration(0).String()
