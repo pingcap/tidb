@@ -27,8 +27,6 @@ const (
 	HashJoinVersionLegacy = "legacy"
 	// HashJoinVersionOptimized means hash join v2
 	HashJoinVersionOptimized = "optimized"
-	// DefaultHashJoinVersion is the default value for hash join version
-	DefaultHashJoinVersion = HashJoinVersionLegacy
 )
 
 var (
