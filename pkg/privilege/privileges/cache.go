@@ -938,7 +938,6 @@ func (p *MySQLPrivilege) loadTable(exec sqlexec.SQLExecutor, sql string,
 		// here, otherwise some werid bug will happen!
 		req = chunk.Renew(req, 1024)
 	}
-	return nil
 }
 
 // parseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
