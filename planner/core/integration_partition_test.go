@@ -1693,3 +1693,17 @@ func TestGeneratedColumnWithPartition(t *testing.T) {
 	tk.MustExec(`INSERT INTO tp (id, c1) VALUES (0, 1)`)
 	tk.MustExec(`select /*+ FORCE_INDEX(tp, idx) */id from tp where c2 = 2 group by id having id in (0)`)
 }
+
+// TestIssue58581
+func TestIssue58581(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int unique key, c int);")
+	tk.MustExec("insert into t values (1, 10);")
+	tk.MustExec("insert into t values (2, 20);")
+	tk.MustExec("insert into t values (3, 30);")
+	tk.MustQuery("select _tidb_rowid from t where id in (1, 2, 3);").Check(testkit.Rows("1", "2", "3"))
+}
