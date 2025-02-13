@@ -188,7 +188,7 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 
 func TestForbidUnixTimestampPushdown(t *testing.T) {
 	ctx := mock.NewContext()
-	fc := &valuesFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 0}, 0, types.NewFieldType(mysql.TypeLong)}
+	fc := &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 0}}
 	bt, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	sf := &ScalarFunction{
