@@ -110,3 +110,7 @@ func (od *OwnerDaemon) ForceToBeOwner(ctx context.Context) error {
 func (od *OwnerDaemon) RetireIfOwner() {
 	od.manager.RetireOwner()
 }
+
+func (od *OwnerDaemon) CampaignCancel() {
+	od.manager.CampaignCancel()
+}

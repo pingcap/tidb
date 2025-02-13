@@ -991,7 +991,8 @@ func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycle
 				isOwner = true
 			} else {
 				// retire from being owner
-				advancerd.RetireIfOwner()
+				advancerd.RetireIfOwner()  // stops advancer
+				advancerd.CampaignCancel() // kills etcd session so election can happen
 				log.Info("command line advancer retired from being owner")
 				isOwner = false
 			}
