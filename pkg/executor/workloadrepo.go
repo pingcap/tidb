@@ -22,7 +22,7 @@ import (
 )
 
 // TakeSnapshot is a hook from workload repo that may trigger manual snapshot.
-var TakeSnapshot func() error
+var TakeSnapshot func(context.Context) error
 
 // WorkloadRepoCreateExec indicates WorkloadRepoCreate executor.
 type WorkloadRepoCreateExec struct {
@@ -30,9 +30,9 @@ type WorkloadRepoCreateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (*WorkloadRepoCreateExec) Next(context.Context, *chunk.Chunk) error {
+func (*WorkloadRepoCreateExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if TakeSnapshot != nil {
-		return TakeSnapshot()
+		return TakeSnapshot(ctx)
 	}
 	return nil
 }
