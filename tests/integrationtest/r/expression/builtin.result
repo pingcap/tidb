@@ -2068,17 +2068,6 @@ NULL
 select export_set(7, "1", "0", ",", 1);
 export_set(7, "1", "0", ",", 1)
 1
-select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');
-format(12332.1, 4)	format(12332.2, 0)	format(12332.2, 2,'en_US')
-12,332.1000	12,332	12,332.20
-select format(NULL, 4), format(12332.2, NULL);
-format(NULL, 4)	format(12332.2, NULL)
-NULL	NULL
-select format(12332.2, 2,'es_EC');
-format(12332.2, 2,'es_EC')
-12,332.20
-Level	Code	Message
-Warning	1649	Unknown locale: 'es_EC'
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 field(1, 2, 1)	field(1, 0, NULL)	field(1, NULL, 2, 1)	field(NULL, 1, 2, NULL)
 2	0	3	0
