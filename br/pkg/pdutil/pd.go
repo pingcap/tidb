@@ -791,7 +791,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 	keyRange [][]kv.Key,
 	ttl time.Duration,
 ) (<-chan struct{}, string, error) {
-	var encodedKeyRangeRule []KeyRangeRule
+	var encodedKeyRangeRule = []KeyRangeRule{}
 	for _, keyPair := range keyRange {
 		var rule KeyRangeRule
 		rule.StartKeyHex = hex.EncodeToString(keyPair[0])
