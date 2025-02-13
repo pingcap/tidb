@@ -325,6 +325,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		backendCtx,
 		engines,
 		r.job.ID,
+		0,
 		tbl,
 		r.indexes,
 		start,
@@ -385,6 +386,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		concurrency,
 		r.GetResource(),
 		rowCntListener,
+		&r.subtaskSummary,
 	)
 }
 

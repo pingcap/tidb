@@ -99,7 +99,6 @@ func GetIngestTempDataDir() string {
 	tidbCfg := config.GetGlobalConfig()
 	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-
 	return sortPath
 }
 

@@ -224,6 +224,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		bcCtx,
 		[]ingest.Engine{mockEngine},
 		1, // job id
+		0, // subtask id
 		tbl.(table.PhysicalTable),
 		[]*model.IndexInfo{idxInfo},
 		startKey,
@@ -324,6 +325,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				bcCtx,
 				[]ingest.Engine{mockEngine},
 				1, // job id
+				0, // subtask id
 				tbl.(table.PhysicalTable),
 				[]*model.IndexInfo{idxInfo},
 				startKey,

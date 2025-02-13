@@ -540,6 +540,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 		ctx,
 		mockOneMultiFileStat(datas, stats),
 		s.store,
+		s.store,
 		s.minKey,
 		s.maxKey.Next(),
 		int64(5*size.MB),

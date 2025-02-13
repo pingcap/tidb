@@ -133,7 +133,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), availableDisk)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
 	case proto.BackfillStepWriteAndIngest:
@@ -279,6 +279,7 @@ func generateNonPartitionPlan(
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int,
+	availableDiskUsage uint64,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
@@ -326,7 +327,7 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud, availableDiskUsage)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			// It should be different for each subtask to determine if there are duplicate entries.
@@ -368,7 +369,7 @@ func generateNonPartitionPlan(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool, availableDiskUsage uint64) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
@@ -379,6 +380,11 @@ func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
+		if vardef.EnableGlobalSortLocalStore.Load() && availableDiskUsage > 0 {
+			approxMaxRegions := availableDiskUsage / (96 * units.MiB)
+			logutil.DDLLogger().Info("calculate region batch", zap.Uint64("max region count", approxMaxRegions))
+			regionBatch = min(int(approxMaxRegions), avgTasksPerInstance)
+		}
 	}
 	regionBatch = max(regionBatch, 1)
 	return regionBatch
