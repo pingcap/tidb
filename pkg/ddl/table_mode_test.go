@@ -176,7 +176,6 @@ func TestTableModeBasic(t *testing.T) {
 }
 
 func TestTableModeConcurrent(t *testing.T) {
-	// Setup a fresh test environment.
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	de := domain.DDLExecutor()
 	tk := testkit.NewTestKit(t, store)
@@ -236,16 +235,15 @@ func TestTableModeConcurrent(t *testing.T) {
 	for e := range errs2 {
 		require.NoError(t, e)
 	}
-	// Verify t1 is now in ModeNormal.
 	checkTableModeTest(t, store, dbInfo, t1NormalInfos[0], model.TableModeNormal)
 
 	// Concurrency test3: concurrently alter t1 to ModeRestore and ModeImport, expecting one success, one failure.
 	modes := []model.TableModeState{
-		model.TableModeRestore, // allowed transition from ModeNormal
-		model.TableModeImport,  // disallowed transition from ModeNormal
+		model.TableModeRestore,
+		model.TableModeImport,
 	}
 	clones := make([]*model.TableInfo, len(modes))
-	for i, _ := range modes {
+	for i := range modes {
 		clones[i] = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	}
 	var wg3 sync.WaitGroup
