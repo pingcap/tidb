@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -45,7 +46,10 @@ go_test(
     flaky = True,
     deps = [
         ":util",
+        "//pkg/domain/infosync",
+        "//pkg/sessionctx",
         "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

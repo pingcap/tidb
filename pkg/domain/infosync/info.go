@@ -1339,6 +1339,19 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
+// HasInternalSessionForTest is the entry function for check whether an internal session is stored in SessionManager.
+func HasInternalSessionForTest(se any) bool {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return false
+	}
+	return sm.HasInternalSessionForTest(se)
+}
+
 // SetEtcdClient is only used for test.
 func SetEtcdClient(etcdCli *clientv3.Client) {
 	is, err := getGlobalInfoSyncer()
