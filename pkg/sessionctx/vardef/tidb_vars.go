@@ -247,9 +247,6 @@ const (
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 
-	// TiDBTxnScope indicates whether using global transactions or local transactions.
-	TiDBTxnScope = "txn_scope"
-
 	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
 	TiDBTxnReadTS = "tx_read_ts"
 
@@ -986,6 +983,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
+	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 )
 
 // TiDB vars that have only global scope
@@ -1571,6 +1571,7 @@ const (
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBAccelerateUserCreationUpdate               = false
 )
 
 // Process global variables.
@@ -1693,8 +1694,9 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
-	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 )
 
 func serverMemoryLimitDefaultValue() string {

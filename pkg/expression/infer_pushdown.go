@@ -210,9 +210,9 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
 		ast.FromDays, /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff /*ast.TimestampDiff, ast.DateAdd*/, ast.FromUnixTime,
+		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
-		ast.Sysdate,
+		ast.Sysdate, ast.StrToDate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -372,6 +372,12 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
 			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
+			return true
+		}
+	case ast.Truncate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
 			return true
 		}
 	case ast.Extract:

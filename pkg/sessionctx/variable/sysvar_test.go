@@ -383,10 +383,6 @@ func TestSessionGetterFuncs(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBFoundInBinding)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
-
-	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBTxnScope)
-	require.NoError(t, err)
-	require.Equal(t, vars.TxnScope.GetVarValue(), val)
 }
 
 func TestInstanceScopedVars(t *testing.T) {
