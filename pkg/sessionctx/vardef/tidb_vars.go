@@ -1554,7 +1554,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
-	DefTiDBHashJoinVersion                            = joinversion.DefaultHashJoinVersion
+	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionLegacy
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
