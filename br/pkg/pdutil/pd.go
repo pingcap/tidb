@@ -678,8 +678,7 @@ func (p *PdController) RemoveSchedulersConfig(
 // To resume the schedulers, call the cancel function.
 // wait until done is finished to ensure schedulers all resumed
 func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (string, func(), error) {
-	innerCtx, cancel := context.WithCancel(ctx)
-	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(innerCtx, p.pdHTTPCli, keyRange, pauseTimeout)
+	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(ctx, p.pdHTTPCli, keyRange, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
@@ -687,7 +686,6 @@ func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange []
 	<-time.After(20 * time.Millisecond)
 
 	resumeScheduler := func() {
-		cancel()
 		<-done
 	}
 
