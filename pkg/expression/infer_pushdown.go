@@ -229,9 +229,8 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 	case ast.UnixTimestamp:
 		if sf.Function.PbCode() == tipb.ScalarFuncSig_UnixTimestampCurrent {
 			return false
-		} else {
-			return true
 		}
+		return true
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
 	case ast.Conv:
