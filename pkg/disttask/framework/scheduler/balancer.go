@@ -114,7 +114,7 @@ func filterNodesByMaxNodeCnt(nodes []string, subtasks []*proto.SubtaskBase, maxN
 	for _, st := range subtasks {
 		nodeSubtaskCnt[st.ExecID]++
 	}
-	sort.Slice(nodes, func(i, j int) bool {
+	sort.SliceStable(nodes, func(i, j int) bool {
 		return nodeSubtaskCnt[nodes[i]] > nodeSubtaskCnt[nodes[j]]
 	})
 	return nodes[:maxNodeCnt]

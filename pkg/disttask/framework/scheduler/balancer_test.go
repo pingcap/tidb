@@ -236,11 +236,11 @@ func TestBalanceOneTask(t *testing.T) {
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0},
 			expectedSubtasks: []*proto.SubtaskBase{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
-			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 0},
+			expectedUsedSlots: map[string]int{"tidb1": 0, "tidb2": 16},
 		},
 		// scale out, but max node count is limited.
 		{
