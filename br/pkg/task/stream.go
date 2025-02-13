@@ -989,9 +989,11 @@ func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycle
 				log.Info("command line advancer forced to be the owner")
 				isOwner = true
 			} else {
-				// retire from being owner
-				advancerd.RetireIfOwner()
-				log.Info("command line advancer retired from being owner")
+				// resign from being owner
+				if err := advancerd.ResignIfOwner(ctx); err != nil {
+					log.Error("command line advancer failed to resign ownership", zap.Error(err))
+				}
+				log.Info("command line advancer resigned from being owner")
 				isOwner = false
 			}
 		}
