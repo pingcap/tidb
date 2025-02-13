@@ -457,8 +457,8 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 	return nil
 }
 
-// Init create db connection and domain for storage.
-func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
+// InitConnections create db connection and domain for storage.
+func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	// setDB must happen after set PolicyMode.
 	// we will use policyMode to set session variables.
 	var err error
@@ -599,7 +599,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	return nil
 }
 
-func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
+func needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
@@ -613,7 +613,7 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawStartKey []byte,
 	RawEndKey []byte,
 ) error {
-	if rc.needLoadSchemas(backupMeta) {
+	if needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
@@ -717,6 +717,15 @@ func (rc *SnapClient) GetDatabases() []*metautil.Database {
 		dbs = append(dbs, db)
 	}
 	return dbs
+}
+
+// GetDatabaseMap returns all databases in a map indexed by db id
+func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
+	dbMap := make(map[int64]*metautil.Database)
+	for _, db := range rc.databases {
+		dbMap[db.Info.ID] = db
+	}
+	return dbMap
 }
 
 // HasBackedUpSysDB whether we have backed up system tables

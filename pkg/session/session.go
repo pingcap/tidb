@@ -927,6 +927,20 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
+	if err == nil && s.txn.lastCommitTS > 0 {
+		// lastCommitTS could be the same, e.g. when the txn is considered readonly
+		if s.txn.lastCommitTS < s.sessionVars.LastCommitTS {
+			logutil.BgLogger().Error("check lastCommitTS failed",
+				zap.Uint64("sessionLastCommitTS", s.sessionVars.LastCommitTS),
+				zap.Uint64("txnLastCommitTS", s.txn.lastCommitTS),
+				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
+			)
+			return fmt.Errorf("txn commit_ts:%d is before session last_commit_ts:%d",
+				s.txn.lastCommitTS, s.sessionVars.LastCommitTS)
+		}
+		s.sessionVars.LastCommitTS = s.txn.lastCommitTS
+	}
+
 	// record the TTLInsertRows in the metric
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
 

@@ -129,12 +129,12 @@ func testCheckpointMetaForRestore(
 	require.NoError(t, err)
 	require.False(t, exists)
 	err = logMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
-		Progress: checkpoint.InLogRestoreAndIdMapPersist,
+		Progress: checkpoint.InLogRestoreAndIdMapPersisted,
 	})
 	require.NoError(t, err)
 	progress, err := logMetaManager.LoadCheckpointProgress(ctx)
 	require.NoError(t, err)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, progress.Progress)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, progress.Progress)
 
 	taskInfo, err := checkpoint.TryToGetCheckpointTaskInfo(ctx, snapshotMetaManager, logMetaManager)
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func testCheckpointMetaForRestore(
 	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
 	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
 	require.Equal(t, true, taskInfo.HasSnapshotMetadata)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, taskInfo.Progress)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, taskInfo.Progress)
 
 	exists, err = logMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
 	require.NoError(t, err)
@@ -416,9 +416,8 @@ func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
 func TestCheckpointRunnerRetryOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	se, err := g.CreateSession(s.Mock.Storage)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotTableMetaManager(se, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerRetry(t, snapshotMetaManager)
 }
@@ -483,9 +482,8 @@ func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 func TestCheckpointRunnerNoRetryOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	se, err := g.CreateSession(s.Mock.Storage)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotTableMetaManager(se, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
 }
@@ -538,9 +536,8 @@ func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
 func TestCheckpointLogRestoreRunnerOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	se, err := g.CreateSession(s.Mock.Storage)
+	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
-	logMetaManager := checkpoint.NewLogTableMetaManager(se, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
 	defer logMetaManager.Close()
 	testCheckpointLogRestoreRunner(t, logMetaManager)
 }

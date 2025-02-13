@@ -374,6 +374,12 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
+	case ast.Truncate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
+			return true
+		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
