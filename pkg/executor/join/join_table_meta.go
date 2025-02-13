@@ -179,7 +179,7 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 // It calculates various metadata about the join table, such as row length, key properties, and column order.
 // buildKeyIndex is the build key column index based on buildSchema, should not be nil
 // columnsUsedByOtherCondition is the column index that will be used in other condition, if no other condition, will be nil
-// ooutputColumns is the column index that is needed generate join result, if outputColumns is nil, all the build column will be used to generate join results
+// outputColumns is the column index that is needed generate join result, if outputColumns is nil, all the build column will be used to generate join results
 // needUsedFlag is true for outer/semi join that use outer to build
 func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, needUsedFlag bool) *joinTableMeta {
 	meta := &joinTableMeta{}
@@ -226,7 +226,9 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		meta.rowLength = 0
 	}
 
-	setupColumnOrder(meta, buildKeyIndex, buildTypes, columnsUsedByOtherCondition, outputColumns, len(columnsNeedToBeSaved))
+	savedColumnNum := len(columnsNeedToBeSaved)
+
+	setupColumnOrder(meta, buildKeyIndex, buildTypes, columnsUsedByOtherCondition, outputColumns, savedColumnNum)
 
 	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
 		meta.keyMode = OneInt64
@@ -242,10 +244,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
 		// so atomic read/write is required. We want to keep this atomic operator inside the access of nullmap,
 		// then the nullMapLength should be 4 bytes alignment since the smallest unit of atomic.LoadUint32 is UInt32
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
+		meta.nullMapLength = ((savedColumnNum + 1 + 31) / 32) * 4
 	} else {
 		meta.colOffsetInNullMap = 0
-		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8
+		meta.nullMapLength = (savedColumnNum + 7) / 8
 	}
 	meta.rowDataOffset = -1
 	if meta.isJoinKeysInlined {
