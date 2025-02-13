@@ -107,6 +107,10 @@ func (od *OwnerDaemon) ForceToBeOwner(ctx context.Context) error {
 	return od.manager.ForceToBeOwner(ctx)
 }
 
-func (od *OwnerDaemon) ResignIfOwner(ctx context.Context) error {
-	return od.manager.ResignOwner(ctx)
+func (od *OwnerDaemon) RetireIfOwner() {
+	od.manager.RetireOwner()
+}
+
+func (od *OwnerDaemon) CampaignCancel() {
+	od.manager.CampaignCancel()
 }
