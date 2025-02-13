@@ -430,6 +430,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 		m.ClusterVersion = clusterVersion
 	})
 
+<<<<<<< HEAD
 	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
 	if err != nil {
 		return errors.Trace(err)
@@ -442,6 +443,8 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 		return errors.Trace(err)
 	}
 
+=======
+>>>>>>> ce45eff1580 (br: error if the log restore has no full backup schema or id maps (#54421))
 	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1261,7 +1264,16 @@ func restoreStream(
 	}
 
 	// get the schemas ID replace information.
+<<<<<<< HEAD
 	schemasReplace, err := client.InitSchemasReplaceForDDL(&fullBackupTables, cfg.TableFilter)
+=======
+	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
+		IsNewTask:         newTask,
+		TableFilter:       cfg.TableFilter,
+		TiFlashRecorder:   cfg.tiflashRecorder,
+		FullBackupStorage: fullBackupStorage,
+	})
+>>>>>>> ce45eff1580 (br: error if the log restore has no full backup schema or id maps (#54421))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1538,6 +1550,7 @@ func getFullBackupTS(
 func initFullBackupTables(
 	ctx context.Context,
 	cfg *RestoreConfig,
+<<<<<<< HEAD
 ) (map[int64]*metautil.Table, error) {
 	var storage string
 	if len(cfg.FullBackupStorage) > 0 {
@@ -1546,6 +1559,14 @@ func initFullBackupTables(
 		storage = cfg.Storage
 	}
 	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+=======
+) (*logclient.FullBackupStorageConfig, error) {
+	if len(cfg.FullBackupStorage) == 0 {
+		log.Info("the full backup path is not specified, so BR will try to get id maps")
+		return nil, nil
+	}
+	u, err := storage.ParseBackend(cfg.FullBackupStorage, &cfg.BackendOptions)
+>>>>>>> ce45eff1580 (br: error if the log restore has no full backup schema or id maps (#54421))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
