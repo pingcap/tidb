@@ -226,7 +226,7 @@ func generatePrimaryKey(begin, end int, res []string) {
 }
 
 // Write data to GCS with retry (column-oriented)
-func writeDataToGCSByCol(store storage.ExternalStorage, fileName string, data [][]string) error {
+func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]string) error {
 	writer, err := store.Create(context.Background(), fileName, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create GCS file: %w", err)
@@ -301,7 +301,7 @@ func glanceFiles(credentialPath, fileName string) {
 }
 
 // Write CSV to local disk (column-oriented)
-func writeCSVToLocalDiskByCol2(filename string, columns []Column, data [][]string) error {
+func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -405,8 +405,8 @@ type Result struct {
 	values   [][]string
 }
 
-// generatorWorkerByCol retrieves tasks from tasksCh, reuses [][]string slices via sync.Pool, and sends generated results to resultsCh
-func generatorWorkerByCol(tasksCh <-chan Task, resultsCh chan<- Result, workerID int, pool *sync.Pool, wg *sync.WaitGroup) {
+// generatorWorker retrieves tasks from tasksCh, reuses [][]string slices via sync.Pool, and sends generated results to resultsCh
+func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int, pool *sync.Pool, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for task := range tasksCh {
 		startTime := time.Now()
@@ -437,8 +437,8 @@ func generatorWorkerByCol(tasksCh <-chan Task, resultsCh chan<- Result, workerID
 	}
 }
 
-// writerWorkerByCol retrieves generated results from resultsCh, writes them to CSV (or GCS), and puts used slices back to pool
-func writerWorkerByCol(resultsCh <-chan Result, store storage.ExternalStorage, workerID int, pool *sync.Pool, wg *sync.WaitGroup) {
+// writerWorker retrieves generated results from resultsCh, writes them to CSV (or GCS), and puts used slices back to pool
+func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, workerID int, pool *sync.Pool, wg *sync.WaitGroup) {
 	defer wg.Done()
 	var err error
 	for result := range resultsCh {
@@ -448,12 +448,12 @@ func writerWorkerByCol(resultsCh <-chan Result, store storage.ExternalStorage, w
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			startTime := time.Now()
 			if *localPath != "" {
-				err = writeCSVToLocalDiskByCol2(*localPath+fileName, nil, result.values)
+				err = writeCSVToLocalDisk(*localPath+fileName, nil, result.values)
 				if err != nil {
 					log.Fatal("Error writing CSV:", err)
 				}
 			} else {
-				err = writeDataToGCSByCol(store, fileName, result.values)
+				err = writeDataToGCS(store, fileName, result.values)
 			}
 			if err == nil {
 				log.Printf("Writer %d: Wrote %s (%d rows), elapsed time: %v", workerID, fileName, len(result.values[0]), time.Since(startTime))
@@ -549,7 +549,7 @@ func main() {
 	// Start generator workers
 	for i := 0; i < *generatorNum; i++ {
 		wgGen.Add(1)
-		go generatorWorkerByCol(tasksCh, resultsCh, i, pool, &wgGen)
+		go generatorWorker(tasksCh, resultsCh, i, pool, &wgGen)
 	}
 
 	var wgWriter sync.WaitGroup
@@ -565,7 +565,7 @@ func main() {
 	}
 	for i := 0; i < *writerNum; i++ {
 		wgWriter.Add(1)
-		go writerWorkerByCol(resultsCh, store, i, pool, &wgWriter)
+		go writerWorker(resultsCh, store, i, pool, &wgWriter)
 	}
 
 	// Divide tasks according to [begin, end) range and send to tasksCh
