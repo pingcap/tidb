@@ -24,7 +24,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx"
+=======
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+>>>>>>> f2c278ddc6b (Planner: Do not allow cardinality to go below 1 (#55242))
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -344,7 +348,17 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		}
 		totalCount += count
 	}
-	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
+	allowZeroEst := fixcontrol.GetBoolWithDefault(
+		sctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	)
+	if allowZeroEst {
+		totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
+	} else {
+		// Don't allow the final result to go below 1 row
+		totalCount = mathutil.Clamp(totalCount, 1, float64(realtimeRowCount))
+	}
 	return totalCount, nil
 }
 
