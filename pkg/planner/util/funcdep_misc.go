@@ -39,7 +39,7 @@ func ExtractNotNullFromConds(conditions []expression.Expression, p base.LogicalP
 	for _, condition := range conditions {
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
-		if IsNullRejected(p.SCtx(), p.Schema(), condition) {
+		if IsNullRejected(p.SCtx(), p.Schema(), condition, true) {
 			for _, col := range cols {
 				notnullColsUniqueIDs.Insert(int(col.UniqueID))
 			}
