@@ -16,6 +16,7 @@ go_library(
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/util/intest",
         "@com_github_bits_and_blooms_bitset//:bitset",
