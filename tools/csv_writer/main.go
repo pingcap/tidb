@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/csv"
@@ -237,15 +236,13 @@ func writeDataToGCSByCol(store storage.ExternalStorage, fileName string, data []
 	for i := 0; i < len(data[0]); i++ {
 		row := make([]string, 0, len(data[0]))
 		for j := 0; j < len(data); j++ {
-			row = append(row, data[j][i])
+			if *base64Encode {
+				row = append(row, base64.StdEncoding.EncodeToString([]byte(data[j][i])))
+			} else {
+				row = append(row, data[j][i])
+			}
 		}
-		// Base64 encode if enabled
-		if *base64Encode {
-			base64Str := base64.StdEncoding.EncodeToString([]byte(strings.Join(row, ",") + "\n"))
-			_, err = writer.Write(context.Background(), []byte(base64Str))
-		} else {
-			_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
-		}
+		_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
 		if err != nil {
 			log.Printf("Write to GCS failed, deleting file: %s", fileName)
 			store.DeleteFile(context.Background(), fileName) // Delete the file if write fails
@@ -303,53 +300,8 @@ func glanceFiles(credentialPath, fileName string) {
 	fmt.Println(string(b))
 }
 
-func writeCSVToLocalDiskBase64(data [][]string, fileName string) error {
-	// Create a bytes.Buffer to hold CSV data
-	var buf bytes.Buffer
-
-	// Create a CSV writer that writes to the buffer
-	writer := csv.NewWriter(&buf)
-	for i := 0; i < len(data[0]); i++ {
-		var row []string
-		for j := 0; j < len(data); j++ {
-			row = append(row, data[j][i])
-		}
-		writer.Write(row)
-	}
-
-	// Flush the CSV writer to ensure all data is written to the buffer
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		log.Fatal("Failed to flush CSV writer:", err)
-		return err
-	}
-
-	// Base64 encode the CSV data
-	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
-
-	// Write the Base64 encoded string to file
-	outFile, err := os.Create(fileName)
-	if err != nil {
-		log.Fatal("Failed to create file:", err)
-		return err
-	}
-	defer outFile.Close()
-
-	_, err = outFile.WriteString(encoded)
-	if err != nil {
-		log.Fatal("Failed to write file:", err)
-		return err
-	}
-
-	log.Println(fmt.Sprintf("CSV file has been Base64 encoded and written to %s", fileName))
-	return nil
-}
-
 // Write CSV to local disk (column-oriented)
 func writeCSVToLocalDiskByCol2(filename string, columns []Column, data [][]string) error {
-	if *base64Encode {
-		return writeCSVToLocalDiskBase64(data, filename)
-	}
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -363,7 +315,11 @@ func writeCSVToLocalDiskByCol2(filename string, columns []Column, data [][]strin
 	for i := 0; i < len(data[0]); i++ {
 		row := []string{}
 		for j := 0; j < len(data); j++ {
-			row = append(row, data[j][i])
+			if *base64Encode {
+				row = append(row, base64.StdEncoding.EncodeToString([]byte(data[j][i])))
+			} else {
+				row = append(row, data[j][i])
+			}
 		}
 		writer.Write(row)
 	}
