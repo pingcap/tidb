@@ -454,12 +454,23 @@ func (pp *ParquetParser) GetMemoryUsage() (memoryUsageStream, memoryUsageNonStre
 	}
 	readBufferUsageNonStream += AllocSize(defaultBufSize) * len(pp.columnNames)
 
-	for i := numColumns; i < 5*numColumns; i += 4 {
-		dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
-		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
+	hasDict := true
+	if 5*numColumns > len(bufSizes) {
+		hasDict = false
 	}
-	for i := 5 * numColumns; i < len(bufSizes); i += 2 {
-		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+
+	if hasDict {
+		for i := numColumns; i < 5*numColumns; i += 4 {
+			dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
+		}
+		for i := 5 * numColumns; i < len(bufSizes); i += 2 {
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+		}
+	} else {
+		for i := numColumns; i < len(bufSizes); i += 2 {
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+		}
 	}
 
 	pageUsage := (dataPageUsage + dictUsage) * numColumns
