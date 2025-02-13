@@ -156,6 +156,10 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
+		destStore := op.tableImporter.GlobalSortStore
+		if op.tableImporter.EnableLocalStoreForCloud {
+			destStore = op.tableImporter.GlobalSortLocalStore
+		}
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
@@ -167,7 +171,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
-			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+			writer := builder.Build(destStore, prefix, writerID)
 			return writer
 		}
 
@@ -179,7 +183,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
-		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+		writer := builder.Build(destStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)

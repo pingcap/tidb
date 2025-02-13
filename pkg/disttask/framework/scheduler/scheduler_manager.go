@@ -118,10 +118,11 @@ type Manager struct {
 		// in task order
 		schedulers []Scheduler
 	}
+	nodeRes *proto.NodeResource
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Manager {
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", serverID))
@@ -144,6 +145,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 		}),
 		logger:   logger,
 		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 
@@ -333,6 +335,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		slotMgr:        sm.slotMgr,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
+		nodeRes:        sm.nodeRes,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
