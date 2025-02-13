@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -104,6 +105,21 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
+func filterNodesByMaxNodeCnt(nodes []string, subtasks []*proto.SubtaskBase, maxNodeCnt int) []string {
+	if maxNodeCnt == 0 || len(nodes) <= maxNodeCnt {
+		return nodes
+	}
+	// Order nodes by subtask count.
+	nodeSubtaskCnt := make(map[string]int, len(nodes))
+	for _, st := range subtasks {
+		nodeSubtaskCnt[st.ExecID]++
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodeSubtaskCnt[nodes[i]] > nodeSubtaskCnt[nodes[j]]
+	})
+	return nodes[:maxNodeCnt]
+}
+
 func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, eligibleNodes []string) (err error) {
 	subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, task.ID)
 	if err != nil {
@@ -120,9 +136,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
 		adjustedNodes = []string{}
 	})
-	if task.MaxNodeCount > 0 && len(adjustedNodes) > task.MaxNodeCount {
-		adjustedNodes = adjustedNodes[:task.MaxNodeCount]
-	}
+	adjustedNodes = filterNodesByMaxNodeCnt(adjustedNodes, subtasks, task.MaxNodeCount)
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.
