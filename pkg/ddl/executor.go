@@ -4066,7 +4066,7 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
-	if schema == "workload_schema" {
+	if schema == mysql.WorkloadSchema {
 		return true
 	}
 	if schema != mysql.SystemDB {
