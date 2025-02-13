@@ -225,6 +225,11 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
+	case ast.UnixTimestamp:
+		if sf.Function.PbCode() == tipb.ScalarFuncSig_UnixTimestampCurrent {
+			return false
+		}
+		return true
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
 	case ast.Conv:
@@ -372,6 +377,12 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
 			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
+			return true
+		}
+	case ast.Truncate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
 			return true
 		}
 	case ast.Extract:

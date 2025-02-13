@@ -407,6 +407,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)
@@ -461,7 +465,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}

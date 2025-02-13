@@ -105,12 +105,12 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 	exists := checkpoint.ExistsCheckpointProgress(ctx, dom)
 	require.False(t, exists)
 	err = checkpoint.SaveCheckpointProgress(ctx, se, &checkpoint.CheckpointProgress{
-		Progress: checkpoint.InLogRestoreAndIdMapPersist,
+		Progress: checkpoint.InLogRestoreAndIdMapPersisted,
 	})
 	require.NoError(t, err)
 	progress, err := checkpoint.LoadCheckpointProgress(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, progress.Progress)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, progress.Progress)
 
 	taskInfo, err := checkpoint.TryToGetCheckpointTaskInfo(ctx, s.Mock.Domain, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
 	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
 	require.Equal(t, true, taskInfo.HasSnapshotMetadata)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, taskInfo.Progress)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, taskInfo.Progress)
 
 	exists = checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, dom)
 	require.False(t, exists)
