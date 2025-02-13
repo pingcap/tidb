@@ -141,12 +141,20 @@ func SetTaskManager(is *TaskManager) {
 
 // WithNewSession executes the function with a new session.
 func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
-	se, err := mgr.sePool.Get()
+	v, err := mgr.sePool.Get()
 	if err != nil {
 		return err
 	}
-	defer mgr.sePool.Put(se)
-	return fn(se.(sessionctx.Context))
+	// when using global sort, the subtask meta might quite large as it include
+	// filenames of all the generated kv/stat files.
+	se := v.(sessionctx.Context)
+	limitBak := se.GetSessionVars().TxnEntrySizeLimit
+	defer func() {
+		se.GetSessionVars().TxnEntrySizeLimit = limitBak
+		mgr.sePool.Put(v)
+	}()
+	se.GetSessionVars().TxnEntrySizeLimit = vardef.TxnEntrySizeLimit.Load()
+	return fn(se)
 }
 
 // WithNewTxn executes the fn in a new transaction.
