@@ -12,6 +12,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//config",
         "//expression",
         "//kv",
         "//parser",
