@@ -117,7 +117,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
-		zap.Int("index-buf-block-size", s.indexBlockSize))
+		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
 	return nil
 }
 
