@@ -369,7 +369,7 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints.EngineCheckpoint, err error) {
+func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]checkpoints.Chunk, err error) {
 	task := log.BeginTask(e.logger, "populate chunks")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
@@ -400,44 +400,37 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
-
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
 		return nil, err2
 	}
 
-	var maxRowID int64
 	timestamp := time.Now().Unix()
-	tableCp := &checkpoints.TableCheckpoint{
-		Engines: map[int32]*checkpoints.EngineCheckpoint{},
-	}
+	// engineChunks indicates the map that contains the k-v: the engineID -> []chunk.
+	engineChunks := make(map[int32][]checkpoints.Chunk, 0)
+
 	for _, region := range tableRegions {
-		engine, found := tableCp.Engines[region.EngineID]
+		chunks, found := engineChunks[region.EngineID]
 		if !found {
-			engine = &checkpoints.EngineCheckpoint{
-				Status: checkpoints.CheckpointStatusLoaded,
-			}
-			tableCp.Engines[region.EngineID] = engine
+			chunks = make([]checkpoints.Chunk, 0)
 		}
-		ccp := &checkpoints.ChunkCheckpoint{
-			Key: checkpoints.ChunkCheckpointKey{
-				Path:   region.FileMeta.Path,
-				Offset: region.Chunk.Offset,
-			},
-			FileMeta:          region.FileMeta,
-			ColumnPermutation: nil,
-			Chunk:             region.Chunk,
-			Timestamp:         timestamp,
-		}
-		engine.Chunks = append(engine.Chunks, ccp)
-		if region.Chunk.RowIDMax > maxRowID {
-			maxRowID = region.Chunk.RowIDMax
-		}
+
+		engineChunks[region.EngineID] = append(chunks, checkpoints.Chunk{
+			Path:         region.FileMeta.Path,
+			FileSize:     region.FileMeta.FileSize,
+			Offset:       region.Chunk.Offset,
+			EndOffset:    region.Chunk.EndOffset,
+			PrevRowIDMax: region.Chunk.PrevRowIDMax,
+			RowIDMax:     region.Chunk.RowIDMax,
+			Type:         region.FileMeta.Type,
+			Compression:  region.FileMeta.Compression,
+			Timestamp:    timestamp,
+		})
 	}
 
 	// Add index engine checkpoint
-	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return tableCp.Engines, nil
+	engineChunks[common.IndexEngineID] = make([]checkpoints.Chunk, 0)
+	return engineChunks, nil
 }
 
 // a simplified version of EstimateCompactionThreshold
