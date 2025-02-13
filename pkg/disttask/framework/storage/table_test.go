@@ -1204,14 +1204,11 @@ func TestTaskManagerEntrySize(t *testing.T) {
 			return err
 		})
 	}
-	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", vardef.DefTiDBTxnEntrySizeLimit))
-	}()
 	meta6m := getMeta(6 << 20)
 	require.ErrorContains(t, insertSubtask(meta6m), "entry too large")
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 7<<20))
 	require.NoError(t, insertSubtask(meta6m))
-	// as TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+	// TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
 	// we won't test that param here
 }
