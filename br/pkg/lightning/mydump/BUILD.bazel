@@ -18,6 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/worker",
@@ -65,6 +66,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/worker",
         "//br/pkg/mock/storage",

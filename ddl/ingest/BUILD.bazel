@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/errormanager",
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
