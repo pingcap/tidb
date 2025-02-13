@@ -278,10 +278,16 @@ func showFiles(credentialPath string) {
 	if err != nil {
 		panic(err)
 	}
+	dirSize := 0.0
+	dirFileNum := 0
 	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
-		log.Printf("Name: %s, Size: %d, Size (MiB): %f", path, size, float64(size)/1024/1024)
+		fSize := float64(size) / 1024 / 1024
+		log.Printf("Name: %s, Size: %d, Size (MiB): %f", path, size, fSize)
+		dirSize += fSize
+		dirFileNum++
 		return nil
 	})
+	log.Printf("Total file Num: %d  Total size: %.2f MiB, %.2f GiB, %.2f TiB", dirFileNum, dirSize, dirSize/1024, dirSize/1024/1024)
 }
 
 func glanceFiles(credentialPath, fileName string) {
