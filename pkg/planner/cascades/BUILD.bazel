@@ -20,5 +20,8 @@ go_test(
     timeout = "short",
     srcs = ["cascades_test.go"],
     flaky = True,
-    deps = ["//pkg/testkit"],
+    deps = [
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
 )

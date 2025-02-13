@@ -117,20 +117,6 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	}
 	slices.Sort(tableIDs)
 
-	// Check if recording historical stats meta is enabled.
-	// TODO: Once RecordHistoricalStatsMeta supports batch processing, this check can be removed and handled within the API.
-	skipRecordHistoricalStatsMeta := false
-	err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		if !sctx.GetSessionVars().EnableHistoricalStats {
-			skipRecordHistoricalStatsMeta = true
-			return nil
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// Dump stats delta in batches.
 	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
 		end := i + dumpDeltaBatchSize
@@ -201,23 +187,22 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !skipRecordHistoricalStatsMeta {
-			startRecordHistoricalStatsMeta := time.Now()
-			// Record historical stats meta for all tables one by one.
-			// FIXME: Although this feature is currently disabled, it would be beneficial to implement it in batches for efficiency.
-			for _, update := range batchUpdates {
-				if !update.IsLocked {
-					failpoint.Inject("panic-when-record-historical-stats-meta", func() {
-						panic("panic when record historical stats meta")
-					})
-					s.statsHandle.RecordHistoricalStatsMeta(update.TableID, statsVersion, "flush stats", false)
-				}
+		startRecordHistoricalStatsMeta := time.Now()
+		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
+		for _, update := range batchUpdates {
+			if !update.IsLocked {
+				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+					panic("panic when record historical stats meta")
+				})
+				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
-			if time.Since(startRecordHistoricalStatsMeta) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
-					zap.Int("tableCount", len(batchUpdates)),
-					zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
-			}
+		}
+		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
+		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
+		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+				zap.Int("tableCount", len(batchUpdates)),
+				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
 		}
 	}
 

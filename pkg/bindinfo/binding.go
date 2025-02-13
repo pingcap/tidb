@@ -34,24 +34,24 @@ import (
 )
 
 const (
-	// Enabled is the bind info's in enabled status.
+	// StatusEnabled is the bind info's in enabled status.
 	// It is the same as the previous 'Using' status.
 	// Only use 'Enabled' status in the future, not the 'Using' status.
 	// The 'Using' status is preserved for compatibility.
-	Enabled = "enabled"
-	// Disabled is the bind info's in disabled status.
-	Disabled = "disabled"
-	// Using is the bind info's in use status.
+	StatusEnabled = "enabled"
+	// StatusDisabled is the bind info's in disabled status.
+	StatusDisabled = "disabled"
+	// StatusUsing is the bind info's in use status.
 	// The 'Using' status is preserved for compatibility.
-	Using = "using"
-	// deleted is the bind info's deleted status.
-	deleted = "deleted"
-	// Manual indicates the binding is created by SQL like "create binding for ...".
-	Manual = "manual"
-	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
-	Builtin = "builtin"
-	// History indicate the binding is created from statement summary by plan digest
-	History = "history"
+	StatusUsing = "using"
+	// StatusDeleted is the bind info's deleted status.
+	StatusDeleted = "deleted"
+	// StatusBuiltin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	StatusBuiltin = "builtin"
+	// SourceManual indicates the binding is created by SQL like "create binding for ...".
+	SourceManual = "manual"
+	// SourceHistory indicate the binding is created from statement summary by plan digest
+	SourceHistory = "history"
 )
 
 // Binding stores the basic bind hint info.
@@ -81,7 +81,7 @@ type Binding struct {
 
 // IsBindingEnabled returns whether the binding is enabled.
 func (b *Binding) IsBindingEnabled() bool {
-	return b.Status == Enabled || b.Status == Using
+	return b.Status == StatusEnabled || b.Status == StatusUsing
 }
 
 // size calculates the memory size of a bind info.
@@ -276,7 +276,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	}()
 
 	p := parser.New()
-	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
+	if (binding.Hint != nil && binding.ID != "") || binding.Status == StatusDeleted {
 		return nil
 	}
 	dbName := binding.Db
@@ -353,7 +353,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	// filter deleted bindings
 	n = 0
 	for _, binding := range bindings {
-		if binding.Status != deleted {
+		if binding.Status != StatusDeleted {
 			bindings[n] = binding
 			n++
 		}

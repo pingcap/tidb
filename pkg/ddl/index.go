@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1302,7 +1304,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -1451,7 +1453,7 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 }
 
 func isRetryableJobError(err error, jobErrCnt int64) bool {
-	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
 	return isRetryableError(err)
@@ -2439,7 +2441,19 @@ func (w *worker) addTableIndex(
 }
 
 func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
-	var bc ingest.BackendCtx
+	var (
+		backendCtx ingest.BackendCtx
+		cfg        *local.BackendConfig
+		backend    *local.Backend
+	)
+	defer func() {
+		if backendCtx != nil {
+			backendCtx.Close()
+		}
+		if backend != nil {
+			backend.Close()
+		}
+	}()
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
@@ -2447,17 +2461,21 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		}
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
-			if bc == nil {
-				bc, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+			if backendCtx == nil {
+				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
 					ForDuplicateCheck().
-					Build()
+					Build(cfg, backend)
 				if err != nil {
 					return err
 				}
-				//nolint:revive,all_revive
-				defer bc.Close()
 			}
-			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			err = backendCtx.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			if err != nil {
 				return err
 			}
@@ -2528,7 +2546,7 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		workerCntLimit := job.ReorgMeta.GetConcurrency()
 		cpuCount, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err

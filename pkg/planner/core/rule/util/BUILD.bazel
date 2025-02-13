@@ -13,5 +13,6 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core/base",
+        "//pkg/util/intset",
     ],
 )

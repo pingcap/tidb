@@ -110,9 +110,8 @@ func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopyS
 		Key:        aws.String(rs.options.Prefix + spec.To),
 	}
 
-	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
-	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
-	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	// We must use the client of the target region.
+	_, err := rs.svc.CopyObjectWithContext(ctx, copyInput)
 	return err
 }
 
@@ -876,8 +875,13 @@ func (rs *S3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil

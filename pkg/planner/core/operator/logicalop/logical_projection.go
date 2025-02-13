@@ -283,12 +283,16 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		RowCount: childProfile.RowCount,
@@ -299,7 +303,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -403,6 +407,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)

@@ -189,9 +189,14 @@ func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Ta
 	return nil, nil
 }
 
-// IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
+// IsRetryableErr implements scheduler.Extension interface.
 func (*LitBackfillScheduler) IsRetryableErr(error) bool {
 	return true
+}
+
+// ModifyMeta implements scheduler.Extension interface.
+func (*LitBackfillScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
 }
 
 func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {

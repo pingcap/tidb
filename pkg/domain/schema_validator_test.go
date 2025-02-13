@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -111,19 +111,19 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 // subTestEnqueue is batched in TestSchemaValidator
 func subTestEnqueue(t *testing.T) {
 	lease := 10 * time.Millisecond
-	originalCnt := variable.GetMaxDeltaSchemaCount()
-	defer variable.SetMaxDeltaSchemaCount(originalCnt)
+	originalCnt := vardef.GetMaxDeltaSchemaCount()
+	defer vardef.SetMaxDeltaSchemaCount(originalCnt)
 
 	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
 	require.True(t, validator.IsStarted())
 
 	// maxCnt is 0.
-	variable.SetMaxDeltaSchemaCount(0)
+	vardef.SetMaxDeltaSchemaCount(0)
 	validator.enqueue(1, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	require.Len(t, validator.deltaSchemaInfos, 0)
 
 	// maxCnt is 10.
-	variable.SetMaxDeltaSchemaCount(10)
+	vardef.SetMaxDeltaSchemaCount(10)
 	ds := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{1, []int64{1}, []uint64{1}},
@@ -171,19 +171,19 @@ func subTestEnqueue(t *testing.T) {
 // subTestEnqueueActionType is batched in TestSchemaValidator
 func subTestEnqueueActionType(t *testing.T) {
 	lease := 10 * time.Millisecond
-	originalCnt := variable.GetMaxDeltaSchemaCount()
-	defer variable.SetMaxDeltaSchemaCount(originalCnt)
+	originalCnt := vardef.GetMaxDeltaSchemaCount()
+	defer vardef.SetMaxDeltaSchemaCount(originalCnt)
 
 	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
 	require.True(t, validator.IsStarted())
 
 	// maxCnt is 0.
-	variable.SetMaxDeltaSchemaCount(0)
+	vardef.SetMaxDeltaSchemaCount(0)
 	validator.enqueue(1, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	require.Len(t, validator.deltaSchemaInfos, 0)
 
 	// maxCnt is 10.
-	variable.SetMaxDeltaSchemaCount(10)
+	vardef.SetMaxDeltaSchemaCount(10)
 	ds := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{1, []int64{1}, []uint64{1}},

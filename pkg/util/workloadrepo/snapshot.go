@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -278,8 +279,13 @@ func (w *worker) resetSnapshotInterval(newRate int32) {
 
 func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
+
+	failpoint.Inject("FastRunawayGC", func() {
+		err = errors.New("fake error")
+	})
+
 	if err != nil {
-		return err
+		return errWrongValueForVar.GenWithStackByArgs(repositorySnapshotInterval, d)
 	}
 
 	w.Lock()

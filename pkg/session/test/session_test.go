@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -917,10 +918,10 @@ func TestBootstrapSQLWithExtension(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{authChecks[0].Name},
 			},
 		}),

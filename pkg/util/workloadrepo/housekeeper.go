@@ -51,6 +51,7 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 	sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
 	skip, err := generatePartitionRanges(sb, tbInfo, now)
 	if err != nil {
+		logutil.BgLogger().Info("workload repository cannot generate partition definitions", zap.String("table", tbl.destTable), zap.NamedError("err", err))
 		return err
 	}
 	if !skip {

@@ -7,14 +7,16 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +31,6 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 		dbMap,
 		nil,
 		9527,
-		filter.All(),
 		midr.mockRecordDeleteRange,
 	)
 }
@@ -59,7 +60,7 @@ func TestRewriteKeyForDB(t *testing.T) {
 		mDbs          = []byte("DBs")
 	)
 
-	encodedKey := encodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
+	encodedKey := utils.EncodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
 
 	dbMap := make(map[UpstreamID]*DBReplace)
 	downstreamID := dbID + 100
@@ -69,7 +70,7 @@ func TestRewriteKeyForDB(t *testing.T) {
 	sr := MockEmptySchemasReplace(nil, dbMap)
 
 	// set restoreKV status and rewrite it.
-	newKey, err := sr.rewriteKeyForDB(encodedKey, DefaultCF)
+	newKey, err := sr.rewriteKeyForDB(encodedKey, consts.DefaultCF)
 	require.Nil(t, err)
 	decodedKey, err := ParseTxnMetaKeyFrom(newKey)
 	require.Nil(t, err)
@@ -79,7 +80,7 @@ func TestRewriteKeyForDB(t *testing.T) {
 	require.Equal(t, newDBID, downstreamID)
 
 	// rewrite it again, and get the same result.
-	newKey, err = sr.rewriteKeyForDB(encodedKey, WriteCF)
+	newKey, err = sr.rewriteKeyForDB(encodedKey, consts.WriteCF)
 	require.Nil(t, err)
 	decodedKey, err = ParseTxnMetaKeyFrom(newKey)
 	require.Nil(t, err)
@@ -110,16 +111,16 @@ func TestRewriteDBInfo(t *testing.T) {
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
-	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].DbID)
+	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
 
 	// rewrite again, and get the same result.
-	newId := sr.DbMap[dbID].DbID
+	newId := sr.DbReplaceMap[dbID].DbID
 	newValue, err = sr.rewriteDBInfo(value)
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
-	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].DbID)
-	require.Equal(t, newId, sr.DbMap[dbID].DbID)
+	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
+	require.Equal(t, newId, sr.DbReplaceMap[dbID].DbID)
 }
 
 func TestRewriteKeyForTable(t *testing.T) {
@@ -157,7 +158,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
+		encodedKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
 
 		dbMap := make(map[UpstreamID]*DBReplace)
 		downStreamDbID := dbID + 100
@@ -169,7 +170,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 		sr := MockEmptySchemasReplace(nil, dbMap)
 
 		// set restoreKV status and rewrite it.
-		newKey, err := sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
+		newKey, err := sr.rewriteKeyForTable(encodedKey, consts.DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
 		require.Nil(t, err)
 		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
 		require.Nil(t, err)
@@ -183,7 +184,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 		require.Equal(t, newTblID, downStreamTblID)
 
 		// rewrite it again, and get the same result.
-		newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		newKey, err = sr.rewriteKeyForTable(encodedKey, consts.WriteCF, ca.decodeTableFn, ca.encodeTableFn)
 		require.Nil(t, err)
 		decodedKey, err = ParseTxnMetaKeyFrom(newKey)
 		require.Nil(t, err)
@@ -217,7 +218,7 @@ func TestRewriteTableInfo(t *testing.T) {
 	// create schemasReplace.
 	sr := MockEmptySchemasReplace(nil, dbMap)
 	tableCount := 0
-	sr.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
+	sr.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		tableCount++
 		tableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count: 1,
@@ -229,17 +230,17 @@ func TestRewriteTableInfo(t *testing.T) {
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, tableInfo.ID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
 	require.EqualValues(t, tableInfo.TiFlashReplica.Count, 1)
 
 	// rewrite it again and get the same result.
-	newID := sr.DbMap[dbId].TableMap[tableID].TableID
+	newID := sr.DbReplaceMap[dbId].TableMap[tableID].TableID
 	newValue, err = sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
-	require.Equal(t, newID, sr.DbMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, tableInfo.ID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, newID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
 	require.EqualValues(t, tableCount, 2)
 }
 
@@ -291,7 +292,6 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 		dbMap,
 		nil,
 		0,
-		filter.All(),
 		nil,
 	)
 
@@ -301,11 +301,11 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.String(), tableName)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, tableInfo.ID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
 	require.Equal(
 		t,
 		tableInfo.Partition.Definitions[0].ID,
-		sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt1ID],
+		sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt1ID],
 	)
 	require.Equal(
 		t,
@@ -315,7 +315,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	require.Equal(
 		t,
 		tableInfo.Partition.Definitions[1].ID,
-		sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt2ID],
+		sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt2ID],
 	)
 	require.Equal(
 		t,
@@ -324,8 +324,8 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	)
 
 	// rewrite it aggin, and get the same result.
-	newID1 := sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt1ID]
-	newID2 := sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt2ID]
+	newID1 := sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt1ID]
+	newID2 := sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt2ID]
 	newValue, err = sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 
@@ -335,13 +335,13 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	require.Equal(
 		t,
 		tableInfo.Partition.Definitions[0].ID,
-		sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt1ID],
+		sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt1ID],
 	)
 	require.Equal(t, tableInfo.Partition.Definitions[0].ID, newID1)
 	require.Equal(
 		t,
 		tableInfo.Partition.Definitions[1].ID,
-		sr.DbMap[dbId].TableMap[tableID].PartitionMap[pt2ID],
+		sr.DbReplaceMap[dbId].TableMap[tableID].PartitionMap[pt2ID],
 	)
 	require.Equal(t, tableInfo.Partition.Definitions[1].ID, newID2)
 }
@@ -360,6 +360,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		tableID2   int64 = 106
 		tableName2       = "t2"
 		tableInfo  model.TableInfo
+		ts         uint64 = 400036290571534337
 	)
 
 	// construct table t1 with the partition pi(pt1, pt2).
@@ -401,7 +402,8 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	dbMap[dbID2] = NewDBReplace(db2.Name.O, dbID2+100)
 	dbMap[dbID2].TableMap[tableID2] = NewTableReplace(t2.Name.O, tableID2+100)
 
-	tc := NewTableMappingManager(dbMap, mockGenGenGlobalID)
+	tm := NewTableMappingManager()
+	tm.MergeBaseDBReplace(dbMap)
 
 	//exchange partition, t1 partition0 with the t2
 	t1Copy := t1.Clone()
@@ -411,14 +413,19 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	value, err := json.Marshal(&t1Copy)
 	require.Nil(t, err)
 
-	err = tc.parseTableValueAndUpdateIdMapping(dbID1, value)
+	// Create an entry for parsing
+	txnKey := utils.EncodeTxnMetaKey(meta.DBkey(dbID1), meta.TableKey(tableID1), ts)
+	entry := &kv.Entry{
+		Key:   txnKey,
+		Value: value,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
-		tc.DbReplaceMap,
+		tm.DBReplaceMap,
 		nil,
 		0,
-		filter.All(),
 		nil,
 	)
 
@@ -434,8 +441,16 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// rewrite no partition table
 	value, err = json.Marshal(&t2Copy)
 	require.Nil(t, err)
-	err = tc.parseTableValueAndUpdateIdMapping(dbID2, value)
+
+	// Create an entry for parsing the second table
+	txnKey = utils.EncodeTxnMetaKey(meta.DBkey(dbID2), meta.TableKey(pt1ID), ts)
+	entry = &kv.Entry{
+		Key:   txnKey,
+		Value: value,
+	}
+	err = tm.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
 	require.Nil(t, err)
+
 	value, err = sr.rewriteTableInfo(value, dbID2)
 	require.Nil(t, err)
 	err = json.Unmarshal(value, &tableInfo)
@@ -488,7 +503,7 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.String(), tableName)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, tableInfo.ID, sr.DbReplaceMap[dbId].TableMap[tableID].TableID)
 	require.NotNil(t, tableInfo.TTLInfo)
 	require.Equal(t, colName, tableInfo.TTLInfo.ColumnName.O)
 	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
@@ -705,7 +720,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 
 	var qargs *PreDelRangeQuery
 	// drop schema
-	err := schemaReplace.restoreFromHistory(dropSchemaJob)
+	err := schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropSchemaJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewTableIDSet))
@@ -715,7 +730,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop table0
-	err = schemaReplace.restoreFromHistory(dropTable0Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewPartitionIDSet))
@@ -728,42 +743,42 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobTable0NewID))
 
 	// drop table1
-	err = schemaReplace.restoreFromHistory(dropTable1Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable1Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobTable1NewID))
 
 	// drop table partition1
-	err = schemaReplace.restoreFromHistory(dropTable0Partition1Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0Partition1Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobPartition1NewID))
 
 	// reorganize table partition1
-	err = schemaReplace.restoreFromHistory(reorganizeTable0Partition1Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(reorganizeTable0Partition1Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
 
 	// remove table partition1
-	err = schemaReplace.restoreFromHistory(removeTable0Partition1Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(removeTable0Partition1Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
 
 	// alter table partition1
-	err = schemaReplace.restoreFromHistory(alterTable0Partition1Job)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(alterTable0Partition1Job)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
 
 	// roll back add index for table0
-	err = schemaReplace.restoreFromHistory(rollBackTable0IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(rollBackTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap := make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -784,7 +799,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// roll back add index for table1
-	err = schemaReplace.restoreFromHistory(rollBackTable1IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(rollBackTable1IndexJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 2)
@@ -794,7 +809,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(tablecodec.TempIndexPrefix|2)), qargs.ParamsList[1].StartKey)
 
 	// drop index for table0
-	err = schemaReplace.restoreFromHistory(dropTable0IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -808,14 +823,14 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop index for table1
-	err = schemaReplace.restoreFromHistory(dropTable1IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable1IndexJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
 
 	// add index for table 0
-	err = schemaReplace.restoreFromHistory(addTable0IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(addTable0IndexJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -829,14 +844,14 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// add index for table 1
-	err = schemaReplace.restoreFromHistory(addTable1IndexJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(addTable1IndexJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, tempIndex2), qargs.ParamsList[0].StartKey)
 
 	// drop column for table0
-	err = schemaReplace.restoreFromHistory(dropTable0ColumnJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -857,7 +872,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop column for table1
-	err = schemaReplace.restoreFromHistory(dropTable1ColumnJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable1ColumnJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLIndexesIDSet))
@@ -867,7 +882,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[1].StartKey)
 
 	// modify column for table0
-	err = schemaReplace.restoreFromHistory(modifyTable0ColumnJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(modifyTable0ColumnJob)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -888,7 +903,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// modify column for table1
-	err = schemaReplace.restoreFromHistory(modifyTable1ColumnJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(modifyTable1ColumnJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLIndexesIDSet))
@@ -898,7 +913,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[1].StartKey)
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(multiSchemaChangeJob0)
 	require.NoError(t, err)
 	oldPartitionIDMap = make(map[string]struct{})
 	for l := 0; l < 2; l++ {
@@ -914,7 +929,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(multiSchemaChangeJob1)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), 1)
@@ -952,7 +967,7 @@ func TestDeleteRangeForMDDLJob2(t *testing.T) {
 	})
 	var qargs *PreDelRangeQuery
 	// drop schema
-	err := schemaReplace.restoreFromHistory(dropSchemaJob)
+	err := schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropSchemaJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewTableIDSet))
@@ -970,7 +985,7 @@ func TestDeleteRangeForMDDLJob2(t *testing.T) {
 	schemaReplace = MockEmptySchemasReplace(midr, map[int64]*DBReplace{
 		mDDLJobDBOldID: dbReplace,
 	})
-	err = schemaReplace.restoreFromHistory(dropSchemaJob)
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropSchemaJob)
 	require.NoError(t, err)
 	qargs = <-midr.queryCh
 	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewPartitionIDSet)+1)

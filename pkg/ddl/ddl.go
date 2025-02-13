@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -180,7 +181,7 @@ type DDL interface {
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
-	GetScope(status string) variable.ScopeFlag
+	GetScope(status string) vardef.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
@@ -1130,7 +1131,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	isEnableBefore := variable.EnableMDL.Load()
+	isEnableBefore := vardef.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
 	}
@@ -1154,7 +1155,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	variable.EnableMDL.Store(enable)
+	vardef.EnableMDL.Store(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
@@ -1178,7 +1179,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
-	if variable.EnableMDL.Load() {
+	if vardef.EnableMDL.Load() {
 		// If metadata lock is enabled. The transaction of DDL must begin after
 		// pre-write of the async commit transaction, then the commit ts of DDL
 		// must be greater than the async commit transaction. In this case, the
