@@ -1088,7 +1088,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	//TODO: (ris) should mod this
 	var restoreSchedulersFunc pdutil.UndoFunc
 	var schedulersConfig *pdutil.ClusterConfig
-	if isFullRestore(cmdName) {
+	if isFullRestore(cmdName) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
 		var tableIDs []int64
