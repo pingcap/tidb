@@ -163,6 +163,7 @@ func GetAlignedSize(size, blockSize uint64) uint64 {
 	return getBlockCnt(size, blockSize) * blockSize
 }
 
+// ceil(limit/blockSize)
 func getBlockCnt(size, blockSize uint64) uint64 {
 	return (size + blockSize - 1) / blockSize
 }
