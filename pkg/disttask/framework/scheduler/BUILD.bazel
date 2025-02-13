@@ -71,6 +71,7 @@ go_test(
         "//pkg/util/disttask",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

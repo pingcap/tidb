@@ -50,7 +50,7 @@ func NewNodeResourceWithDisk(totalCPU int, totalMem int64, totalDisk uint64) *No
 	}
 }
 
-// GetStepResource gets the step resource accoring to concurrency.
+// GetStepResource gets the step resource according to concurrency.
 func (nr *NodeResource) GetStepResource(concurrency int) *StepResource {
 	return &StepResource{
 		CPU: NewAllocatable(int64(concurrency)),
