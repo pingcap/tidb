@@ -20,6 +20,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
+        "//br/pkg/membuf",
         "//br/pkg/pdutil",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
@@ -74,6 +75,7 @@ go_library(
         "//pkg/util/engine",
         "//pkg/util/etcd",
         "//pkg/util/extsort",
+        "//pkg/util/memory",
         "//pkg/util/redact",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",

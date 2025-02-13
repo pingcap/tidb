@@ -169,6 +169,7 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
+	ParquetMeta  mydump.ParquetFileMeta
 }
 
 // Checksum records the checksum information.
