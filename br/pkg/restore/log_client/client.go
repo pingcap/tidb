@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -114,7 +113,7 @@ func NewLogRestoreManager(
 	}
 
 	if se != nil {
-		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
+		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore2(ctx, se)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -174,7 +173,7 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore2(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1661,7 +1660,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	ctx context.Context,
 	logIter LogIter,
-	execCtx sqlexec.RestrictedSQLExecutor,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
 	splitSize uint64,
@@ -1671,7 +1670,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1714,11 +1713,16 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	if rc.useCheckpoint {
-		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+		exists, err := logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
+		if err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+		if exists {
+			checkpointSQLs, err := logCheckpointMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1783,7 +1787,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
-		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
 		}); err != nil {
 			return sqls, false, errors.Trace(err)
@@ -1793,8 +1797,13 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
+func (rc *LogClient) RepairIngestIndex(
+	ctx context.Context,
+	ingestRecorder *ingestrec.IngestRecorder,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	g glue.Glue,
+) error {
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}

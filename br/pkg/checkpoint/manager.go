@@ -27,13 +27,30 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-type MetaManager[K KeyType, V ValueType, M any] interface {
-	LoadCheckpointData(context.Context, func(K, V)) (time.Duration, error)
+type SnapshotMetaManagerT = MetaManager[RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore]
+type LogMetaManagerT = MetaManager[LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore]
+
+type tickDurationConfig struct {
+	tickDurationForFlush    time.Duration
+	tickDurationForChecksum time.Duration
+	retryDuration           time.Duration
+}
+
+func DefaultTickDurationConfig() tickDurationConfig {
+	return tickDurationConfig{
+		tickDurationForFlush:    defaultTickDurationForFlush,
+		tickDurationForChecksum: defaultTickDurationForChecksum,
+		retryDuration:           defaultRetryDuration,
+	}
+}
+
+type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
+	LoadCheckpointData(context.Context, func(K, LV)) (time.Duration, error)
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
 	LoadCheckpointMetadata(context.Context) (*M, error)
 	SaveCheckpointMetadata(context.Context, *M) error
 	ExistsCheckpointMetadata(context.Context) (bool, error)
-	RemoveCheckpointDataForSstRestore(context.Context) error
+	RemoveCheckpointData(context.Context) error
 
 	// only for log restore
 	LoadCheckpointProgress(context.Context) (*CheckpointProgress, error)
@@ -45,33 +62,92 @@ type MetaManager[K KeyType, V ValueType, M any] interface {
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 
 	// start checkpoint runner
-	StartCheckpointRunner(context.Context, func(*RangeGroup[K, V]) ([]byte, error)) (*CheckpointRunner[K, V], error)
+	StartCheckpointRunner(context.Context, tickDurationConfig, func(*RangeGroup[K, SV]) ([]byte, error)) (*CheckpointRunner[K, SV], error)
+
+	// close session
+	Close()
 }
 
-type TableCheckpointMetaManager[K KeyType, V ValueType, M any] struct {
-	se     glue.Session
-	dom    *domain.Domain
-	dbName string
+type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
+	se       glue.Session
+	runnerSe glue.Session
+	dom      *domain.Domain
+	dbName   string
+}
+
+func NewLogTableMetaManager(
+	g glue.Glue,
+	dom *domain.Domain,
+	dbName string,
+) (LogMetaManagerT, error) {
+	se, err := g.CreateSession(dom.Store())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	runnerSe, err := g.CreateSession(dom.Store())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &TableMetaManager[
+		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
+	]{
+		se:       se,
+		runnerSe: runnerSe,
+		dom:      dom,
+		dbName:   dbName,
+	}, nil
+}
+
+func NewSnapshotTableMetaManager(
+	g glue.Glue,
+	dom *domain.Domain,
+	dbName string,
+) (SnapshotMetaManagerT, error) {
+	se, err := g.CreateSession(dom.Store())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	runnerSe, err := g.CreateSession(dom.Store())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &TableMetaManager[
+		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
+	]{
+		se:       se,
+		runnerSe: runnerSe,
+		dom:      dom,
+		dbName:   dbName,
+	}, nil
+}
+
+func (manager *TableMetaManager[K, SV, LV, M]) Close() {
+	if manager.se != nil {
+		manager.se.Close()
+	}
+	if manager.runnerSe != nil {
+		manager.runnerSe.Close()
+	}
 }
 
 // load the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
-func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointData(
+func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
-	fn func(K, V),
+	fn func(K, LV),
 ) (time.Duration, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	return selectCheckpointData(ctx, execCtx, manager.dbName, fn)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointChecksum(
+func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointChecksum(
 	ctx context.Context,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	return selectCheckpointChecksum(ctx, execCtx, manager.dbName)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointMetadata(
+func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointMetadata(
 	ctx context.Context,
 ) (*M, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -80,7 +156,7 @@ func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointMetadata(
 	return m, err
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) SaveCheckpointMetadata(
+func (manager *TableMetaManager[K, SV, LV, M]) SaveCheckpointMetadata(
 	ctx context.Context,
 	meta *M,
 ) error {
@@ -95,7 +171,7 @@ func (manager *TableCheckpointMetaManager[K, V, M]) SaveCheckpointMetadata(
 	return nil
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) ExistsCheckpointMetadata(
+func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointMetadata(
 	ctx context.Context,
 ) (bool, error) {
 	// we only check the existence of the checkpoint data table
@@ -104,14 +180,14 @@ func (manager *TableCheckpointMetaManager[K, V, M]) ExistsCheckpointMetadata(
 		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointMetaTableName)), nil
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) RemoveCheckpointDataForSstRestore(
+func (manager *TableMetaManager[K, SV, LV, M]) RemoveCheckpointData(
 	ctx context.Context,
 ) error {
 	return dropCheckpointTables(ctx, manager.dom, manager.se, manager.dbName,
 		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointProgress(
+func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointProgress(
 	ctx context.Context,
 ) (*CheckpointProgress, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -120,21 +196,21 @@ func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointProgress(
 	return m, errors.Trace(err)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) SaveCheckpointProgress(
+func (manager *TableMetaManager[K, SV, LV, M]) SaveCheckpointProgress(
 	ctx context.Context,
 	meta *CheckpointProgress,
 ) error {
 	return insertCheckpointMeta(ctx, manager.se, manager.dbName, checkpointProgressTableName, meta)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) ExistsCheckpointProgress(
+func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointProgress(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.dom.InfoSchema().
 		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointProgressTableName)), nil
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointIngestIndexRepairSQLs(
+func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 ) (*CheckpointIngestIndexRepairSQLs, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -143,24 +219,25 @@ func (manager *TableCheckpointMetaManager[K, V, M]) LoadCheckpointIngestIndexRep
 	return m, errors.Trace(err)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) SaveCheckpointIngestIndexRepairSQLs(
+func (manager *TableMetaManager[K, SV, LV, M]) SaveCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 	meta *CheckpointIngestIndexRepairSQLs,
 ) error {
 	return insertCheckpointMeta(ctx, manager.se, manager.dbName, checkpointIngestTableName, meta)
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) ExistsCheckpointIngestIndexRepairSQLs(
+func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.dom.InfoSchema().
 		TableExists(ast.NewCIStr(manager.dbName), ast.NewCIStr(checkpointIngestTableName)), nil
 }
 
-func (manager *TableCheckpointMetaManager[K, V, M]) StartCheckpointRunner(
+func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	ctx context.Context,
-	valueMarshaler func(*RangeGroup[K, V]) ([]byte, error),
-) (*CheckpointRunner[K, V], error) {
+	cfg tickDurationConfig,
+	valueMarshaler func(*RangeGroup[K, SV]) ([]byte, error),
+) (*CheckpointRunner[K, SV], error) {
 	runner := newCheckpointRunner(
 		newTableCheckpointStorage(manager.se, manager.dbName),
 		nil, valueMarshaler)
@@ -168,30 +245,60 @@ func (manager *TableCheckpointMetaManager[K, V, M]) StartCheckpointRunner(
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(
 		ctx,
-		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
+		cfg.tickDurationForFlush, cfg.tickDurationForChecksum, 0, cfg.retryDuration)
 	return runner, nil
 }
 
-type StorageCheckpointMetaManager[K KeyType, V ValueType, M any] struct {
+type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
 	storage  storage.ExternalStorage
 	cipher   *backuppb.CipherInfo
 	taskName string
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointData(
+func NewSnapshotStorageMetaManager(
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	taskName string,
+) SnapshotMetaManagerT {
+	return &StorageMetaManager[
+		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
+	]{
+		storage:  storage,
+		cipher:   cipher,
+		taskName: taskName,
+	}
+}
+
+func NewLogStorageMetaManager(
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	taskName string,
+) LogMetaManagerT {
+	return &StorageMetaManager[
+		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
+	]{
+		storage:  storage,
+		cipher:   cipher,
+		taskName: taskName,
+	}
+}
+
+func (manager *StorageMetaManager[K, SV, LV, M]) Close() {}
+
+func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
-	fn func(K, V),
+	fn func(K, LV),
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, manager.storage, manager.cipher, getCheckpointDataDirByName(manager.taskName), fn)
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointChecksum(
+func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointChecksum(
 	ctx context.Context,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	return loadCheckpointChecksum(ctx, manager.storage, getCheckpointChecksumDirByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointMetadata(
+func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointMetadata(
 	ctx context.Context,
 ) (*M, error) {
 	m := new(M)
@@ -199,27 +306,27 @@ func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointMetadata(
 	return m, errors.Trace(err)
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) SaveCheckpointMetadata(
+func (manager *StorageMetaManager[K, SV, LV, M]) SaveCheckpointMetadata(
 	ctx context.Context,
 	meta *M,
 ) error {
 	return saveCheckpointMetadata(ctx, manager.storage, meta, getCheckpointMetaPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) ExistsCheckpointMetadata(
+func (manager *StorageMetaManager[K, SV, LV, M]) ExistsCheckpointMetadata(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.storage.FileExists(ctx, getCheckpointMetaPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) RemoveCheckpointDataForSstRestore(
+func (manager *StorageMetaManager[K, SV, LV, M]) RemoveCheckpointData(
 	ctx context.Context,
 ) error {
 	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, manager.taskName)
 	return removeCheckpointData(ctx, manager.storage, prefix)
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointProgress(
+func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointProgress(
 	ctx context.Context,
 ) (*CheckpointProgress, error) {
 	m := &CheckpointProgress{}
@@ -227,20 +334,20 @@ func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointProgress(
 	return m, errors.Trace(err)
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) SaveCheckpointProgress(
+func (manager *StorageMetaManager[K, SV, LV, M]) SaveCheckpointProgress(
 	ctx context.Context,
 	meta *CheckpointProgress,
 ) error {
 	return saveCheckpointMetadata(ctx, manager.storage, meta, getCheckpointProgressPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) ExistsCheckpointProgress(
+func (manager *StorageMetaManager[K, SV, LV, M]) ExistsCheckpointProgress(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.storage.FileExists(ctx, getCheckpointProgressPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointIngestIndexRepairSQLs(
+func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 ) (*CheckpointIngestIndexRepairSQLs, error) {
 	m := &CheckpointIngestIndexRepairSQLs{}
@@ -248,24 +355,25 @@ func (manager *StorageCheckpointMetaManager[K, V, M]) LoadCheckpointIngestIndexR
 	return m, errors.Trace(err)
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) SaveCheckpointIngestIndexRepairSQLs(
+func (manager *StorageMetaManager[K, SV, LV, M]) SaveCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 	meta *CheckpointIngestIndexRepairSQLs,
 ) error {
 	return saveCheckpointMetadata(ctx, manager.storage, meta, getCheckpointIngestIndexPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) ExistsCheckpointIngestIndexRepairSQLs(
+func (manager *StorageMetaManager[K, SV, LV, M]) ExistsCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 ) (bool, error) {
 	return manager.storage.FileExists(ctx, getCheckpointIngestIndexPathByName(manager.taskName))
 }
 
-func (manager *StorageCheckpointMetaManager[K, V, M]) StartCheckpointRunner(
+func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	ctx context.Context,
-	valueMarshaler func(*RangeGroup[K, V]) ([]byte, error),
-) (*CheckpointRunner[K, V], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, manager.storage, nil)
+	cfg tickDurationConfig,
+	valueMarshaler func(*RangeGroup[K, SV]) ([]byte, error),
+) (*CheckpointRunner[K, SV], error) {
+	checkpointStorage, err := newExternalCheckpointStorage(ctx, manager.storage, nil, flushPositionForRestore(manager.taskName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -274,6 +382,6 @@ func (manager *StorageCheckpointMetaManager[K, V, M]) StartCheckpointRunner(
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(
 		ctx,
-		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
+		cfg.tickDurationForFlush, cfg.tickDurationForChecksum, 0, cfg.retryDuration)
 	return runner, nil
 }

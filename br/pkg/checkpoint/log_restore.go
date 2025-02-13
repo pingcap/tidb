@@ -21,10 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type LogRestoreKeyType = string
@@ -98,23 +96,21 @@ func newTableCheckpointStorage(se glue.Session, checkpointDBName string) *tableC
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
-	se glue.Session,
 	tick time.Duration,
+	manager LogMetaManagerT,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
-	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
-		nil, valueMarshalerForLogRestore)
-
-	runner.startCheckpointMainLoop(ctx, tick, tick, 0, defaultRetryDuration)
-	return runner, nil
+	cfg := DefaultTickDurationConfig()
+	cfg.tickDurationForChecksum = tick
+	cfg.tickDurationForFlush = tick
+	return manager.StartCheckpointRunner(ctx, cfg, valueMarshalerForLogRestore)
 }
 
 // Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForLogRestore(
 	ctx context.Context,
-	manager MetaManager[LogRestoreKeyType, LogRestoreValueType, CheckpointMetadataForLogRestore],
+	manager LogMetaManagerT,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
-	return manager.StartCheckpointRunner(ctx, valueMarshalerForLogRestore)
+	return manager.StartCheckpointRunner(ctx, DefaultTickDurationConfig(), valueMarshalerForLogRestore)
 }
 
 func AppendRangeForLogRestore(
@@ -137,16 +133,6 @@ func AppendRangeForLogRestore(
 	})
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
-// and return the total time cost in the past executions
-func LoadCheckpointDataForLogRestore[K KeyType, V ValueType](
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-	fn func(K, V),
-) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, LogRestoreCheckpointDatabaseName, fn)
-}
-
 type CheckpointMetadataForLogRestore struct {
 	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
 	RestoredTS        uint64 `json:"restored-ts"`
@@ -155,14 +141,6 @@ type CheckpointMetadataForLogRestore struct {
 	GcRatio           string `json:"gc-ratio"`
 	// tiflash recorder items with snapshot restore records
 	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
-}
-
-func ExistsLogRestoreCheckpointMetadata(
-	ctx context.Context,
-	dom *domain.Domain,
-) bool {
-	return dom.InfoSchema().
-		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointMetaTableName))
 }
 
 // A progress type for snapshot + log restore.
@@ -211,8 +189,8 @@ type TaskInfoForLogRestore struct {
 
 func TryToGetCheckpointTaskInfo(
 	ctx context.Context,
-	snapshotManager MetaManager[RestoreKeyType, RestoreValueType, CheckpointMetadataForSnapshotRestore],
-	logManager MetaManager[LogRestoreKeyType, LogRestoreValueType, CheckpointMetadataForLogRestore],
+	snapshotManager SnapshotMetaManagerT,
+	logManager LogMetaManagerT,
 ) (*TaskInfoForLogRestore, error) {
 	var (
 		metadata *CheckpointMetadataForLogRestore

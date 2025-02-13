@@ -1610,7 +1610,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, execCtx, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1980,17 +1980,12 @@ func checkPiTRTaskInfo(
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
 		curTaskInfo   *checkpoint.TaskInfoForLogRestore
+		err           error
 	)
 	checkInfo := &PiTRTaskInfo{}
 
 	if cfg.UseCheckpoint {
-		se, err := g.CreateSession(mgr.GetStorage())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, mgr.GetDomain(), execCtx)
+		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}

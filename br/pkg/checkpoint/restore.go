@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 )
 
@@ -62,34 +61,23 @@ func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType
 // only for test
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
-	se glue.Session,
-	dbName string,
 	tick time.Duration,
 	retryDuration time.Duration,
+	manager SnapshotMetaManagerT,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, dbName),
-		nil, valueMarshalerForRestore)
-
-	runner.startCheckpointMainLoop(ctx, tick, tick, 0, retryDuration)
-	return runner, nil
+	cfg := DefaultTickDurationConfig()
+	cfg.tickDurationForChecksum = tick
+	cfg.tickDurationForFlush = tick
+	cfg.retryDuration = retryDuration
+	return manager.StartCheckpointRunner(ctx, cfg, valueMarshalerForRestore)
 }
 
 // Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
-	se glue.Session,
-	dbName string,
+	manager SnapshotMetaManagerT,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, dbName),
-		nil, valueMarshalerForRestore)
-
-	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(
-		ctx,
-		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
-	return runner, nil
+	return manager.StartCheckpointRunner(ctx, DefaultTickDurationConfig(), valueMarshalerForRestore)
 }
 
 func AppendRangesForRestore(

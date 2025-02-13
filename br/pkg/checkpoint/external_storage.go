@@ -40,6 +40,13 @@ const (
 	CheckpointIngestIndexPathForRestoreFormat = CheckpointRestoreDirFormat + "/ingest_index.meta"
 )
 
+func flushPositionForRestore(taskName string) flushPosition {
+	return flushPosition{
+		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
+		CheckpointChecksumDir: getCheckpointChecksumDirByName(taskName),
+	}
+}
+
 func getCheckpointMetaPathByName(taskName string) string {
 	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
 }
@@ -72,9 +79,10 @@ func newExternalCheckpointStorage(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	timer GlobalTimer,
+	flushPosition flushPosition,
 ) (*externalCheckpointStorage, error) {
 	checkpointStorage := &externalCheckpointStorage{
-		flushPosition: flushPositionForBackup(),
+		flushPosition: flushPosition,
 		storage:       s,
 		timer:         timer,
 	}
