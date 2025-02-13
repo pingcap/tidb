@@ -1,8 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "decorrelate_apply",
-    srcs = ["xf_decorrelate_apply.go"],
+    srcs = [
+        "xf_decorrelate_apply_base.go",
+        "xf_decorrelate_simple_apply.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,5 +16,27 @@ go_library(
         "//pkg/planner/util/coreusage",
         "//pkg/util/intest",
         "//pkg/util/plancodec",
+    ],
+)
+
+go_test(
+    name = "decorrelate_apply_test",
+    timeout = "short",
+    srcs = ["xf_decorrelate_apply_test.go"],
+    flaky = True,
+    deps = [
+        ":decorrelate_apply",
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/cascades",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "//pkg/util/plancodec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )
