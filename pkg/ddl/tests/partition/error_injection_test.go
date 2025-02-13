@@ -15,12 +15,13 @@
 package partition
 
 import (
+	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,11 @@ type InjectedTest struct {
 type FailureTest struct {
 	FailpointPrefix string
 	Tests           []InjectedTest
+}
+
+type TestQuery struct {
+	Query  string
+	ErrTxt string
 }
 
 var truncateTests = FailureTest{
@@ -61,27 +67,166 @@ var truncateTests = FailureTest{
 	},
 }
 
+var addPartitionTests = FailureTest{
+	FailpointPrefix: "addPart",
+	Tests: []InjectedTest{
+		{
+			Name:        "Cancel1",
+			Recoverable: false,
+			Rollback:    true,
+		},
+		{
+			Name:        "Cancel2",
+			Recoverable: false,
+			Rollback:    true,
+		},
+		{
+			Name:        "Fail1",
+			Recoverable: true,
+			Rollback:    true,
+		},
+		{
+			Name:        "Fail2",
+			Recoverable: true,
+			Rollback:    false,
+		},
+		{
+			Name:        "Fail3",
+			Recoverable: true,
+			Rollback:    false,
+		},
+		{
+			Name:        "Fail4",
+			Recoverable: true,
+			Rollback:    false,
+		},
+	},
+}
+
+func TestAddPartitionListWithGlobalIndex(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (c) global) partition by list(b) (
+                        partition p0 values in (1,2,3),
+                        partition p1 values in (4,5,6),
+                        partition p2 values in (7,8,9))`
+	alter := `alter table t add partition (partition p3 values in (10,11,12))`
+	beforeDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+			"",
+		},
+		{
+			`update t set a = 7, b = 7, c = 7 where a = 1`,
+			"",
+		},
+		{
+			`update t set b = 3, c = 3 where c = 4`,
+			"",
+		},
+		{
+			`delete from t where a = 8`,
+			"",
+		},
+		{
+			`delete from t where b = 2`,
+			"",
+		},
+	}
+	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
+	afterDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+			"",
+		},
+		{
+			`insert into t values (11,11,11)`,
+			"[table:1526]Table has no partition for value 11",
+		},
+		{
+			`update t set a = 3, b = 3, c = 3 where a = 4`,
+			"",
+		},
+		{
+			`update t set a = 13, b = 13, c = 13 where a = 1`,
+			"[table:1526]Table has no partition for value 13",
+		},
+		{
+			// Should not find any row, so OK
+			`update t set a = 1, b = 1, c = 1 where c = 11`,
+			"",
+		},
+		{
+			`update t set a = 4, b = 4, c = 4 where c = 3`,
+			"",
+		},
+		{
+			`delete from t where a = 7`,
+			"",
+		},
+		{
+			// Should not find any row, so OK
+			`delete from t where b = 13`,
+			"",
+		},
+	}
+	afterResult := testkit.Rows("1 1 1", "4 4 4", "5 5 5", "6 6 6", "8 8 8", "9 7 9")
+	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
+	testDDLWithInjectedErrors(t, addPartitionTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover)
+}
+
 func TestTruncatePartitionListFailuresWithGlobalIndex(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (c) global) partition by list(b) (
                         partition p0 values in (1,2,3),
                         partition p1 values in (4,5,6),
                         partition p2 values in (7,8,9))`
 	alter := `alter table t truncate partition p0,p2`
-	beforeDML := []string{
-		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
-		`update t set a = 7, b = 7, c = 7 where a = 1`,
-		`update t set b = 3, c = 3 where c = 4`,
-		`delete from t where a = 8`,
-		`delete from t where b = 2`,
+	beforeDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+			"",
+		},
+		{
+			`update t set a = 7, b = 7, c = 7 where a = 1`,
+			"",
+		},
+		{
+			`update t set b = 3, c = 3 where c = 4`,
+			"",
+		},
+		{
+			`delete from t where a = 8`,
+			"",
+		},
+		{
+			`delete from t where b = 2`,
+			"",
+		},
 	}
 	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
-	afterDML := []string{
-		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
-		`update t set a = 2, b = 2, c = 2 where a = 1`,
-		`update t set a = 1, b = 1, c = 1 where c = 6`,
-		`update t set a = 6, b = 6 where a = 9`,
-		`delete from t where a = 5`,
-		`delete from t where b = 3`,
+	afterDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+			"",
+		},
+		{
+			`update t set a = 2, b = 2, c = 2 where a = 1`,
+			"",
+		},
+		{
+			`update t set a = 1, b = 1, c = 1 where c = 6`,
+			"",
+		},
+		{
+			`update t set a = 6, b = 6 where a = 9`,
+			"",
+		},
+		{
+			`delete from t where a = 5`,
+			"",
+		},
+		{
+			`delete from t where b = 3`,
+			"",
+		},
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
@@ -94,28 +239,61 @@ func TestTruncatePartitionListFailures(t *testing.T) {
                         partition p1 values in (4,5,6),
                         partition p2 values in (7,8,9))`
 	alter := `alter table t truncate partition p0,p2`
-	beforeDML := []string{
-		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
-		`update t set a = 7, b = 7, c = 7 where a = 1`,
-		`update t set b = 3, c = 3, a = 3 where c = 4`,
-		`delete from t where a = 8`,
-		`delete from t where b = 2`,
+	beforeDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+			"",
+		},
+		{
+			`update t set a = 7, b = 7, c = 7 where a = 1`,
+			"",
+		},
+		{
+			`update t set b = 3, c = 3, a = 3 where c = 4`,
+			"",
+		},
+		{
+			`delete from t where a = 8`,
+			"",
+		},
+		{
+			`delete from t where b = 2`,
+			"",
+		},
 	}
 	beforeResult := testkit.Rows("3 3 3", "6 6 6", "7 7 7", "9 9 9")
-	afterDML := []string{
-		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
-		`update t set a = 2, b = 2, c = 2 where a = 1`,
-		`update t set a = 1, b = 1, c = 1 where c = 6`,
-		`update t set a = 6, b = 6, c = 6 where a = 9`,
-		`delete from t where a = 5`,
-		`delete from t where b = 3`,
+	afterDML := []TestQuery{
+		{
+			`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+			"",
+		},
+		{
+			`update t set a = 2, b = 2, c = 2 where a = 1`,
+			"",
+		},
+		{
+			`update t set a = 1, b = 1, c = 1 where c = 6`,
+			"",
+		},
+		{
+			`update t set a = 6, b = 6, c = 6 where a = 9`,
+			"",
+		},
+		{
+			`delete from t where a = 5`,
+			"",
+		},
+		{
+			`delete from t where b = 3`,
+			"",
+		},
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 6", "7 7 7", "8 8 8")
 	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
 	testDDLWithInjectedErrors(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Fail1", "Fail2", "Fail3")
 }
 
-func testDDLWithInjectedErrors(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterRollback, afterRecover [][]any, skipTests ...string) {
+func testDDLWithInjectedErrors(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []TestQuery, beforeResult [][]any, afterDML []TestQuery, afterRollback, afterRecover [][]any, skipTests ...string) {
 TEST:
 	for _, test := range tests.Tests {
 		for _, skip := range skipTests {
@@ -132,23 +310,23 @@ TEST:
 	}
 }
 
-func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any) {
+func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName, createSQL, alterSQL string, beforeDML []TestQuery, beforeResult [][]any, afterDML []TestQuery, afterResult [][]any) {
 	name := failpointName + test.Name
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
 	defer func() {
 		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
 	}()
 	ddl.WaitTimeWhenErrorOccurred = 0
 	tk.MustExec(createSQL)
-	for _, sql := range beforeDML {
-		tk.MustExec(sql + ` /* ` + name + ` */`)
+	for _, query := range beforeDML {
+		if query.ErrTxt != "" {
+			tk.MustContainErrMsg(query.Query+` /* `+name+` */`, query.ErrTxt)
+		} else {
+			tk.MustExec(query.Query + ` /* ` + name + ` */`)
+		}
 	}
 	tk.MustQuery(`select * from t /* ` + name + ` */`).Sort().Check(beforeResult)
 	tOrg := external.GetTableByName(t, tk, "test", "t")
@@ -167,9 +345,9 @@ func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName
 		// test that it should handle recover/retry on error
 		term = "1*return(true)"
 	}
-	require.NoError(t, failpoint.Enable(fullName, term))
+	testfailpoint.Enable(t, fullName, term)
 	err := tk.ExecToErr(alterSQL + " /* " + name + " */")
-	require.NoError(t, failpoint.Disable(fullName))
+	testfailpoint.Disable(t, fullName)
 	tt := external.GetTableByName(t, tk, "test", "t")
 	pi := tt.Meta().Partition
 	if recoverable {
@@ -178,7 +356,14 @@ func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName
 		for i, pid := range pids {
 			equal = equal && pid == pi.Definitions[i].ID
 		}
-		require.False(t, equal, name)
+		if strings.HasPrefix(failpointName, "truncatePart") {
+			require.False(t, equal, name)
+		} else if strings.HasPrefix(failpointName, "addPart") {
+			require.True(t, equal, name)
+			require.Less(t, len(pids), len(pi.Definitions))
+		} else {
+			require.Fail(t, "Unknown failpoint test", "failpointName: %s", failpointName)
+		}
 		return
 	}
 	require.Error(t, err, "failpoint "+name)
@@ -197,8 +382,12 @@ func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName
 	}
 	tk.MustExec(`admin check table t /* ` + name + ` */`)
 	tk.MustExec(`update t set b = 7 where a = 9 /* ` + name + ` */`)
-	for _, sql := range afterDML {
-		tk.MustExec(sql + " /* " + name + " */")
+	for _, query := range afterDML {
+		if query.ErrTxt != "" {
+			tk.MustContainErrMsg(query.Query+` /* `+name+` */`, query.ErrTxt)
+		} else {
+			tk.MustExec(query.Query + ` /* ` + name + ` */`)
+		}
 	}
 	tk.MustQuery(`select * from t /* ` + name + ` */`).Sort().Check(afterResult)
 	tk.MustExec(`drop table t /* ` + name + ` */`)
