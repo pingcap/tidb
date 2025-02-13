@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -860,8 +861,6 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
-<<<<<<< HEAD
-=======
 func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
@@ -876,7 +875,6 @@ func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 
->>>>>>> 042846ecb16 (log backup: set a proper maxVersion to resolve lock (#57178))
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
