@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,6 +98,53 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 	return string(code)
 }
 
+func isInvertedIndexSupportedExpr(expr expression.Expression, columns []*expression.Column) bool {
+	// Check if the expression is a supported scalar function
+	binop, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+
+	// List of supported function names
+	supportedFuncs := map[string]struct{}{
+		ast.EQ: {},
+		ast.LT: {},
+		ast.LE: {},
+		ast.GT: {},
+		ast.GE: {},
+		ast.NE: {},
+		ast.In: {},
+	}
+
+	// Check if the function is supported
+	if _, supported := supportedFuncs[binop.FuncName.L]; !supported {
+		return false
+	}
+
+	// List of supported column types
+	supportedTypes := map[byte]struct{}{
+		mysql.TypeTiny:      {},
+		mysql.TypeShort:     {},
+		mysql.TypeInt24:     {},
+		mysql.TypeLong:      {},
+		mysql.TypeLonglong:  {},
+		mysql.TypeYear:      {},
+		mysql.TypeDuration:  {},
+		mysql.TypeDate:      {},
+		mysql.TypeTimestamp: {},
+		mysql.TypeDatetime:  {},
+	}
+
+	// Check if all columns have supported types
+	for _, col := range columns {
+		if _, supported := supportedTypes[col.RetType.GetType()]; !supported {
+			return false
+		}
+	}
+
+	return true
+}
+
 // groupByColumnsSortBySelectivity is used to group the conditions by the column they use
 // and sort the groups by the selectivity of the conditions in the group.
 // @param: conds: the conditions to be grouped
@@ -118,6 +166,11 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 		}
 
 		columns := expression.ExtractColumns(cond)
+
+		// If all columns are integer columns, we do not push down the condition to TiFlash.
+		if isInvertedIndexSupportedExpr(cond, columns) {
+			continue
+		}
 
 		var code string
 		if len(columns) == 0 {
