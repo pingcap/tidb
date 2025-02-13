@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -897,7 +897,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
 	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
-	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -927,7 +927,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		childFKInfo.RefTable = newTableName
 	}
 	for _, info := range fkh.loaded {
-		err := updateTable(t, info.schemaID, info.tblInfo)
+		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {
 			return err
 		}
@@ -1323,12 +1323,19 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 		}
 	}
 
-	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo)
+	needUpdateTs := tblInfo.State == model.StatePublic &&
+		job.Type != model.ActionTruncateTable &&
+		job.Type != model.ActionTruncateTablePartition &&
+		job.Type != model.ActionRenameTable &&
+		job.Type != model.ActionRenameTables &&
+		job.Type != model.ActionExchangeTablePartition
+
+	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo, needUpdateTs)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo)
+		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo, needUpdateTs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1336,8 +1343,8 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 	return ver, nil
 }
 
-func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo) error {
-	if tblInfo.State == model.StatePublic {
+func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo, needUpdateTs bool) error {
+	if needUpdateTs {
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return t.UpdateTable(schemaID, tblInfo)

@@ -4,6 +4,7 @@ go_test(
     name = "addindextest2_test",
     timeout = "long",
     srcs = [
+        "alter_job_test.go",
         "global_sort_test.go",
         "main_test.go",
     ],
@@ -14,7 +15,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",

@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -269,7 +269,7 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 
 	tk.MustExec("set @@global.tidb_historical_stats_duration = '1s'")
-	duration := variable.HistoricalStatsDuration.Load()
+	duration := vardef.HistoricalStatsDuration.Load()
 	fmt.Println(duration.String())
 	time.Sleep(2 * time.Second)
 	err = dom.StatsHandle().ClearOutdatedHistoryStats()

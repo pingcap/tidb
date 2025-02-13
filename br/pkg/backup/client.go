@@ -692,7 +692,7 @@ func (bc *Client) SetApiVersion(v kvrpcpb.APIVersion) {
 	bc.apiVersion = v
 }
 
-// Client.BuildBackupRangeAndSchema calls BuildBackupRangeAndSchema,
+// BuildBackupRangeAndSchema calls BuildBackupRangeAndInitSchema,
 // if the checkpoint mode is used, return the ranges from checkpoint meta
 func (bc *Client) BuildBackupRangeAndSchema(
 	storage kv.Storage,
@@ -731,7 +731,7 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 	return nil
 }
 
-// BuildBackupRangeAndSchema gets KV range and schema of tables.
+// BuildBackupRangeAndInitSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
 func BuildBackupRangeAndInitSchema(

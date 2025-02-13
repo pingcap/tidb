@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
@@ -49,46 +50,6 @@ type statsReadWriter struct {
 // NewStatsReadWriter creates a new StatsReadWriter.
 func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsReadWriter {
 	return &statsReadWriter{statsHandler: statsHandler}
-}
-
-// InsertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
-// This operation also updates version.
-func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
-		}
-	}()
-
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := InsertColStats2KV(util.StatsCtx, sctx, physicalID, colInfos)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		statsVer = startTS
-		return nil
-	}, util.FlagWrapTxn)
-}
-
-// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
-// new columns and indices which belong to this table.
-func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
-		}
-	}()
-
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := InsertTableStats2KV(util.StatsCtx, sctx, info, physicalID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		statsVer = startTS
-		return nil
-	}, util.FlagWrapTxn)
 }
 
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
@@ -309,10 +270,10 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 ) {
 	historicalStatsEnabled, err := s.statsHandler.CheckHistoricalStatsEnable()
 	if err != nil {
-		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
+		return nil, nil, errors.Errorf("check %v failed: %v", vardef.TiDBEnableHistoricalStats, err)
 	}
 	if !historicalStatsEnabled {
-		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
+		return nil, nil, errors.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats)
 	}
 
 	defer func() {

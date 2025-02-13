@@ -14,17 +14,22 @@
 
 package rule
 
-type ruleType int
+// Type indicates the rule type.
+type Type int
 
 const (
 	// DefaultNone indicates this is none rule.
-	DefaultNone ruleType = iota
+	DefaultNone Type = iota
 	// XFJoinToApply refers to join to a apply rule.
 	XFJoinToApply
+	// XFDeCorrelateApply try to decorate apply to a join.
+	XFDeCorrelateApply
+	// XFPullCorrExprsFromProj try to pull correlated expression from proj from outer child of a apply.
+	XFPullCorrExprsFromProj
 )
 
 // String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
+func (tp *Type) String() string {
 	switch *tp {
 	case XFJoinToApply:
 		return "join_to_apply"

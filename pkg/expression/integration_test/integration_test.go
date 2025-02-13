@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -1920,8 +1921,8 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", vardef.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -3959,132 +3960,6 @@ func TestIssue16205(t *testing.T) {
 	rows2 := tk.MustQuery("execute stmt").Rows()
 	require.Len(t, rows2, 1)
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
-}
-
-func TestCrossDCQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
-	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
-	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
-	PARTITION p1 VALUES LESS THAN (11) placement policy p2
-);`)
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
-
-	testcases := []struct {
-		name      string
-		txnScope  string
-		zone      string
-		sql       string
-		expectErr error
-	}{
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21872
-		//{
-		//	name:      "cross dc read to sh by holding bj, IndexReader",
-		//	txnScope:  "bj",
-		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
-		//{
-		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
-		//	txnScope:  "bj",
-		//	sql:       "select * from t1 where c in (1,2,3,4);",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		{
-			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c = 1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c < 6",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to global by holding bj",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "read sh dc by holding sh",
-			txnScope:  "local",
-			zone:      "sh",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-		{
-			name:      "read sh dc by holding global",
-			txnScope:  "global",
-			zone:      "",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-	}
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	for _, testcase := range testcases {
-		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone)))
-		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		tk.Exec("begin")
-		res, err := tk.Exec(testcase.sql)
-		_, resErr := session.GetRows4Test(context.Background(), tk.Session(), res)
-		var checkErr error
-		if err != nil {
-			checkErr = err
-		} else {
-			checkErr = resErr
-		}
-		if testcase.expectErr != nil {
-			require.Error(t, checkErr)
-			require.Regexp(t, ".*can not be read by.*", checkErr.Error())
-		} else {
-			require.NoError(t, checkErr)
-		}
-		if res != nil {
-			res.Close()
-		}
-		tk.Exec("commit")
-	}
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func calculateChecksum(cols ...any) string {

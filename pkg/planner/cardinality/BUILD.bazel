@@ -78,7 +78,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",

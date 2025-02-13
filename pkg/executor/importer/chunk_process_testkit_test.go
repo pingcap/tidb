@@ -49,7 +49,7 @@ import (
 func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
 	file, err := os.Open(fileName)
 	require.NoError(t, err)
-	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{Separator: `,`, Delimiter: `"`},
+	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{FieldsTerminatedBy: `,`, FieldsEnclosedBy: `"`},
 		file, importer.LoadDataReadBlockSize, nil, false, nil)
 	require.NoError(t, err)
 	return csvParser

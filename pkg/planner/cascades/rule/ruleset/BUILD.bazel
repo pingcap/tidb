@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ruleset",
+    srcs = ["rule_set.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/ruleset",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/pattern",
+        "//pkg/planner/cascades/rule",
+        "//pkg/planner/cascades/rule/apply/decorrelate_apply",
+    ],
+)

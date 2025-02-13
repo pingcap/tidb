@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,15 +53,15 @@ func TestSetSystemVariable(t *testing.T) {
 		value string
 		err   bool
 	}{
-		{variable.TxnIsolation, "SERIALIZABLE", true},
-		{variable.TimeZone, "xyz", true},
-		{variable.TiDBOptAggPushDown, "1", false},
-		{variable.TiDBOptDeriveTopN, "1", false},
-		{variable.TiDBOptDistinctAggPushDown, "1", false},
-		{variable.TiDBMemQuotaQuery, "1024", false},
-		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
-		{variable.TiDBEnableRowLevelChecksum, "1", true},
+		{vardef.TxnIsolation, "SERIALIZABLE", true},
+		{vardef.TimeZone, "xyz", true},
+		{vardef.TiDBOptAggPushDown, "1", false},
+		{vardef.TiDBOptDeriveTopN, "1", false},
+		{vardef.TiDBOptDistinctAggPushDown, "1", false},
+		{vardef.TiDBMemQuotaQuery, "1024", false},
+		{vardef.TiDBMemQuotaApplyCache, "1024", false},
+		{vardef.TiDBEnableStmtSummary, "1", true}, // now global only
+		{vardef.TiDBEnableRowLevelChecksum, "1", true},
 	}
 
 	for _, tc := range testCases {
@@ -449,7 +450,7 @@ func TestHookContext(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	ctx := mock.NewContext()
 	ctx.Store = store
-	sv := variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "testhooksysvar", Value: variable.On, Type: variable.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
+	sv := variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "testhooksysvar", Value: vardef.On, Type: vardef.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
 		require.Equal(t, s.GetStore(), store)
 		return nil
 	}}

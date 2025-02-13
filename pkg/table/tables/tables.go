@@ -1383,7 +1383,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.Trace(err)
 	}
 	if meta.ShardRowIDBits > 0 {
 		shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), meta.ShardRowIDBits, autoid.RowIDBitLength)
