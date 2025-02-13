@@ -35,7 +35,6 @@ import (
 
 const (
 	defaultSubtaskKeepDays = 14
-	minEntrySizeLimit      = 32 * units.MiB
 
 	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
 	// TaskColumns is the columns for task.
@@ -142,21 +141,12 @@ func SetTaskManager(is *TaskManager) {
 
 // WithNewSession executes the function with a new session.
 func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
-	v, err := mgr.sePool.Get()
+	se, err := mgr.sePool.Get()
 	if err != nil {
 		return err
 	}
-	// when using global sort, the subtask meta might quite large as it include
-	// filenames of all the generated kv/stat files, we set a minimal entry size
-	// to make sure it works even with the default tidb_txn_entry_size_limit(6M)
-	se := v.(sessionctx.Context)
-	limitBak := se.GetSessionVars().TxnEntrySizeLimit
-	defer func() {
-		se.GetSessionVars().TxnEntrySizeLimit = limitBak
-		mgr.sePool.Put(v)
-	}()
-	se.GetSessionVars().TxnEntrySizeLimit = max(vardef.TxnEntrySizeLimit.Load(), minEntrySizeLimit)
-	return fn(se)
+	defer mgr.sePool.Put(se)
+	return fn(se.(sessionctx.Context))
 }
 
 // WithNewTxn executes the fn in a new transaction.
