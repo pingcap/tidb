@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/httputil",
+        "//pkg/kv",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/util/codec",
@@ -42,6 +43,7 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
+        "//pkg/kv",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testsetup",
         "@com_github_coreos_go_semver//semver",

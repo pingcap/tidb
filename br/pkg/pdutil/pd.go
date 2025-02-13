@@ -354,7 +354,7 @@ func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string)
 	}
 	ruleRet, err := p.pdHTTPCli.GetRegionLabelRulesByIDs(ctx, []string{ruleID})
 	if err != nil {
-		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id",ruleID))
+		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
 	}
 	rule := ruleRet[0]
 	// Set ttl to 0 to remove the rule.
@@ -439,7 +439,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
-	if err := pd.ResumeRegionLabelRule(ctx,clusterCfg.RuleID); err != nil {
+	if err := pd.ResumeRegionLabelRule(ctx, clusterCfg.RuleID); err != nil {
 		return errors.Annotate(err, "fail to patch region label rule")
 	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
@@ -469,7 +469,6 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
 	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
 }
-
 
 func (p *PdController) MakeFineGrainedUndoFunction(config ClusterConfig, undoFunc func()) UndoFunc {
 	restore := func(ctx context.Context) error {
@@ -683,7 +682,7 @@ func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange []
 
 	resumeScheduler := func() {
 		cancel()
-		<- done
+		<-done
 	}
 
 	return ruleID, resumeScheduler, errors.Trace(err)

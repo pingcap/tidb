@@ -247,15 +247,15 @@ func calSortedKeyRanges(ids []int64) [][]kv.Key {
 		return [][]kv.Key{}
 	}
 	var keyRanges [][]kv.Key
-	for i :=0; i < len(idRanges); i++{
+	for i := 0; i < len(idRanges); i++ {
 		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
 		endKey := tablecodec.EncodeTablePrefix(idRanges[i][1])
-		keyRanges = append(keyRanges, []kv.Key{startKey,endKey})
+		keyRanges = append(keyRanges, []kv.Key{startKey, endKey})
 	}
 	return keyRanges
 }
 
-func calSortedTableIds(ids []int64) ([][]int64){
+func calSortedTableIds(ids []int64) [][]int64 {
 	if len(ids) == 0 {
 		return [][]int64{}
 	}

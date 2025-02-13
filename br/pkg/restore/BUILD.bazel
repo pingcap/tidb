@@ -26,6 +26,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/tablecodec",
         "//pkg/util",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
