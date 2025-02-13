@@ -213,7 +213,6 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
 		ast.Sysdate,
-		ast.UnixTimestamp,
 		ast.StrToDate,
 
 		// encryption functions.
@@ -227,6 +226,12 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
+	case ast.UnixTimestamp:
+		if len(sf.GetArgs()) == 0 {
+			return false
+		} else {
+			return true
+		}
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
 	case ast.Conv:
