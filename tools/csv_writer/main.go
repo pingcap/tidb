@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
@@ -20,28 +21,42 @@ import (
 
 // 解析命令行参数
 var (
-	credentialPath      = flag.String("credential", "/home/admin/credential", "Path to GCS credential file")
-	templatePath        = flag.String("template", "/home/admin/template.sql", "Path to SQL schema template")
+	credentialPath = flag.String("credential", "/Users/fanzhou/tcms/120T/credential", "Path to GCS credential file")
+	//credentialPath = flag.String("credential", "/home/admin/credential", "Path to GCS credential file")
+	//templatePath        = flag.String("template", "/home/admin/template.sql", "Path to SQL schema template")
+	templatePath        = flag.String("template", "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer/template.sql", "Path to SQL schema template")
 	concurrency         = flag.Int("concurrency", 3, "Number of concurrent goroutines for data generation and GCS upload")
-	rowCount            = flag.Int("rows", 10000, "Number of rows to generate")
+	rowCount            = flag.Int("rows", 8000, "Number of rows to generate")
 	duplicateWriteTimes = flag.Int("duplicateWriteTimes", 1, "Number of rows to generate")
 	showFile            = flag.Bool("showFile", false, "List all files in the GCS directory without generating data")
 	deleteFileName      = flag.String("deleteFile", "", "Delete a specific file from GCS")
 	deleteAfterWrite    = flag.Bool("deleteAfterWrite", false, "Delete all file from GCS after write, TEST ONLY!")
-	localPath           = flag.String("localPath", "", "Path to write local file")
-	glanceFile          = flag.String("glanceFile", "", "Glance the first 128*1024 byte of a specific file from GCS")
-	fileNamePrefix      = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
-	deletePrefixFile    = flag.String("deletePrefixFile", "", "Delete all files with prefix")
-	testLongTimeWrite   = flag.Bool("testLongTimeWrite", false, "Test long time write")
+	//localPath           = flag.String("localPath", "", "Path to write local file")
+	localPath         = flag.String("localPath", "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer/testCSVWriter.0.csv", "Path to write local file")
+	glanceFile        = flag.String("glanceFile", "", "Glance the first 128*1024 byte of a specific file from GCS")
+	fileNamePrefix    = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
+	deletePrefixFile  = flag.String("deletePrefixFile", "", "Delete all files with prefix")
+	testLongTimeWrite = flag.Bool("testLongTimeWrite", false, "Test long time write")
 
-	batchSize    = flag.Int("batchSize", 1000, "Number of rows to generate in each batch")
-	generatorNum = flag.Int("generatorNum", 8, "Number of generator goroutines")
-	writerNum    = flag.Int("writerNum", 4, "Number of writer goroutines")
+	batchSize    = flag.Int("batchSize", 500, "Number of rows to generate in each batch")
+	generatorNum = flag.Int("generatorNum", 16, "Number of generator goroutines")
+	writerNum    = flag.Int("writerNum", 16, "Number of writer goroutines")
 )
 
 const (
-	maxRetries = 3 // 最大重试次数
+	maxRetries = 3
+	charSet    = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" // 最大重试次数
 )
+
+var faker *gofakeit.Faker
+var faker1 *gofakeit.Faker
+
+// 初始化 Faker 实例
+func init() {
+	rand.Seed(time.Now().UnixNano())
+	faker = gofakeit.New(time.Now().Unix())
+	faker1 = gofakeit.New(time.Now().Unix())
+}
 
 type Column struct {
 	Name string
@@ -167,62 +182,74 @@ func generateValue(col Column) string {
 }
 
 func generateLetterWithNum(len int) string {
+	var builder strings.Builder
+
+	// 如果长度小于等于1000，直接生成
 	if len <= 1000 {
-		return gofakeit.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", len))
+		builder.WriteString(faker1.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", len)))
+	} else {
+		// 生成1000字符的部分
+		builder.WriteString(faker1.Regex("[a-zA-Z0-9]{1000}"))
+
+		// 重复生成
+		for i := 1; i < len/1000; i++ {
+			builder.WriteString(builder.String()[:1000])
+		}
+
+		// 如果有剩余，补充
+		remain := len % 1000
+		if remain > 0 {
+			builder.WriteString(builder.String()[:remain])
+		}
 	}
-	res := gofakeit.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", 1000))
-	for i := 1; i < len/1000; i++ {
-		res += res[:1000]
-	}
-	if remain := len % 1000; remain > 0 {
-		res += res[:remain]
-	}
-	return res
+
+	return builder.String()
 }
 
-func generateValueByCol(col Column, num int) []string {
+func generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "BIGINT"):
-		return generateBigint(num)
+		generateBigint(num, res)
 
 	case strings.HasPrefix(col.Type, "TINYINT"):
-		return generateTinyint1(num)
+		generateTinyint1(num, res)
 
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
-		return generateTimestamp(num)
+		generateTimestamp(num, res)
 
 	case strings.HasPrefix(col.Type, "VARBINARY"):
-		return generateVarbinary(num, extractNumberFromSQLType(col.Type))
+		generateVarbinary(num, extractNumberFromSQLType(col.Type), res)
 
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
-		return generateMediumblob(num)
+		generateMediumblob(num, res)
+	default:
+		log.Printf("Unsupported type: %s", col.Type)
 	}
-	log.Printf("Unsupported type: %s", col.Type)
-	return nil
+	//return nil
 }
 
-func generateBigint(num int) []string {
-	res := make([]string, num)
+func generateBigint(num int, res []string) {
+	//res := make([]string, num)
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(gofakeit.Number(1, 1000000000))
+		res[i] = strconv.Itoa(faker.Number(1, 1000000000))
 	}
-	return res
+	//return res
 }
 
-func generateTinyint1(num int) []string {
-	res := make([]string, num)
+func generateTinyint1(num int, res []string) {
+	//res := make([]string, num)
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(gofakeit.Number(0, 1))
+		res[i] = strconv.Itoa(faker.Number(0, 1))
 	}
-	return res
+	//return res
 }
 
-func generateVarbinary(num, len int) []string {
-	res := make([]string, num)
+func generateVarbinary(num, len int, res []string) {
+	//res := make([]string, num)
 	for i := 0; i < num; i++ {
 		res[i] = generateLetterWithNum(len)
 	}
-	return res
+	//return res
 }
 
 //func generateVarbinary(num, len int) []string {
@@ -257,19 +284,19 @@ func generateVarbinary(num, len int) []string {
 //	return res
 //}
 
-func generateMediumblob(num int) []string {
-	return generateVarbinary(num, 73312)
+func generateMediumblob(num int, res []string) {
+	generateVarbinary(num, 73312, res)
 }
 
-func generateTimestamp(num int) []string {
-	res := make([]string, num)
+func generateTimestamp(num int, res []string) {
+	//res := make([]string, num)
 	start := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Now() // 取当前时间
 	for i := 0; i < num; i++ {
-		randomTime := gofakeit.DateRange(start, end)
+		randomTime := faker.DateRange(start, end)
 		res[i] = randomTime.Format("2006-01-02 15:04:05")
 	}
-	return res
+	//return res
 }
 
 // 生成符合字段类型的数据（并发）
@@ -295,11 +322,11 @@ func generateDataConcurrentlyByCol(columns []Column, rowCount int, concurrency i
 			log.Printf("Worker %d: 生成数据 %d - %d", workerID, start, end)
 
 			workerData := make([][]string, 0, end-start)
-			for _, col := range columns {
-				//t := time.Now()
-				workerData = append(workerData, generateValueByCol(col, end-start))
-				//log.Printf("Worker %d: 生成 %s 数据耗时: %v", workerID, col.Type, time.Since(t))
-			}
+			//for _, col := range columns {
+			//t := time.Now()
+			//workerData = append(workerData, generateValueByCol(col, end-start))
+			//log.Printf("Worker %d: 生成 %s 数据耗时: %v", workerID, col.Type, time.Since(t))
+			//}
 
 			dataChannel <- workerData
 			log.Printf("Worker %d: 生成完成 %d 行数据", workerID, len(workerData))
@@ -873,6 +900,12 @@ func mainOld() {
 }
 
 func main() {
+	//go func() {
+	//	// pprof 服务器，将暴露在 6060 端口
+	//	if err := http.ListenAndServe(":6060", nil); err != nil {
+	//		panic(err)
+	//	}
+	//}()
 	// 解析命令行参数
 	flag.Parse()
 
@@ -1095,15 +1128,20 @@ func generatorWorkerByCol(tasksCh <-chan Task, resultsCh chan<- Result, workerID
 		count := task.end - task.begin
 		// 尝试从池中获取一个 [][]string 切片
 		buf := pool.Get().([][]string)
-		if cap(buf) < colNum {
+		if cap(buf) != colNum {
 			buf = make([][]string, colNum)
+		}
+		for i := range buf {
+			if len(buf[i]) != *batchSize {
+				buf[i] = make([]string, *batchSize)
+			}
 		}
 		// 设定切片长度为 count
 		values := buf[:colNum]
 		for i, col := range task.cols {
-			t := time.Now()
-			values[i] = generateValueByCol(col, count)
-			log.Printf("Worker %d: 生成 %s 数据耗时: %v", workerID, col.Type, time.Since(t))
+			//t := time.Now()
+			generateValueByCol(col, count, values[i])
+			//log.Printf("Worker %d: 生成 %s 数据耗时: %v", workerID, col.Type, time.Since(t))
 		}
 		log.Printf("Generator %d: 处理任务 %d, 主键范围 [%d, %d)，生成 %d 个随机字符串, 耗时: %v",
 			workerID, task.id, task.begin, task.end, count, time.Since(startTime))
@@ -1123,6 +1161,8 @@ func writerWorkerByCol(resultsCh <-chan Result, store storage.ExternalStorage, w
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			startTime := time.Now()
 			if *localPath != "" {
+				success = true
+				break
 				err = writeCSVToLocalDiskByCol2(*localPath+fileName, nil, result.values)
 				if err != nil {
 					log.Fatal("Error writing CSV:", err)

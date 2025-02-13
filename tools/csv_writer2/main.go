@@ -23,24 +23,24 @@ import (
 
 // 解析命令行参数
 var (
-	credentialPath   = flag.String("credential", "/home/admin/credential", "Path to GCS credential file")
-	templatePath     = flag.String("template", "/home/admin/template.sql", "Path to SQL schema template")
+	credentialPath   = flag.String("credential", "/Users/fanzhou/tcms/120T/credential", "Path to GCS credential file")
+	templatePath     = flag.String("template", "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer/template.sql", "Path to SQL schema template")
 	showFile         = flag.Bool("showFile", false, "List all files in the GCS directory without generating data")
 	deleteFileName   = flag.String("deleteFile", "", "Delete a specific file from GCS")
 	deleteAfterWrite = flag.Bool("deleteAfterWrite", false, "Delete all file from GCS after write, TEST ONLY!")
-	localPath        = flag.String("localPath", "", "Path to write local file")
+	localPath        = flag.String("localPath", "/Users/fanzhou/Documents/GitHub/tidb/tools/csv_writer2/", "Path to write local file")
 	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 byte of a specific file from GCS")
 	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
 	gcsDir           = flag.String("gcsDir", "gcs://global-sort-dir", "GCS directory")
 
-	batchSize           = flag.Int("batchSize", 500, "Number of rows to generate in each batch")
+	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
 	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
 	writerNum           = flag.Int("writerNum", 8, "Number of writer goroutines")
 	pkBegin             = flag.Int("pkBegin", 0, "Begin of primary key, [begin, end)")
-	pkEnd               = flag.Int("pkEnd", 1, "End of primary key[begin, end)")
+	pkEnd               = flag.Int("pkEnd", 10, "End of primary key[begin, end)")
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
-	base64Encode        = flag.Bool("base64Encode", true, "Base64 encode the CSV file")
+	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
 )
 
 const (
