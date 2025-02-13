@@ -1188,9 +1188,9 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 
 func TestTaskManagerEntrySize(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
-	getMeta := func(len int) []byte {
-		meta := make([]byte, len)
-		for i := 0; i < len; i++ {
+	getMeta := func(l int) []byte {
+		meta := make([]byte, l)
+		for i := 0; i < l; i++ {
 			meta[i] = 'a'
 		}
 		return meta
