@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1268,4 +1270,45 @@ func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
 	j := getJobMetaByID(t, tk, job.ID)
 	require.Equal(t, j.ReorgMeta, job.ReorgMeta)
 	deleteJobMetaByID(tk, job.ID)
+}
+
+func TestGetAllTableInfos(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create table test.t1 (a int)")
+
+	tblInfos1 := make([]*model.TableInfo, 0)
+	tblInfos2 := make([]*model.TableInfo, 0)
+	dbs := dom.InfoSchema().AllSchemas()
+	maxDBID := int64(0)
+	for _, db := range dbs {
+		if infoschema.IsSpecialDB(db.Name.L) {
+			continue
+		}
+		if db.ID > maxDBID {
+			maxDBID = db.ID
+		}
+		info, err := dom.InfoSchema().SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		tblInfos1 = append(tblInfos1, info...)
+	}
+
+	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 10, func(tblInfo *model.TableInfo) error {
+		tblInfos2 = append(tblInfos2, tblInfo)
+		return nil
+	}, maxDBID)
+	require.NoError(t, err)
+
+	slices.SortFunc(tblInfos1, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+	slices.SortFunc(tblInfos2, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+	require.Equal(t, len(tblInfos1), len(tblInfos2))
+	for i := range tblInfos1 {
+		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
+		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
+	}
 }
