@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -83,26 +84,26 @@ func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	totalScanTime := 0.0
 	totalMemUsage := 0.0
 	for _, middleMetric := range middleMetrics {
-		metric, ok := tableNameToMetrics[middleMetric.tableName]
+		metric, ok := tableNameToMetrics[middleMetric.TableName]
 		if !ok {
-			tableNameToMetrics[middleMetric.tableName] = middleMetric
+			tableNameToMetrics[middleMetric.TableName] = middleMetric
 		} else {
-			metric.tableScanTime += middleMetric.tableScanTime * float64(middleMetric.readFrequency)
-			metric.tableMemUsage += middleMetric.tableMemUsage * float64(middleMetric.readFrequency)
-			metric.readFrequency += middleMetric.readFrequency
+			metric.TableScanTime += middleMetric.TableScanTime * float64(middleMetric.ReadFrequency)
+			metric.TableMemUsage += middleMetric.TableMemUsage * float64(middleMetric.ReadFrequency)
+			metric.ReadFrequency += middleMetric.ReadFrequency
 		}
-		totalScanTime += middleMetric.tableScanTime
-		totalMemUsage += middleMetric.tableMemUsage
+		totalScanTime += middleMetric.TableScanTime
+		totalMemUsage += middleMetric.TableMemUsage
 	}
 	if totalScanTime == 0 || totalMemUsage == 0 {
 		return
 	}
 	// step4: calculate the percentage of scan time and memory usage for each table
 	for _, metric := range tableNameToMetrics {
-		metric.tableCost = metric.tableScanTime/totalScanTime + metric.tableMemUsage/totalMemUsage
+		metric.TableCost = metric.TableScanTime/totalScanTime + metric.TableMemUsage/totalMemUsage
 	}
 	// step5: save the table cost metrics to table "mysql.workload_values"
-	handle.saveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
+	handle.SaveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
 }
 
 func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
@@ -119,10 +120,10 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, t
 	return nil, time.Now(), time.Now()
 }
 
-// TODO save the workload job info such as start end time into workload_jobs table
-// table cost metrics, workload-based start and end time, version,
-func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableCostMetrics,
+// SaveReadTableCostMetrics table cost metrics, workload-based start and end time, version,
+func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableCostMetrics,
 	startTime, endTime time.Time, infoSchema infoschema.InfoSchema) {
+	// TODO save the workload job info such as start end time into workload_jobs table
 	// step1: create a new session, context, txn for saving table cost metrics
 	se, err := handle.sysSessionPool.Get()
 	if err != nil {
@@ -131,15 +132,21 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 	}
 	defer handle.sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
-	// enable plan cache
-	sctx.GetSessionVars().EnableNonPreparedPlanCache = true
-	txn, err := sctx.Txn(true)
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
+	// begin a new txn
+	err = sessiontxn.NewTxn(context.Background(), sctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get txn failed when saving table cost metrics", zap.Error(err))
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
-	exec := sctx.GetRestrictedSQLExecutor()
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get txn when saving table cost metrics", zap.Error(err))
+		return
+	}
+	// enable plan cache
+	sctx.GetSessionVars().EnableNonPreparedPlanCache = true
 
 	// step2: insert new version table cost metrics by batch using one common txn and context
 	version := txn.StartTS()
@@ -148,27 +155,27 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "insert into mysql.workload_values (version, category, type, table_id, value) values ")
 	for _, metric := range metrics {
-		tbl, err := infoSchema.TableByName(ctx, metric.dbName, metric.tableName)
+		tbl, err := infoSchema.TableByName(ctx, metric.DbName, metric.TableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to save this table cost metrics due to table id not found in info schema",
-				zap.String("db_name", metric.dbName.String()),
-				zap.String("table_name", metric.tableName.String()),
-				zap.Float64("table_scan_time", metric.tableScanTime),
-				zap.Float64("table_mem_usage", metric.tableMemUsage),
-				zap.Int64("read_frequency", metric.readFrequency),
-				zap.Float64("table_cost", metric.tableCost),
+				zap.String("db_name", metric.DbName.String()),
+				zap.String("table_name", metric.TableName.String()),
+				zap.Float64("table_scan_time", metric.TableScanTime),
+				zap.Float64("table_mem_usage", metric.TableMemUsage),
+				zap.Int64("read_frequency", metric.ReadFrequency),
+				zap.Float64("table_cost", metric.TableCost),
 				zap.Error(err))
 			continue
 		}
 		metricBytes, err := json.Marshal(metric)
 		if err != nil {
 			logutil.BgLogger().Warn("marshal table cost metrics failed",
-				zap.String("db_name", metric.dbName.String()),
-				zap.String("table_name", metric.tableName.String()),
-				zap.Float64("table_scan_time", metric.tableScanTime),
-				zap.Float64("table_mem_usage", metric.tableMemUsage),
-				zap.Int64("read_frequency", metric.readFrequency),
-				zap.Float64("table_cost", metric.tableCost),
+				zap.String("db_name", metric.DbName.String()),
+				zap.String("table_name", metric.TableName.String()),
+				zap.Float64("table_scan_time", metric.TableScanTime),
+				zap.Float64("table_mem_usage", metric.TableMemUsage),
+				zap.Int64("read_frequency", metric.ReadFrequency),
+				zap.Float64("table_cost", metric.TableCost),
 				zap.Error(err))
 			continue
 		}
@@ -199,7 +206,7 @@ func (handle *Handle) saveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		}
 	}
 	// step3: commit the txn, finish the save
-	err = sctx.CommitTxn(ctx)
+	err = txn.Commit(context.Background())
 	if err != nil {
 		logutil.BgLogger().Warn("commit txn failed when saving table cost metrics", zap.Error(err))
 	}

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "workloadlearning",
@@ -13,9 +13,23 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
+        "//pkg/sessiontxn",
         "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "workloadlearning_test",
+    timeout = "short",
+    srcs = ["handle_test.go"],
+    flaky = True,
+    deps = [
+        ":workloadlearning",
+        "//pkg/parser/ast",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
     ],
 )
