@@ -514,7 +514,9 @@ func (p *PdController) RemoveSchedulersWithConfig(
 		return
 	}
 
-	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg, RuleID: ""})
+	undo = p.MakeUndoFunctionByConfig(
+		ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg, RuleID: ""},
+	)
 	return undo, &origin, errors.Trace(err)
 }
 
