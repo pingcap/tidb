@@ -1368,6 +1368,19 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBUnityOfflineK, Value: "0", Type: vardef.TypeInt, MinValue: 0, MaxValue: 100000000,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.UnityOfflineK.Load())), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			v, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.UnityOfflineK.Store(v)
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableInstancePlanCache, Value: vardef.Off, Type: vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(vardef.EnableInstancePlanCache.Load()), nil
