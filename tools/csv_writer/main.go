@@ -22,7 +22,6 @@ import (
 
 // Command-line parameters
 var (
-	credentialPath   = flag.String("credential", "/home/admin/credential", "Path to GCS credential file")
 	templatePath     = flag.String("template", "/home/admin/template.sql", "Path to SQL schema template")
 	credentialPath   = flag.String("credential", "", "Path to GCS credential file")
 	showFile         = flag.Bool("showFile", false, "List all files in the GCS directory without generating data")
