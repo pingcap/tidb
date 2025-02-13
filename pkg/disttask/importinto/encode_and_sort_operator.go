@@ -91,7 +91,8 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon, executor.perIndexKVMemSizePerCon)
+			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
+				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -149,7 +150,8 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
+	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -157,8 +159,6 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
-		indexBlockSize := getAdjustedIndexBlockSize(perIndexKVMemSizePerCon)
-		op.logger.Info("use adjusted index buf block size", zap.Int("size", indexBlockSize))
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
