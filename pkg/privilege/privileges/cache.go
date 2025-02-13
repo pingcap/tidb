@@ -2147,7 +2147,6 @@ func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 			break
 		}
 	}
-	h.fullData.Store(false)
 	for _, user := range userList {
 		h.activeUsers.Store(user, struct{}{})
 	}
@@ -2180,6 +2179,7 @@ func (h *Handle) UpdateAll() error {
 
 // UpdateAllActive loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAllActive() error {
+	h.fullData.Store(false)
 	userList := make([]string, 0, 20)
 	h.activeUsers.Range(func(key, _ any) bool {
 		userList = append(userList, key.(string))
@@ -2204,6 +2204,7 @@ func (h *Handle) UpdateAllActive() error {
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
+	h.fullData.Store(false)
 	if len(userList) > 100 {
 		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
 	}
