@@ -16,6 +16,7 @@ package prefetch
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sync"
 )
@@ -62,6 +63,12 @@ func (r *Reader) run() {
 		case r.bufCh <- buf:
 		}
 		if err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				// this is caused by io.ReadFull. Because we are prefetching, the buffer size may
+				// be larger that caller's need. So we return io.EOF instead. Let caller check
+				// its needed size to convert io.EOF to io.ErrUnexpectedEOF.
+				err = io.EOF
+			}
 			r.err = err
 			close(r.bufCh)
 			return
