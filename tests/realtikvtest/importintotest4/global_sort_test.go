@@ -29,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -155,4 +158,40 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+}
+
+func (s *mockGCSSuite) TestTaskManagerEntrySize() {
+	getMeta := func(len int) []byte {
+		meta := make([]byte, len)
+		for i := 0; i < len; i++ {
+			meta[i] = 'a'
+		}
+		return meta
+	}
+	insertSubtask := func(meta []byte) error {
+		ctx := context.Background()
+		ctx = util.WithInternalSourceType(ctx, "table_test")
+		taskManager, err := storage.GetTaskManager()
+		s.NoError(err)
+		return taskManager.WithNewSession(func(se sessionctx.Context) error {
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
+				`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				1, "1", "execID", meta, proto.SubtaskStatePending, proto.Type2Int(proto.TaskTypeExample), 1)
+			return err
+		})
+	}
+	defer func() {
+		s.tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", vardef.DefTiDBTxnEntrySizeLimit))
+	}()
+	meta6m := getMeta(6 << 20)
+	s.ErrorContains(insertSubtask(meta6m), "entry too large")
+	s.tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 7<<20))
+	s.NoError(insertSubtask(meta6m))
+	meta8m := getMeta(8 << 20)
+	s.ErrorContains(insertSubtask(meta8m), "entry too large")
+	s.tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 9<<20))
+	// as TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+	// we won't test that param here
+	s.ErrorContains(insertSubtask(meta8m), "entry is too large")
 }
