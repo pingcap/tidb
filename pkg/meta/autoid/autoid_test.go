@@ -682,5 +682,4 @@ func TestGetAutoIDServiceLeaderEtcdPath(t *testing.T) {
 	keyspaceID = 1
 	path = autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
 	require.Equal(t, "/"+autoid.AutoIDLeaderPath, path)
-
 }
