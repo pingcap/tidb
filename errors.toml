@@ -2946,6 +2946,16 @@ error = '''
 Cannot set resource group for a role
 '''
 
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
