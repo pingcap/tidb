@@ -195,7 +195,6 @@ type reorgBackfillTask struct {
 	startKey kv.Key
 	endKey   kv.Key
 	jobID    int64
-	sqlQuery string
 	priority int
 }
 

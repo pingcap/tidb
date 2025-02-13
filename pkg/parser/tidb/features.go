@@ -32,6 +32,8 @@ const (
 	FeatureIDTTL = "ttl"
 	// FeatureIDResourceGroup is the `resource group` feature.
 	FeatureIDResourceGroup = "resource_group"
+	// FeatureIDPresplit is the pre-split feature.
+	FeatureIDPresplit = "pre_split"
 )
 
 var featureIDs = map[string]struct{}{
@@ -42,6 +44,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
+	FeatureIDPresplit:       {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.
