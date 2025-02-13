@@ -807,6 +807,16 @@ func (pp *ParquetParser) ScannedPos() (int64, error) {
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
+	defer func() {
+		if a, ok := pp.alloc.(interface{ Close() }); ok {
+			a.Close()
+		}
+
+		if pp.memLimiter != nil {
+			pp.memLimiter.Release(pp.memoryUsage)
+		}
+	}()
+
 	pp.resetReader()
 	for _, r := range pp.readers {
 		if err := r.Close(); err != nil {
@@ -814,12 +824,6 @@ func (pp *ParquetParser) Close() error {
 		}
 	}
 
-	if a, ok := pp.alloc.(interface{ Close() }); ok {
-		a.Close()
-	}
-	if pp.memLimiter != nil {
-		pp.memLimiter.Release(pp.memoryUsage)
-	}
 	return nil
 }
 
