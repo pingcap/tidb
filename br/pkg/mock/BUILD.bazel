@@ -17,7 +17,6 @@ go_library(
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/checkpoints",
-        "//br/pkg/lightning/config",
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
