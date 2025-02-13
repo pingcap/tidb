@@ -54,7 +54,7 @@ func (r *Reader) run() {
 	for {
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
-		n, err := r.r.Read(buf)
+		n, err := io.ReadFull(r.r, buf)
 		buf = buf[:n]
 		select {
 		case <-r.closedCh:
