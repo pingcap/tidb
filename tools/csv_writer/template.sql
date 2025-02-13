@@ -102,5 +102,5 @@ CREATE TABLE `mosag_raw_data` (
     `http_error_status_codes_4` varbinary(5) DEFAULT NULL,
     `http_error_timestamps_4` varbinary(4) DEFAULT NULL,
     `priority_4` varbinary(77) DEFAULT NULL,
-    `location_4` varbinary(4239) DEFAULT NULL,
+    `location_4` varbinary(4239) DEFAULT NULL
 );
