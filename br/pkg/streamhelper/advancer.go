@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -669,7 +670,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		failpoint.Inject("AsyncResolveLocks", func() {})
 		maxTs := uint64(0)
 		for _, t := range targets {
-			maxTs = max(maxTs, t.Value)
+			maxTs = mathutil.Max(maxTs, t.Value)
 		}
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
