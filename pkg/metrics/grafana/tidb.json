@@ -13463,6 +13463,8 @@
           "id": 23763572019,
           "legend": {
             "alignAsTable": true,
+            "hideEmpty": true,
+            "hideZero": true,
             "avg": false,
             "current": false,
             "max": false,
@@ -13490,12 +13492,12 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(pd_client_request_circuit_breaker_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (name, success)",
+              "expr": "sum(rate(pd_client_request_circuit_breaker_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (name, event)",
               "format": "time_series",
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{name}}-{{success}}",
+              "legendFormat": "{{name}}-{{event}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
