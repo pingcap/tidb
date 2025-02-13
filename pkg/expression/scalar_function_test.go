@@ -189,7 +189,7 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 // To test that when argument number is 0, unix_timestamp can not be pushed down to tikv
 func TestForbidUnixTimestampPushdown(t *testing.T) {
 	ctx := mock.NewContext()
-	fc := &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 0}}
+	fc := &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}}
 	bt, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	sf := &ScalarFunction{
