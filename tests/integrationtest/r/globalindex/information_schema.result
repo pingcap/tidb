@@ -21,4 +21,4 @@ p3	0	0
 p4	0	0
 select table_name, data_length, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
 table_name	data_length	index_length
-t	16	8
+t	16	16

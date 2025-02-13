@@ -682,12 +682,12 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return rows, err
-				}
-			} else {
+			// Even if the table is a partition table, we still need to update the stats cache for the table itself.
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
 				// needs to update all partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
