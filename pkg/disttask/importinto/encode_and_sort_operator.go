@@ -157,7 +157,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
-		// the buf size is aligned to block size, when target table might have
+		// the buf size is aligned to block size, and the target table might have
 		// many indexes, one index KV writer might take much more memory when the
 		// buf size is slightly larger than the N*block-size.
 		// such as when dataKVMemSizePerCon = 2M, block-size = 16M, the aligned

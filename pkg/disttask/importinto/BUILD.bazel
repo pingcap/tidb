@@ -18,6 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
+        "//br/pkg/membuf",
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/config",
