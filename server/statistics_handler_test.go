@@ -276,91 +276,31 @@ func checkData(t *testing.T, path string, client *testServerClient) {
 	require.NoError(t, rows.Close())
 }
 
-func TestStatsPriorityQueueAPI(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	driver := server2.NewTiDBDriver(store)
-	client := testserverclient.NewTestServerClient()
-	cfg := util.NewTestConfig()
-	cfg.Port = client.Port
-	cfg.Status.StatusPort = client.StatusPort
-	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
-
-	server, err := server2.NewServer(cfg, driver)
-	require.NoError(t, err)
-	defer server.Close()
-
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	server.SetDomain(dom)
-	go func() {
-		err := server.Run(nil)
-		require.NoError(t, err)
-	}()
-	<-server2.RunInGoTestChan
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
-	client.WaitUntilServerOnline()
-
-	router := mux.NewRouter()
-	handler := optimizor.NewStatsPriorityQueueHandler(dom)
-	router.Handle("/stats/priority-queue", handler)
-
-	resp, err := client.FetchStatus("/stats/priority-queue")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	js, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Equal(t, "priority queue not initialized", string(js))
-
-	// Init the queue.
-	handle := dom.StatsHandle()
-	require.False(t, handle.HandleAutoAnalyze())
-
-	resp, err = client.FetchStatus("/stats/priority-queue")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	js, err = io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	var snapshot types.PriorityQueueSnapshot
-	err = json.Unmarshal(js, &snapshot)
-	require.NoError(t, err)
-	require.Empty(t, snapshot.CurrentJobs)
-	require.Empty(t, snapshot.MustRetryTables)
-}
-
 // fix issue 53966
 func TestLoadNullStatsFile(t *testing.T) {
 	// Setting up the mock store
 	store := testkit.CreateMockStore(t)
 
 	// Creating a new TiDB driver and client
-	driver := server2.NewTiDBDriver(store)
-	client := testserverclient.NewTestServerClient()
-	cfg := util.NewTestConfig()
-	cfg.Port = client.Port
-	cfg.Status.StatusPort = client.StatusPort
+	driver := NewTiDBDriver(store)
+	client := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Port = client.port
+	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
-
-	// Creating and running the server
-	server, err := server2.NewServer(cfg, driver)
+	RunInGoTestChan = make(chan struct{})
+	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
-
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	server.SetDomain(dom)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	<-server2.RunInGoTestChan
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
-	client.WaitUntilServerOnline()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.waitUntilServerOnline()
 
 	// Creating the stats file
 	path := "/tmp/stats.json"
@@ -375,10 +315,11 @@ func TestLoadNullStatsFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Connecting to the database and executing SQL commands
-	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}))
+
 	require.NoError(t, err, "Error connecting")
 	tk := testkit.NewDBTestKit(t, db)
 	defer func() {

@@ -83,7 +83,7 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 		return errors.Trace(err)
 	}
 	// Check the `jsonTbl` in cases where the stats file with `null`.
-	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
+	if jsonTbl.TableName == "" && jsonTbl.Columns == nil {
 		return nil
 	}
 	do := domain.GetDomain(e.Ctx)
