@@ -175,9 +175,11 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 	}
 }
 
+// newTableMeta initializes a new joinTableMeta structure.
+// It calculates various metadata about the join table, such as row length, key properties, and column order.
 // buildKeyIndex is the build key column index based on buildSchema, should not be nil
-// otherConditionColIndex is the column index that will be used in other condition, if no other condition, will be nil
-// columnsNeedConvertToRow is the column index that need to be converted to row, should not be nil
+// columnsUsedByOtherCondition is the column index that will be used in other condition, if no other condition, will be nil
+// ooutputColumns is the column index that is needed generate join result, if outputColumns is nil, all the build column will be used to generate join results
 // needUsedFlag is true for outer/semi join that use outer to build
 func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, needUsedFlag bool) *joinTableMeta {
 	meta := &joinTableMeta{}
@@ -211,115 +213,21 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 	}
 
-	meta.isJoinKeysFixedLength = true
-	meta.joinKeysLength = 0
-	meta.isJoinKeysInlined = true
-	keyIndexMap := make(map[int]struct{})
-	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
-	isAllKeyInteger := true
-	varLengthKeyNumber := 0
-	for index, keyIndex := range buildKeyIndex {
-		keyType := buildKeyTypes[index]
-		prop := getKeyProp(keyType)
-		if prop.keyLength != chunk.VarElemLen {
-			meta.joinKeysLength += prop.keyLength
-		} else {
-			meta.isJoinKeysFixedLength = false
-			varLengthKeyNumber++
-		}
-		if !prop.canBeInlined {
-			meta.isJoinKeysInlined = false
-		}
-		if prop.isKeyInteger {
-			buildUnsigned := prop.isKeyUnsigned
-			probeKeyProp := getKeyProp(probeKeyTypes[index])
-			if !probeKeyProp.isKeyInteger {
-				panic("build key is integer but probe key is not integer, should not happens")
-			}
-			probeUnsigned := probeKeyProp.isKeyUnsigned
-			if (buildUnsigned && !probeUnsigned) || (probeUnsigned && !buildUnsigned) {
-				meta.serializeModes = append(meta.serializeModes, codec.NeedSignFlag)
-				meta.isJoinKeysInlined = false
-				if meta.isJoinKeysFixedLength {
-					// an extra sign flag is needed in this case
-					meta.joinKeysLength++
-				}
-			} else {
-				meta.serializeModes = append(meta.serializeModes, codec.Normal)
-			}
-		} else {
-			if !prop.isKeyInteger {
-				isAllKeyInteger = false
-			}
-			if prop.keyLength == chunk.VarElemLen {
-				// keep var column by default for var length column
-				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
-			} else {
-				meta.serializeModes = append(meta.serializeModes, codec.Normal)
-			}
-		}
-		keyIndexMap[keyIndex] = struct{}{}
-	}
-	if !meta.isJoinKeysFixedLength {
-		meta.joinKeysLength = -1
-	}
-	if len(buildKeyIndex) != len(keyIndexMap) {
-		// has duplicated key, can not be inlined
-		meta.isJoinKeysInlined = false
-	}
-	if !meta.isJoinKeysInlined {
-		if varLengthKeyNumber == 1 {
-			// if key is not inlined and there is only one var-length key, then don't need to record the var length
-			for i := 0; i < len(buildKeyIndex); i++ {
-				if meta.serializeModes[i] == codec.KeepVarColumnLength {
-					meta.serializeModes[i] = codec.Normal
-				}
-			}
-		}
-	} else {
+	isAllKeyInteger := false
+	meta.isJoinKeysFixedLength, meta.joinKeysLength, meta.isJoinKeysInlined, meta.serializeModes, isAllKeyInteger = setupJoinKeys(buildKeyIndex, buildKeyTypes, probeKeyTypes)
+
+	if meta.isJoinKeysInlined {
 		for _, index := range buildKeyIndex {
 			updateMeta(index)
 		}
 	}
+
 	if !meta.isFixedLength {
 		meta.rowLength = 0
 	}
-	// construct the column order
-	meta.rowColumnsOrder = make([]int, 0, len(columnsNeedToBeSaved))
-	meta.columnsSize = make([]int, 0, len(columnsNeedToBeSaved))
-	usedColumnMap := make(map[int]struct{}, len(columnsNeedToBeSaved))
 
-	updateColumnOrder := func(index int) {
-		if _, ok := usedColumnMap[index]; !ok {
-			meta.rowColumnsOrder = append(meta.rowColumnsOrder, index)
-			meta.columnsSize = append(meta.columnsSize, chunk.GetFixedLen(buildTypes[index]))
-			usedColumnMap[index] = struct{}{}
-		}
-	}
-	if meta.isJoinKeysInlined {
-		// if join key is inlined, the join key will be the first columns
-		for _, index := range buildKeyIndex {
-			updateColumnOrder(index)
-		}
-	}
-	meta.columnCountNeededForOtherCondition = 0
-	if len(columnsUsedByOtherCondition) > 0 {
-		// if join has other condition, the columns used by other condition is appended to row layout after the key
-		for _, index := range columnsUsedByOtherCondition {
-			updateColumnOrder(index)
-		}
-		meta.columnCountNeededForOtherCondition = len(usedColumnMap)
-	}
-	if outputColumns == nil {
-		// outputColumns = nil means all the column is needed
-		for index := range buildTypes {
-			updateColumnOrder(index)
-		}
-	} else {
-		for _, index := range outputColumns {
-			updateColumnOrder(index)
-		}
-	}
+	setupColumnOrder(meta, buildKeyIndex, buildTypes, columnsUsedByOtherCondition, outputColumns, len(columnsNeedToBeSaved))
+
 	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
 		meta.keyMode = OneInt64
 	} else {
@@ -355,4 +263,112 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		meta.fakeKeyByte = make([]byte, meta.joinKeysLength)
 	}
 	return meta
+}
+
+func setupJoinKeys(buildKeyIndex []int, buildKeyTypes, probeKeyTypes []*types.FieldType) (bool, int, bool, []codec.SerializeMode, bool) {
+	isJoinKeysFixedLength := true
+	joinKeysLength := 0
+	isJoinKeysInlined := true
+	serializeModes := make([]codec.SerializeMode, 0, len(buildKeyIndex))
+	isAllKeyInteger := true
+	varLengthKeyNumber := 0
+	keyIndexMap := make(map[int]struct{})
+
+	for index, keyIndex := range buildKeyIndex {
+		keyType := buildKeyTypes[index]
+		prop := getKeyProp(keyType)
+		if prop.keyLength != chunk.VarElemLen {
+			joinKeysLength += prop.keyLength
+		} else {
+			isJoinKeysFixedLength = false
+			varLengthKeyNumber++
+		}
+		if !prop.canBeInlined {
+			isJoinKeysInlined = false
+		}
+		if prop.isKeyInteger {
+			buildUnsigned := prop.isKeyUnsigned
+			probeKeyProp := getKeyProp(probeKeyTypes[index])
+			if !probeKeyProp.isKeyInteger {
+				panic("build key is integer but probe key is not integer, should not happens")
+			}
+			probeUnsigned := probeKeyProp.isKeyUnsigned
+			if buildUnsigned != probeUnsigned {
+				serializeModes = append(serializeModes, codec.NeedSignFlag)
+				isJoinKeysInlined = false
+				if isJoinKeysFixedLength {
+					// an extra sign flag is needed in this case
+					joinKeysLength++
+				}
+			} else {
+				serializeModes = append(serializeModes, codec.Normal)
+			}
+		} else {
+			isAllKeyInteger = false
+			if prop.keyLength == chunk.VarElemLen {
+				// keep var column by default for var length column
+				serializeModes = append(serializeModes, codec.KeepVarColumnLength)
+			} else {
+				serializeModes = append(serializeModes, codec.Normal)
+			}
+		}
+		keyIndexMap[keyIndex] = struct{}{}
+	}
+
+	if !isJoinKeysFixedLength {
+		joinKeysLength = -1
+	}
+	if len(buildKeyIndex) != len(keyIndexMap) {
+		// has duplicated key, can not be inlined
+		isJoinKeysInlined = false
+	}
+	if !isJoinKeysInlined {
+		if varLengthKeyNumber == 1 {
+			// if key is not inlined and there is only one var-length key, then don't need to record the var length
+			for i := 0; i < len(buildKeyIndex); i++ {
+				if serializeModes[i] == codec.KeepVarColumnLength {
+					serializeModes[i] = codec.Normal
+				}
+			}
+		}
+	}
+	return isJoinKeysFixedLength, joinKeysLength, isJoinKeysInlined, serializeModes, isAllKeyInteger
+}
+
+func setupColumnOrder(meta *joinTableMeta, buildKeyIndex []int, buildTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, savedColumnLength int) {
+	meta.rowColumnsOrder = make([]int, 0, savedColumnLength)
+	meta.columnsSize = make([]int, 0, savedColumnLength)
+	usedColumnMap := make(map[int]struct{}, savedColumnLength)
+
+	updateColumnOrder := func(index int) {
+		if _, ok := usedColumnMap[index]; !ok {
+			meta.rowColumnsOrder = append(meta.rowColumnsOrder, index)
+			meta.columnsSize = append(meta.columnsSize, chunk.GetFixedLen(buildTypes[index]))
+			usedColumnMap[index] = struct{}{}
+		}
+	}
+	if meta.isJoinKeysInlined {
+		// if join key is inlined, the join key will be the first columns
+		for _, index := range buildKeyIndex {
+			updateColumnOrder(index)
+		}
+	}
+	meta.columnCountNeededForOtherCondition = 0
+	if len(columnsUsedByOtherCondition) > 0 {
+		// if join has other condition, the columns used by other condition is appended to row layout after the key
+		for _, index := range columnsUsedByOtherCondition {
+			updateColumnOrder(index)
+		}
+		meta.columnCountNeededForOtherCondition = len(usedColumnMap)
+	}
+	if outputColumns == nil {
+		// outputColumns = nil means all the column is needed
+		for index := range buildTypes {
+			updateColumnOrder(index)
+		}
+	} else {
+		for _, index := range outputColumns {
+			updateColumnOrder(index)
+		}
+	}
 }
