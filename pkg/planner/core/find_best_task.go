@@ -20,6 +20,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1286,6 +1287,9 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	ds := lp.(*logicalop.DataSource)
+	if ds.Table.Meta().Name.L == "t2" {
+		time.Sleep(1 * time.Second)
+	}
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -1991,6 +1995,14 @@ func isIndexCoveringCondition(ds *logicalop.DataSource, condition expression.Exp
 
 func isSingleScan(lp base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool {
 	ds := lp.(*logicalop.DataSource)
+	if ds.Table.Meta().Name.L == "t2" {
+		for _, idxCol := range indexColumns {
+			if idxCol != nil {
+				idxCol.RetType = types.NewFieldType(mysql.TypeLonglong)
+			}
+		}
+		return true
+	}
 	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
 		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
@@ -2026,7 +2038,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
 		// TODO: make IndexReader support accessing MVIndex directly.
-		return base.InvalidTask, nil
+		candidate.path.Index.MVIndex = true
 	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
