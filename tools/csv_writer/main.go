@@ -269,7 +269,7 @@ func deleteFile(credentialPath, fileName string) {
 }
 
 func showFiles(credentialPath string) {
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
 		panic(err)
