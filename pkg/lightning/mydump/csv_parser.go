@@ -125,7 +125,7 @@ func NewCSVParser(
 		}
 	}
 	intest.Assert(cfg.FieldsEncodedBy == config.FieldEncodeNone ||
-		(!cfg.Header && cfg.FieldsEscapedBy == "" && cfg.FieldsEnclosedBy == ""),
+		(!cfg.Header && cfg.EscapedBy == "" && cfg.Delimiter == ""),
 		"base64 encoding is not supported for CSV with header, escaped fields or enclosed fields")
 
 	var quoteStopSet, newLineStopSet []byte
