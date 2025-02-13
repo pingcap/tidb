@@ -169,7 +169,6 @@ func SaveCheckpointMetadataForSstRestore(
 }
 
 func ExistsSstRestoreCheckpoint(
-	ctx context.Context,
 	dom *domain.Domain,
 	dbName string,
 ) bool {

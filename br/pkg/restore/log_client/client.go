@@ -571,7 +571,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 ) (map[string]struct{}, error) {
 	sstCheckpointSets := make(map[string]struct{})
 
-	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+	if checkpoint.ExistsSstRestoreCheckpoint(rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
 		// we need to load the checkpoint data for the following restore
 		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
@@ -1410,6 +1410,11 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
+		// sanity check key will never to nil, otherwise will write invalid format data to TiKV
+		if newEntry.Key == nil {
+			log.Error("invalid nil key during rewrite")
+			return 0, 0, errors.Trace(err)
+		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
@@ -1518,6 +1523,12 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SetTableModeToNormal sets the table mode back to normal from restore mode.
+func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaID int64, tableID int64) error {
+	sql := fmt.Sprintf("ALTER TABLE `%d`.`%d` MODE = 'normal'", schemaID, tableID)
+	return rc.unsafeSession.ExecuteInternal(ctx, sql)
 }
 
 // WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
