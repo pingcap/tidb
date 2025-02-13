@@ -932,12 +932,12 @@ func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, ski
 	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, notSkipPlanCache bool) (Expression, error) {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			res, err := EvaluateExprWithNull(ctx, schema, arg, notSkipPlanCache)
+			res, err := EvaluateExprWithNull(ctx, schema, arg, skipPlanCache)
 			if err != nil {
 				return nil, err
 			}
