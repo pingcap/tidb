@@ -227,7 +227,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 
 		return true
 	case ast.UnixTimestamp:
-		if len(sf.GetArgs()) == 0 {
+		if sf.Function.PbCode() == tipb.ScalarFuncSig_UnixTimestampCurrent {
 			return false
 		} else {
 			return true
