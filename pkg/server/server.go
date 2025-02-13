@@ -1064,6 +1064,14 @@ func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Unlock()
 }
 
+// HasInternalSessionForTest implements SessionManager interface.
+func (s *Server) HasInternalSessionForTest(se any) bool {
+	s.sessionMapMutex.Lock()
+	_, ok := s.internalSessions[se]
+	s.sessionMapMutex.Unlock()
+	return ok
+}
+
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se any) {

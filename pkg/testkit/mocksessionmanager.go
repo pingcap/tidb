@@ -137,6 +137,17 @@ func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Unlock()
 }
 
+// HasInternalSessionForTest is to check whether the internal session is stored in the SessionManager
+func (msm *MockSessionManager) HasInternalSessionForTest(se any) bool {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if msm.internalSessions == nil {
+		return false
+	}
+	_, ok := msm.internalSessions[se]
+	return ok
+}
+
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()

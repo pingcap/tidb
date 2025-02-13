@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -85,6 +86,8 @@ func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, 
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			infosync.DeleteInternalSession(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
