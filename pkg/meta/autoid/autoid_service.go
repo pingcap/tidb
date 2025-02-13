@@ -63,7 +63,8 @@ type ClientDiscover struct {
 }
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
+	AutoIDLeaderPath = "tidb/autoid/leader"
 )
 
 // NewClientDiscover creates a ClientDiscover object.
@@ -73,11 +74,12 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
-func getLeaderEtcdPath(keyspaceID uint32) string {
+// GetAutoIDServiceLeaderEtcdPath exported for test.
+func GetAutoIDServiceLeaderEtcdPath(keyspaceID uint32) string {
 	if keyspaceID == uint32(tikv.NullspaceID) {
-		return autoIDLeaderPath
+		return AutoIDLeaderPath
 	}
-	return "/" + autoIDLeaderPath
+	return "/" + AutoIDLeaderPath
 }
 
 // GetClient gets the AutoIDAllocClient.
@@ -96,7 +98,7 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
-	resp, err := d.etcdCli.Get(ctx, getLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
+	resp, err := d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
