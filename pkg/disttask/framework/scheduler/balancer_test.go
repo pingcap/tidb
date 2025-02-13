@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -368,7 +369,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	manager := NewManager(ctx, mockTaskMgr, "1")
+	manager := NewManager(ctx, mockTaskMgr, "1", proto.NewNodeResource(16, 32*units.GiB))
 	manager.slotMgr.updateCapacity(16)
 	manager.nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "tidb1", Role: ""}, {ID: "tidb2", Role: ""}, {ID: "tidb3", Role: ""}})
 	b := newBalancer(Param{

@@ -93,12 +93,19 @@ func InitGlobalLightningEnv(path string) (ok bool) {
 	return true
 }
 
-// GenIngestTempDataDir generates a path for DDL ingest.
+// GetIngestTempDataDir gets the path for DDL ingest.
 // Format: ${temp-dir}/tmp_ddl-{port}
-func GenIngestTempDataDir() (string, error) {
+func GetIngestTempDataDir() string {
 	tidbCfg := config.GetGlobalConfig()
 	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	return sortPath
+}
+
+// GenIngestTempDataDir generates a path for DDL ingest, and create the dir if not exists.
+// Format: ${temp-dir}/tmp_ddl-{port}
+func GenIngestTempDataDir() (string, error) {
+	sortPath := GetIngestTempDataDir()
 
 	if _, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {

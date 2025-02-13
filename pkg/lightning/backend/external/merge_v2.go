@@ -37,7 +37,8 @@ import (
 func MergeOverlappingFilesV2(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	store storage.ExternalStorage,
+	inStore storage.ExternalStorage,
+	outStore storage.ExternalStorage,
 	startKey []byte,
 	endKey []byte,
 	partSize int64,
@@ -74,7 +75,7 @@ func MergeOverlappingFilesV2(
 	splitter, err := NewRangeSplitter(
 		ctx,
 		multiFileStat,
-		store,
+		inStore,
 		int64(rangesGroupSize),
 		math.MaxInt64,
 		int64(4*size.GB),
@@ -92,7 +93,7 @@ func MergeOverlappingFilesV2(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		BuildOneFile(store, newFilePrefix, writerID)
+		BuildOneFile(outStore, newFilePrefix, writerID)
 	defer func() {
 		err = splitter.Close()
 		if err != nil {
@@ -128,7 +129,7 @@ func MergeOverlappingFilesV2(
 		now := time.Now()
 		err1 = readAllData(
 			ctx,
-			store,
+			inStore,
 			dataFilesOfGroup,
 			statFilesOfGroup,
 			curStart,

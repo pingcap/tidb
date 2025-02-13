@@ -23,3 +23,43 @@ type ManagedNode struct {
 	Role     string
 	CPUCount int
 }
+
+// NodeResource is the resource of the node.
+// exported for test.
+type NodeResource struct {
+	TotalCPU  int
+	TotalMem  int64
+	TotalDisk uint64
+}
+
+// NewNodeResource creates a new NodeResource.
+func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
+	return &NodeResource{
+		TotalCPU:  totalCPU,
+		TotalMem:  totalMem,
+		TotalDisk: 0,
+	}
+}
+
+// NewNodeResourceWithDisk creates a new NodeResource with totalDisk initialized.
+func NewNodeResourceWithDisk(totalCPU int, totalMem int64, totalDisk uint64) *NodeResource {
+	return &NodeResource{
+		TotalCPU:  totalCPU,
+		TotalMem:  totalMem,
+		TotalDisk: totalDisk,
+	}
+}
+
+// GetStepResource gets the step resource accoring to concurrency.
+func (nr *NodeResource) GetStepResource(concurrency int) *StepResource {
+	return &StepResource{
+		CPU: NewAllocatable(int64(concurrency)),
+		// same proportion as CPU
+		Mem: NewAllocatable(int64(float64(concurrency) / float64(nr.TotalCPU) * float64(nr.TotalMem))),
+	}
+}
+
+// GetTaskDiskResource gets available disk for a task.
+func (nr *NodeResource) GetTaskDiskResource(concurrency int) uint64 {
+	return uint64(float64(concurrency) / float64(nr.TotalCPU) * float64(nr.TotalDisk))
+}

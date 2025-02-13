@@ -259,6 +259,53 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+
+	if s.tableImporter.IsGlobalSort() && s.tableImporter.GlobalSortLocalStore != nil {
+		dataFiles := sharedVars.SortedDataMeta.GetDataFiles()
+		sharedVars.SortedDataMeta = &external.SortedKVMeta{}
+		dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(s.GetResource(), &s.taskMeta.Plan)
+		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		prefix := subtaskPrefix(s.taskID, subtask.ID)
+		err := external.MergeOverlappingFiles(
+			ctx,
+			dataFiles,
+			s.tableImporter.GlobalSortLocalStore,
+			s.tableImporter.GlobalSortStore,
+			dataKVPartSize,
+			prefix,
+			getKVGroupBlockSize(dataKVGroup),
+			sharedVars.mergeDataSummary,
+			int(s.GetResource().CPU.Capacity()),
+			false)
+		if err != nil {
+			return err
+		}
+		sharedVars.SortedIndexMetas = make(map[int64]*external.SortedKVMeta)
+		for idxID, idxKVGroup := range sharedVars.SortedIndexMetas {
+			dataFiles := idxKVGroup.GetDataFiles()
+			sharedVars.SortedIndexMetas[idxID] = &external.SortedKVMeta{}
+			err = external.MergeOverlappingFiles(
+				ctx,
+				dataFiles,
+				s.tableImporter.GlobalSortLocalStore,
+				s.tableImporter.GlobalSortStore,
+				indexKVPartSize,
+				prefix,
+				getKVGroupBlockSize(strconv.Itoa(int(idxID))),
+				func(summary *external.WriterSummary) {
+					sharedVars.mergeIndexSummary(idxID, summary)
+				},
+				int(s.GetResource().CPU.Capacity()),
+				false)
+			if err != nil {
+				return err
+			}
+		}
+		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -341,6 +388,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
+		m.controller.GlobalSortStore,
 		m.controller.GlobalSortStore,
 		partSize,
 		prefix,

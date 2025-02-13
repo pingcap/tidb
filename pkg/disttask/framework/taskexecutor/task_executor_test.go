@@ -103,7 +103,7 @@ func newTaskExecutorRunEnv0(t *testing.T) *taskExecutorRunEnv {
 	taskExecutor := NewBaseTaskExecutor(context.Background(), &task1, Param{
 		taskTable: taskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NewNodeResource(16, 32*units.GiB),
 		execID:    "id",
 	})
 	taskExecutor.Extension = taskExecExt
@@ -1127,7 +1127,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 	taskExecutor := NewBaseTaskExecutor(ctx, task, Param{
 		taskTable: mockSubtaskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NewNodeResource(16, 32*units.GiB),
 		execID:    "tidb1",
 	})
 	taskExecutor.Extension = mockExtension

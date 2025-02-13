@@ -268,6 +268,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			ctx,
 			mockOneMultiFileStat(group, statGroup[i]),
 			memStore,
+			memStore,
 			startKeys[i],
 			endKeys[i],
 			int64(5*size.MB),

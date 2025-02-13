@@ -366,6 +366,11 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 	e.ExecuteNodesCnt = cnt
 }
 
+// SetTaskIDForGlobalSort sets the task ID for global sort.
+func (e *LoadDataController) SetTaskIDForGlobalSort(taskID int64) {
+	e.taskID = taskID
+}
+
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.

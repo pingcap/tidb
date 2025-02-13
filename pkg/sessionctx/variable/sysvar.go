@@ -1485,6 +1485,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableFastCreateTable.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableGlobalSortUseLocalStore, Value: BoolToOnOff(vardef.DefTiDBEnableGlobalSortUseLocalStore), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if vardef.EnableGlobalSortLocalStore.Load() != TiDBOptOn(val) {
+			vardef.EnableGlobalSortLocalStore.Store(TiDBOptOn(val))
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableGlobalSortLocalStore.Load()), nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableNoopVariables, Value: BoolToOnOff(vardef.DefTiDBEnableNoopVariables), Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
@@ -2666,7 +2674,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLDiskQuota, Value: strconv.Itoa(vardef.DefTiDBDDLDiskQuota), Type: vardef.TypeInt, MinValue: vardef.DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * vardef.DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLDiskQuota, Value: strconv.Itoa(vardef.DefTiDBDDLDiskQuota), Type: vardef.TypeInt, MinValue: vardef.DefTiDBDDLDiskQuota / 1000, MaxValue: 1024 * 1024 * vardef.DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatUint(vardef.DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.DDLDiskQuota.Store(TidbOptUint64(val, vardef.DefTiDBDDLDiskQuota))
