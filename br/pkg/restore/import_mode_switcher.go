@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -249,7 +250,9 @@ func calSortedKeyRanges(ids []int64) [][]kv.Key {
 	var keyRanges [][]kv.Key
 	for i := 0; i < len(idRanges); i++ {
 		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
+		startKey = codec.EncodeBytes([]byte{}, startKey)
 		endKey := tablecodec.EncodeTablePrefix(idRanges[i][1])
+		endKey = codec.EncodeBytes([]byte{}, endKey)
 		keyRanges = append(keyRanges, []kv.Key{startKey, endKey})
 	}
 	return keyRanges
