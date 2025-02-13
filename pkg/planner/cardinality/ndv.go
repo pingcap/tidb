@@ -39,7 +39,7 @@ func EstimateColumnNDV(tbl *statistics.Table, colID int64) (ndv float64) {
 			ndv *= factor
 		}
 	} else {
-		ndv = float64(tbl.RealtimeCount) * distinctFactor
+		ndv = math.Sqrt(float64(tbl.RealtimeCount))
 	}
 	return ndv
 }
