@@ -217,6 +217,45 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
 	prometheus.MustRegister(TTLJobStatus)
 	prometheus.MustRegister(TTLPhaseTime)
+<<<<<<< HEAD:metrics/metrics.go
+=======
+	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
+	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(timermetrics.TimerEventCounter)
+
+	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
+
+	prometheus.MustRegister(HistoricalStatsCounter)
+	prometheus.MustRegister(PlanReplayerTaskCounter)
+	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
+
+	prometheus.MustRegister(DistTaskGauge)
+	prometheus.MustRegister(DistTaskStartTimeGauge)
+	prometheus.MustRegister(DistTaskUsedSlotsGauge)
+	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageRate)
+	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
+	prometheus.MustRegister(GlobalSortUploadWorkerCount)
+	prometheus.MustRegister(AddIndexScanRate)
+
+	prometheus.MustRegister(InfoSchemaV2CacheCounter)
+	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
+	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(TableByNameDuration)
+
+	prometheus.MustRegister(BindingCacheHitCounter)
+	prometheus.MustRegister(BindingCacheMissCounter)
+	prometheus.MustRegister(BindingCacheMemUsage)
+	prometheus.MustRegister(BindingCacheMemLimit)
+	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272)):pkg/metrics/metrics.go
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

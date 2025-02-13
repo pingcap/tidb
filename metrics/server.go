@@ -27,7 +27,61 @@ var (
 
 // Metrics
 var (
+<<<<<<< HEAD:metrics/server.go
 	PacketIOCounter = prometheus.NewCounterVec(
+=======
+	PacketIOCounter            *prometheus.CounterVec
+	QueryDurationHistogram     *prometheus.HistogramVec
+	QueryRPCHistogram          *prometheus.HistogramVec
+	QueryProcessedKeyHistogram *prometheus.HistogramVec
+	QueryTotalCounter          *prometheus.CounterVec
+	ConnGauge                  *prometheus.GaugeVec
+	DisconnectionCounter       *prometheus.CounterVec
+	PreparedStmtGauge          prometheus.Gauge
+	ExecuteErrorCounter        *prometheus.CounterVec
+	CriticalErrorCounter       prometheus.Counter
+
+	ServerStart = "server-start"
+	ServerStop  = "server-stop"
+
+	// Eventkill occurs when the server.Kill() function is called.
+	EventKill = "kill"
+
+	ServerEventCounter              *prometheus.CounterVec
+	TimeJumpBackCounter             prometheus.Counter
+	PlanCacheCounter                *prometheus.CounterVec
+	PlanCacheMissCounter            *prometheus.CounterVec
+	PlanCacheInstanceMemoryUsage    *prometheus.GaugeVec
+	PlanCacheInstancePlanNumCounter *prometheus.GaugeVec
+	ReadFromTableCacheCounter       prometheus.Counter
+	HandShakeErrorCounter           prometheus.Counter
+	GetTokenDurationHistogram       prometheus.Histogram
+	NumOfMultiQueryHistogram        prometheus.Histogram
+	TotalQueryProcHistogram         *prometheus.HistogramVec
+	TotalCopProcHistogram           *prometheus.HistogramVec
+	TotalCopWaitHistogram           *prometheus.HistogramVec
+	CopMVCCRatioHistogram           *prometheus.HistogramVec
+	MaxProcs                        prometheus.Gauge
+	GOGC                            prometheus.Gauge
+	ConnIdleDurationHistogram       *prometheus.HistogramVec
+	ServerInfo                      *prometheus.GaugeVec
+	TokenGauge                      prometheus.Gauge
+	ConfigStatus                    *prometheus.GaugeVec
+	TiFlashQueryTotalCounter        *prometheus.CounterVec
+	TiFlashFailedMPPStoreState      *prometheus.GaugeVec
+	PDAPIExecutionHistogram         *prometheus.HistogramVec
+	PDAPIRequestCounter             *prometheus.CounterVec
+	CPUProfileCounter               prometheus.Counter
+	LoadTableCacheDurationHistogram prometheus.Histogram
+	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
+)
+
+// InitServerMetrics initializes server metrics.
+func InitServerMetrics() {
+	PacketIOCounter = NewCounterVec(
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272)):pkg/metrics/server.go
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -337,7 +391,27 @@ var (
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+<<<<<<< HEAD:metrics/server.go
 )
+=======
+
+	MemoryLimit = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_quota_bytes",
+			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
+		})
+}
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272)):pkg/metrics/server.go
 
 // ExecuteErrorToLabel converts an execute error to label.
 func ExecuteErrorToLabel(err error) string {
