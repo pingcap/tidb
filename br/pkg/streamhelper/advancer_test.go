@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -377,7 +378,7 @@ func TestResolveLock(t *testing.T) {
 				}
 			}
 			s.Merge(spans.Valued{Key: kr, Value: u})
-			maxTargetTs = max(maxTargetTs, u)
+			maxTargetTs = mathutil.Max(maxTargetTs, u)
 		})
 	})
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
