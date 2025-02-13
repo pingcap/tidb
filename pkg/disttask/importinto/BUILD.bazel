@@ -90,7 +90,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//br/pkg/storage",
         "//pkg/ddl",
