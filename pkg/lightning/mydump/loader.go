@@ -91,6 +91,7 @@ type ParquetFileMeta struct {
 	Rows               int64 // row count
 	MemoryUsage        int   // memory usage for streaming mode
 	MemoryUsageFull    int   // memory usage for non-streaming mode
+	MemoryQuota        int   // memory quota for current file reader to use non-streaming mode
 	UseStreaming       bool  // whether use streaming mode
 	UseSampleAllocator bool  // whether use sample allocator
 }

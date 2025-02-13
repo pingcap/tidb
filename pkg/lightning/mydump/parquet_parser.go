@@ -454,12 +454,23 @@ func (pp *ParquetParser) GetMemoryUsage() (memoryUsageStream, memoryUsageNonStre
 	}
 	readBufferUsageNonStream += AllocSize(defaultBufSize) * len(pp.columnNames)
 
-	for i := numColumns; i < 5*numColumns; i += 4 {
-		dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
-		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
+	hasDict := true
+	if 5*numColumns > len(bufSizes) {
+		hasDict = false
 	}
-	for i := 5 * numColumns; i < len(bufSizes); i += 2 {
-		dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+
+	if hasDict {
+		for i := numColumns; i < 5*numColumns; i += 4 {
+			dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
+		}
+		for i := 5 * numColumns; i < len(bufSizes); i += 2 {
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+		}
+	} else {
+		for i := numColumns; i < len(bufSizes); i += 2 {
+			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
+		}
 	}
 
 	pageUsage := (dataPageUsage + dictUsage) * numColumns
@@ -796,6 +807,16 @@ func (pp *ParquetParser) ScannedPos() (int64, error) {
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
+	defer func() {
+		if a, ok := pp.alloc.(interface{ Close() }); ok {
+			a.Close()
+		}
+
+		if pp.memLimiter != nil {
+			pp.memLimiter.Release(pp.memoryUsage)
+		}
+	}()
+
 	pp.resetReader()
 	for _, r := range pp.readers {
 		if err := r.Close(); err != nil {
@@ -803,12 +824,6 @@ func (pp *ParquetParser) Close() error {
 		}
 	}
 
-	if a, ok := pp.alloc.(interface{ Close() }); ok {
-		a.Close()
-	}
-	if pp.memLimiter != nil {
-		pp.memLimiter.Release(pp.memoryUsage)
-	}
 	return nil
 }
 
@@ -1049,7 +1064,7 @@ func NewParquetParserWithMeta(
 	if meta.UseSampleAllocator {
 		memoryUsage = 0
 		meta.UseStreaming = true
-	} else if meta.MemoryUsageFull < defaultArenaSize {
+	} else if meta.MemoryUsageFull < meta.MemoryQuota {
 		memoryUsage = meta.MemoryUsageFull
 		meta.UseStreaming = false
 	} else {
@@ -1061,6 +1076,7 @@ func NewParquetParserWithMeta(
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryUsage>>20)),
 		zap.Bool("streaming mode", meta.UseStreaming),
 		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
