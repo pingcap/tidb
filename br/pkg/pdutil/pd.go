@@ -347,6 +347,9 @@ func (p *PdController) ResumeSchedulers(ctx context.Context, schedulers []string
 }
 
 func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
+	if len(schedulers) == 0 {
+		return nil
+	}
 	log.Info("resume scheduler", zap.Strings("schedulers", schedulers))
 	p.schedulerPauseCh <- struct{}{}
 
@@ -441,6 +444,15 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 // MakeUndoFunctionByConfig return an UndoFunc based on specified ClusterConfig
 func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
 	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
+}
+
+
+func (p *PdController) MakeFineGrainedUndoFunction(config ClusterConfig, undoFunc func()) UndoFunc {
+	restore := func(ctx context.Context) error {
+		undoFunc()
+		return restoreSchedulers(ctx, p, config, expectPDCfgGenerators)
+	}
+	return restore
 }
 
 // GenRestoreSchedulerFunc gen restore func
@@ -634,9 +646,17 @@ func (p *PdController) RemoveSchedulersConfig(
 	return originCfg, removedCfg, nil
 }
 
-func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (err error) {
-	pauseSchedulerByKeyRangeWithTTL(ctx, p.pdHTTPCli, keyRange, pauseTimeout)
-	return nil
+// To resume the schedulers, call the cancel function.
+// wait until done is finished to ensure schedulers all resumed
+func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (<-chan struct{}, context.CancelFunc, error) {
+	innerCtx, cancel := context.WithCancel(ctx)
+	done, err := pauseSchedulerByKeyRangeWithTTL(innerCtx, p.pdHTTPCli, keyRange, pauseTimeout)
+	// Wait for the rule to take effect because the PD operator is processed asynchronously.
+	// To synchronize this, checking the operator status may not be enough. For details, see
+	// https://github.com/pingcap/tidb/issues/49477.
+	// Let's use two times default value of `patrol-region-interval` from PD configuration.
+	<-time.After(20 * time.Millisecond)
+	return done, cancel, errors.Trace(err)
 }
 
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig

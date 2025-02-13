@@ -231,10 +231,18 @@ func FineGrainedRestorePreWork(
 
 	// pause scheduler
 	keyRange := calSortedKeyRanges(tableIDs)
-	mgr.RemoveSchedulersOnRegion(ctx, keyRange)
+	done, cancel, err := mgr.RemoveSchedulersOnRegion(ctx, keyRange)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
+
+	resumeScheduler := func() {
+		cancel()
+		<- done
+	}
 
 	// handle undo
-	undo := mgr.MakeUndoFunctionByConfig(pdutil.ClusterConfig{Schedulers: originCfg.Schedulers, ScheduleCfg: originCfg.ScheduleCfg})
+	undo := mgr.MakeFineGrainedUndoFunction(pdutil.ClusterConfig{Schedulers: []string{}, ScheduleCfg: originCfg.ScheduleCfg}, resumeScheduler)
 	return undo, &originCfg, errors.Trace(err)
 }
 
