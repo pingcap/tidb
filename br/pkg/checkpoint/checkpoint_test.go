@@ -358,7 +358,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
 
-	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	exists := checkpoint.ExistsSstRestoreCheckpoint(s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.False(t, exists)
 	exists = s.Mock.Domain.InfoSchema().SchemaExists(ast.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
 	require.False(t, exists)
@@ -628,7 +628,7 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 		respCount++
 	}
 
-	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	exists := checkpoint.ExistsSstRestoreCheckpoint(s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.True(t, exists)
 
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.CustomSSTRestoreCheckpointDatabaseName, checker)
@@ -638,7 +638,7 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
 
-	exists = checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	exists = checkpoint.ExistsSstRestoreCheckpoint(s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.False(t, exists)
 	exists = s.Mock.Domain.InfoSchema().SchemaExists(ast.NewCIStr(checkpoint.CustomSSTRestoreCheckpointDatabaseName))
 	require.False(t, exists)
