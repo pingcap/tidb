@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -62,7 +61,6 @@ type BackendCtxBuilder struct {
 
 	sessPool   *sess.Pool
 	physicalID int64
-	checkDup   bool
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -82,20 +80,13 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	return b
 }
 
-// ForDuplicateCheck marks this backend context is only used for duplicate check.
-// TODO(tangenta): remove this after we don't rely on the backend to do duplicate check.
-func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
-	b.checkDup = true
-	return b
-}
-
 // BackendCounterForTest is only used in test.
 var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
 func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
 	ctx, store, job := b.ctx, b.store, b.job
-	jobSortPath, err := genJobSortPath(job.ID, b.checkDup)
+	jobSortPath, err := genJobSortPath(job.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,24 +119,24 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+		defaultSystemVarsForDuplicateCheck, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
 	return bCtx, nil
 }
 
-func genJobSortPath(jobID int64, checkDup bool) (string, error) {
+func genJobSortPath(jobID int64) (string, error) {
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(sortPath, encodeBackendTag(jobID, checkDup)), nil
+	return filepath.Join(sortPath, encodeBackendTag(jobID)), nil
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
-	jobSortPath, err := genJobSortPath(job.ID, checkDup)
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job) (*local.BackendConfig, *local.Backend, error) {
+	jobSortPath, err := genJobSortPath(job.ID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -160,7 +151,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
+	cfg := newLocalBackendConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
 
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
@@ -236,10 +227,7 @@ func newBackendContext(
 
 // encodeBackendTag encodes the job ID to backend tag.
 // The backend tag is also used as the file name of the local index data files.
-func encodeBackendTag(jobID int64, checkDup bool) string {
-	if checkDup {
-		return fmt.Sprintf("%d-dup", jobID)
-	}
+func encodeBackendTag(jobID int64) string {
 	return strconv.FormatInt(jobID, 10)
 }
 
