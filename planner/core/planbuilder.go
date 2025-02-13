@@ -3213,7 +3213,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD:planner/core/planbuilder.go
 			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+=======
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/planner/core/planbuilder.go
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3221,6 +3225,24 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			p.StaleTxnStartTS = readTS
 			// consume read ts here
 			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+<<<<<<< HEAD:planner/core/planbuilder.go
+=======
+		} else if b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL {
+			// try to get the stale ts from external timestamp
+			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return nil, err
+			}
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+				return nil, err
+			}
+			p.StaleTxnStartTS = startTS
+		}
+	case *ast.SetResourceGroupStmt:
+		if variable.EnableResourceControlStrictMode.Load() {
+			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"}, false, err)
+>>>>>>> 3578b1da095 (*: Use strict validation for stale read ts & flashback ts (#57050)):pkg/planner/core/planbuilder.go
 		}
 	}
 	return p, nil
