@@ -160,7 +160,7 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 	defer cancel()
 	startKey := kv.Key{0, 0, 0, 0}
 	endKey := kv.Key{0xff, 0xff, 0xff, 0xff}
-	done, err := pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][]kv.Key{{startKey, endKey}}, ttl)
+	done, _, err := pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][]kv.Key{{startKey, endKey}}, ttl)
 	require.NoError(t, err)
 	time.Sleep(ttl * 3)
 	cancel()

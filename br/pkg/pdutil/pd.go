@@ -75,6 +75,8 @@ type ClusterConfig struct {
 	Schedulers []string `json:"schedulers"`
 	// Original scheudle configuration
 	ScheduleCfg map[string]any `json:"schedule_cfg"`
+	// The region rule ID registered
+	RuleID string `json:"rule_id"`
 }
 
 type pauseSchedulerBody struct {
@@ -346,6 +348,25 @@ func (p *PdController) ResumeSchedulers(ctx context.Context, schedulers []string
 	return errors.Trace(p.resumeSchedulerWith(ctx, schedulers))
 }
 
+func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string) error {
+	if ruleID == "" {
+		return nil
+	}
+	ruleRet, err := p.pdHTTPCli.GetRegionLabelRulesByIDs(ctx, []string{ruleID})
+	if err != nil {
+		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id",ruleID))
+	}
+	rule := ruleRet[0]
+	// Set ttl to 0 to remove the rule.
+	rule.Labels[0].TTL = time.Duration(0).String()
+	deleteRule := &pdhttp.LabelRulePatch{DeleteRules: []string{ruleID}}
+	if err := p.pdHTTPCli.PatchRegionLabelRules(ctx, deleteRule); err != nil {
+		log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
+			zap.String("rule-id", rule.ID), zap.Error(err))
+	}
+	return nil
+}
+
 func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
 	if len(schedulers) == 0 {
 		return nil
@@ -417,6 +438,9 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	configsNeedRestore map[string]pauseConfigGenerator) error {
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
+	}
+	if err := pd.ResumeRegionLabelRule(ctx,clusterCfg.RuleID); err != nil {
+		return errors.Annotate(err, "fail to patch region label rule")
 	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]any)
@@ -648,15 +672,21 @@ func (p *PdController) RemoveSchedulersConfig(
 
 // To resume the schedulers, call the cancel function.
 // wait until done is finished to ensure schedulers all resumed
-func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (<-chan struct{}, context.CancelFunc, error) {
+func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][]kv.Key) (string, func(), error) {
 	innerCtx, cancel := context.WithCancel(ctx)
-	done, err := pauseSchedulerByKeyRangeWithTTL(innerCtx, p.pdHTTPCli, keyRange, pauseTimeout)
+	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(innerCtx, p.pdHTTPCli, keyRange, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
 	// Let's use two times default value of `patrol-region-interval` from PD configuration.
 	<-time.After(20 * time.Millisecond)
-	return done, cancel, errors.Trace(err)
+
+	resumeScheduler := func() {
+		cancel()
+		<- done
+	}
+
+	return ruleID, resumeScheduler, errors.Trace(err)
 }
 
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig
@@ -747,7 +777,7 @@ func PauseSchedulersByKeyRange(
 	pdHTTPCli pdhttp.Client,
 	startKey, endKey []byte,
 ) (done <-chan struct{}, err error) {
-	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][]kv.Key{{startKey, endKey}}, pauseTimeout)
+	done, _, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][]kv.Key{{startKey, endKey}}, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
@@ -761,7 +791,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 	pdHTTPCli pdhttp.Client,
 	keyRange [][]kv.Key,
 	ttl time.Duration,
-) (<-chan struct{}, error) {
+) (<-chan struct{}, string, error) {
 	var encodedKeyRangeRule []KeyRangeRule
 	for _, keyPair := range keyRange {
 		var rule KeyRangeRule
@@ -785,7 +815,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 
 	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	go func() {
@@ -818,7 +848,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}
 	}()
-	return done, nil
+	return done, rule.ID, nil
 }
 
 // CanPauseSchedulerByKeyRange returns whether the scheduler can be paused by key range.
