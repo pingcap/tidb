@@ -61,6 +61,7 @@ type autoIDConverter func(int64) int64
 
 type tableKVEncoder struct {
 	tbl             table.Table
+	columns         []*table.Column
 	autoRandomColID int64
 	se              *session
 	recordCache     []types.Datum
@@ -120,6 +121,7 @@ func NewTableKVEncoder(
 
 	return &tableKVEncoder{
 		tbl:             tbl,
+		columns:         cols,
 		autoRandomColID: autoRandomColID,
 		se:              se,
 		genCols:         genCols,
@@ -380,7 +382,6 @@ func (kvcodec *tableKVEncoder) Encode(
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
 	// unable to release. So we truncate the warnings here.
 	defer kvcodec.se.vars.StmtCtx.TruncateWarnings(0)
-	cols := kvcodec.tbl.Cols()
 
 	var value types.Datum
 	var err error
@@ -390,11 +391,11 @@ func (kvcodec *tableKVEncoder) Encode(
 	if kvcodec.recordCache != nil {
 		record = kvcodec.recordCache
 	} else {
-		record = make([]types.Datum, 0, len(cols)+1)
+		record = make([]types.Datum, 0, len(kvcodec.columns)+1)
 	}
 
 	meta := kvcodec.tbl.Meta()
-	for i, col := range cols {
+	for i, col := range kvcodec.columns {
 		var theDatum *types.Datum = nil
 		j := columnPermutation[i]
 		if j >= 0 && j < len(row) {
@@ -424,7 +425,7 @@ func (kvcodec *tableKVEncoder) Encode(
 
 	if common.TableHasAutoRowID(meta) {
 		rowValue := rowID
-		j := columnPermutation[len(cols)]
+		j := columnPermutation[len(kvcodec.columns)]
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.se, row[j], ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
@@ -443,7 +444,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+		if errCol, err := evaluateGeneratedColumns(kvcodec.se, record, kvcodec.columns, kvcodec.genCols); err != nil {
 			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}
@@ -494,11 +495,9 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 		err   error
 	)
 
-	cols := kvcodec.tbl.Cols()
-
 	// Since this method is only called when iterating the columns in the `Encode()` method,
 	// we can assume that the `colIndex` always have a valid input
-	col := cols[colIndex]
+	col := kvcodec.columns[colIndex]
 
 	isBadNullValue := false
 	if inputDatum != nil {
