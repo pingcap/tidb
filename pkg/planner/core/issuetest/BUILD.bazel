@@ -10,10 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 6,
->>>>>>> 0c22a2db403 (planner: fix idxMergePartPlans forget to deal with RootTaskConds (#58507))
+    shard_count = 3,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
