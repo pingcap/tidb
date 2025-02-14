@@ -134,7 +134,7 @@ Selection_5	0.00	root		json_overlaps(planner__core__casetest__index__index.t2.a,
   └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
 id	estRows	task	access object	operator info
-TableDual_5	0.00	root		rows:0
+TableDual_6	0.00	root		rows:0
 drop table if exists t;
 create table t(a int, b int, c int, unique index(a), unique index(b), primary key(c));
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2;

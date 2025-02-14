@@ -157,3 +157,13 @@ create table t1(a int not null, b int not null, index(a));
 -- error 1055
 select b from t1 group by a;
 
+# TestIssue59211
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+-- error 8123
+select a,max(b) as max_b from (select * from t union all select * from t) x ;
+-- error 8123
+select a,max(b) as max_b from (select * from t union all select 1,2,3 ) x ;
+-- error 8123
+select a,max(b) as max_b from (select * from t where a=1 union all select 1,2,3 ) x ;

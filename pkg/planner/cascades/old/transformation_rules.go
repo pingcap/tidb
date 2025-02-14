@@ -15,7 +15,6 @@
 package old
 
 import (
-	"github.com/pingcap/tidb/pkg/util/intset"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -1956,7 +1956,7 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 
 	// only when agg only use the columns from outer table can eliminate outer join.
-	if !ruleutil.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(agg.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
@@ -2018,7 +2018,7 @@ func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (new
 	}
 
 	// only when proj only use the columns from outer table can eliminate outer join.
-	if !ruleutil.IsColsAllFromOuterTable(proj.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(proj.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 

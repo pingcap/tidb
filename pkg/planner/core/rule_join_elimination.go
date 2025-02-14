@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intset"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // OuterJoinEliminator is used to eliminate outer join.
@@ -63,14 +63,14 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	// In fact, we only care about whether there is any column from inner
 	// table, if there is none, we are good.
 	if len(parentCols) > 0 {
-		matched := ruleutil.IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
+		matched := ruleutil.IsColsAllFromOuterTable(parentCols, &outerUniqueIDs)
 		if !matched {
 			return p, false, nil
 		}
 	}
 
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched := ruleutil.IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
+	matched := ruleutil.IsColsAllFromOuterTable(aggCols, &outerUniqueIDs)
 	if matched {
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil

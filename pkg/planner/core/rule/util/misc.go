@@ -60,7 +60,7 @@ func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expressi
 }
 
 // IsColsAllFromOuterTable check whether the cols all from outer plan
-func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs intset.FastIntSet) bool {
+func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.FastIntSet) bool {
 	// There are two cases "return false" here:
 	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
 	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.

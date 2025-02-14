@@ -32,6 +32,7 @@ go_library(
         "//pkg/table/temptable",
         "//pkg/tablecodec",
         "//pkg/util/logutil",
+        "//pkg/util/redact",
         "//pkg/util/tableutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
