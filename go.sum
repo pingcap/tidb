@@ -518,6 +518,8 @@ github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGw
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/joechenrh/arrow-go/v18 v18.0.0-20250107060625-e99480fe0ed9 h1:LJGbjOFBrjYubt498ycNLCkXth989t1N9LjWdGuD36U=
 github.com/joechenrh/arrow-go/v18 v18.0.0-20250107060625-e99480fe0ed9/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20250215045230-203e420514b7 h1:8QBwC5DOnNBqsXPpeGqD79FcYNTqVR6wDeczNpHLBpA=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20250215045230-203e420514b7/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877 h1:O7syWuYGzre3s73s+NkgB8e0ZvsIVhT/zxNU7V1gHK8=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877/go.mod h1:AxgWC4DDX54O2WDoQO1Ceabtn6IbktjU/7bigor+66g=
 github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df h1:Zrb0IbuLOGHL7nrO2WrcuNWgDTlzFv3zY69QMx4ggQE=

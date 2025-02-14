@@ -89,7 +89,7 @@ type MDTableMeta struct {
 // ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
 type ParquetFileMeta struct {
 	Rows               int64 // row count
-	MemoryUsage        int   // memory usage for streaming mode
+	MemoryUsageStream  int   // memory usage for streaming mode
 	MemoryUsageFull    int   // memory usage for non-streaming mode
 	MemoryQuota        int   // memory quota for current file reader to use non-streaming mode
 	UseStreaming       bool  // whether use streaming mode
@@ -558,7 +558,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			s.sampledParquetRowSizes[tableName],
 				s.sampledParquetMemoryUsage[tableName],
 				s.sampledParquetMemoryUsageFull[tableName],
-				err = SampleParquetFileProperty(ctx, info.FileMeta, s.loader.GetStore())
+				err = SampleStatisticsFromParquet(ctx, info.FileMeta, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -579,7 +579,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 			}
-			info.FileMeta.ParquetMeta.MemoryUsage = s.sampledParquetMemoryUsage[tableName]
+			info.FileMeta.ParquetMeta.MemoryUsageStream = s.sampledParquetMemoryUsage[tableName]
 			info.FileMeta.ParquetMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
 			info.FileMeta.ParquetMeta.UseStreaming = true
 			info.FileMeta.ParquetMeta.UseSampleAllocator = false
@@ -866,64 +866,4 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 		return 0, err
 	}
 	return float64(tot) / float64(pos), nil
-}
-
-// SampleParquetFileProperty samples row size and memory usage of the parquet file.
-func SampleParquetFileProperty(
-	ctx context.Context,
-	fileMeta SourceFileMeta,
-	store storage.ExternalStorage,
-) (
-	avgRowSize float64,
-	memoryUsage int,
-	memoryUsageFull int,
-	err error,
-) {
-	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
-	if totalRowCount == 0 || err != nil {
-		return 0, 0, 0, err
-	}
-
-	reader, err := store.Open(ctx, fileMeta.Path, nil)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
-	parquetMeta := fileMeta.ParquetMeta
-	parquetMeta.UseStreaming = true
-	parquetMeta.UseSampleAllocator = true
-	parser, err := NewParquetParserWithMeta(ctx, store, reader, fileMeta.Path, parquetMeta)
-	if err != nil {
-		//nolint: errcheck
-		reader.Close()
-		return 0, 0, 0, err
-	}
-	//nolint: errcheck
-	defer parser.Close()
-
-	var (
-		rowSize  int64
-		rowCount int64
-	)
-	for {
-		err = parser.ReadRow()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				break
-			}
-			return 0, 0, 0, err
-		}
-		lastRow := parser.LastRow()
-		rowCount++
-		rowSize += int64(lastRow.Length)
-		parser.RecycleRow(lastRow)
-		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
-			break
-		}
-	}
-
-	avgRowSize = float64(rowSize) / float64(rowCount)
-	memoryUsage, memoryUsageFull = parser.GetMemoryUsage()
-
-	return avgRowSize, memoryUsage, memoryUsageFull, nil
 }

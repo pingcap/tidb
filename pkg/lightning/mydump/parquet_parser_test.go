@@ -59,7 +59,7 @@ func TestParquetParser(t *testing.T) {
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	reader, err := NewParquetParser(context.TODO(), store, r, name, GetDefaultParquetMeta())
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -136,7 +136,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	reader, err := NewParquetParser(context.TODO(), store, r, name, GetDefaultParquetMeta())
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -192,7 +192,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
-	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName, GetDefaultParquetMeta())
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -232,7 +232,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
-	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName, GetDefaultParquetMeta())
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -253,7 +253,7 @@ func TestParquetAurora(t *testing.T) {
 	fileName := "test.parquet"
 	r, err := store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
-	parser, err := NewParquetParser(context.TODO(), store, r, fileName)
+	parser, err := NewParquetParser(context.TODO(), store, r, fileName, GetDefaultParquetMeta())
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
@@ -310,7 +310,7 @@ func TestHiveParquetParser(t *testing.T) {
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	reader, err := NewParquetParser(context.TODO(), store, r, name, GetDefaultParquetMeta())
 	require.NoError(t, err)
 	defer reader.Close()
 	// UTC+0:00

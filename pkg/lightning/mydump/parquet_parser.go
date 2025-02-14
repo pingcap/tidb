@@ -23,7 +23,6 @@ import (
 	"math/big"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
@@ -49,29 +48,6 @@ const (
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
 )
-
-type allocatorWithStats struct {
-	baseAllocator memory.Allocator
-	allocated     atomic.Int64
-}
-
-func (a *allocatorWithStats) Allocate(size int) []byte {
-	b := a.baseAllocator.Allocate(size)
-	a.allocated.Add(int64(cap(b)))
-	return b
-}
-
-func (a *allocatorWithStats) Reallocate(size int, b []byte) []byte {
-	return a.baseAllocator.Reallocate(size, b)
-}
-
-func (a *allocatorWithStats) Free(b []byte) {
-	a.baseAllocator.Free(b)
-}
-
-func (a *allocatorWithStats) Allocated() int64 {
-	return a.allocated.Load()
-}
 
 type columnDumper struct {
 	reader         file.ColumnChunkReader
@@ -305,18 +281,14 @@ func (pf *parquetFileWrapper) InitBuffer(bufSize int) {
 }
 
 func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
-	read := 0
-	for read < len(p) {
-		n, err := pf.Read(p[read:])
-		read += n
-		if err != nil {
-			return read, err
-		}
+	n, err := io.ReadFull(pf, p)
+	if err != nil && err != io.EOF {
+		return 0, errors.Trace(err)
 	}
-	if read != len(p) {
-		return read, errors.Errorf("Error reading %d bytes, only read %d bytes", len(p), read)
+	if n != len(p) {
+		return n, errors.Errorf("Error reading %d bytes, only read %d bytes", len(p), n)
 	}
-	return read, nil
+	return n, nil
 }
 
 // ReadAt implemement ReaderAt interface
@@ -405,78 +377,6 @@ type ParquetParser struct {
 
 	memoryUsage int
 	memLimiter  *membuf.Limiter
-}
-
-// GetMemoryUsage estimate the memory usage for this file.
-func (pp *ParquetParser) GetMemoryUsage() (memoryUsageStream, memoryUsageNonStream int) {
-	// Initialize column reader
-	if pp.dumpers[0].reader == nil {
-		if err := pp.ReadRow(); err != nil {
-			return math.MaxInt, math.MaxInt
-		}
-	}
-
-	// All the columns share the same data page size,
-	// so we only need to read one column chunk.
-	dumper := pp.dumpers[0]
-	for {
-		if _, ok := dumper.Next(); !ok {
-			break
-		}
-	}
-
-	alloc, ok := pp.alloc.(*sampleAllocator)
-	if !ok {
-		return 0, 0
-	}
-	bufSizes := alloc.allocated
-
-	/*
-	 * We have collected all the allocations, and the allocation order are:
-	 * read buffer(repeat n times), decompressed dict buffer, compressed buffer, decompressed data page buffer, compressed data page buffer, ...
-	 * since the compressed buffer is released after decompression, we estimate the memory usage as:
-	 * (AllocSize(decompressed dict buffer) + AllocSize(decompressed data page buffer) + AllocSize(read buffer) + AllocSize(parquet read buffer)) * num_cols
-	 */
-
-	numColumns := len(pp.columnNames)
-	dictUsage := 0
-	dataPageUsage := 0
-	readBufferUsageStream := (AllocSize(bufSizes[0]) + AllocSize(defaultBufSize)) * numColumns
-
-	readBufferUsageNonStream := 0
-	meta := pp.readers[0].MetaData()
-	for _, rg := range meta.RowGroups {
-		currUsage := 0
-		for _, c := range rg.Columns {
-			currUsage += AllocSize(int(c.MetaData.GetTotalCompressedSize()))
-		}
-		readBufferUsageNonStream = max(readBufferUsageNonStream, currUsage)
-	}
-	readBufferUsageNonStream += AllocSize(defaultBufSize) * len(pp.columnNames)
-
-	hasDict := true
-	if 5*numColumns > len(bufSizes) {
-		hasDict = false
-	}
-
-	if hasDict {
-		for i := numColumns; i < 5*numColumns; i += 4 {
-			dictUsage = max(dictUsage, AllocSize(bufSizes[i]))
-			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i+2]))
-		}
-		for i := 5 * numColumns; i < len(bufSizes); i += 2 {
-			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
-		}
-	} else {
-		for i := numColumns; i < len(bufSizes); i += 2 {
-			dataPageUsage = max(dataPageUsage, AllocSize(bufSizes[i]))
-		}
-	}
-
-	pageUsage := (dataPageUsage + dictUsage) * numColumns
-
-	return roundUp(pageUsage+readBufferUsageStream, defaultArenaSize),
-		roundUp(pageUsage+readBufferUsageNonStream, defaultArenaSize)
 }
 
 func (pp *ParquetParser) setStringData(row, col int, val interface{}) {
@@ -962,97 +862,56 @@ func ReadParquetFileRowCountByFile(
 	return reader.MetaData().NumRows, nil
 }
 
-// NewParquetParser generates a parquet parser.
-func NewParquetParser(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
-) (*ParquetParser, error) {
-	wrapper, ok := r.(*parquetFileWrapper)
-	if !ok {
-		wrapper = &parquetFileWrapper{
-			ReadSeekCloser: r,
-			store:          store,
-			ctx:            ctx,
-			path:           path,
-		}
-		wrapper.InitBuffer(defaultBufSize)
-	}
-
-	allocator := GetDefaultAllocator()
-	prop := parquet.NewReaderProperties(allocator)
-	prop.BufferedStreamEnabled = true
-
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	fileSchema := reader.MetaData().Schema
-	columnMetas := make([]convertedType, fileSchema.NumColumns())
-	columnNames := make([]string, 0, fileSchema.NumColumns())
-
-	for i := range columnMetas {
-		desc := reader.MetaData().Schema.Column(i)
-		columnNames = append(columnNames, strings.ToLower(desc.Name()))
-
-		logicalType := desc.LogicalType()
-		if logicalType.IsValid() {
-			columnMetas[i].converted, columnMetas[i].decimalMeta = logicalType.ToConvertedType()
-		} else {
-			columnMetas[i].converted = desc.ConvertedType()
-			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
-			columnMetas[i].decimalMeta = pnode.DecimalMetadata()
-		}
-	}
-
-	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
-	subreaders = append(subreaders, reader)
-	for i := 1; i < fileSchema.NumColumns(); i++ {
-		newWrapper, err := wrapper.Open("")
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		subreaders = append(subreaders, reader)
-	}
-
-	parser := &ParquetParser{
-		readers:     subreaders,
-		colMetas:    columnMetas,
-		columnNames: columnNames,
-		alloc:       allocator,
-		logger:      log.FromContext(ctx),
-	}
-	if err := parser.Init(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return parser, nil
-}
-
+// sampleAllocator is used to collection memory usage in parquet reader.
 type sampleAllocator struct {
-	allocated []int
+	maxCompressedLength int
+	maxDataPage         int
+	totalDictPage       int
+	otherAllocated      int
 }
 
-func (sa *sampleAllocator) Allocate(size int) []byte {
-	sa.allocated = append(sa.allocated, size)
+func (sa *sampleAllocator) Allocate(size int, tp memory.BufferType) []byte {
+	size = AllocSize(size)
+	switch tp {
+	case memory.BufferCompressed:
+		sa.maxCompressedLength = max(sa.maxCompressedLength, size)
+	case memory.BufferDataPage:
+		sa.maxDataPage = max(sa.maxDataPage, size)
+	case memory.BufferDictionary:
+		// For each row group, we need to store all dictionary pages to decode data page.
+		sa.totalDictPage += size
+	default:
+		sa.otherAllocated += size
+	}
 	return make([]byte, size)
 }
 
 func (*sampleAllocator) Free([]byte) {}
 
-func (sa *sampleAllocator) Reallocate(size int, _ []byte) []byte {
-	sa.allocated = append(sa.allocated, size)
-	return make([]byte, size)
+func (sa *sampleAllocator) Reallocate(size int, _ []byte, tp memory.BufferType) []byte {
+	return sa.Allocate(size, tp)
 }
 
-// NewParquetParserWithMeta generates a parquet parser.
-func NewParquetParserWithMeta(
+func (sa *sampleAllocator) reset() {
+	sa.maxCompressedLength = 0
+	sa.maxDataPage = 0
+	sa.totalDictPage = 0
+	sa.otherAllocated = 0
+}
+
+// GetDefaultParquetMeta return a default file meta
+func GetDefaultParquetMeta() ParquetFileMeta {
+	return ParquetFileMeta{
+		MemoryUsageStream:  0,
+		MemoryUsageFull:    math.MaxInt32,
+		MemoryQuota:        0,
+		UseSampleAllocator: true,
+		UseStreaming:       true,
+	}
+}
+
+// NewParquetParser generates a parquet parser.
+func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
@@ -1064,11 +923,11 @@ func NewParquetParserWithMeta(
 	if meta.UseSampleAllocator {
 		memoryUsage = 0
 		meta.UseStreaming = true
-	} else if meta.MemoryUsageFull < meta.MemoryQuota {
+	} else if meta.MemoryUsageFull <= meta.MemoryQuota || meta.MemoryUsageFull == meta.MemoryUsageStream {
 		memoryUsage = meta.MemoryUsageFull
 		meta.UseStreaming = false
 	} else {
-		memoryUsage = meta.MemoryUsage
+		memoryUsage = meta.MemoryUsageStream
 		meta.UseStreaming = true
 	}
 	memoryUsage = min(memoryUsage, memLimit)
@@ -1076,7 +935,9 @@ func NewParquetParserWithMeta(
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
-		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryUsage>>20)),
+		zap.String("memory usage full", fmt.Sprintf("%d MB", meta.MemoryUsageFull>>20)),
+		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryQuota>>20)),
+		zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
 		zap.Bool("streaming mode", meta.UseStreaming),
 		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
@@ -1160,4 +1021,142 @@ func NewParquetParserWithMeta(
 	}
 
 	return parser, nil
+}
+
+// SampleStatisticsFromParquet samples row size and memory usage of the parquet file.
+func SampleStatisticsFromParquet(
+	ctx context.Context,
+	fileMeta SourceFileMeta,
+	store storage.ExternalStorage,
+) (
+	avgRowSize float64,
+	memoryUsage int,
+	memoryUsageFull int,
+	err error,
+) {
+	r, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	wrapper := &parquetFileWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           fileMeta.Path,
+	}
+	wrapper.InitBuffer(defaultBufSize)
+
+	prop := parquet.NewReaderProperties(nil)
+	prop.BufferedStreamEnabled = true
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	if err != nil {
+		return 0, 0, 0, errors.Trace(err)
+	}
+
+	fileSchema := reader.MetaData().Schema
+	columnMetas := make([]convertedType, fileSchema.NumColumns())
+	columnNames := make([]string, 0, fileSchema.NumColumns())
+
+	for i := range columnMetas {
+		desc := reader.MetaData().Schema.Column(i)
+		columnNames = append(columnNames, strings.ToLower(desc.Name()))
+
+		logicalType := desc.LogicalType()
+		if logicalType.IsValid() {
+			columnMetas[i].converted, columnMetas[i].decimalMeta = logicalType.ToConvertedType()
+		} else {
+			columnMetas[i].converted = desc.ConvertedType()
+			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
+			columnMetas[i].decimalMeta = pnode.DecimalMetadata()
+		}
+	}
+
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	allSampleAllocators := make([]*sampleAllocator, 0, fileSchema.NumColumns())
+	for i := 0; i < fileSchema.NumColumns(); i++ {
+		newWrapper, err := wrapper.Open("")
+		if err != nil {
+			return 0, 0, 0, errors.Trace(err)
+		}
+
+		alloc := &sampleAllocator{}
+		prop := parquet.NewReaderProperties(alloc)
+		prop.BufferedStreamEnabled = true
+		allSampleAllocators = append(allSampleAllocators, alloc)
+
+		reader, err := file.NewParquetReader(
+			newWrapper,
+			file.WithReadProps(prop),
+			file.WithMetadata(reader.MetaData()),
+		)
+
+		if err != nil {
+			return 0, 0, 0, errors.Trace(err)
+		}
+		subreaders = append(subreaders, reader)
+	}
+
+	parser := &ParquetParser{
+		readers:     subreaders,
+		colMetas:    columnMetas,
+		columnNames: columnNames,
+		logger:      log.FromContext(ctx),
+		base64:      fileMeta.ParquetMeta.Base64,
+	}
+	if err := parser.Init(); err != nil {
+		return 0, 0, 0, errors.Trace(err)
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	var (
+		rowSize  int64
+		rowCount int64
+	)
+
+	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
+		return 0, 0, 0, nil
+	}
+
+	totalReadRows := reader.MetaData().RowGroups[0].NumRows
+	for i := 0; i < int(totalReadRows); i++ {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, 0, 0, err
+		}
+		lastRow := parser.LastRow()
+		rowCount++
+		rowSize += int64(lastRow.Length)
+		parser.RecycleRow(lastRow)
+	}
+
+	avgRowSize = float64(rowSize) / float64(rowCount)
+
+	memoryUsageStream, memoryUsageFull := 0, 0
+	for _, alloc := range allSampleAllocators {
+		memoryUsageFull += alloc.maxDataPage
+		memoryUsageFull += alloc.totalDictPage
+		memoryUsageStream += alloc.otherAllocated
+		memoryUsageStream += alloc.maxDataPage
+		memoryUsageStream += alloc.totalDictPage
+	}
+
+	pageBufferFull := 0
+	for _, rg := range parser.readers[0].MetaData().RowGroups {
+		totalUsage := 0
+		for _, c := range rg.Columns {
+			totalUsage += AllocSize(int(c.MetaData.GetTotalCompressedSize()))
+		}
+		pageBufferFull = max(pageBufferFull, totalUsage)
+	}
+	memoryUsageFull += pageBufferFull
+
+	memoryUsageStream = roundUp(memoryUsageStream, defaultArenaSize)
+	memoryUsageFull = roundUp(memoryUsageFull, defaultArenaSize)
+	return avgRowSize, memoryUsageStream, memoryUsageFull, nil
 }

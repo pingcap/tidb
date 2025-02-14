@@ -61,9 +61,7 @@ func SetMemoryLimitForParquet(percent int, useGlobal bool) {
 	}
 	memLimit = int(memTotal) * min(percent, 90) / 100
 	memLimiter = membuf.NewLimiter(memLimit)
-	if useGlobal {
-		InitializeGlobalArena(memLimit)
-	}
+	InitializeGlobalArena(memLimit, useGlobal)
 
 	log.L().Info("set memory limit",
 		zap.Int("total memory", int(memTotal)),
@@ -113,6 +111,7 @@ type arena interface {
 type arenaPool struct {
 	arenas    chan arena
 	allocated int
+	reuse     bool
 	lock      sync.Mutex
 }
 
@@ -174,7 +173,12 @@ func (ap *arenaPool) put(a arena) {
 		return
 	}
 
-	ap.arenas <- a
+	if ap.reuse {
+		ap.arenas <- a
+	} else {
+		ap.allocated--
+		ap.adjustGCPercent()
+	}
 }
 
 func (ap *arenaPool) free() {
@@ -203,7 +207,7 @@ func (alloc *defaultAllocator) init() {
 	alloc.allocatedBuf = make(map[uintptr]int, 8)
 }
 
-func (alloc *defaultAllocator) Allocate(size int) []byte {
+func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
 	for i, a := range alloc.arenas {
 		if buf := a.allocate(size); buf != nil {
 			alloc.allocatedBuf[addressOf(buf)] = i
@@ -236,9 +240,9 @@ func (alloc *defaultAllocator) Free(buf []byte) {
 	}
 }
 
-func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
+func (alloc *defaultAllocator) Reallocate(size int, buf []byte, tp memory.BufferType) []byte {
 	alloc.Free(buf)
-	return alloc.Allocate(size)
+	return alloc.Allocate(size, tp)
 }
 
 func (alloc *defaultAllocator) Close() {
@@ -262,9 +266,10 @@ func GetDefaultAllocator() memory.Allocator {
 
 // InitializeGlobalArena initialize a global arena pool.
 // If you call this function, remember to call FreeMemory.
-func InitializeGlobalArena(size int) {
+func InitializeGlobalArena(size int, reuse bool) {
 	maxArenaCount = size / defaultArenaSize
 	globalPool = &arenaPool{}
+	globalPool.reuse = reuse
 	globalPool.arenas = make(chan arena, maxArenaCount)
 }
 

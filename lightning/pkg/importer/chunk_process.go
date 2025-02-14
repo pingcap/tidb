@@ -107,7 +107,7 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParserWithMeta(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
 		if err != nil {
 			return nil, err
 		}

@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -1134,7 +1133,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet {
-		_, memoryUsage, memoryUsageFull, err := mydump.SampleParquetFileProperty(ctx, *dataFiles[0], e.dataStore)
+		_, memoryUsage, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1142,7 +1141,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			// To reduce the memory usage, we only use streaming mode to read file.
 			// TODO(joechenrh): set a more proper memory quota
 			dataFile.ParquetMeta = mydump.ParquetFileMeta{
-				MemoryUsage:        memoryUsage,
+				MemoryUsageStream:  memoryUsage,
 				MemoryUsageFull:    memoryUsageFull,
 				MemoryQuota:        mydump.GetMemoryQuota(runtime.NumCPU()),
 				UseStreaming:       true,
@@ -1150,15 +1149,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}
 		}
 
-		// Adjust thread count for parquet
-		memTotal, err := memory.MemTotal()
-		if err == nil {
-			limit := min(int(memTotal)*50/100/int(dataFiles[0].ParquetMeta.MemoryUsage), e.Plan.ThreadCnt)
-			limit = max(limit, 1)
-			log.L().Info("adjust IMPORT INTO thread count for parquet",
-				zap.Int("thread count", e.Plan.ThreadCnt), zap.Int("after", limit))
-			e.Plan.ThreadCnt = limit
-		}
+		// TODO(joechnerh): maybe we can adjust thread count for parquet here
 	}
 
 	e.dataFiles = dataFiles
@@ -1255,7 +1246,7 @@ func (e *LoadDataController) GetParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParserWithMeta(
+		parser, err = mydump.NewParquetParser(
 			ctx,
 			e.dataStore,
 			reader,
