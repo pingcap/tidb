@@ -500,31 +500,31 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.SQLExecutor) error {
 func findUserAndAllRoles(userList []string, roleGraph map[string]roleGraphEdgesTable) map[string]struct{} {
 	// Including the user list and also their roles
 	all := make(map[string]struct{}, len(userList))
+	queue := make([]string, 0, len(userList))
+
+	// Initialize the queue with the initial user list
 	for _, user := range userList {
 		all[user] = struct{}{}
+		queue = append(queue, user)
 	}
 
-	for {
-		before := len(all)
-
+	// Process the queue using BFS
+	for len(queue) > 0 {
+		user := queue[0]
+		queue = queue[1:]
 		for userHost, value := range roleGraph {
-			user, _, found := strings.Cut(userHost, "@")
+			roleUser, _, found := strings.Cut(userHost, "@")
 			if !found {
-				// this should never happen
-				continue
+				// this should never happen continue
 			}
-			if _, ok := all[user]; ok {
-				// If a user is in map, all its role should also added
+			if roleUser == user {
 				for _, role := range value.roleList {
-					all[role.Username] = struct{}{}
+					if _, ok := all[role.Username]; !ok {
+						all[role.Username] = struct{}{}
+						queue = append(queue, role.Username)
+					}
 				}
 			}
-		}
-
-		// loop until the map does not expand
-		after := len(all)
-		if before == after {
-			break
 		}
 	}
 	return all
