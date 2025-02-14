@@ -279,13 +279,12 @@ func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, prob
 			meta.isJoinKeysInlined = false
 		}
 		if prop.isKeyInteger {
-			buildUnsigned := prop.isKeyUnsigned
 			probeKeyProp := getKeyProp(probeKeyTypes[index])
 			if !probeKeyProp.isKeyInteger {
 				panic("build key is integer but probe key is not integer, should not happen")
 			}
-			probeUnsigned := probeKeyProp.isKeyUnsigned
-			if buildUnsigned != probeUnsigned {
+			if prop.isKeyUnsigned != probeKeyProp.isKeyUnsigned {
+				// for mixed signed and unsigned integer, an extra sign flag is needed
 				meta.serializeModes = append(meta.serializeModes, codec.NeedSignFlag)
 				meta.isJoinKeysInlined = false
 				if meta.isJoinKeysFixedLength {
@@ -298,7 +297,8 @@ func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, prob
 		} else {
 			isAllKeyInteger = false
 			if prop.keyLength == chunk.VarElemLen {
-				// keep var column by default for var length column
+				// keep var column by default for var length column, otherwise,
+				// if there are 2 var columns, [a, aa] and [aa, a] can not be distinguished
 				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
 			} else {
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
