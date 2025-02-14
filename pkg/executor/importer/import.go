@@ -386,8 +386,11 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to CSV
-		format = DataFormatCSV
+		f, err := mydump.ParseFormat(ctx, nil, plan.Path)
+		if err != nil {
+			return nil, err
+		}
+		format = f
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	// those are the default values for lightning CSV format too
