@@ -558,62 +558,66 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	}
 }
 
-func (cfg *RestoreConfig) getSnapshotCheckpointTaskName() string {
-	log.Fatal("unimplement")
-	return ""
+func (cfg *RestoreConfig) getSnapshotCheckpointTaskName(clusterID uint64) string {
+	return fmt.Sprintf("snapshot-%d", clusterID)
 }
 
-func (cfg *RestoreConfig) getLogCheckpointTaskName() string {
-	log.Fatal("unimplement")
-	return ""
+func (cfg *RestoreConfig) getLogCheckpointTaskName(clusterID, startTS, restoreTS uint64) string {
+	return fmt.Sprintf("log-%d/%d.%d/log", clusterID, startTS, restoreTS)
 }
 
-func (cfg *RestoreConfig) getSstCheckpointTaskName() string {
-	log.Fatal("unimplement")
-	return ""
+func (cfg *RestoreConfig) getSstCheckpointTaskName(clusterID, startTS, restoreTS uint64) string {
+	return fmt.Sprintf("log-%d/%d.%d/sst", clusterID, startTS, restoreTS)
 }
 
-func (cfg *RestoreConfig) newStorageCheckpointMetaManager(isPITR bool, checkpointStorage storage.ExternalStorage) {
-	if isPITR {
-		if len(cfg.FullBackupStorage) > 0 {
-			cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-				checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName())
-		}
-		cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, cfg.getLogCheckpointTaskName())
-		cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, cfg.getSstCheckpointTaskName())
-	} else {
+func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
+	checkpointStorage storage.ExternalStorage,
+	clusterID, startTS, restoreTS uint64,
+) {
+	if len(cfg.FullBackupStorage) > 0 {
 		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName())
+			checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(clusterID))
 	}
+	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
+		checkpointStorage, &cfg.CipherInfo, cfg.getLogCheckpointTaskName(clusterID, startTS, restoreTS))
+	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
+		checkpointStorage, &cfg.CipherInfo, cfg.getSstCheckpointTaskName(clusterID, startTS, restoreTS))
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManager(isPITR bool, g glue.Glue, dom *domain.Domain) (err error) {
-	if isPITR {
-		if len(cfg.FullBackupStorage) > 0 {
-			if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-				g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
-			); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
-			g, dom, checkpoint.LogRestoreCheckpointDatabaseName,
-		); err != nil {
-			return errors.Trace(err)
-		}
-		if cfg.sstCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-			g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
+func (cfg *RestoreConfig) newStorageCheckpointMEtaManagerSnapshot(
+	checkpointStorage storage.ExternalStorage,
+	clusterID uint64,
+) {
+	cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
+		checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(clusterID))
+}
+
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain) (err error) {
+	if len(cfg.FullBackupStorage) > 0 {
 		if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
 			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
 		); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
+		g, dom, checkpoint.LogRestoreCheckpointDatabaseName,
+	); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.sstCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
+		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName,
+	); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain) (err error) {
+	if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
+		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+	); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -798,17 +802,18 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
-			u, err := storage.ParseBackend(cfg.CheckpointStorage, &storage.BackendOptions{})
+			u, err := storage.ParseBackend(cfg.CheckpointStorage, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			checkpointStorage, err := storage.New(c, u, &storage.ExternalStorageOptions{})
+			checkpointStorage, err := storage.New(c, u, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cfg.newStorageCheckpointMetaManager(IsStreamRestore(cmdName), checkpointStorage)
+			clusterID := mgr.GetPDClient().GetClusterID(c)
+			cfg.newStorageCheckpointMetaManagerPITR(checkpointStorage, clusterID, 0, 0)
 		} else {
-			cfg.newTableCheckpointMetaManager(IsStreamRestore(cmdName), g, mgr.GetDomain())
+			cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain())
 		}
 		defer cfg.CloseCheckpointMetaManager()
 	}
@@ -1051,7 +1056,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
 	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+		if err := checkTableExistence(ctx, mgr, tables); err != nil {
 			canRestoreSchedulers = true
 			return errors.Trace(err)
 		}
@@ -1445,7 +1450,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	return nil
 }
 
-func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table) error {
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {

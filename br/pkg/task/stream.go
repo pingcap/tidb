@@ -1319,7 +1319,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1522,12 +1522,13 @@ func restoreStream(
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
-		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder)
+		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
+			ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		oldGCRatio = gcRatioFromCheckpoint
-		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx)
+		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx, cfg.sstCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1660,7 +1661,7 @@ func restoreStream(
 	}
 
 	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1723,16 +1724,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 
-	createCheckpointSessionFn := func() (glue.Session, error) {
-		// always create a new session for checkpoint runner
-		// because session is not thread safe
-		if cfg.UseCheckpoint {
-			return g.CreateSession(mgr.GetStorage())
-		}
-		return nil, nil
-	}
-
-	err = client.InitClients(ctx, u, createCheckpointSessionFn, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
+	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1998,7 +1990,6 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 func generatePiTRTaskInfo(
 	ctx context.Context,
 	mgr *conn.Mgr,
-	g glue.Glue,
 	cfg *RestoreConfig,
 ) (*PiTRTaskInfo, error) {
 	var (
@@ -2085,7 +2076,7 @@ func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) err
 	return nil
 }
 
-func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore) bool {
+func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) bool {
 	return checkpointTaskInfo != nil && checkpointTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersisted
 }
 
@@ -2145,7 +2136,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = client.SaveIdMapWithFailPoints(ctx, tableMappingManager); err != nil {
+		if err = client.SaveIdMapWithFailPoints(ctx, tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
 			return errors.Trace(err)
 		}
 	}

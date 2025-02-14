@@ -99,7 +99,7 @@ func NewLogRestoreManager(
 	ctx context.Context,
 	fileImporter *LogFileImporter,
 	poolSize uint,
-	createCheckpointSessionFn func() (glue.Session, error),
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) (*LogRestoreManager, error) {
 	// for compacted reason, user only set --concurrency for log file restore speed.
 	log.Info("log restore worker pool", zap.Uint("size", poolSize))
@@ -107,13 +107,10 @@ func NewLogRestoreManager(
 		fileImporter: fileImporter,
 		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
 	}
-	se, err := createCheckpointSessionFn()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
-	if se != nil {
-		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore2(ctx, se)
+	if logCheckpointMetaManager != nil {
+		var err error
+		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -156,7 +153,7 @@ func NewSstRestoreManager(
 	snapFileImporter *snapclient.SnapFileImporter,
 	concurrencyPerStore uint,
 	storeCount uint,
-	createCheckpointSessionFn func() (glue.Session, error),
+	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 ) (*SstRestoreManager, error) {
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	// This poolSize is similar to full restore, as both workflows are comparable.
@@ -168,12 +165,9 @@ func NewSstRestoreManager(
 	s := &SstRestoreManager{
 		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
 	}
-	se, err := createCheckpointSessionFn()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if se != nil {
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore2(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	if sstCheckpointMetaManager != nil {
+		var err error
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -519,7 +513,8 @@ func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) er
 func (rc *LogClient) InitClients(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	createSessionFn func() (glue.Session, error),
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
 	concurrencyPerStore uint,
 ) error {
@@ -535,7 +530,7 @@ func (rc *LogClient) InitClients(
 		ctx,
 		NewLogFileImporter(metaClient, importCli, backend),
 		concurrency,
-		createSessionFn,
+		logCheckpointMetaManager,
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -560,20 +555,24 @@ func (rc *LogClient) InitClients(
 		snapFileImporter,
 		concurrencyPerStore,
 		uint(len(stores)),
-		createSessionFn,
+		sstCheckpointMetaManager,
 	)
 	return errors.Trace(err)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	ctx context.Context,
+	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 ) (map[string]struct{}, error) {
 	sstCheckpointSets := make(map[string]struct{})
 
-	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+	exists, err := sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if exists {
 		// we need to load the checkpoint data for the following restore
-		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
-		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
 			sstCheckpointSets[v.Name] = struct{}{}
 		})
 		if err != nil {
@@ -581,7 +580,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+		err = sstCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -594,14 +593,19 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	startTS, restoredTS uint64,
 	gcRatio string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) (string, error) {
 	rc.useCheckpoint = true
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
-	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
+	exists, err := logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if exists {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -619,7 +623,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	log.Info("save gc ratio into checkpoint metadata",
 		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
-	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.unsafeSession, &checkpoint.CheckpointMetadataForLogRestore{
+	if err := logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
@@ -1859,12 +1863,13 @@ const PITRIdMapBlockSize int = 524288
 func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
-	if err := rc.saveIDMap(ctx, manager); err != nil {
+	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1878,6 +1883,7 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 func (rc *LogClient) saveIDMap(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
 	backupmeta := &backuppb.BackupMeta{DbMaps: manager.ToProto()}
 	data, err := proto.Marshal(backupmeta)
@@ -1904,7 +1910,7 @@ func (rc *LogClient) saveIDMap(
 
 	if rc.useCheckpoint {
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := checkpoint.SaveCheckpointProgress(ctx, rc.unsafeSession, &checkpoint.CheckpointProgress{
+		if err := logCheckpointMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersisted,
 		}); err != nil {
 			return errors.Trace(err)
