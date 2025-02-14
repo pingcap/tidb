@@ -588,7 +588,7 @@ func TestShowTableRegion(t *testing.T) {
 		"PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN (MAXVALUE))")
 	re = tk.MustQuery("show table sbtest0000 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 8)
+	require.Len(t, rows, 7) // 3 index regions + 4 record regions
 
 	tbl = external.GetTableByName(t, tk, "test", "sbtest0000")
 	require.Equal(t, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID), rows[0][1]) // index `uk``
@@ -596,9 +596,8 @@ func TestShowTableRegion(t *testing.T) {
 	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[2][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[3][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[4][1])
-	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID+1), rows[5][1])
-	require.Equal(t, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID+1), rows[6][1]) // index `idx0`
-	require.Equal(t, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID+1), rows[7][1]) // index `idx1`
+	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID+1), rows[5][1])     // index `idx0`
+	require.Equal(t, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID+1), rows[6][1]) // index `idx1`
 }
 
 func BenchmarkLocateRegion(t *testing.B) {

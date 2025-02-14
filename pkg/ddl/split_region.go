@@ -150,22 +150,28 @@ func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTa
 
 func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, physicalTableID int64) []uint64 {
 	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
-	var maxIndexID int64 = -1
 	for _, idx := range tblInfo.Indices {
 		if tblInfo.GetPartitionInfo() != nil &&
-			((idx.Global && tblInfo.ID != physicalTableID) ||
-				(!idx.Global && tblInfo.ID == physicalTableID)) {
+			((idx.Global && tblInfo.ID != physicalTableID) || (!idx.Global && tblInfo.ID == physicalTableID)) {
 			continue
 		}
-		maxIndexID = max(maxIndexID, idx.ID)
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, idx.ID)
+		id := idx.ID
+		// For normal index, split regions like
+		// [t_tid_, 			t_tid_i_idx1ID+1),
+		// [t_tid_i_idx1ID+1,	t_tid_i_idx2ID+1),
+		// ...
+		// [t_tid_i_idxMaxID+1, t_tid_r_xxxx)
+		//
+		// For global index, split regions like
+		// [t_tid_i_idx1ID, t_tid_i_idx2ID),
+		// [t_tid_i_idx2ID, t_tid_i_idx3ID),
+		// ...
+		// [t_tid_i_idxMaxID, t_pid1_)
+		if !idx.Global {
+			id = id + 1
+		}
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, id)
 		splitKeys = append(splitKeys, indexPrefix)
-	}
-	if len(splitKeys) == 0 {
-		return []uint64{}
-	}
-	if !(tblInfo.GetPartitionInfo() != nil && tblInfo.ID == physicalTableID) {
-		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexID).PrefixNext())
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
 	if err != nil {
