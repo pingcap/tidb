@@ -575,6 +575,10 @@ func (p *mockSessionPool) Put(r pools.Resource) {
 	p.Called(r)
 }
 
+func (p *mockSessionPool) Destroy(r pools.Resource) {
+	p.Called(r)
+}
+
 func (p *mockSessionPool) Close() {}
 
 type mockSession struct {
