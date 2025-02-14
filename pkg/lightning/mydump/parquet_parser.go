@@ -1064,7 +1064,7 @@ func NewParquetParserWithMeta(
 	if meta.UseSampleAllocator {
 		memoryUsage = 0
 		meta.UseStreaming = true
-	} else if meta.MemoryUsageFull < defaultArenaSize {
+	} else if meta.MemoryUsageFull < meta.MemoryQuota {
 		memoryUsage = meta.MemoryUsageFull
 		meta.UseStreaming = false
 	} else {
@@ -1076,6 +1076,7 @@ func NewParquetParserWithMeta(
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
+		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryUsage>>20)),
 		zap.Bool("streaming mode", meta.UseStreaming),
 		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
