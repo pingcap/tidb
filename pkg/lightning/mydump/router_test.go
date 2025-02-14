@@ -15,9 +15,13 @@
 package mydump
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -323,4 +327,45 @@ func TestRouteWithCompressedParquet(t *testing.T) {
 	require.NoError(t, err)
 	_, err = router.Route(fileName)
 	require.Error(t, err)
+}
+
+func TestParseFormat(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test_parse_format")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	fileNames := []string{
+		"1.sql", "2.sql", "1.sql.gz", "1.csv.gz", "2.csv.gz", "1.sql.gzip", "1.sql.zst", "1.sql.zstd", "1.sql.snappy",
+		"1.csv", "2.csv", "1.csv.gzip", "2.csv.gzip", "1.csv.zst", "2.csv.zst", "1.csv.zstd", "2.csv.zstd", "1.csv.snappy", "2.csv.snappy",
+		"1.parquet", "2.parquet", "1.gz.parquet",
+	}
+	for _, fileName := range fileNames {
+		_, err = os.Create(filepath.Join(tmpDir, fileName))
+		require.NoError(t, err)
+	}
+	b, err := storage.ParseBackend(tmpDir, nil)
+	require.NoError(t, err)
+	store, err := storage.NewWithDefaultOpt(context.Background(), b)
+	require.NoError(t, err)
+
+	sqlPatterns := []string{"*.sql", "1.sql", "[12].sql", "*.sql.gz", "*.sql.gzip", "*.sql.zst", "*.sql.zstd", "*.sql.snappy"}
+	for _, sqlPattern := range sqlPatterns {
+		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		require.NoError(t, err)
+		require.Equal(t, TypeSQL, format)
+	}
+
+	csvPatterns := []string{"*.csv", "1.csv", "[12].csv", "*.csv.gz", "*.csv.gzip", "*.csv.zst", "*.csv.zstd", "*.csv.snappy"}
+	for _, sqlPattern := range csvPatterns {
+		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		require.NoError(t, err)
+		require.Equal(t, TypeCSV, format)
+	}
+
+	parquetPatterns := []string{"*.parquet", "1.parquet", "[12].gz.parquet"}
+	for _, sqlPattern := range parquetPatterns {
+		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		require.NoError(t, err)
+		require.Equal(t, TypeParquet, format)
+	}
 }
