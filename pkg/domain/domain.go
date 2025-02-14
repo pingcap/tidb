@@ -2616,7 +2616,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.BgLogger().Warn("load histograms failed", zap.Error(err), zap.Stack("stack"))
 			}
 		case <-do.exit:
 			return
