@@ -213,8 +213,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 	}
 
-	isAllKeyInteger := false
-	meta.isJoinKeysFixedLength, meta.joinKeysLength, meta.isJoinKeysInlined, meta.serializeModes, isAllKeyInteger = setupJoinKeys(buildKeyIndex, buildKeyTypes, probeKeyTypes)
+	setupJoinKeys(meta, buildKeyIndex, buildKeyTypes, probeKeyTypes)
 
 	if meta.isJoinKeysInlined {
 		for _, index := range buildKeyIndex {
@@ -230,15 +229,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 
 	setupColumnOrder(meta, buildKeyIndex, buildTypes, columnsUsedByOtherCondition, outputColumns, savedColumnNum)
 
-	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
-		meta.keyMode = OneInt64
-	} else {
-		if meta.isJoinKeysFixedLength {
-			meta.keyMode = FixedSerializedKey
-		} else {
-			meta.keyMode = VariableSerializedKey
-		}
-	}
 	if needUsedFlag {
 		meta.colOffsetInNullMap = 1
 		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
@@ -267,11 +257,11 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	return meta
 }
 
-func setupJoinKeys(buildKeyIndex []int, buildKeyTypes, probeKeyTypes []*types.FieldType) (bool, int, bool, []codec.SerializeMode, bool) {
-	isJoinKeysFixedLength := true
-	joinKeysLength := 0
-	isJoinKeysInlined := true
-	serializeModes := make([]codec.SerializeMode, 0, len(buildKeyIndex))
+func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, probeKeyTypes []*types.FieldType) {
+	meta.isJoinKeysFixedLength = true
+	meta.joinKeysLength = 0
+	meta.isJoinKeysInlined = true
+	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
 	varLengthKeyNumber := 0
 	keyIndexMap := make(map[int]struct{})
@@ -280,61 +270,70 @@ func setupJoinKeys(buildKeyIndex []int, buildKeyTypes, probeKeyTypes []*types.Fi
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
 		if prop.keyLength != chunk.VarElemLen {
-			joinKeysLength += prop.keyLength
+			meta.joinKeysLength += prop.keyLength
 		} else {
-			isJoinKeysFixedLength = false
+			meta.isJoinKeysFixedLength = false
 			varLengthKeyNumber++
 		}
 		if !prop.canBeInlined {
-			isJoinKeysInlined = false
+			meta.isJoinKeysInlined = false
 		}
 		if prop.isKeyInteger {
 			buildUnsigned := prop.isKeyUnsigned
 			probeKeyProp := getKeyProp(probeKeyTypes[index])
 			if !probeKeyProp.isKeyInteger {
-				panic("build key is integer but probe key is not integer, should not happens")
+				panic("build key is integer but probe key is not integer, should not happen")
 			}
 			probeUnsigned := probeKeyProp.isKeyUnsigned
 			if buildUnsigned != probeUnsigned {
-				serializeModes = append(serializeModes, codec.NeedSignFlag)
-				isJoinKeysInlined = false
-				if isJoinKeysFixedLength {
+				meta.serializeModes = append(meta.serializeModes, codec.NeedSignFlag)
+				meta.isJoinKeysInlined = false
+				if meta.isJoinKeysFixedLength {
 					// an extra sign flag is needed in this case
-					joinKeysLength++
+					meta.joinKeysLength++
 				}
 			} else {
-				serializeModes = append(serializeModes, codec.Normal)
+				meta.serializeModes = append(meta.serializeModes, codec.Normal)
 			}
 		} else {
 			isAllKeyInteger = false
 			if prop.keyLength == chunk.VarElemLen {
 				// keep var column by default for var length column
-				serializeModes = append(serializeModes, codec.KeepVarColumnLength)
+				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
 			} else {
-				serializeModes = append(serializeModes, codec.Normal)
+				meta.serializeModes = append(meta.serializeModes, codec.Normal)
 			}
 		}
 		keyIndexMap[keyIndex] = struct{}{}
 	}
 
-	if !isJoinKeysFixedLength {
-		joinKeysLength = -1
+	if !meta.isJoinKeysFixedLength {
+		meta.joinKeysLength = -1
 	}
 	if len(buildKeyIndex) != len(keyIndexMap) {
 		// has duplicated key, can not be inlined
-		isJoinKeysInlined = false
+		meta.isJoinKeysInlined = false
 	}
-	if !isJoinKeysInlined {
+	if !meta.isJoinKeysInlined {
 		if varLengthKeyNumber == 1 {
 			// if key is not inlined and there is only one var-length key, then don't need to record the var length
 			for i := 0; i < len(buildKeyIndex); i++ {
-				if serializeModes[i] == codec.KeepVarColumnLength {
-					serializeModes[i] = codec.Normal
+				if meta.serializeModes[i] == codec.KeepVarColumnLength {
+					meta.serializeModes[i] = codec.Normal
 				}
 			}
 		}
 	}
-	return isJoinKeysFixedLength, joinKeysLength, isJoinKeysInlined, serializeModes, isAllKeyInteger
+
+	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
+		meta.keyMode = OneInt64
+	} else {
+		if meta.isJoinKeysFixedLength {
+			meta.keyMode = FixedSerializedKey
+		} else {
+			meta.keyMode = VariableSerializedKey
+		}
+	}
 }
 
 func setupColumnOrder(meta *joinTableMeta, buildKeyIndex []int, buildTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, savedColumnLength int) {
