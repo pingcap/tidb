@@ -1573,8 +1573,8 @@ func convertRow(strRow ...string) []types.Datum {
 func TestFieldsBase64Encoded(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			FieldsTerminatedBy: ",",
-			FieldsEncodedBy:    config.FieldEncodeBase64,
+			Separator:       ",",
+			FieldsEncodedBy: config.FieldEncodeBase64,
 		},
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
