@@ -84,8 +84,9 @@ type TaskBase struct {
 	// contain the tidb_service_scope=TargetScope label.
 	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
 	// if there is no such nodes, will try nodes of "" scope.
-	TargetScope string
-	CreateTime  time.Time
+	TargetScope  string
+	CreateTime   time.Time
+	MaxNodeCount int
 }
 
 // IsDone checks if the task is done.
