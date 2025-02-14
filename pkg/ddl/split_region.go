@@ -38,11 +38,11 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
+		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
-		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
-		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 	} else {
 		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatterScope))
@@ -161,8 +161,10 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, idx.ID)
 		splitKeys = append(splitKeys, indexPrefix)
 	}
-	if len(splitKeys) != 0 &&
-		(tblInfo.GetPartitionInfo() == nil || tblInfo.ID != physicalTableID) {
+	if len(splitKeys) == 0 {
+		return []uint64{}
+	}
+	if tblInfo.GetPartitionInfo() == nil || tblInfo.ID != physicalTableID {
 		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexID).PrefixNext())
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
