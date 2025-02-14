@@ -111,7 +111,7 @@ func (ss *Schemas) BackupSchemas(
 		}
 
 		var checksum *checkpoint.ChecksumItem
-		var exists bool = false
+		var exists = false
 		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
@@ -153,7 +153,7 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost),
+							zap.Duration("TimeTaken", calculateCost),
 							zap.Duration("flush-take", flushCost))
 					}
 				}
