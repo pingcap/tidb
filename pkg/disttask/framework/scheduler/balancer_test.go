@@ -245,23 +245,23 @@ func TestBalanceOneTask(t *testing.T) {
 		// scale out, but max node count is limited.
 		{
 			subtasks: []*proto.SubtaskBase{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 4, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 1, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
 			maxNodeCount:  2,
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.SubtaskBase{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
-				{ID: 5, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 1, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
-			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 0},
+			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 0, "tidb3": 16},
 		},
 	}
 
