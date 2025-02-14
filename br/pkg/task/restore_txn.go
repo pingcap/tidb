@@ -96,6 +96,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
+	//TODO: handle scheduler here
 	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, false, true)
 	if err != nil {
 		return errors.Trace(err)
