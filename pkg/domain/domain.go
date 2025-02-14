@@ -158,7 +158,7 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
-	sysSessionPool  util.SessionPool
+	sysSessionPool  util.DestroyableSessionPool
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -1345,6 +1345,10 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 				})
 				infosync.DeleteInternalSession(r)
 			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
 		),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
@@ -1814,7 +1818,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() util.SessionPool {
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
@@ -2612,7 +2616,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
