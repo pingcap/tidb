@@ -146,7 +146,6 @@ func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
 	}
 	_, ok := msm.internalSessions[se]
 	return ok
-
 }
 
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
