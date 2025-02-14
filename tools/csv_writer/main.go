@@ -483,7 +483,7 @@ func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, worker
 }
 
 func main() {
-	// Parse command-line arguments
+	// Parse command-line arguments.
 	flag.Parse()
 
 	// List files in GCS directory if showFile is true
