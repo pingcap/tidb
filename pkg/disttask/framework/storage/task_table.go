@@ -151,7 +151,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 		se.GetSessionVars().TxnEntrySizeLimit = limitBak
 		mgr.sePool.Put(v)
 	}()
-	se.GetSessionVars().TxnEntrySizeLimit = vardef.TxnEntrySizeLimit.Load()
+	se.GetSessionVars().TxnEntrySizeLimit = variable.TxnEntrySizeLimit.Load()
 	return fn(se)
 }
 
