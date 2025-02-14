@@ -26,57 +26,75 @@ const (
 
 	DumpDirPerm = 0755
 
-	HeapDumpFilePattern = "br_heap_%s_%d.pprof"
-	TimeFormat          = "20060102_150405"
+	TimeFormat         = "20060102_150405"
+	DefaultProfilesDir = "/tmp/profiles"
+	// MaxDumpBatches is the number of dump directories to keep, where each directory contains multiple profile types
+	MaxDumpBatches     = 3
+	ProfileFilePattern = "%s.pprof"
+	DumpDirPattern     = "br_dump_%s_%d"
+	ProfileGlobPattern = "br_*"
 
-	DefaultHeapDumpDir = "/tmp/heapdump"
+	// profile types
+	ProfileHeap      = "heap"
+	ProfileGoroutine = "goroutine"
 
-	MaxHeapDumps = 3
+	// debug levels
+	GoroutineDebugLevel = 2 // includes stack traces, status, and creation location
 )
+
+type profileItem struct {
+	Name  string
+	Debug int
+}
+
+var defaultProfiles = []profileItem{
+	{Name: ProfileHeap},
+	{Name: ProfileGoroutine, Debug: GoroutineDebugLevel},
+}
 
 // MemoryMonitorConfig holds configuration for memory monitoring
 type MemoryMonitorConfig struct {
-	// DumpDir is where heap dumps will be written
+	// DumpDir is where profile dumps will be written
 	DumpDir string
 	// MemoryLimit is the memory limit in bytes (if known)
 	MemoryLimit uint64
-	// MinDumpInterval is the minimum time between heap dumps
+	// MinDumpInterval is the minimum time between profile dumps
 	MinDumpInterval time.Duration
 }
 
-// cleanupOldHeapDumps removes old heap dumps if there are more than MaxHeapDumps
-func cleanupOldHeapDumps(dumpDir string) {
-	files, err := filepath.Glob(filepath.Join(dumpDir, "br_heap_*.pprof"))
+// cleanupOldProfileDumps removes old profile dump directories if there are more than MaxDumpBatches
+func cleanupOldProfileDumps(dumpDir string) {
+	files, err := filepath.Glob(filepath.Join(dumpDir, ProfileGlobPattern))
 	if err != nil {
-		log.Warn("Failed to list heap dumps for cleanup", zap.Error(err))
+		log.Warn("Failed to list profile dumps for cleanup", zap.Error(err))
 		return
 	}
 
-	if len(files) <= MaxHeapDumps {
+	if len(files) <= MaxDumpBatches {
 		return
 	}
 
 	// sort by filename which contains timestamp
 	sort.Strings(files)
 
-	// remove older files (keeping the last MaxHeapDumps files)
-	for i := 0; i < len(files)-MaxHeapDumps; i++ {
-		if err := os.Remove(files[i]); err != nil {
-			log.Warn("Failed to remove old heap dump",
-				zap.String("file", files[i]),
+	// remove older directories (keeping the last MaxDumpBatches directories)
+	for i := 0; i < len(files)-MaxDumpBatches; i++ {
+		if err := os.RemoveAll(files[i]); err != nil {
+			log.Warn("Failed to remove old profile dump directory",
+				zap.String("dir", files[i]),
 				zap.Error(err))
 			continue
 		}
-		log.Info("Removed old heap dump", zap.String("file", files[i]))
+		log.Info("Removed old profile dump directory", zap.String("dir", files[i]))
 	}
 }
 
-// StartMemoryMonitor starts monitoring memory usage and dumps heap when thresholds are exceeded
+// StartMemoryMonitor starts monitoring memory usage and dumps profiles when thresholds are exceeded
 func StartMemoryMonitor(ctx context.Context, cfg MemoryMonitorConfig) error {
 	if cfg.DumpDir == "" {
-		cfg.DumpDir = DefaultHeapDumpDir
+		cfg.DumpDir = DefaultProfilesDir
 		if err := os.MkdirAll(cfg.DumpDir, DumpDirPerm); err != nil {
-			log.Warn("Failed to create default heap dump directory, falling back to temp dir",
+			log.Warn("Failed to create default profiles directory, falling back to temp dir",
 				zap.String("default_dir", cfg.DumpDir),
 				zap.Error(err))
 			cfg.DumpDir = os.TempDir()
@@ -91,13 +109,13 @@ func StartMemoryMonitor(ctx context.Context, cfg MemoryMonitorConfig) error {
 		return fmt.Errorf("failed to create dump directory: %v", err)
 	}
 
-	// Clean up any existing old heap dumps on startup
-	cleanupOldHeapDumps(cfg.DumpDir)
+	// Clean up any existing old profile dumps on startup
+	cleanupOldProfileDumps(cfg.DumpDir)
 
-	log.Info("Memory monitor will store heap dumps in",
+	log.Info("Memory monitor will store profiles in",
 		zap.String("dump_dir", cfg.DumpDir),
 		zap.Bool("using_temp_dir", cfg.DumpDir == os.TempDir()),
-		zap.Int("max_dumps", MaxHeapDumps))
+		zap.Int("max_dump_batches", MaxDumpBatches))
 
 	var lastDump time.Time
 	var memStats runtime.MemStats
@@ -123,34 +141,39 @@ func StartMemoryMonitor(ctx context.Context, cfg MemoryMonitorConfig) error {
 
 				if memoryUsage >= MemoryWarningThreshold {
 					log.Warn("High memory usage detected",
-						zap.Float64("usage_percentage", memoryUsage*100),
+						zap.Float64("usage_percentage", float64(int(memoryUsage*10000))/100),
 						zap.Uint64("alloc_bytes", memStats.Alloc),
 						zap.Uint64("sys_bytes", memStats.Sys))
 				}
 
-				// dump heap at dump threshold if enough time has passed since last dump
+				// dump profiles at dump threshold if enough time has passed since last dump
 				if memoryUsage >= MemoryDumpThreshold && time.Since(lastDump) >= cfg.MinDumpInterval {
-					dumpPath := filepath.Join(cfg.DumpDir,
-						fmt.Sprintf(HeapDumpFilePattern,
-							time.Now().Format(TimeFormat),
-							memStats.Alloc/units.MiB))
+					dumpTime := time.Now().Format(TimeFormat)
+					dumpDir := filepath.Join(cfg.DumpDir, fmt.Sprintf(DumpDirPattern, dumpTime, memStats.Alloc/units.MiB))
 
-					if err := dumpHeap(dumpPath); err != nil {
-						log.Error("Failed to dump heap",
+					if err := os.MkdirAll(dumpDir, DumpDirPerm); err != nil {
+						log.Error("Failed to create dump directory",
 							zap.Error(err),
-							zap.String("path", dumpPath))
+							zap.String("path", dumpDir))
 						continue
 					}
 
-					log.Info("Heap dump created",
-						zap.String("path", dumpPath),
-						zap.Float64("usage_percentage", memoryUsage*100),
+					if err := dumpProfiles(dumpDir); err != nil {
+						log.Error("Failed to dump profiles",
+							zap.Error(err),
+							zap.String("path", dumpDir))
+						continue
+					}
+
+					log.Info("Memory profiles created",
+						zap.String("path", dumpDir),
+						zap.Float64("usage_percentage", float64(int(memoryUsage*10000))/100),
 						zap.Uint64("alloc_mb", memStats.Alloc/units.MiB))
 
 					lastDump = time.Now()
 
 					// clean up old dumps after creating a new one
-					cleanupOldHeapDumps(cfg.DumpDir)
+					cleanupOldProfileDumps(cfg.DumpDir)
 				}
 			}
 		}
@@ -159,17 +182,29 @@ func StartMemoryMonitor(ctx context.Context, cfg MemoryMonitorConfig) error {
 	return nil
 }
 
-// dumpHeap creates a heap profile at the specified path
-func dumpHeap(path string) error {
-	f, err := os.Create(path)
+// dumpProfiles creates all configured profile types at the specified directory
+func dumpProfiles(dumpDir string) error {
+	for _, item := range defaultProfiles {
+		if err := writeProfile(item, dumpDir); err != nil {
+			return fmt.Errorf("failed to write %s profile: %v", item.Name, err)
+		}
+	}
+	return nil
+}
+
+// writeProfile writes a single profile type to the specified directory
+func writeProfile(item profileItem, dumpDir string) error {
+	fileName := filepath.Join(dumpDir, fmt.Sprintf(ProfileFilePattern, item.Name))
+	f, err := os.Create(fileName)
 	if err != nil {
-		return fmt.Errorf("failed to create heap dump file: %v", err)
+		return fmt.Errorf("failed to create profile file: %v", err)
 	}
 	defer f.Close()
 
-	if err := pprof.WriteHeapProfile(f); err != nil {
-		return fmt.Errorf("failed to write heap profile: %v", err)
+	p := pprof.Lookup(item.Name)
+	if p == nil {
+		return fmt.Errorf("profile %s not found", item.Name)
 	}
 
-	return nil
+	return p.WriteTo(f, item.Debug)
 }
