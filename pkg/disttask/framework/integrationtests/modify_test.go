@@ -17,6 +17,7 @@ package integrationtests
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,8 +32,9 @@ import (
 )
 
 type collectedRuntimeInfo struct {
-	currentTask  *proto.Task
-	subtaskInfos []subtaskRuntimeInfo
+	currTaskMeta        atomic.Pointer[[]byte]
+	currTaskConcurrency atomic.Int64
+	subtaskInfos        []subtaskRuntimeInfo
 }
 
 type subtaskRuntimeInfo struct {
@@ -52,7 +54,16 @@ func TestModifyTaskConcurrency(t *testing.T) {
 	})
 	subtaskCh := make(chan struct{})
 	runtimeInfo := collectedRuntimeInfo{}
+	var (
+		testModifyWhenSubtaskRun atomic.Bool
+		modifyWaitCh             = make(chan struct{})
+	)
+
 	runSubtaskFn := func(ctx context.Context, subtask *proto.Subtask) error {
+		if testModifyWhenSubtaskRun.Load() {
+			<-modifyWaitCh
+			<-modifyWaitCh
+		}
 		select {
 		case <-subtaskCh:
 			runtimeInfo.subtaskInfos = append(runtimeInfo.subtaskInfos, subtaskRuntimeInfo{
@@ -66,7 +77,8 @@ func TestModifyTaskConcurrency(t *testing.T) {
 	}
 
 	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
-		runtimeInfo.currentTask = task
+		runtimeInfo.currTaskMeta.Store(&task.Meta)
+		runtimeInfo.currTaskConcurrency.Store(int64(task.Concurrency))
 		executor := mockexecute.NewMockStepExecutor(c.MockCtrl)
 		executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 		executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
@@ -74,8 +86,12 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		executor.EXPECT().SetResource(gomock.Any()).AnyTimes()
 		executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
 		executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
-		executor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).DoAndReturn(func(newTask *proto.Task) error {
-			runtimeInfo.currentTask = newTask
+		executor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, newMeta []byte) error {
+			runtimeInfo.currTaskMeta.Store(&newMeta)
+			return nil
+		}).AnyTimes()
+		executor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, newResource *proto.StepResource) error {
+			runtimeInfo.currTaskConcurrency.Store(newResource.CPU.Capacity())
 			return nil
 		}).AnyTimes()
 		return executor, nil
@@ -342,6 +358,70 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
 		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
-		require.EqualValues(t, []byte("modify_max_write_speed=123"), runtimeInfo.currentTask.Meta)
+		require.EqualValues(t, []byte("modify_max_write_speed=123"), *runtimeInfo.currTaskMeta.Load())
+	})
+
+	t.Run("modify meta and increase concurrency when subtask is running, and apply success", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		defer testModifyWhenSubtaskRun.Store(false)
+		testModifyWhenSubtaskRun.Store(true)
+		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, 3, "", []byte("init"))
+		require.NoError(t, err)
+		require.Equal(t, 3, task.Concurrency)
+		require.EqualValues(t, []byte("init"), task.Meta)
+		modifyWaitCh <- struct{}{}
+		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 7},
+				{Type: proto.ModifyMaxWriteSpeed, To: 123},
+			},
+		}))
+		require.Eventually(t, func() bool {
+			return "modify_max_write_speed=123" == string(*runtimeInfo.currTaskMeta.Load()) &&
+				runtimeInfo.currTaskConcurrency.Load() == 7
+		}, 10*time.Second, 100*time.Millisecond)
+		testModifyWhenSubtaskRun.Store(false)
+		modifyWaitCh <- struct{}{}
+		// finish subtasks
+		for i := 0; i < 5; i++ {
+			subtaskCh <- struct{}{}
+		}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+		require.Equal(t, "modify_max_write_speed=123", string(*runtimeInfo.currTaskMeta.Load()))
+		require.Equal(t, int64(7), runtimeInfo.currTaskConcurrency.Load())
+	})
+
+	t.Run("modify meta and decrease concurrency when subtask is running, and apply success", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		defer testModifyWhenSubtaskRun.Store(false)
+		testModifyWhenSubtaskRun.Store(true)
+		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, 9, "", []byte("init"))
+		require.NoError(t, err)
+		require.Equal(t, 9, task.Concurrency)
+		require.EqualValues(t, []byte("init"), task.Meta)
+		modifyWaitCh <- struct{}{}
+		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 5},
+				{Type: proto.ModifyMaxWriteSpeed, To: 456},
+			},
+		}))
+		require.Eventually(t, func() bool {
+			return "modify_max_write_speed=456" == string(*runtimeInfo.currTaskMeta.Load()) &&
+				runtimeInfo.currTaskConcurrency.Load() == 5
+		}, 10*time.Second, 100*time.Millisecond)
+		testModifyWhenSubtaskRun.Store(false)
+		modifyWaitCh <- struct{}{}
+		// finish subtasks
+		for i := 0; i < 5; i++ {
+			subtaskCh <- struct{}{}
+		}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+		require.Equal(t, "modify_max_write_speed=456", string(*runtimeInfo.currTaskMeta.Load()))
+		require.Equal(t, int64(5), runtimeInfo.currTaskConcurrency.Load())
 	})
 }
