@@ -173,5 +173,4 @@ func (s *mockGCSSuite) TestSnappy() {
 	s.tk.MustQuery("SELECT * FROM snappy.t;").Check(testkit.Rows(
 		"1 test1", "2 test2",
 	))
-
 }
