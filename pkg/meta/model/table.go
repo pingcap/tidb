@@ -499,7 +499,7 @@ func (t *TableInfo) IsSequence() bool {
 	return t.Sequence != nil
 }
 
-// IsBaseTable checks to see the table is neither a view or a sequence.
+// IsBaseTable checks to see the table is neither a view nor a sequence.
 func (t *TableInfo) IsBaseTable() bool {
 	return t.Sequence == nil && t.View == nil
 }
