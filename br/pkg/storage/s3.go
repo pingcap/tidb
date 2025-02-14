@@ -602,6 +602,9 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 		remainRetry -= 1
 		return true
 	}
+
+	// The errors cannot be handled by the SDK because they happens during reading the HTTP response body.
+	// We cannot use `utils.WithRetry[V2]` here because cyclinic deps.
 	for {
 		data, err := rs.doReadFile(ctx, file)
 		if err != nil {
