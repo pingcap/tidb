@@ -960,16 +960,16 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	csvConfig := &config.CSVConfig{
-		Separator: e.FieldsTerminatedBy,
+		FieldsTerminatedBy: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		Delimiter:   e.FieldsEnclosedBy,
-		Terminator:  e.LinesTerminatedBy,
-		NotNull:     false,
-		Null:        e.FieldNullDef,
-		Header:      false,
-		TrimLastSep: false,
-		EscapedBy:   e.FieldsEscapedBy,
-		StartingBy:  e.LinesStartingBy,
+		FieldsEnclosedBy:   e.FieldsEnclosedBy,
+		LinesTerminatedBy:  e.LinesTerminatedBy,
+		NotNull:            false,
+		FieldNullDefinedBy: e.FieldNullDef,
+		Header:             false,
+		TrimLastEmptyField: false,
+		FieldsEscapedBy:    e.FieldsEscapedBy,
+		LinesStartingBy:    e.LinesStartingBy,
 	}
 	if !e.InImportInto {
 		// for load data

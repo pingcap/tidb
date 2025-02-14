@@ -1180,4 +1180,35 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
 	checkBasicTaskEq(t, &tasks[3].TaskBase, taskExecInfos[2].TaskBase)
 	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
+	// :4002, no such subtasks
+	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4002")
+	require.NoError(t, err)
+	require.Empty(t, taskExecInfos)
+}
+
+func TestTaskManagerEntrySize(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	getMeta := func(l int) []byte {
+		meta := make([]byte, l)
+		for i := 0; i < l; i++ {
+			meta[i] = 'a'
+		}
+		return meta
+	}
+	insertSubtask := func(meta []byte) error {
+		return tm.WithNewSession(func(se sessionctx.Context) error {
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
+				`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				1, "1", "execID", meta, proto.SubtaskStatePending, proto.Type2Int(proto.TaskTypeExample), 1)
+			return err
+		})
+	}
+	meta6m := getMeta(6 << 20)
+	require.ErrorContains(t, insertSubtask(meta6m), "entry too large")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 7<<20))
+	require.NoError(t, insertSubtask(meta6m))
+	// TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+	// we won't test that param here
 }

@@ -125,27 +125,6 @@ var defaultSysVars = []*SysVar{
 		return "", false, nil
 	}},
 	/* TiDB specific variables */
-	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope, SetSession: func(s *SessionVars, val string) error {
-		switch val {
-		case kv.GlobalTxnScope:
-			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		case kv.LocalTxnScope:
-			if !vardef.EnableLocalTxn.Load() {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when tidb_enable_local_txn is off")
-			}
-			txnScope := config.GetTxnScopeFromConfig()
-			if txnScope == kv.GlobalTxnScope {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when zone label is empty or \"global\"")
-			}
-			s.TxnScope = kv.NewLocalTxnScopeVar(txnScope)
-		default:
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
-		}
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return s.TxnScope.GetVarValue(), nil
-	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
@@ -3454,6 +3433,12 @@ var defaultSysVars = []*SysVar{
 			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
 				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)))
 			}
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(vardef.DefTiDBAccelerateUserCreationUpdate), Type: vardef.TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
 			return nil
 		},
 	},

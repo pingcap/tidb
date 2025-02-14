@@ -36,7 +36,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -116,5 +116,5 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(242), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(243), session.CurrentBootstrapVersion)
 }

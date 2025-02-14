@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
+        "//pkg/planner/funcdep",
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",
