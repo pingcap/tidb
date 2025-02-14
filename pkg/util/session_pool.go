@@ -26,8 +26,14 @@ import (
 type SessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
-	Destroy(pools.Resource)
 	Close()
+}
+
+// DestroyableSessionPool is a session pool that can destroy the session resource.
+// If the caller meets an error when using the session, it can destroy the session.
+type DestroyableSessionPool interface {
+	SessionPool
+	Destroy(pools.Resource)
 }
 
 // resourceCallback is a helper function to be triggered after Get/Put call.
@@ -46,7 +52,7 @@ type pool struct {
 }
 
 // NewSessionPool creates a new session pool with the given capacity and factory function.
-func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback, destroyCallback resourceCallback) SessionPool {
+func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback, destroyCallback resourceCallback) DestroyableSessionPool {
 	return &pool{
 		resources:       make(chan pools.Resource, capacity),
 		factory:         factory,
