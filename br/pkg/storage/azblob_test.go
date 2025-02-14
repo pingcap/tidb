@@ -4,10 +4,9 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
-	"github.com/apache/arrow/go/v12/arrow/endian"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/stretchr/testify/require"
@@ -400,6 +398,15 @@ func TestDownloadRetry(t *testing.T) {
 	require.Less(t, azblobRetryTimes, count)
 }
 
+type wr struct {
+	w   ExternalFileWriter
+	ctx context.Context
+}
+
+func (w wr) Write(bs []byte) (int, error) {
+	return w.w.Write(w.ctx, bs)
+}
+
 func TestCopyObject(t *testing.T) {
 	mkTestStrg := func(bucket, prefix string) *AzureBlobStorage {
 		ctx := context.Background()
@@ -423,14 +430,19 @@ func TestCopyObject(t *testing.T) {
 	strg1 := mkTestStrg("alice", "somewhat/")
 	strg2 := mkTestStrg("bob", "complex/prefix/")
 
-	magic := sha256.Sum256(endian.Native.AppendUint64(nil, rand.Uint64()))
 	ctx := context.Background()
-	require.NoError(t, strg1.WriteFile(ctx, "test.txt", magic[:]))
-	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
-		From: "test.txt",
-		To:   "somewhere/test.txt",
-	}))
-	content, err := strg2.ReadFile(ctx, "somewhere/test.txt")
+
+	w, err := strg1.Create(ctx, "test.bin", &WriterOption{})
 	require.NoError(t, err)
-	require.Equal(t, content, magic[:])
+	_, err = io.CopyN(wr{w, ctx}, rand.Reader, 300*1024*1024)
+	require.NoError(t, err)
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
+		From: "test.bin",
+		To:   "somewhere/test.bin",
+	}))
+	srcReader, err := strg1.ReadFile(ctx, "test.bin")
+	require.NoError(t, err)
+	reader, err := strg2.ReadFile(ctx, "somewhere/test.bin")
+	require.NoError(t, err)
+	require.Equal(t, srcReader, reader)
 }
