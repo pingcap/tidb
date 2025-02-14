@@ -591,7 +591,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 8)
 
 	tbl = external.GetTableByName(t, tk, "test", "sbtest0000")
-	require.Equal(t, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID), rows[0][1])   // index `uk``
+	require.Equal(t, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID), rows[0][1]) // index `uk``
 	require.Equal(t, fmt.Sprintf("t_%d_i_4_", tbl.Meta().ID+1), rows[1][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[2][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[3][1])
