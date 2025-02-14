@@ -16,6 +16,12 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/version/build",
         "//pkg/config",
+<<<<<<< HEAD:br/pkg/lightning/config/BUILD.bazel
+=======
+        "//pkg/lightning/common",
+        "//pkg/lightning/log",
+        "//pkg/parser/ast",
+>>>>>>> a83ed8f7dd1 (lightning: redact external storage url (#59256)):pkg/lightning/config/BUILD.bazel
         "//pkg/parser/mysql",
         "//pkg/util",
         "//pkg/util/mathutil",
