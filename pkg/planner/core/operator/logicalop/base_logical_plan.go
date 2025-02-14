@@ -35,6 +35,11 @@ import (
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
 
+const (
+	// ApplyGenFromXFDeCorrelateRuleFlag is the flag marked for this op apply is intermediary.
+	ApplyGenFromXFDeCorrelateRuleFlag uint64 = 1 << 0
+)
+
 // BaseLogicalPlan is the common structure that used in logical plan.
 type BaseLogicalPlan struct {
 	baseimpl.Plan
@@ -54,6 +59,9 @@ type BaseLogicalPlan struct {
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
 	fdSet *fd.FDSet
+
+	// Flag is with that each bit has its meaning to mark this logical plan for special handling.
+	Flag uint64
 }
 
 // *************************** implementation of HashEquals interface ***************************
@@ -440,6 +448,16 @@ func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, 
 		Plan:         baseimpl.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
+}
+
+// HasFlag checks if the logical plan has the specified flag.
+func (p *BaseLogicalPlan) HasFlag(mask uint64) bool {
+	return p.Flag&mask > 0
+}
+
+// SetFlag sets the flag for the logical plan.
+func (p *BaseLogicalPlan) SetFlag(mask uint64) {
+	p.Flag = p.Flag | mask
 }
 
 // ReAlloc4Cascades reset some elements in the logical plan.
