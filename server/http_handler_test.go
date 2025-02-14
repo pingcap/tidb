@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -63,6 +64,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type basicHTTPHandlerTestSuite struct {
@@ -989,6 +991,11 @@ func TestAllHistory(t *testing.T) {
 	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
 	err = decoder.Decode(&jobs)
+	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
+	// sort job.
+	slices.SortFunc(jobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
+	})
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())

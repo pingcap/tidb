@@ -3169,7 +3169,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = `eq(cast(test.t1.a, var_string(1)), "A")`
+	rows[1][2] = `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`
 	sql = "select a from t1 where cast(a as char)='A'"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
@@ -3177,7 +3177,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	rows = [][]interface{}{
-		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
+		{"Selection_5", "root", `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`},
 		{"└─TableReader_7", "root", "data:TableFullScan_6"},
 		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
@@ -8804,4 +8804,34 @@ func TestIssue40285(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;")
 	tk.MustQuery("(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);")
+}
+
+func TestIssue53175(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`set @@sql_mode = default`)
+	tk.MustQuery(`select @@sql_mode REGEXP 'ONLY_FULL_GROUP_BY'`).Check(testkit.Rows("1"))
+	tk.MustContainErrMsg(`select * from t group by null`, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustExec(`create view v as select * from t group by null`)
+	tk.MustContainErrMsg(`select * from v`, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustQuery(`select * from t group by null`)
+	tk.MustQuery(`select * from v`)
+}
+
+func TestCastBitAsString(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test(a bit(24))")
+	tk.MustExec("insert into test values('中')")
+	tk.MustQuery("select a from test where '中' like convert(a, char)").Check(testkit.Rows("中"))
+	tk.MustQuery("select a from test where false not like convert(a, char)").Check(testkit.Rows("中"))
+	tk.MustQuery("select a from test where false like convert(a, char)").Check(testkit.Rows())
+	tk.MustExec("truncate table test")
+	tk.MustExec("insert into test values(0xffffff)")
+	err := tk.QueryToErr("select a from test where false not like convert(a, char)")
+	require.EqualError(t, err, "[tikv:3854]Cannot convert string '\\xFF\\xFF\\xFF' from binary to utf8mb4")
 }

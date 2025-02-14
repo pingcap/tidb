@@ -3,6 +3,7 @@
 package streamhelper_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -334,14 +336,19 @@ func TestResolveLock(t *testing.T) {
 	lockRegion := c.findRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
-			Key: []byte{1},
+			Key: []byte("011"),
 			// TxnID == minCheckpoint
 			TxnID: minCheckpoint,
 		},
 		{
-			Key: []byte{2},
+			Key: []byte("012"),
 			// TxnID > minCheckpoint
 			TxnID: minCheckpoint + 1,
+		},
+		{
+			Key: []byte("013"),
+			// this lock cannot be resolved due to scan version
+			TxnID: oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute)),
 		},
 	}
 	c.LockRegion(lockRegion, allLocks)
@@ -350,32 +357,39 @@ func TestResolveLock(t *testing.T) {
 	resolveLockRef := atomic.NewBool(false)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 		resolveLockRef.Store(true)
-		require.ElementsMatch(t, locks, allLocks)
+		// The third lock has skipped, because it's less than max version.
+		require.ElementsMatch(t, locks, allLocks[:2])
 		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	// make lastCheckpoint stuck at 123
-	adv.UpdateLastCheckpoint(streamhelper.NewCheckpointWithSpan(spans.Valued{
-		Key: kv.KeyRange{
-			StartKey: kv.Key([]byte("1")),
-			EndKey:   kv.Key([]byte("2")),
-		},
-		Value: 123,
-	}))
-	adv.NewCheckpoints(
-		spans.Sorted(spans.NewFullWith([]kv.KeyRange{
-			{
-				StartKey: kv.Key([]byte("1")),
-				EndKey:   kv.Key([]byte("2")),
-			},
-		}, 0)),
-	)
 	adv.StartTaskListener(ctx)
-	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
-		time.Second, 50*time.Millisecond)
+
+	maxTargetTs := uint64(0)
 	coll := streamhelper.NewClusterCollector(ctx, env)
+	coll.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
+		adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+			for _, lock := range allLocks {
+				// if there is any lock key in the range
+				if bytes.Compare(kr.StartKey, lock.Key) <= 0 && (bytes.Compare(lock.Key, kr.EndKey) < 0 || len(kr.EndKey) == 0) {
+					// mock lock behavior, do not update checkpoint
+					s.Merge(spans.Valued{Key: kr, Value: minCheckpoint})
+					return
+				}
+			}
+			s.Merge(spans.Valued{Key: kr, Value: u})
+			maxTargetTs = mathutil.Max(maxTargetTs, u)
+		})
+	})
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
 	require.NoError(t, err)
+	r, err := coll.Finish(ctx)
+	require.NoError(t, err)
+	require.Len(t, r.FailureSubRanges, 0)
+	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
+
+	env.maxTs = maxTargetTs + 1
+	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
+		time.Second, 50*time.Millisecond)
 	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
 	require.True(t, adv.GetInResolvingLock())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
@@ -384,10 +398,6 @@ func TestResolveLock(t *testing.T) {
 	// state must set to false after tick
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
-	r, err := coll.Finish(ctx)
-	require.NoError(t, err)
-	require.Len(t, r.FailureSubRanges, 0)
-	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
 
 func TestOwnerDropped(t *testing.T) {

@@ -142,16 +142,6 @@ func (e *baseExecutor) releaseSysSession(ctx context.Context, sctx sessionctx.Co
 	sysSessionPool.Put(sctx.(pools.Resource))
 }
 
-// clearSysSession close the session does not return the session.
-// Since the environment variables in the session are changed, the session object is not returned.
-func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
-	if sctx == nil {
-		return
-	}
-	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
-	sctx.(pools.Resource).Close()
-}
-
 // Next implements the Executor Next interface.
 func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -1692,10 +1682,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.getSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.releaseSysSession(ctx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
@@ -2389,10 +2379,10 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.releaseSysSession(ctx, sysSession)
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	// session isolation level changed to READ-COMMITTED.
