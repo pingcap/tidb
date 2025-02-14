@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1088,7 +1089,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	//TODO: (ris) should mod this
 	var restoreSchedulersFunc pdutil.UndoFunc
 	var schedulersConfig *pdutil.ClusterConfig
-	log.Info("prepare for pausing schedulers")
 	if isFullRestore(cmdName) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
@@ -1105,6 +1105,34 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		if fileName, ok := val.(string); ok {
+			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+			msg := []byte(fmt.Sprintf("schedulers removed\n"))
+			_, err = f.Write(msg)
+			if err != nil {
+				log.Warn("failed to write data to file", zap.Error(err))
+				return
+			}
+
+			//block until the file is deleted
+			for {
+				_, statErr := os.Stat(fileName)
+				if os.IsNotExist(statErr) {
+					return
+				} else if statErr != nil {
+					log.Warn("error checking file", zap.Error(statErr))
+					return
+				}
+		
+				time.Sleep(1 * time.Second)
+			}
+		}
+	})
 	defer func() {
 		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
