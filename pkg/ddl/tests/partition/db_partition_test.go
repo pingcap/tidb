@@ -1232,11 +1232,11 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 	tk.MustExec(`alter table t2 truncate partition p3`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
