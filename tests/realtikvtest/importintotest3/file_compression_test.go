@@ -83,6 +83,28 @@ func (s *mockGCSSuite) TestGzipAndMixedCompression() {
 	s.tk.MustQuery("SELECT * FROM gzip.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6", "7 test7", "8 test8", "9 test9",
 	))
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gzip", Name: "compress2.001.sql.gz"},
+		Content:     s.getCompressedData(mydump.CompressionGZ, []byte("INSERT INTO `gzip`.`t` VALUES (1,'test1'),(2,'test2');")),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gzip", Name: "compress2.001.sql.gzip"},
+		Content:     s.getCompressedData(mydump.CompressionGZ, []byte("INSERT INTO `gzip`.`t` VALUES (3,'test3'),(4,'test4');")),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gzip", Name: "compress2.002.sql"},
+		Content:     []byte("INSERT INTO `gzip`.`t` VALUES (5,'test5'),(6,'test6'),(7,'test7'),(8,'test8'),(9,'test9');"),
+	})
+
+	s.tk.MustExec("TRUNCATE TABLE gzip.t")
+	sql = fmt.Sprintf(`IMPORT INTO gzip.t FROM 'gs://gzip/compress2.*?endpoint=%s'
+		WITH thread=1;`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM gzip.t;").Check(testkit.Rows(
+		"1 test1", "2 test2", "3 test3", "4 test4",
+		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
+	))
 }
 
 func (s *mockGCSSuite) TestZStd() {
@@ -99,6 +121,23 @@ func (s *mockGCSSuite) TestZStd() {
 	})
 
 	sql := fmt.Sprintf(`IMPORT INTO zstd.t FROM 'gs://zstd/t.*?endpoint=%s'
+		WITH thread=1;`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM zstd.t;").Check(testkit.Rows(
+		"1 test1", "2 test2", "3 test3", "4 test4",
+	))
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "zstd", Name: "t2.01.sql.zst"},
+		Content:     s.getCompressedData(mydump.CompressionZStd, []byte("INSERT INTO `gzip`.`t` VALUES (1,'test1'),(2,'test2');")),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "zstd", Name: "t2.02.sql.zstd"},
+		Content:     s.getCompressedData(mydump.CompressionZStd, []byte("INSERT INTO `gzip`.`t` VALUES (3,'test3'),(4,'test4');")),
+	})
+
+	s.tk.MustExec("truncate table zstd.t")
+	sql = fmt.Sprintf(`IMPORT INTO zstd.t FROM 'gs://zstd/t2.*?endpoint=%s'
 		WITH thread=1;`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM zstd.t;").Check(testkit.Rows(
@@ -121,4 +160,18 @@ func (s *mockGCSSuite) TestSnappy() {
 	s.tk.MustQuery("SELECT * FROM snappy.t;").Check(testkit.Rows(
 		"1 test1", "2 test2",
 	))
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "snappy", Name: "t2.01.sql.snappy"},
+		Content:     s.getCompressedData(mydump.CompressionSnappy, []byte("INSERT INTO `gzip`.`t` VALUES (1,'test1'),(2,'test2');")),
+	})
+
+	s.tk.MustQuery("truncate table snappy.t;")
+	sql = fmt.Sprintf(`IMPORT INTO snappy.t FROM 'gs://snappy/t2.*?endpoint=%s'
+		WITH thread=1;`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM snappy.t;").Check(testkit.Rows(
+		"1 test1", "2 test2",
+	))
+
 }
