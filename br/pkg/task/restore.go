@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -571,35 +570,34 @@ func (cfg *RestoreConfig) getSstCheckpointTaskName(clusterID, startTS, restoreTS
 }
 
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
-	checkpointStorage storage.ExternalStorage,
+	ctx context.Context,
 	clusterID, startTS, restoreTS uint64,
-) {
-	if len(cfg.FullBackupStorage) > 0 {
-		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(clusterID))
+) error {
+	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
 		checkpointStorage, &cfg.CipherInfo, cfg.getLogCheckpointTaskName(clusterID, startTS, restoreTS))
 	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
 		checkpointStorage, &cfg.CipherInfo, cfg.getSstCheckpointTaskName(clusterID, startTS, restoreTS))
+	return nil
 }
 
-func (cfg *RestoreConfig) newStorageCheckpointMEtaManagerSnapshot(
-	checkpointStorage storage.ExternalStorage,
+func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
+	ctx context.Context,
 	clusterID uint64,
-) {
+) error {
+	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
 		checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(clusterID))
+	return nil
 }
 
 func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain) (err error) {
-	if len(cfg.FullBackupStorage) > 0 {
-		if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
 		g, dom, checkpoint.LogRestoreCheckpointDatabaseName,
 	); err != nil {
@@ -799,24 +797,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
-
-	if cfg.UseCheckpoint {
-		if len(cfg.CheckpointStorage) > 0 {
-			u, err := storage.ParseBackend(cfg.CheckpointStorage, nil)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			checkpointStorage, err := storage.New(c, u, nil)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			clusterID := mgr.GetPDClient().GetClusterID(c)
-			cfg.newStorageCheckpointMetaManagerPITR(checkpointStorage, clusterID, 0, 0)
-		} else {
-			cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain())
-		}
-		defer cfg.CloseCheckpointMetaManager()
-	}
+	defer cfg.CloseCheckpointMetaManager()
 
 	defer printRestoreMetrics()
 
@@ -953,6 +934,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
+		if len(cfg.CheckpointStorage) > 0 {
+			clusterID := mgr.PDClient().GetClusterID(ctx)
+			cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID)
+		} else {
+			cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain())
+		}
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
 		existsCheckpointMetadata, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)

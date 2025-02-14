@@ -1319,7 +1319,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, cfg)
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1990,6 +1990,7 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 func generatePiTRTaskInfo(
 	ctx context.Context,
 	mgr *conn.Mgr,
+	g glue.Glue,
 	cfg *RestoreConfig,
 ) (*PiTRTaskInfo, error) {
 	var (
@@ -2000,6 +2001,12 @@ func generatePiTRTaskInfo(
 	checkInfo := &PiTRTaskInfo{}
 
 	if cfg.UseCheckpoint {
+		if len(cfg.CheckpointStorage) > 0 {
+			clusterID := mgr.GetPDClient().GetClusterID(ctx)
+			cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, cfg.StartTS, cfg.RestoreTS)
+		} else {
+			cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain())
+		}
 		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return checkInfo, errors.Trace(err)
