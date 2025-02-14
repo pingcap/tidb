@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"mime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -18,6 +20,84 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
+
+/*
+{
+    "severity": "ERROR" | "REGULAR_OPERATION",
+    "operation_hostname": string,
+    "operation_pid": int,
+    "operation_time": datetime,
+    "payload_type": "application/x-protobuf;messageType=brpb.StreamBackupError" | "text/plain;charset=UTF-8",
+    "payload": bytes,
+}
+*/
+
+const (
+	SeverityError            = "ERROR"
+	SeverityRegularOperation = "REGULAR_OPERATION"
+)
+
+// RFC3339Time is a wrapper of `time.Time` that marshals to a RFC3339
+// JSON string when encoding to / decoding from json.
+type RFC3339Time time.Time
+
+// MarshalJSON implements the `json.Marshaler` interface.
+func (t RFC3339Time) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(time.Time(t).Format(time.RFC3339))), nil
+}
+
+// UnmarshalJSON implements the `json.Unmarshaler` interface.
+func (t *RFC3339Time) UnmarshalJSON(data []byte) error {
+	str, err := strconv.Unquote(string(data))
+	if err != nil {
+		return errors.Annotatef(err, "RFC3339Time: the data to unmarshal isn't a json string (%v)", data)
+	}
+	tm, err := time.Parse(time.RFC3339, str)
+	if err != nil {
+		return errors.Annotatef(err, "RFC3339Time: the data isn't a valid RFC3339 time (%s)", str)
+	}
+	*t = RFC3339Time(tm)
+	return nil
+}
+
+type PauseV2 struct {
+	Severity         string      `json:"severity"`
+	OperatorHostName string      `json:"operation_hostname"`
+	OperatorPID      int         `json:"operation_pid"`
+	OperationTime    RFC3339Time `json:"operation_time"`
+	PayloadType      string      `json:"payload_type"`
+	Payload          []byte      `json:"payload"`
+}
+
+// The returned value should be one of `string` or `*backuppb.StreamBackupError`.
+func (p *PauseV2) GetPayload() (any, error) {
+	m, param, err := mime.ParseMediaType(p.PayloadType)
+	if err != nil {
+		return nil, errors.Annotatef(err, "%s isn't a valid mime type", p.PayloadType)
+	}
+
+	switch m {
+	case "text/plain":
+		// Note: consider the charset?
+		return string(p.Payload), nil
+	case "application/x-protobuf":
+		msgType, ok := param["messagetype"]
+		if !ok {
+			return nil, errors.Errorf("x-protobuf didn't specified msgType (%s)", p.PayloadType)
+		}
+		if msgType != "brpb.StreamBackupError" {
+			return nil, errors.Errorf("only type brpb.StreamBackupError is supported (%s)", p.PayloadType)
+		}
+		var msg backuppb.StreamBackupError
+		err := proto.Unmarshal(p.Payload, &msg)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to unmarshal the payload")
+		}
+		return &msg, nil
+	default:
+		return nil, errors.Errorf("unsupported payload type %s", m)
+	}
+}
 
 // Checkpoint is the polymorphic checkpoint type.
 // The `ID` and `Version` implies the type of this checkpoint:
