@@ -12,19 +12,16 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
-<<<<<<< HEAD
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/model",
-=======
-        "//pkg/meta/model",
-        "//pkg/metrics",
->>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739))
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
