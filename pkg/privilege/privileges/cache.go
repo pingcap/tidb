@@ -515,7 +515,8 @@ func findUserAndAllRoles(userList []string, roleGraph map[string]roleGraphEdgesT
 		for userHost, value := range roleGraph {
 			roleUser, _, found := strings.Cut(userHost, "@")
 			if !found {
-				// this should never happen continue
+				// this should never happen
+				continue
 			}
 			if roleUser == user {
 				for _, role := range value.roleList {
