@@ -309,3 +309,20 @@ func TestIsLocal(t *testing.T) {
 		})
 	}
 }
+
+func TestParseBackend(t *testing.T) {
+	backendOptions := &BackendOptions{
+		S3:     S3BackendOptions{},
+		GCS:    GCSBackendOptions{},
+		Azblob: AzblobBackendOptions{},
+	}
+	_, err := ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&sse-kms-key-id=TestKey&xyz=abc", backendOptions)
+	require.NoError(t, err)
+	require.Equal(t, "", backendOptions.S3.SseKmsKeyID)
+	_, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1&predefined-acl=1234", backendOptions)
+	require.NoError(t, err)
+	require.Equal(t, "", backendOptions.GCS.PredefinedACL)
+	_, err = ParseBackend("azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user&encryption-scope=test", backendOptions)
+	require.NoError(t, err)
+	require.Equal(t, "", backendOptions.Azblob.EncryptionScope)
+}
