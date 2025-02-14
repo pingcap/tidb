@@ -4,7 +4,6 @@ package streamhelper
 
 import (
 	"context"
-	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -278,12 +277,10 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
+		failpoint.InjectCall("listen_flush_stream", s.storeID, &err)
 		if err != nil {
 			logutil.CL(ctx).Info("Listen stopped.",
 				zap.Uint64("store", storeID), logutil.ShortError(err))
-			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
-				return
-			}
 			s.emitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
 			return
 		}
