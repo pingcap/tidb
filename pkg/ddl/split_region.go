@@ -150,20 +150,20 @@ func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTa
 
 func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, physicalTableID int64) []uint64 {
 	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
-	var maxIndexId int64 = -1
+	var maxIndexID int64 = -1
 	for _, idx := range tblInfo.Indices {
 		if tblInfo.GetPartitionInfo() != nil &&
 			((idx.Global && tblInfo.ID != physicalTableID) ||
 				(!idx.Global && tblInfo.ID == physicalTableID)) {
 			continue
 		}
-		maxIndexId = max(maxIndexId, idx.ID)
+		maxIndexID = max(maxIndexID, idx.ID)
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, idx.ID)
 		splitKeys = append(splitKeys, indexPrefix)
 	}
 	if len(splitKeys) != 0 &&
 		(tblInfo.GetPartitionInfo() == nil || tblInfo.ID != physicalTableID) {
-		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexId).PrefixNext())
+		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexID).PrefixNext())
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
 	if err != nil {
