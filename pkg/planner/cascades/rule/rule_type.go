@@ -44,6 +44,10 @@ const (
 
 	// XFMergeAdjacentProjection try to merge adjacent projection together to avoid executor open cost.
 	XFMergeAdjacentProjection
+	// XFEliminateProjection try to eliminate projection operator once all projected expr are columns.
+	XFEliminateProjection
+	// XFEliminateOuterJoinBelowProjection try to eliminate outer join below projection.
+	XFEliminateOuterJoinBelowProjection
 
 	// XFMaximumRuleLength is the maximum rule length.
 	XFMaximumRuleLength

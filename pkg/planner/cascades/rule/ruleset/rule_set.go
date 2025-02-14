@@ -92,10 +92,13 @@ var OperandProjectionRules = &OperandRules{OperandProjectionRulesMap, OperandPro
 var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 	XFSetProjectionUtil: {
 		projection.NewXFMergeAdjacentProjection(),
+		projection.NewXFEliminateProjection(),
 	},
 }
 
 // OperandProjectionRulesList is the rules rooted from an apply operand, organized as list.
 var OperandProjectionRulesList = []rule.Rule{
 	projection.NewXFMergeAdjacentProjection(),
+	projection.NewXFEliminateProjection(),
+	projection
 }

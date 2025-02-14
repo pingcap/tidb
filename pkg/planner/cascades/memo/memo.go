@@ -153,6 +153,10 @@ func (mm *Memo) RemoveOut(target *Group, lp base.LogicalPlan) {
 	intest.Assert(lp != nil)
 	ge := lp.(*GroupExpression)
 	intest.Assert(ge != nil)
+	if ge.abandoned {
+		// group merge has happened, the GE has been abandoned.
+		return
+	}
 	// delete from group
 	target.Delete(ge)
 	// delete from global
