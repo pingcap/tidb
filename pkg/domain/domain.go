@@ -1345,6 +1345,10 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 				})
 				infosync.DeleteInternalSession(r)
 			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
 		),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,

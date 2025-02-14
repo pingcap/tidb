@@ -85,6 +85,9 @@ func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, 
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)

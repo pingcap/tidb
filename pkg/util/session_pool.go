@@ -26,6 +26,7 @@ import (
 type SessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
+	Destroy(pools.Resource)
 	Close()
 }
 
@@ -39,17 +40,19 @@ type pool struct {
 		sync.RWMutex
 		closed bool
 	}
-	getCallback resourceCallback
-	putCallback resourceCallback
+	getCallback     resourceCallback
+	putCallback     resourceCallback
+	destroyCallback resourceCallback
 }
 
 // NewSessionPool creates a new session pool with the given capacity and factory function.
-func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback resourceCallback) SessionPool {
+func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback, destroyCallback resourceCallback) SessionPool {
 	return &pool{
-		resources:   make(chan pools.Resource, capacity),
-		factory:     factory,
-		getCallback: getCallback,
-		putCallback: putCallback,
+		resources:       make(chan pools.Resource, capacity),
+		factory:         factory,
+		getCallback:     getCallback,
+		putCallback:     putCallback,
+		destroyCallback: destroyCallback,
 	}
 }
 
@@ -93,6 +96,14 @@ func (p *pool) Put(resource pools.Resource) {
 	case p.resources <- resource:
 	default:
 		resource.Close()
+	}
+}
+
+// Destroy destroys the session.
+func (p *pool) Destroy(resource pools.Resource) {
+	resource.Close()
+	if p.destroyCallback != nil {
+		p.destroyCallback(resource)
 	}
 }
 
