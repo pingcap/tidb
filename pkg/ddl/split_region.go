@@ -164,7 +164,7 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 	if len(splitKeys) == 0 {
 		return []uint64{}
 	}
-	if tblInfo.GetPartitionInfo() == nil || tblInfo.ID != physicalTableID {
+	if !(tblInfo.GetPartitionInfo() != nil && tblInfo.ID == physicalTableID) {
 		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexID).PrefixNext())
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
