@@ -41,6 +41,8 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
+		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
+		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 	} else {
 		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatterScope))
@@ -127,7 +129,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 		logutil.DDLLogger().Warn("pre split some table regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
-	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, &tableID)...)
+	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, physicalID)...)
 	return regionIDs
 }
 
@@ -146,13 +148,24 @@ func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTa
 	return 0
 }
 
-func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, tableID *int64) []uint64 {
+func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool, physicalTableID int64) []uint64 {
 	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
+	var maxIndexId int64 = -1
 	for _, idx := range tblInfo.Indices {
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
+		if tblInfo.GetPartitionInfo() != nil &&
+			((idx.Global && tblInfo.ID != physicalTableID) ||
+				(!idx.Global && tblInfo.ID == physicalTableID)) {
+			continue
+		}
+		maxIndexId = max(maxIndexId, idx.ID)
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, idx.ID)
 		splitKeys = append(splitKeys, indexPrefix)
 	}
-	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, tableID)
+	if len(splitKeys) != 0 &&
+		(tblInfo.GetPartitionInfo() == nil || tblInfo.ID != physicalTableID) {
+		splitKeys = append(splitKeys, tablecodec.EncodeTableIndexPrefix(physicalTableID, maxIndexId).PrefixNext())
+	}
+	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &physicalTableID)
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table index regions failed",
 			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
