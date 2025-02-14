@@ -13446,7 +13446,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
