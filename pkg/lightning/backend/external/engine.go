@@ -25,11 +25,11 @@ import (
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	membuf2 "github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
@@ -52,7 +52,7 @@ type memKVsAndBuffers struct {
 	values [][]byte
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
-	memKVBuffers []*membuf.Buffer
+	memKVBuffers []*membuf2.Buffer
 	size         int
 	droppedSize  int
 
@@ -99,8 +99,8 @@ type Engine struct {
 	jobKeys           [][]byte
 	splitKeys         [][]byte
 	regionSplitSize   int64
-	smallBlockBufPool *membuf.Pool
-	largeBlockBufPool *membuf.Pool
+	smallBlockBufPool *membuf2.Pool
+	largeBlockBufPool *membuf2.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 
@@ -153,7 +153,7 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 ) common.Engine {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf2.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
 		dataFiles:  dataFiles,
@@ -162,15 +162,15 @@ func NewExternalEngine(
 		endKey:     endKey,
 		jobKeys:    jobKeys,
 		splitKeys:  splitKeys,
-		smallBlockBufPool: membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(smallBlockSize),
+		smallBlockBufPool: membuf2.NewPool(
+			membuf2.WithBlockNum(0),
+			membuf2.WithPoolMemoryLimiter(memLimiter),
+			membuf2.WithBlockSize(smallBlockSize),
 		),
-		largeBlockBufPool: membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		largeBlockBufPool: membuf2.NewPool(
+			membuf2.WithBlockNum(0),
+			membuf2.WithPoolMemoryLimiter(memLimiter),
+			membuf2.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
@@ -401,7 +401,7 @@ func (e *Engine) LoadIngestData(
 	return nil
 }
 
-func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
+func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf2.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,
@@ -491,21 +491,21 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf2.NewLimiter(memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
-		e.smallBlockBufPool = membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(smallBlockSize),
+		e.smallBlockBufPool = membuf2.NewPool(
+			membuf2.WithBlockNum(0),
+			membuf2.WithPoolMemoryLimiter(memLimiter),
+			membuf2.WithBlockSize(smallBlockSize),
 		)
 	}
 	if e.largeBlockBufPool != nil {
 		e.largeBlockBufPool.Destroy()
-		e.largeBlockBufPool = membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		e.largeBlockBufPool = membuf2.NewPool(
+			membuf2.WithBlockNum(0),
+			membuf2.WithPoolMemoryLimiter(memLimiter),
+			membuf2.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		)
 	}
 	return nil
@@ -522,7 +522,7 @@ type MemoryIngestData struct {
 	values [][]byte
 	ts     uint64
 
-	memBuf          []*membuf.Buffer
+	memBuf          []*membuf2.Buffer
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -632,7 +632,7 @@ type memoryDataDupDetectIter struct {
 	dupDetector    *common.DupDetector
 	err            error
 	curKey, curVal []byte
-	buf            *membuf.Buffer
+	buf            *membuf2.Buffer
 }
 
 // First implements ForwardIter.
@@ -696,7 +696,7 @@ func (m *memoryDataDupDetectIter) ReleaseBuf() {
 func (m *MemoryIngestData) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
-	bufPool *membuf.Pool,
+	bufPool *membuf2.Pool,
 ) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
