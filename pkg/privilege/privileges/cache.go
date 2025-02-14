@@ -30,6 +30,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2147,7 +2148,7 @@ func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 			break
 		}
 	}
-	for _, user := range userList {
+	for user := range userList {
 		h.activeUsers.Store(user, struct{}{})
 	}
 }
@@ -2177,7 +2178,7 @@ func (h *Handle) UpdateAll() error {
 	return nil
 }
 
-// UpdateAllActive loads all the active users' privilege info from kv storage.
+// UpdateAllActive loads all the aqctive users' privilege info from kv storage.
 func (h *Handle) UpdateAllActive() error {
 	h.fullData.Store(false)
 	userList := make([]string, 0, 20)
@@ -2185,6 +2186,8 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
+	metrics.ActiveUser.Set(float64(len(userList)))
+
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)
