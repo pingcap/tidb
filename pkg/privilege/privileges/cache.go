@@ -2147,7 +2147,7 @@ func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 			break
 		}
 	}
-	for _, user := range userList {
+	for user := range userList {
 		h.activeUsers.Store(user, struct{}{})
 	}
 }
