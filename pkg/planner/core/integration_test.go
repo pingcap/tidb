@@ -2546,3 +2546,36 @@ func TestIssue58829(t *testing.T) {
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
+
+func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (p int, o int, v int not null);")
+	tk.MustExec("insert into test.t values (0, 0, -1), (1, 0, -1), (1, 1, 0), (1, 3, 4), (1, 6, 6), (1, 7, -5), (1, 8, 3), (1, 18, 1), (1, 30, 30), (2, 0, 2), (2, 1, 0), (2, 4, -4), (2, 7, -2), (2, 8, 1), (2, 15, 2), (2, 30, -11), (3, 0, 7), (3, 4, -3), (3, 6, 9), (3, 10, -9), (3, 20, -3), (3, 40, 2), (3, 41, 1), (4, 0, 4), (5, 0, -5), (6, 0, 2), (6, 10, 5), (6, 30, 0), (7, 0, 3), (7, 1, 3), (7, 2, 2), (7, 3, -4), (7, 4, 9);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	rows := [][]any{
+		{"TableReader_24", "root", "MppVersion: 3, data:ExchangeSender_23"},
+		{"└─ExchangeSender_23", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
+		{"    └─Window_22", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_14", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_13", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_12", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_11", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
+}
