@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -81,6 +83,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cgroup"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -1748,7 +1752,13 @@ func (do *Domain) InitDistTaskLoop() error {
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancel)
 	do.cancelFns.mu.Unlock()
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager)
+
+	nodeRes, err := calculateNodeResource()
+	if err != nil {
+		return err
+	}
+
+	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
@@ -1763,12 +1773,47 @@ func (do *Domain) InitDistTaskLoop() error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
+		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID, nodeRes)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {
+func calculateNodeResource() (*proto.NodeResource, error) {
+	logger := logutil.ErrVerboseLogger()
+	totalMem, err := memory.MemTotal()
+	if err != nil {
+		// should not happen normally, as in main function of tidb-server, we assert
+		// that memory.MemTotal() will not fail.
+		return nil, err
+	}
+	totalCPU := cpu.GetCPUCount()
+	if totalCPU <= 0 || totalMem <= 0 {
+		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
+	}
+	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
+	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
+	if err == nil && version == cgroup.V2 {
+		// see cgroup.detectMemLimitInV2 for more details.
+		// below are some real memory limits tested on GCP:
+		// node-spec  real-limit  percent
+		// 16c32g        27.83Gi    87%
+		// 32c64g        57.36Gi    89.6%
+		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
+		// content of 'memory.max' might be 'max', so we use the min of them.
+		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
+		logger.Info("adjust memory limit for cgroup v2",
+			zap.String("before", units.BytesSize(float64(totalMem))),
+			zap.String("after", units.BytesSize(float64(adjustedMem))))
+		totalMem = adjustedMem
+	}
+	// TODO(tangenta): refine the disk quota by considering available space.
+	totalDisk := vardef.DDLDiskQuota.Load()
+	logger.Info("initialize node resource", zap.Int("total-cpu", totalCPU),
+		zap.String("total-mem", units.BytesSize(float64(totalMem))))
+	return proto.NewNodeResourceWithDisk(totalCPU, int64(totalMem), totalDisk), nil
+}
+
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
 	err := executorManager.Start()
 	if err != nil {
 		logutil.BgLogger().Error("dist task executor manager start failed", zap.Error(err))
@@ -1786,7 +1831,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID)
+		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
