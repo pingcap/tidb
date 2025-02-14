@@ -1936,7 +1936,7 @@ DirectResourceGroupOption:
 	}
 |	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableUnlimited}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
 	}
 |	"BURSTABLE" EqOpt Boolean
 	{
