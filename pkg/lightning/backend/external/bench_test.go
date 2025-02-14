@@ -499,6 +499,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		ctx,
 		datas,
 		s.store,
+		s.store,
 		int64(5*size.MB),
 		mergeOutput,
 		DefaultBlockSize,

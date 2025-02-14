@@ -174,6 +174,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			ctx,
 			group,
 			memStore,
+			memStore,
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
