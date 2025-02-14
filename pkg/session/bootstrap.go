@@ -3337,7 +3337,6 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
-<<<<<<< HEAD
 // writeClusterID writes cluster id into mysql.tidb
 func writeClusterID(s sessiontypes.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
