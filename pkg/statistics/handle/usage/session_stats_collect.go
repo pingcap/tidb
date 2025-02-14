@@ -220,13 +220,10 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
-<<<<<<< HEAD
+	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
 	if !variable.EnableColumnTracking.Load() {
 		return nil
 	}
-=======
-	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
->>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739))
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
