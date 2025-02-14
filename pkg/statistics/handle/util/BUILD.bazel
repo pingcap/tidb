@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/terror",
@@ -20,6 +21,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
