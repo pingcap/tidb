@@ -36,6 +36,7 @@ import (
 var _ base.LogicalPlan = &BaseLogicalPlan{}
 
 const (
+	// ApplyGenFromXFDeCorrelateRuleFlag is the flag marked for this op apply is intermediary.
 	ApplyGenFromXFDeCorrelateRuleFlag uint64 = 1 << 0
 )
 
