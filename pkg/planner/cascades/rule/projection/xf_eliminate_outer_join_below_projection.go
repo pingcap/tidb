@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -54,20 +53,20 @@ func (*XFEliminateOuterJoinBelowProjection) PreCheck(projGE corebase.LogicalPlan
 
 // XForm implements the Rule interface.
 func (xf *XFEliminateOuterJoinBelowProjection) XForm(projGE corebase.LogicalPlan) ([]corebase.LogicalPlan, bool, error) {
-	projOp := projGE.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
-	joinGE := projGE.Children()[0]
-	joinOp := joinGE.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-	ok, innerChildIdx, outerGE, innerGE, outerUniqueIDs := xf.prepareForEliminateOuterJoin(joinGE)
-	if !ok {
-		return nil, false, nil
-	}
-	// only when proj only use the columns from outer table can eliminate outer join.
-	if !ruleutil.IsColsAllFromOuterTable(projOp.GetUsedCols(), outerUniqueIDs) {
-		return nil, false, nil
-	}
-	//
-	innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx)
-
+	//projOp := projGE.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
+	//joinGE := projGE.Children()[0]
+	//joinOp := joinGE.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
+	//ok, innerChildIdx, outerGE, innerGE, outerUniqueIDs := xf.prepareForEliminateOuterJoin(joinGE)
+	//if !ok {
+	//	return nil, false, nil
+	//}
+	//// only when proj only use the columns from outer table can eliminate outer join.
+	//if !ruleutil.IsColsAllFromOuterTable(projOp.GetUsedCols(), outerUniqueIDs) {
+	//	return nil, false, nil
+	//}
+	////
+	//innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx
+	return nil, false, nil
 }
 
 func (*XFEliminateOuterJoinBelowProjection) prepareForEliminateOuterJoin(joinGE corebase.LogicalPlan) (ok bool, innerChildIdx int, outerGE, innerGE corebase.LogicalPlan, outerUniqueIDs intset.FastIntSet) {
@@ -95,18 +94,24 @@ func (*XFEliminateOuterJoinBelowProjection) prepareForEliminateOuterJoin(joinGE 
 // check whether one of unique keys sets is contained by inner join keys.
 func (*XFEliminateOuterJoinBelowProjection) isInnerJoinKeysContainUniqueKey(innerGroup *memo.GroupExpression, joinKeys *expression.Schema) (bool, error) {
 	// builds UniqueKey info of innerGroup.
-	innerGroup.BuildKeyInfo()
-	for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
-		joinKeysContainKeyInfo := true
-		for _, col := range keyInfo {
-			if !joinKeys.Contains(col) {
-				joinKeysContainKeyInfo = false
-				break
-			}
-		}
-		if joinKeysContainKeyInfo {
-			return true, nil
-		}
-	}
+	//fds := innerGroup.GetGroup().GetLogicalProperty().FD
+	//// PK or UK(without nullability) can be used as strict key.
+	//closure, ok := fds.FindPrimaryKey()
+	//if !ok {
+	//	return false, nil
+	//}
+	//
+	//for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
+	//	joinKeysContainKeyInfo := true
+	//	for _, col := range keyInfo {
+	//		if !joinKeys.Contains(col) {
+	//			joinKeysContainKeyInfo = false
+	//			break
+	//		}
+	//	}
+	//	if joinKeysContainKeyInfo {
+	//		return true, nil
+	//	}
+	//}
 	return false, nil
 }

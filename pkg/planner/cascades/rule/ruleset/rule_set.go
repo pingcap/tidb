@@ -100,5 +100,4 @@ var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 var OperandProjectionRulesList = []rule.Rule{
 	projection.NewXFMergeAdjacentProjection(),
 	projection.NewXFEliminateProjection(),
-	projection
 }
