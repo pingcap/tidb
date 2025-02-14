@@ -218,6 +218,8 @@ type SessionManager interface {
 	ServerID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se any)
+	// HasInternalSessionForTest checks whether the internal session is stored in the SessionManager.
+	HasInternalSessionForTest(se any) bool
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
 	DeleteInternalSession(se any)
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
