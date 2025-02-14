@@ -87,7 +87,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.24rc3",
+    version = "1.24.0",
 )
 
 gazelle_dependencies(go_sdk = "go_sdk")
