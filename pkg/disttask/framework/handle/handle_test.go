@@ -79,7 +79,7 @@ func TestHandle(t *testing.T) {
 	// submit same task.
 	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
 	require.Nil(t, task)
-	require.Error(t, storage.ErrTaskAlreadyExists, err)
+	require.ErrorIs(t, err, storage.ErrTaskAlreadyExists)
 	// pause and resume task.
 	require.NoError(t, handle.PauseTask(ctx, "2"))
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
@@ -90,7 +90,7 @@ func TestHandle(t *testing.T) {
 	require.NoError(t, mgr.TransferTasks2History(ctx, []*proto.Task{task}))
 	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, "", proto.EmptyMeta)
 	require.Nil(t, task)
-	require.Error(t, storage.ErrTaskAlreadyExists, err)
+	require.ErrorIs(t, err, storage.ErrTaskAlreadyExists)
 }
 
 func TestRunWithRetry(t *testing.T) {
