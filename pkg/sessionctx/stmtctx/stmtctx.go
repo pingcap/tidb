@@ -469,6 +469,11 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
+	usedStats := sc.usedStatsInfo.Load()
+	if usedStats != nil {
+		usedStats.store.Clear()
+	}
+
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -493,6 +498,10 @@ func (sc *StatementContext) Reset() {
 		h.Reset()
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+
+	if usedStats != nil {
+		sc.usedStatsInfo.Store(usedStats)
 	}
 }
 
