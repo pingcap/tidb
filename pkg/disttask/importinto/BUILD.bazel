@@ -18,7 +18,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
-        "//br/pkg/membuf",
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/config",
@@ -41,6 +40,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
+        "//pkg/lightning/membuf",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",

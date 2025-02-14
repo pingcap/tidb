@@ -318,6 +318,7 @@ func (b *Buffer) addBlock() {
 	b.curIdx = 0
 }
 
+// GetSlice returns the byte slice for the slice location.
 func (b *Buffer) GetSlice(loc SliceLocation) []byte {
 	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.length]
 }
