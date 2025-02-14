@@ -1215,7 +1215,6 @@ func (e *executor) CreateTableWithInfo(
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
-			// TODO(xiaoyuan): I think this branch will never be reached, please see e.createTableWithInfoJob
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
