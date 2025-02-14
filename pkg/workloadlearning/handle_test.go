@@ -39,7 +39,7 @@ func TestSaveReadTableCostMetrics(t *testing.T) {
 		TableCost:     1.0,
 	}
 	tableCostMetrics := map[ast.CIStr]*workloadlearning.ReadTableCostMetrics{
-		ast.CIStr{O: "test", L: "test"}: readTableCostMetrics,
+		{O: "test", L: "test"}: readTableCostMetrics,
 	}
 	handle := workloadlearning.NewWorkloadLearningHandle(dom.SysSessionPool())
 	handle.SaveReadTableCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
