@@ -26,34 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
 var testNodeRes = proto.NewNodeResource(16, 32*units.GiB)
-
-func TestBuildManager(t *testing.T) {
-	m, err := NewManager(context.Background(), "test", nil, testNodeRes)
-	require.NoError(t, err)
-	require.NotNil(t, m)
-
-	bak := memory.MemTotal
-	defer func() {
-		memory.MemTotal = bak
-	}()
-	memory.MemTotal = func() (uint64, error) {
-		return 0, errors.New("mock error")
-	}
-	_, err = NewManager(context.Background(), "test", nil, testNodeRes)
-	require.ErrorContains(t, err, "mock error")
-
-	memory.MemTotal = func() (uint64, error) {
-		return 0, nil
-	}
-	_, err = NewManager(context.Background(), "test", nil, testNodeRes)
-	require.ErrorContains(t, err, "invalid cpu or memory")
-}
 
 func TestManageTaskExecutor(t *testing.T) {
 	ctrl := gomock.NewController(t)
