@@ -913,7 +913,7 @@ func (s *localRowCntListener) SetTotal(total int) {
 }
 
 // UpdateDDLJobReorgCfgInterval is the interval to check and update reorg configuration.
-const UpdateDDLJobReorgCfgInterval = 2 * time.Second
+var UpdateDDLJobReorgCfgInterval = 2 * time.Second
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
