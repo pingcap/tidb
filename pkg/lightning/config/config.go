@@ -803,6 +803,17 @@ func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 	return nil
 }
 
+// FieldEncodeType is the type of encoding for a CSV field.
+type FieldEncodeType string
+
+const (
+	// FieldEncodeNone means no special encoding.
+	FieldEncodeNone FieldEncodeType = ""
+	// FieldEncodeBase64 means the field is encoded in base64.
+	// this encoding also implies some constraints on other parameters
+	FieldEncodeBase64 FieldEncodeType = "base64"
+)
+
 // CSVConfig is the config for CSV files.
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.

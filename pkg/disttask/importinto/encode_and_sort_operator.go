@@ -229,6 +229,11 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
 	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
+
+	// For parquet file format, we allocate 50% of the memory to file reader.
+	if plan.Format == "parquet" {
+		memPerCon /= 2
+	}
 	// we use half of the total available memory for data writer, and the other half
 	// for encoding and other stuffs, it's an experience value, might not optimal.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer

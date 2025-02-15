@@ -94,6 +94,7 @@ type ParquetFileMeta struct {
 	MemoryQuota        int   // memory quota for current file reader to use non-streaming mode
 	UseStreaming       bool  // whether use streaming mode
 	UseSampleAllocator bool  // whether use sample allocator
+	Base64             bool
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
