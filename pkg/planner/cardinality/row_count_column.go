@@ -184,14 +184,13 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, float64, error) {
+func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (rowCount, riskCount float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	var rowCount, riskCount float64
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
@@ -201,7 +200,8 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
-		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
+		var cmp int
+		cmp, err = lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
@@ -283,9 +283,9 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, _, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
-			if err != nil {
-				return 0, 0, errors.Trace(err)
+			lowCnt, _, lowErr := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+			if lowErr != nil {
+				return 0, 0, errors.Trace(lowErr)
 			}
 			cnt -= lowCnt
 			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
@@ -294,9 +294,9 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, outOfRange, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
-			if err != nil {
-				return 0, 0, errors.Trace(err)
+			highCnt, outOfRange, highErr := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+			if highErr != nil {
+				return 0, 0, errors.Trace(highErr)
 			}
 			cnt += highCnt
 			if outOfRange {
@@ -395,19 +395,19 @@ func columnBetweenRowCount(sctx planctx.PlanContext, t *statistics.Table, a, b t
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func ColumnEqualRowCount(sctx planctx.PlanContext, t *statistics.Table, value types.Datum, colID int64) (float64, float64, error) {
+func ColumnEqualRowCount(sctx planctx.PlanContext, t *statistics.Table, value types.Datum, colID int64) (result, riskCount float64, err error) {
 	c := t.GetCol(colID)
 	if statistics.ColumnStatsIsInvalid(c, sctx, &t.HistColl, colID) {
-		result := float64(t.RealtimeCount) / pseudoEqualRate
+		result = float64(t.RealtimeCount) / pseudoEqualRate
 		return result, result, nil
 	}
-	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, value)
-	err = sctx.GetSessionVars().StmtCtx.HandleError(err)
-	if err != nil {
-		return 0, 0, err
+	encodedVal, encodeErr := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, value)
+	encodeErr = sctx.GetSessionVars().StmtCtx.HandleError(encodeErr)
+	if encodeErr != nil {
+		return 0, 0, encodeErr
 	}
-	var riskCount float64
-	result, outOfRange, err := equalRowCountOnColumn(sctx, c, value, encodedVal, t.RealtimeCount, t.ModifyCount)
+	var outOfRange bool
+	result, outOfRange, err = equalRowCountOnColumn(sctx, c, value, encodedVal, t.RealtimeCount, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	if outOfRange {
 		riskCount = result
