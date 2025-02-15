@@ -34,7 +34,7 @@ func init() {
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
+func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result, riskCount float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -59,7 +59,7 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		if err == nil && sc.EnableOptimizerCETrace && c != nil {
 			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
-		return result, err
+		return result, 0, err
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
@@ -68,15 +68,15 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	result, riskCount, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
-	return result, errors.Trace(err)
+	return result, riskCount, errors.Trace(err)
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
+func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result, riskCount float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -98,7 +98,7 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 	}
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
 		if len(intRanges) == 0 {
-			return 0, nil
+			return 0, 0, nil
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
 			result = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.RealtimeCount))
@@ -108,7 +108,7 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 		if sc.EnableOptimizerCETrace && c != nil {
 			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
 		}
-		return result, nil
+		return result, 0, nil
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
@@ -117,11 +117,11 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
-	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
+	result, riskCount, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
-	return result, errors.Trace(err)
+	return result, riskCount, errors.Trace(err)
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
@@ -184,14 +184,14 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
+func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	var rowCount float64
+	var rowCount, riskCount float64
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
@@ -203,17 +203,17 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		}
 		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
 		lowEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		highEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
@@ -232,7 +232,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 				var cnt float64
 				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
 				if err != nil {
-					return 0, errors.Trace(err)
+					return 0, 0, errors.Trace(err)
 				}
 				// If the current table row count has changed, we should scale the row count accordingly.
 				cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -253,7 +253,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 				for _, val := range rangeVals {
 					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount)
 					if err != nil {
-						return 0, err
+						return 0, 0, err
 					}
 					// If the current table row count has changed, we should scale the row count accordingly.
 					cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -277,7 +277,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
 			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
@@ -288,7 +288,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, 0, errors.Trace(err)
 			}
 			cnt += highCnt
 		}
@@ -306,7 +306,8 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
+			riskCount = c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
+			cnt += riskCount
 		}
 
 		if debugTrace {
@@ -325,7 +326,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// Don't allow the final result to go below 1 row
 		rowCount = mathutil.Clamp(rowCount, 1, float64(realtimeRowCount))
 	}
-	return rowCount, nil
+	return rowCount, riskCount, nil
 }
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
