@@ -67,9 +67,9 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, c == nil || c.CMSketch == nil)
 
 	// Column stats are loaded after they are needed.
-	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colAID)
+	_, _, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colAID)
 	require.NoError(t, err)
-	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colCID)
+	_, _, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetTableStats(tableInfo)
