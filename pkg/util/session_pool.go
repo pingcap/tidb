@@ -107,10 +107,10 @@ func (p *pool) Put(resource pools.Resource) {
 
 // Destroy destroys the session.
 func (p *pool) Destroy(resource pools.Resource) {
-	resource.Close()
 	if p.destroyCallback != nil {
 		p.destroyCallback(resource)
 	}
+	resource.Close()
 }
 
 // Close closes the pool to release all resources.
