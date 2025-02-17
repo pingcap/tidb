@@ -534,53 +534,43 @@ func findUserAndAllRoles(userList []string, roleGraph map[string]roleGraphEdgesT
 	return all
 }
 
-func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.SQLExecutor, users ...string) (map[string]struct{}, error) {
-	// Load the full role edge table first.
-	p.roleGraph = make(map[string]roleGraphEdgesTable)
-	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.SQLExecutor, userList map[string]struct{}) error {
+	err := loadTable(ctx, addUserFilterCondition(sqlLoadUserTable, userList), p.decodeUserTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	// Including the user and also their roles
-	userList := findUserAndAllRoles(users, p.roleGraph)
-
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadUserTable, userList), p.decodeUserTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadGlobalPrivTable, userList), p.decodeGlobalPrivTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadGlobalPrivTable, userList), p.decodeGlobalPrivTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadGlobalGrantsTable, userList), p.decodeGlobalGrantsTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadGlobalGrantsTable, userList), p.decodeGlobalGrantsTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadDBTable, userList), p.decodeDBTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadDBTable, userList), p.decodeDBTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadTablePrivTable, userList), p.decodeTablesPrivTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadTablePrivTable, userList), p.decodeTablesPrivTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadDefaultRoles, userList), p.decodeDefaultRoleTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadDefaultRoles, userList), p.decodeDefaultRoleTableRow(userList))
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadColumnsPrivTable, userList), p.decodeColumnsPrivTableRow(userList))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	err = p.loadTable(ctx, addUserFilterCondition(sqlLoadColumnsPrivTable, userList), p.decodeColumnsPrivTableRow(userList))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return userList, nil
+	return nil
 }
 
 // merge construct a new MySQLPrivilege by merging the data of the two objects.
@@ -687,7 +677,7 @@ func noSuchTable(err error) bool {
 // LoadRoleGraph loads the mysql.role_edges table from database.
 func (p *MySQLPrivilege) LoadRoleGraph(exec sqlexec.SQLExecutor) error {
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
-	err := p.loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	err := loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -696,7 +686,7 @@ func (p *MySQLPrivilege) LoadRoleGraph(exec sqlexec.SQLExecutor) error {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(exec sqlexec.SQLExecutor) error {
-	err := p.loadTable(exec, sqlLoadUserTable, p.decodeUserTableRow(nil))
+	err := loadTable(exec, sqlLoadUserTable, p.decodeUserTableRow(nil))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -821,7 +811,7 @@ func (p *MySQLPrivilege) SortUserTable() {
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalPrivTable(exec sqlexec.SQLExecutor) error {
-	if err := p.loadTable(exec, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow(nil)); err != nil {
+	if err := loadTable(exec, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow(nil)); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -829,7 +819,7 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(exec sqlexec.SQLExecutor) error {
 
 // LoadGlobalGrantsTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
-	if err := p.loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
+	if err := loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -837,7 +827,7 @@ func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(exec sqlexec.SQLExecutor) error {
-	err := p.loadTable(exec, sqlLoadDBTable, p.decodeDBTableRow(nil))
+	err := loadTable(exec, sqlLoadDBTable, p.decodeDBTableRow(nil))
 	if err != nil {
 		return err
 	}
@@ -873,7 +863,7 @@ func compareTablesPrivRecord(x, y tablesPrivRecord) int {
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
-	err := p.loadTable(exec, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow(nil))
+	err := loadTable(exec, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow(nil))
 	if err != nil {
 		return err
 	}
@@ -882,12 +872,12 @@ func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
-	return p.loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
+	return loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadDefaultRoles(exec sqlexec.SQLExecutor) error {
-	return p.loadTable(exec, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow(nil))
+	return loadTable(exec, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow(nil))
 }
 
 func addUserFilterCondition(sql string, userList map[string]struct{}) string {
@@ -909,7 +899,7 @@ func addUserFilterCondition(sql string, userList map[string]struct{}) string {
 	return b.String()
 }
 
-func (*MySQLPrivilege) loadTable(exec sqlexec.SQLExecutor, sql string,
+func loadTable(exec sqlexec.SQLExecutor, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Do not use sctx.ExecRestrictedSQL() here deliberately.
@@ -2126,21 +2116,7 @@ func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
 	if exist {
 		return nil
 	}
-	data := newMySQLPrivilege()
-	data.globalVars = h.globalVars
-	res, err := h.sctx.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer h.sctx.Put(res)
-	exec := res.(sqlexec.SQLExecutor)
-
-	userList, err := data.loadSomeUsers(exec, user)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	h.merge(data, userList)
-	return nil
+	return h.updateUsers([]string{user})
 }
 
 func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
@@ -2188,21 +2164,7 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
-	res, err := h.sctx.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer h.sctx.Put(res)
-	exec := res.(sqlexec.SQLExecutor)
-
-	priv := newMySQLPrivilege()
-	priv.globalVars = h.globalVars
-	userList1, err := priv.loadSomeUsers(exec, userList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	h.merge(priv, userList1)
-	return nil
+	return h.updateUsers(userList)
 }
 
 // Update loads the privilege info from kv storage for the list of users.
@@ -2222,6 +2184,10 @@ func (h *Handle) Update(userList []string) error {
 		return nil
 	}
 
+	return h.updateUsers(userList)
+}
+
+func (h *Handle) updateUsers(userList []string) error {
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -2229,12 +2195,21 @@ func (h *Handle) Update(userList []string) error {
 	defer h.sctx.Put(res)
 	exec := res.(sqlexec.SQLExecutor)
 
-	priv := newMySQLPrivilege()
-	priv.globalVars = h.globalVars
-	userList1, err := priv.loadSomeUsers(exec, userList...)
+	p := newMySQLPrivilege()
+	p.globalVars = h.globalVars
+	// Load the full role edge table first.
+	p.roleGraph = make(map[string]roleGraphEdgesTable)
+	err = loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Including the user and also their roles
+	userAndRoles := findUserAndAllRoles(userList, p.roleGraph)
+	err = p.loadSomeUsers(exec, userAndRoles)
 	if err != nil {
 		return err
 	}
-	h.merge(priv, userList1)
+	h.merge(p, userAndRoles)
 	return nil
 }
