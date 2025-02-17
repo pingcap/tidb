@@ -33,7 +33,7 @@ var (
 	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 bytes of a specific file from GCS")
 	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
-	gcsDir           = flag.String("gcsDir", "gcs://global-sort-dir", "GCS directory")
+	gcsDir           = flag.String("gcsDir", "gcs://global-sort-dir/testGenerateCSV", "GCS directory")
 
 	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
 	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
