@@ -1555,3 +1555,40 @@ func TestHeaderSchemaMatch(t *testing.T) {
 		assert.Equal(t, tc.ExpectedColumns, parser.Columns(), comment)
 	}
 }
+
+const nullStr = `\N`
+
+func convertRow(strRow ...string) []types.Datum {
+	row := make([]types.Datum, len(strRow))
+	for i, str := range strRow {
+		if str == nullStr {
+			row[i].SetNull()
+		} else {
+			row[i].SetString(str, "utf8mb4_bin")
+		}
+	}
+	return row
+}
+
+func TestFieldsBase64Encoded(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:       ",",
+			FieldsEncodedBy: config.FieldEncodeBase64,
+		},
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	assert.NoError(t, err)
+	inputData := `YWFhYQ==,MQ==
+YmJiYg==,bnVsbA==
+,Mg==`
+
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(inputData), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
+	require.NoError(t, err)
+	readedRows := [][]string{{"aaaa", "1"}, {"bbbb", "null"}, {"", "2"}}
+	for _, r := range readedRows {
+		require.NoError(t, parser.ReadRow())
+		require.EqualValues(t, convertRow(r...), parser.LastRow().Row)
+	}
+	require.NoError(t, parser.Close())
+}
