@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"os"
 	"path"
@@ -12,9 +13,12 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -296,6 +300,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
@@ -304,6 +309,22 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 
 	bucket := client.Bucket(gcs.Bucket)
 	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
+}
+
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+	return false
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
