@@ -844,7 +844,8 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
 	if rs == nil {
-		return "", "", "", "", "", errors.New("can't find any records for '" + planDigest + "' in statement summary")
+		return "", "", "", "", "",
+			errors.New("can't find any records for '" + planDigest + "' in statement summary")
 	}
 	if err != nil {
 		return "", "", "", "", "", err
@@ -926,6 +927,9 @@ func constructSQLBindOPFromPlanDigest(
 	schema, query, planHint, charset, collation, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
 	if err != nil {
 		return nil, err
+	}
+	if query == "" {
+		return nil, errors.New("can't find any plans for '" + planDigest + "'")
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 	parser4binding := parser.New()
