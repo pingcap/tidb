@@ -112,5 +112,4 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	for _, group := range resourceGroups {
 		info.setResourceGroup(group)
 	}
-
 }
