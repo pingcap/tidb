@@ -577,9 +577,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
+	var store storage.ExternalStorage
+	if *localPath == "" {
+		store, err = storage.NewWithDefaultOpt(context.Background(), s)
+		if err != nil {
+			panic(err)
+		}
 	}
 	for i := 0; i < *writerNum; i++ {
 		wgWriter.Add(1)
@@ -615,7 +618,9 @@ func main() {
 	// Wait for all writers to finish writing
 	wgWriter.Wait()
 	log.Printf("GCS write completed, total time: %v", time.Since(startTime))
-	showFiles(*credentialPath)
+	if *localPath == "" {
+		showFiles(*credentialPath)
+	}
 
 	if *deleteAfterWrite {
 		for _, fileName := range fileNames {
