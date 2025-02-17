@@ -446,7 +446,7 @@ func ParseFormat(ctx context.Context, store storage.ExternalStorage, path string
 	format := TypeCSV
 	u, err := storage.ParseRawURL(path)
 	if err != nil {
-		return format, err
+		return "", err
 	}
 	dir, filePattern := filepath.Split(u.Path)
 	u.Path = dir
@@ -454,11 +454,11 @@ func ParseFormat(ctx context.Context, store storage.ExternalStorage, path string
 	if store == nil {
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
-			return format, err
+			return "", err
 		}
 		store, err = storage.NewWithDefaultOpt(ctx, b)
 		if err != nil {
-			return format, err
+			return "", err
 		}
 	}
 	err = store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
@@ -471,7 +471,10 @@ func ParseFormat(ctx context.Context, store storage.ExternalStorage, path string
 		}
 		return nil
 	})
-	return format, err
+	if err != nil {
+		return "", err
+	}
+	return format, nil
 }
 
 func detectFileType(path string) string {
