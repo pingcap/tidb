@@ -119,7 +119,7 @@ func parseSQLSchema(schema string) []Column {
 			col.IsPK = true
 		}
 		if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") &&
-			strings.HasPrefix(col.Type, "VARBINARY") &&
+			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
 			extractNumberFromSQLType(colType) > uuidLen &&
 			extractNumberFromSQLType(colType) < maxIndexLen {
 			col.IsUnique = true
@@ -159,6 +159,7 @@ func generateValueByCol(col Column, num int, res []string) {
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
 		generateTimestamp(num, res)
 	case strings.HasPrefix(col.Type, "VARBINARY"):
+	case strings.HasPrefix(col.Type, "VARCHAR"):
 		generateVarbinary(num, extractNumberFromSQLType(col.Type), res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
 		generateMediumblob(num, res)
