@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -42,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -61,8 +62,6 @@ var (
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
 	mockDDLErrOnce = int64(0)
-	// TestNotifyBeginTxnCh is used for if the txn is beginning in runInTxn.
-	TestNotifyBeginTxnCh = make(chan struct{})
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -89,6 +88,7 @@ type jobContext struct {
 	store             kv.Storage
 	schemaVerSyncer   schemaver.Syncer
 	eventPublishStore notifier.Store
+	sysTblMgr         systable.Manager
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -277,7 +277,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !variable.EnableMDL.Load() {
+	if !vardef.EnableMDL.Load() {
 		return nil
 	}
 	if ver == 0 {
@@ -531,7 +531,6 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
 	jobW *model.JobW,
-	sysTblMgr systable.Manager,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
@@ -545,7 +544,7 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
 	if err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
@@ -585,7 +584,7 @@ func (w *worker) transitOneJobStep(
 	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
+	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, jobCtx.sysTblMgr)
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
@@ -678,21 +677,6 @@ func (w *ReorgContext) ddlJobSourceType() string {
 	return w.tp
 }
 
-func skipWriteBinlog(job *model.Job) bool {
-	switch job.Type {
-	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
-	// it's used to update table's TiFlash replica available status.
-	case model.ActionUpdateTiFlashReplicaStatus:
-		return true
-	// Don't sync 'alter table cache|nocache' to other tools.
-	// It's internal to the current cluster.
-	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
-		return true
-	}
-
-	return false
-}
-
 func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 	if t == 0 || t > maxv {
 		return maxv
@@ -715,7 +699,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	if err1 := loadDDLVars(w); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
-	errorCount := variable.GetDDLErrorCountLimit()
+	errorCount := vardef.GetDDLErrorCountLimit()
 
 	if job.ErrorCount > errorCount {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
@@ -743,8 +727,8 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
-	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
-		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+	if job.ErrorCount > vardef.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logger.Warn("DDL job error count exceed the limit, cancelling it now", zap.Int64("errorCountLimit", vardef.GetDDLErrorCountLimit()))
 		job.State = model.JobStateCancelling
 	}
 	return err
@@ -854,8 +838,9 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
+						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if err == systable.ErrNotFound {
+						if goerrors.Is(err, systable.ErrNotFound) {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))
@@ -884,9 +869,9 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateRunning:
 							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
 							}
 						}
 					}
@@ -1101,7 +1086,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

@@ -112,7 +112,11 @@ type ttlJob struct {
 	createTime    time.Time
 	ttlExpireTime time.Time
 
-	tbl *cache.PhysicalTable
+	// assignTime is the time when the job is assigned to the current manager.
+	// The `assignTime` may be greater than `createTime` if the job is reassigned to another manager.
+	assignTime time.Time
+
+	tableID int64
 
 	// status is the only field which should be protected by a mutex, as `Cancel` may be called at any time, and will
 	// change the status
@@ -127,7 +131,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
-		sql, args := finishJobSQL(job.tbl.ID, now, summary.SummaryText, job.id)
+		sql, args := finishJobSQL(job.tableID, now, summary.SummaryText, job.id)
 		_, err := se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

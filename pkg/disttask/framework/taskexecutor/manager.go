@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
@@ -184,7 +184,7 @@ func (m *Manager) handleTasksLoop() {
 
 		m.handleTasks()
 		// service scope might change, so we call WithLabelValues every time.
-		metrics.DistTaskUsedSlotsGauge.WithLabelValues(variable.ServiceScope.Load()).
+		metrics.DistTaskUsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
 		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -1232,11 +1232,11 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 	tk.MustExec(`alter table t2 truncate partition p3`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
@@ -2753,7 +2753,7 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
 	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
-	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	originErrCountLimit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))

@@ -370,11 +370,15 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		p.StatsInfo().GroupNDVs = p.GetGroupNDVs(childStats)
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), false, nil
 	}
 	childProfile := childStats[0]
 	p.SetStats(&property.StatsInfo{
@@ -390,7 +394,7 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
 	}
 	p.StatsInfo().GroupNDVs = p.GetGroupNDVs(childStats)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.

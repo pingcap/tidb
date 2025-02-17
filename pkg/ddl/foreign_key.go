@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -149,7 +149,7 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
@@ -211,7 +211,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 }
 
 func checkTableForeignKeyValidInOwner(jobCtx *jobContext, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return false, nil
 	}
 	is := jobCtx.infoCache.GetLatest()
@@ -404,7 +404,7 @@ func checkTableHasForeignKeyReferred(is infoschemactx.MetaOnlyInfoSchema, schema
 }
 
 func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, job *model.Job, args *model.DropTableArgs) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	objectIdents, fkCheck := args.Identifiers, args.FKCheck
@@ -434,7 +434,7 @@ func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCa
 }
 
 func checkTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) (_ *model.ReferredFKInfo, _ error) {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil, nil
 	}
 	is := infoCache.GetLatest()
@@ -490,7 +490,7 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 }
 
 func checkIndexNeededInForeignKeyInOwner(infoCache *infoschema.InfoCache, job *model.Job, dbName string, tbInfo *model.TableInfo, idxInfo *model.IndexInfo) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -522,7 +522,7 @@ func checkDropColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName st
 }
 
 func checkDropColumnWithForeignKeyConstraintInOwner(infoCache *infoschema.InfoCache, job *model.Job, tbInfo *model.TableInfo, colName string) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -603,7 +603,7 @@ func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoS
 }
 
 func checkDatabaseHasForeignKeyReferredInOwner(jobCtx *jobContext, job *model.Job) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	args, err := model.GetDropSchemaArgs(job)
@@ -633,7 +633,7 @@ func checkFKDupName(tbInfo *model.TableInfo, fkName ast.CIStr) error {
 }
 
 func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	err := checkTableForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
@@ -648,7 +648,7 @@ func checkAddForeignKeyValidInOwner(infoCache *infoschema.InfoCache, schema stri
 	if err != nil {
 		return err
 	}
-	if !variable.EnableForeignKey.Load() {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	is := infoCache.GetLatest()

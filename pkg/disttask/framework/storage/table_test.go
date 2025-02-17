@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -262,9 +262,9 @@ func TestSwitchTaskStep(t *testing.T) {
 		subtasksStepTwo[i] = proto.NewSubtask(proto.StepTwo, taskID, proto.TaskTypeExample,
 			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
 	}
-	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar(variable.TiDBMemQuotaQuery, "1024"))
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBMemQuotaQuery, "1024"))
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, subtasksStepTwo))
-	value, ok := tk.Session().GetSessionVars().GetSystemVar(variable.TiDBMemQuotaQuery)
+	value, ok := tk.Session().GetSessionVars().GetSystemVar(vardef.TiDBMemQuotaQuery)
 	require.True(t, ok)
 	require.Equal(t, "1024", value)
 	task, err = tm.GetTaskByID(ctx, taskID)
@@ -523,7 +523,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, sm.StartSubtask(ctx, 1, "tidb1"))
 
 	err = sm.StartSubtask(ctx, 1, "tidb2")
-	require.Error(t, storage.ErrSubtaskNotFound, err)
+	require.ErrorIs(t, err, storage.ErrSubtaskNotFound)
 
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
@@ -950,16 +950,16 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 func TestTaskNotFound(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	task, err := gm.GetTaskByID(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByIDWithHistory(ctx, 1)
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKey(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 	task, err = gm.GetTaskByKeyWithHistory(ctx, "key")
-	require.Error(t, err, storage.ErrTaskNotFound)
+	require.ErrorIs(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 }
 
@@ -1180,4 +1180,35 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
 	checkBasicTaskEq(t, &tasks[3].TaskBase, taskExecInfos[2].TaskBase)
 	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
+	// :4002, no such subtasks
+	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4002")
+	require.NoError(t, err)
+	require.Empty(t, taskExecInfos)
+}
+
+func TestTaskManagerEntrySize(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	getMeta := func(l int) []byte {
+		meta := make([]byte, l)
+		for i := 0; i < l; i++ {
+			meta[i] = 'a'
+		}
+		return meta
+	}
+	insertSubtask := func(meta []byte) error {
+		return tm.WithNewSession(func(se sessionctx.Context) error {
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
+				`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				1, "1", "execID", meta, proto.SubtaskStatePending, proto.Type2Int(proto.TaskTypeExample), 1)
+			return err
+		})
+	}
+	meta6m := getMeta(6 << 20)
+	require.ErrorContains(t, insertSubtask(meta6m), "entry too large")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set global tidb_txn_entry_size_limit = %d", 7<<20))
+	require.NoError(t, insertSubtask(meta6m))
+	// TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+	// we won't test that param here
 }

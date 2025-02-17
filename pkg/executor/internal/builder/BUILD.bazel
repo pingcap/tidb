@@ -11,7 +11,7 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/planctx",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",
     ],

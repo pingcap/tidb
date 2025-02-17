@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -678,15 +679,15 @@ func newContext() *Context {
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-	vars.EnablePaging = variable.DefTiDBEnablePaging
-	vars.MinPagingSize = variable.DefMinPagingSize
-	vars.CostModelVersion = variable.DefTiDBCostModelVer
+	vars.EnablePaging = vardef.DefTiDBEnablePaging
+	vars.MinPagingSize = vardef.DefMinPagingSize
+	vars.CostModelVersion = vardef.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
-	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
-	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
-	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, "utf8mb4"); err != nil {
 		panic(err)
 	}
 	return sctx

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -59,7 +59,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
 	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
@@ -258,6 +258,23 @@ select * from t;
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.Equal(t, warnings[0].Err.Error(), "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
+
+	// issue 39940
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# DB: a: b
+# Index_names: [t:i: a]
+# Succ: true
+select * from t;
+`)
+	reader = bufio.NewReader(slowLog)
+	rows, err = parseSlowLog(ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	value, _ := rows[0][41].ToString()
+	require.Equal(t, value, "a: b")
+	value, _ = rows[0][42].ToString()
+	require.Equal(t, value, "[t:i: a]")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -272,16 +289,16 @@ func TestParseSlowLogFileSerial(t *testing.T) {
 select * from t;
 # Time: 2019-04-24-19:41:21.716221 +0800
 `)
-	originValue := variable.MaxOfMaxAllowedPacket
-	variable.MaxOfMaxAllowedPacket = 65536
-	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
+	originValue := vardef.MaxOfMaxAllowedPacket
+	vardef.MaxOfMaxAllowedPacket = 65536
+	sql := strings.Repeat("x", int(vardef.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader := bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, reader)
 	require.Error(t, err)
 	require.EqualError(t, err, "single line length exceeds limit: 65536")
 
-	variable.MaxOfMaxAllowedPacket = originValue
+	vardef.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)

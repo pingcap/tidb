@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -165,6 +166,11 @@ func (e *GroupExpression) addr() unsafe.Pointer {
 	return unsafe.Pointer(e)
 }
 
+// GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
+	return e.LogicalPlan
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -182,8 +188,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
-	// just add this mock for a mocked logical-plan which is with the id less than 0.
-	//  todo: functional dependency
+	tmpFD := e.LogicalPlan.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).FDs()
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
 	// the leaves node may have already had their stats in join reorder est phase, while
@@ -195,12 +200,14 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	})
 	if !skipDeriveStats {
 		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
+		tmpStats, _, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
 		if err != nil {
 			return err
 		}
+		tmpFD = e.LogicalPlan.ExtractFD()
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	e.GetGroup().GetLogicalProperty().FD = tmpFD
 	return nil
 }

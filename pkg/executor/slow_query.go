@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -296,7 +297,7 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLine(reader, int(variable.MaxOfMaxAllowedPacket))
+	return util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
 }
 
 type offset struct {
@@ -700,9 +701,12 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogHostStr, host, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
-				} else if strings.HasPrefix(line, variable.SlowLogWarnings) {
+				} else if strings.HasPrefix(line, variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogWarnings, line, e.checker, fileLine)
+				} else if strings.HasPrefix(line, variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr) {
+					line = line[len(variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
 					for i := 0; i < len(fields); i++ {
