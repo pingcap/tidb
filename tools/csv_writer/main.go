@@ -47,9 +47,9 @@ const (
 	maxRetries     = 3
 	uuidLen        = 36
 	maxIndexLen    = 3072
-	totalOrdered   = "total ordered"
-	totalRandom    = "total random"
-	partialOrdered = "partial ordered"
+	totalOrdered   = "TOTAL ORDERED"
+	totalRandom    = "TOTAL RANDOM"
+	partialOrdered = "PARTIAL ORDERED"
 )
 
 var faker *gofakeit.Faker
@@ -65,6 +65,7 @@ type Column struct {
 	Enum     []string // For ENUM type
 	IsPK     bool
 	IsUnique bool
+	Order    string
 }
 
 // Read SQL schema file
@@ -123,6 +124,13 @@ func parseSQLSchema(schema string) []Column {
 			extractNumberFromSQLType(colType) < maxIndexLen {
 			col.IsUnique = true
 		}
+		if strings.Contains(strings.ToUpper(line), totalOrdered) {
+			col.Order = totalOrdered
+		} else if strings.Contains(strings.ToUpper(line), totalRandom) {
+			col.Order = totalRandom
+		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
+			col.Order = partialOrdered
+		}
 		columns = append(columns, col)
 	}
 	return columns
@@ -145,7 +153,7 @@ func extractNumberFromSQLType(sqlType string) int {
 func generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "BIGINT"):
-		generateBigint(num, res)
+		generateBigint(num, res, col.Order)
 	case strings.HasPrefix(col.Type, "TINYINT"):
 		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
@@ -182,17 +190,22 @@ func generateLetterWithNum(len int) string {
 	return builder.String()
 }
 
-func generateBigint(num int, res []string) {
+func generateBigint(num int, res []string, order string) {
+	intRes := make([]int, num)
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(-9223372036854775808, 9223372036854775807))
+		intRes[i] = faker.Number(-9223372036854775808, 9223372036854775807) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B
 	}
-	order := ""
-	if order == totalRandom || order == "" {
-		return
-	} else if order == totalOrdered {
-		sort.Strings(res)
+
+	if order == totalOrdered {
+		sort.Ints(intRes)
 	} else if order == partialOrdered {
-		sort.Strings(res[:len(res)-1])
+		sort.Ints(intRes[:len(res)-1])
+	}
+	if len(res) < num {
+		res = make([]string, num)
+	}
+	for i, v := range intRes {
+		res[i] = strconv.Itoa(v)
 	}
 }
 
