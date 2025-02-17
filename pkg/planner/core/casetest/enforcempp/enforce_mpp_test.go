@@ -269,6 +269,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 	// test table
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set tidb_hash_join_version=optimized")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t(a int primary key)")
 	tk.MustExec("drop table if exists s")

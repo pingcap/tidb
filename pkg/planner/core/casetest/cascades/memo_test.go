@@ -71,6 +71,7 @@ func TestDeriveStats(t *testing.T) {
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
 		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
@@ -103,11 +104,15 @@ func TestDeriveStats(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
+				}
+				if logicProp.FD == nil {
+					sb.WriteString(", fd:nil")
+				} else {
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}
@@ -164,6 +169,7 @@ func TestGroupNDVCols(t *testing.T) {
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
 		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
@@ -195,11 +201,15 @@ func TestGroupNDVCols(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
+				}
+				if logicProp.FD == nil {
+					sb.WriteString(", fd:nil")
+				} else {
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}

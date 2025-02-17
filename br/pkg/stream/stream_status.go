@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -130,9 +131,9 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
 	table.Add("status", task.colorfulStatusString())
-	table.Add("start", fmt.Sprint(FormatDate(oracle.GetTimeFromTS(task.Info.StartTs))))
+	table.Add("start", fmt.Sprint(utils.FormatDate(oracle.GetTimeFromTS(task.Info.StartTs))))
 	if task.Info.EndTs > 0 {
-		table.Add("end", fmt.Sprint(FormatDate(oracle.GetTimeFromTS(task.Info.EndTs))))
+		table.Add("end", fmt.Sprint(utils.FormatDate(oracle.GetTimeFromTS(task.Info.EndTs))))
 	}
 	s := storage.FormatBackendURL(task.Info.GetStorage())
 	table.Add("storage", s.String())
@@ -146,7 +147,7 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		if gap > 10*time.Minute {
 			gapColor = color.New(color.FgRed)
 		}
-		info := fmt.Sprintf("%s; gap=%s", FormatDate(pTime), gapColor.Sprint(gap))
+		info := fmt.Sprintf("%s; gap=%s", utils.FormatDate(pTime), gapColor.Sprint(gap))
 		return info
 	}
 	table.Add("checkpoint[global]", formatTS(task.globalCheckpoint))
