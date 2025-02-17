@@ -40,7 +40,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = make([]uint64, 0, len(parts)*(len(tbInfo.Indices)+1))
 		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
-		// Try to split global index here.
+		// Try to split global index region here.
 		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
