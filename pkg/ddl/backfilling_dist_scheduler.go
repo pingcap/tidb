@@ -208,39 +208,6 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(
-	ctx context.Context,
-	store kv.StorageWithPD,
-	tblInfo *model.TableInfo,
-) (metas [][]byte, err error) {
-	defs := tblInfo.Partition.Definitions
-	physicalIDs := make([]int64, len(defs))
-	for i := range defs {
-		physicalIDs[i] = defs[i].ID
-	}
-
-	subTaskMetas := make([][]byte, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		// It should be different for each subtask to determine if there are duplicate entries.
-		importTS, err := allocNewTS(ctx, store)
-		if err != nil {
-			return nil, err
-		}
-		subTaskMeta := &BackfillSubTaskMeta{
-			PhysicalTableID: physicalID,
-			TS:              importTS,
-		}
-
-		metaBytes, err := json.Marshal(subTaskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
-}
-
 const (
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
@@ -337,9 +304,10 @@ func generatePlanForPhysicalTable(
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
-				RowStart: batch[0].StartKey(),
-				RowEnd:   batch[len(batch)-1].EndKey(),
-				TS:       importTS,
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        batch[0].StartKey(),
+				RowEnd:          batch[len(batch)-1].EndKey(),
+				TS:              importTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
