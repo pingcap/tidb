@@ -267,6 +267,13 @@ func generatePrimaryKey(begin, end int, res []string) {
 	}
 }
 
+// escapeJSONString escapes special characters in a JSON string for CSV
+func escapeJSONString(jsonStr string) string {
+	// CSV requires the string to be wrapped with double quotes, and any internal double quotes need to be escaped
+	// CSV will automatically escape other characters like newlines and commas inside quoted strings
+	return `"` + strings.ReplaceAll(jsonStr, `"`, `""`) + `"`
+}
+
 func generateJSONObject(num int, res []string) {
 	jsonOpt := &gofakeit.JSONOptions{
 		Type: "object",
@@ -288,7 +295,11 @@ func generateJSONObject(num int, res []string) {
 		if err != nil {
 			fmt.Println(err)
 		}
-		res[i] = string(r)
+		if *localPath == "" {
+			res[i] = escapeJSONString(string(r))
+		} else {
+			res[i] = string(r)
+		}
 	}
 }
 
