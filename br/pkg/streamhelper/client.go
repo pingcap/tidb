@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"mime"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,17 +24,6 @@ import (
 	"go.uber.org/zap"
 )
 
-/*
-{
-    "severity": "ERROR" | "REGULAR_OPERATION",
-    "operation_hostname": string,
-    "operation_pid": int,
-    "operation_time": datetime,
-    "payload_type": "application/x-protobuf;messageType=brpb.StreamBackupError" | "text/plain;charset=UTF-8",
-    "payload": bytes,
-}
-*/
-
 const (
 	SeverityError            = "ERROR"
 	SeverityRegularOperation = "REGULAR_OPERATION"
@@ -43,7 +35,7 @@ type RFC3339Time time.Time
 
 // MarshalJSON implements the `json.Marshaler` interface.
 func (t RFC3339Time) MarshalJSON() ([]byte, error) {
-	return []byte(strconv.Quote(time.Time(t).Format(time.RFC3339))), nil
+	return []byte(strconv.Quote(t.String())), nil
 }
 
 // UnmarshalJSON implements the `json.Unmarshaler` interface.
@@ -58,6 +50,25 @@ func (t *RFC3339Time) UnmarshalJSON(data []byte) error {
 	}
 	*t = RFC3339Time(tm)
 	return nil
+}
+
+func (t RFC3339Time) String() string {
+	return time.Time(t).Format(time.RFC3339)
+}
+
+func NewLocalPauseV2() *PauseV2 {
+	pid := os.Getpid()
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = fmt.Sprintf("[err: %s]", err)
+	}
+
+	return &PauseV2{
+		Severity:         SeverityRegularOperation,
+		OperatorHostName: hostName,
+		OperatorPID:      pid,
+		OperationTime:    RFC3339Time(time.Now()),
+	}
 }
 
 type PauseV2 struct {
@@ -97,6 +108,32 @@ func (p *PauseV2) GetPayload() (any, error) {
 	default:
 		return nil, errors.Errorf("unsupported payload type %s", m)
 	}
+}
+
+func (p *PauseV2) DisplayTable(display func(string, string)) {
+	display("pause-time", p.OperationTime.String())
+	display("pause-operator", p.OperatorHostName)
+	display("pause-operator-pid", strconv.Itoa(p.OperatorPID))
+
+	pl, err := p.GetPayload()
+	if err != nil {
+		display("pause-payload[errparse]", err.Error())
+	} else {
+		switch val := pl.(type) {
+		case string:
+			display("pause-payload", val)
+		case *backuppb.StreamBackupError:
+			display("pause-payload[errcode]", val.ErrorCode)
+			display("pause-payload[errmesg]", val.ErrorMessage)
+		default:
+			display("pause-payload", "unknown")
+		}
+	}
+}
+
+func (p *PauseV2) SetTextMessage(t string) {
+	p.PayloadType = "text/plain;charset=UTF-8"
+	p.Payload = []byte(t)
 }
 
 // Checkpoint is the polymorphic checkpoint type.
@@ -252,8 +289,33 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 	return nil
 }
 
-func (c *MetaDataClient) PauseTask(ctx context.Context, taskName string) error {
-	_, err := c.KV.Put(ctx, Pause(taskName), "")
+type pauseTaskCfg struct {
+	message string
+}
+
+type PauseTaskOption func(*pauseTaskCfg)
+
+func PauseWithMessage(m string) PauseTaskOption {
+	return func(cfg *pauseTaskCfg) {
+		cfg.message = m
+	}
+}
+
+func (c *MetaDataClient) PauseTask(ctx context.Context, taskName string, opts ...PauseTaskOption) error {
+	cfg := pauseTaskCfg{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	p := NewLocalPauseV2()
+	if len(cfg.message) > 0 {
+		p.SetTextMessage(cfg.message)
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return errors.Annotatef(err, "failed to marshal pause payload for task %s", taskName)
+	}
+	_, err = c.KV.Put(ctx, Pause(taskName), string(data))
 	if err != nil {
 		return errors.Annotatef(err, "failed to pause task %s", taskName)
 	}
@@ -378,13 +440,33 @@ func NewTask(client *MetaDataClient, info backuppb.StreamBackupTaskInfo) *Task {
 }
 
 // Pause is a shorthand for `metaCli.PauseTask`.
-func (t *Task) Pause(ctx context.Context) error {
-	return t.cli.PauseTask(ctx, t.Info.Name)
+func (t *Task) Pause(ctx context.Context, opts ...PauseTaskOption) error {
+	return t.cli.PauseTask(ctx, t.Info.Name, opts...)
 }
 
 // Resume is a shorthand for `metaCli.ResumeTask`
 func (t *Task) Resume(ctx context.Context) error {
 	return t.cli.ResumeTask(ctx, t.Info.Name)
+}
+
+func (t *Task) GetPauseV2(ctx context.Context) (*PauseV2, error) {
+	resp, err := t.cli.KV.Get(ctx, Pause(t.Info.Name))
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to fetch the status of task %s", t.Info.Name)
+	}
+	if resp.Count == 0 {
+		return nil, nil
+	}
+	rawPauseV2 := resp.Kvs[0].Value
+	if len(rawPauseV2) == 0 {
+		return nil, nil
+	}
+	var pauseV2 PauseV2
+	err = json.Unmarshal(rawPauseV2, &pauseV2)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to unmarshal pause payload for task %s", t.Info.Name)
+	}
+	return &pauseV2, nil
 }
 
 func (t *Task) IsPaused(ctx context.Context) (bool, error) {
