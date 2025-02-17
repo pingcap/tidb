@@ -27,8 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-type SnapshotMetaManagerT = MetaManager[RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore]
-type LogMetaManagerT = MetaManager[LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore]
+type SnapshotMetaManagerT = MetaManager[
+	RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
+]
+type LogMetaManagerT = MetaManager[
+	LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
+]
 
 type tickDurationConfig struct {
 	tickDurationForFlush    time.Duration
@@ -62,7 +66,9 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 
 	// start checkpoint runner
-	StartCheckpointRunner(context.Context, tickDurationConfig, func(*RangeGroup[K, SV]) ([]byte, error)) (*CheckpointRunner[K, SV], error)
+	StartCheckpointRunner(
+		context.Context, tickDurationConfig, func(*RangeGroup[K, SV]) ([]byte, error),
+	) (*CheckpointRunner[K, SV], error)
 
 	// close session
 	Close()
@@ -183,8 +189,13 @@ func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointMetadata(
 func (manager *TableMetaManager[K, SV, LV, M]) RemoveCheckpointData(
 	ctx context.Context,
 ) error {
-	return dropCheckpointTables(ctx, manager.dom, manager.se, manager.dbName,
-		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
+	return dropCheckpointTables(ctx, manager.dom, manager.se, manager.dbName, []string{
+		checkpointDataTableName,
+		checkpointChecksumTableName,
+		checkpointMetaTableName,
+		checkpointProgressTableName,
+		checkpointIngestTableName,
+	})
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointProgress(
@@ -373,7 +384,8 @@ func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	cfg tickDurationConfig,
 	valueMarshaler func(*RangeGroup[K, SV]) ([]byte, error),
 ) (*CheckpointRunner[K, SV], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, manager.storage, nil, flushPositionForRestore(manager.taskName))
+	checkpointStorage, err := newExternalCheckpointStorage(
+		ctx, manager.storage, nil, flushPositionForRestore(manager.taskName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
