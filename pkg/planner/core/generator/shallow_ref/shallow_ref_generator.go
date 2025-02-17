@@ -41,7 +41,7 @@ import (
 // clonedJoin._EqualConditionsShallowRef()
 // clonedJoin.EqualConditions[0] = newFunction(xx, clonedJoin.EqualConditions[0].FuncName, clodJoin.EqualConditions[0].tp|nullable)
 func GenShallowRef4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalProjection{}}
 	c := new(cc)
 	c.write(codeGenLogicalOpCowPrefix)
 	for _, s := range structures {

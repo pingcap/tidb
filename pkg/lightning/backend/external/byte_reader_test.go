@@ -29,9 +29,9 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )

@@ -6,7 +6,7 @@ go_library(
         "buffer.go",
         "limiter.go",
     ],
-    importpath = "github.com/pingcap/tidb/br/pkg/membuf",
+    importpath = "github.com/pingcap/tidb/pkg/lightning/membuf",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_log//:log",
