@@ -48,7 +48,6 @@ const (
 	uuidLen        = 36
 	maxIndexLen    = 3072
 	totalOrdered   = "TOTAL ORDERED"
-	totalRandom    = "TOTAL RANDOM"
 	partialOrdered = "PARTIAL ORDERED"
 )
 
@@ -126,8 +125,6 @@ func parseSQLSchema(schema string) []Column {
 		}
 		if strings.Contains(strings.ToUpper(line), totalOrdered) {
 			col.Order = totalOrdered
-		} else if strings.Contains(strings.ToUpper(line), totalRandom) {
-			col.Order = totalRandom
 		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
 			col.Order = partialOrdered
 		}
