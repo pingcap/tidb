@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package decorrelate_apply
+package decorrelateapply
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
@@ -31,7 +31,9 @@ type XFDeCorrelateApplyBase struct {
 func (*XFDeCorrelateApplyBase) PreCheck(applyGE base.LogicalPlan) bool {
 	apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
 	if apply.NoDecorrelate {
-		return false
+		// false
+		return !(apply.NoDecorrelate)
 	}
-	return true
+	// true
+	return apply.NoDecorrelate
 }

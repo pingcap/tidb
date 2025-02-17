@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package decorrelate_apply_test
+package decorrelateapply_test
 
 import (
 	"testing"
@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelateapply"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
@@ -95,7 +95,7 @@ func TestXFDeCorrelateShouldDeleteIntermediaryApply(t *testing.T) {
 	apply.SetTP(plancodec.TypeApply)
 	mm := memo.NewMemo()
 	mm.Init(apply)
-	myRule := decorrelate_apply.NewXFDeCorrelateSimpleApply()
+	myRule := decorrelateapply.NewXFDeCorrelateSimpleApply()
 	cas, err := cascades.NewOptimizer(apply)
 	require.Nil(t, err)
 	// only allow NewXFDeCorrelateSimpleApply.
@@ -145,7 +145,7 @@ func TestXFDeCorrelateShouldDeleteIntermediaryApply(t *testing.T) {
 	apply.SetFlag(logicalop.ApplyGenFromXFDeCorrelateRuleFlag)
 	mm.Destroy()
 	mm.Init(apply)
-	myRule = decorrelate_apply.NewXFDeCorrelateSimpleApply()
+	myRule = decorrelateapply.NewXFDeCorrelateSimpleApply()
 	cas, err = cascades.NewOptimizer(apply)
 	require.Nil(t, err)
 	// only allow NewXFDeCorrelateSimpleApply.

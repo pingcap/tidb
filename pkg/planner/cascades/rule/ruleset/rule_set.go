@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelateapply"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
@@ -72,13 +72,13 @@ var OperandApplyRules = &OperandRules{OperandApplyRulesMap, OperandApplyRulesLis
 // OperandApplyRulesMap OperandApplyRules is the rules rooted from an apply operand, organized as map, key is sub-set type.
 var OperandApplyRulesMap = map[SetType][]rule.Rule{
 	XFSetDeCorrelateApply: {
-		decorrelate_apply.NewXFDeCorrelateSimpleApply(),
+		decorrelateapply.NewXFDeCorrelateSimpleApply(),
 	},
 }
 
 // OperandApplyRulesList OperandApplyRules is the rules rooted from an apply operand, organized as list.
 var OperandApplyRulesList = []rule.Rule{
-	decorrelate_apply.NewXFDeCorrelateSimpleApply(),
+	decorrelateapply.NewXFDeCorrelateSimpleApply(),
 }
 
 // DefaultRuleSet is default set of a series of rules.
