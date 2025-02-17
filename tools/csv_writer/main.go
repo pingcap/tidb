@@ -429,7 +429,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 			panic(fmt.Errorf("failed to write CSV row: %v", err))
 		}
 	}
-	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, localPath)
+	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, *localPath)
 }
 
 // Write CSV to local disk (column-oriented)
