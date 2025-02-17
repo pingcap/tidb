@@ -37,12 +37,12 @@ done
 echo "backup start..."
 run_br backup db --db "$DB" -s "local://$TEST_DIR/${DB}" --pd $PD_ADDR
 
-run_sql "drop schema $DB;"
-
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\")"
 
 #Test 1: restore the whole db without checkpoint
+run_sql "drop schema $DB;"
+
 run_br restore db --db "$DB" -s "local://$TEST_DIR/${DB}" --pd $PD_ADDR &
 RESTORE_PID=$!
 
@@ -70,8 +70,45 @@ exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
          jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
 if [ "$exists" != "false" ]; then
     echo "Error: Region label rule (schedule=deny) should have been removed."
-    # If the rule is missing, kill the restore process and exit with failure.
     exit 1
 fi
 
+echo "Test 1: restore the whole db without checkpoint finished successfully!"
+
+#Test 2: restore random tables without checkpoint
+run_sql "drop schema $DB;"
+
+TABLE_LIST=$(shuf -i 1-300 -n 20 | awk '{printf "-t sbtest%s ", $1}')
+
+run_br restore table --db "$DB" -s "local://$TEST_DIR/${DB}" \
+    --pd $PD_ADDR $TABLE_LIST &
+RESTORE_PID=$!
+
+echo "Monitoring for checkpoint stage (waiting for log file creation)..."
+# Wait for the checkpoint: the restore process will create $LOG_FILE when pausing.
+while [ ! -f "$LOG_FILE" ]; do
+    sleep 1
+done
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" != "true" ]; then
+    echo "Error: Expected region label rule (schedule=deny) not found (Test 2)."
+    kill $RESTORE_PID
+    exit 1
+fi
+
+rm -f "$LOG_FILE"
+wait $RESTORE_PID
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" != "false" ]; then
+    echo "Error: Region label rule (schedule=deny) should have been removed (Test 2)."
+    exit 1
+fi
+
+echo "Test 2: restore random tables without checkpoint finished successfully!"
+
+export GO_FAILPOINTS=""
 exit 0

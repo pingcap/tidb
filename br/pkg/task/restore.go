@@ -1105,34 +1105,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
-	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
-		if fileName, ok := val.(string); ok {
-			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-			if osErr != nil {
-				log.Warn("failed to create file", zap.Error(osErr))
-				return
-			}
-			msg := []byte(fmt.Sprintf("schedulers removed\n"))
-			_, err = f.Write(msg)
-			if err != nil {
-				log.Warn("failed to write data to file", zap.Error(err))
-				return
-			}
-
-			//block until the file is deleted
-			for {
-				_, statErr := os.Stat(fileName)
-				if os.IsNotExist(statErr) {
-					return
-				} else if statErr != nil {
-					log.Warn("error checking file", zap.Error(statErr))
-					return
-				}
-		
-				time.Sleep(1 * time.Second)
-			}
-		}
-	})
 	defer func() {
 		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
@@ -1171,6 +1143,37 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
 		}()
 	}
+
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		for {
+			if !ok {
+				break
+			}
+			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				break
+			}
+			msg := []byte(fmt.Sprintf("schedulers removed\n"))
+			_, err = f.Write(msg)
+			if err != nil {
+				log.Warn("failed to write data to file", zap.Error(err))
+				break
+			}
+			break
+		}
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+	})
 
 	if cfg.tiflashRecorder != nil {
 		for _, createdTable := range createdTables {
