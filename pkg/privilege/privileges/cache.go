@@ -906,7 +906,7 @@ func addUserFilterCondition(sql string, userList map[string]struct{}) string {
 	return b.String()
 }
 
-func (p *MySQLPrivilege) loadTable(exec sqlexec.SQLExecutor, sql string,
+func (*MySQLPrivilege) loadTable(exec sqlexec.SQLExecutor, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Do not use sctx.ExecRestrictedSQL() here deliberately.
