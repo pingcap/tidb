@@ -582,7 +582,7 @@ func main() {
 	for pk := *pkBegin; pk < *pkEnd; pk += *batchSize {
 		begin := pk
 		end := pk + *batchSize
-		csvFileName := fmt.Sprintf("%s.%d.csv", *fileNamePrefix, taskID)
+		csvFileName := fmt.Sprintf("%s.%09d.csv", *fileNamePrefix, taskID)
 		fileNames = append(fileNames, csvFileName)
 		task := Task{
 			id:       taskID,
