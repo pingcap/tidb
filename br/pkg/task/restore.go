@@ -1146,26 +1146,22 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
 		fileName, ok := val.(string)
-		for {
+		func() {
 			if !ok {
-				break
+				return
 			}
 			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 			if osErr != nil {
 				log.Warn("failed to create file", zap.Error(osErr))
-				break
+				return
 			}
 			msg := []byte("schedulers removed\n")
 			_, err = f.Write(msg)
 			if err != nil {
 				log.Warn("failed to write data to file", zap.Error(err))
-				break
+				return
 			}
-			//we add this only to make linter happy :D
-			if ok{
-				break
-			}
-		}
+		}()
 		for {
 			_, statErr := os.Stat(fileName)
 			if os.IsNotExist(statErr) {
