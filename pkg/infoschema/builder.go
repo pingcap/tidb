@@ -693,8 +693,6 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
-	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
-
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
@@ -998,6 +996,8 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
+		// Maintain foreign key reference information.
+		b.infoSchema.addReferredForeignKeys(di.Name, tblInfo)
 	}
 }
 
