@@ -46,6 +46,7 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 run_sql "DROP DATABASE IF EXISTS $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 
 # file corruption
 for filename in $(find $TEST_DIR/$DB -name "*.sst_temp"); do
@@ -62,6 +63,7 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 run_sql "DROP DATABASE IF EXISTS $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 
 # verify validating checksum is still performed even backup didn't enable it
 for filename in $(find $TEST_DIR/$DB -name "*.sst_bak"); do
@@ -77,6 +79,7 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 run_sql "DROP DATABASE IF EXISTS $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 
 # sanity check restore can succeed
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --checksum=true
