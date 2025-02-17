@@ -41,4 +41,4 @@ MODULE.bazel.lock
 genkeyword
 test_coverage
 coverage.dat
-tools/csv_writer/testCSVWriter.0.csv
+tools/csv_writer/*.csv
