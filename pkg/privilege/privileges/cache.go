@@ -439,6 +439,9 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.SQLExecutor) error {
 		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
 		return errLoadPrivilege.FastGen("mysql.user")
 	}
+	if l := p.user.Len(); l > 1024 {
+		logutil.BgLogger().Warn("load all called and user list is long, suggest enabling @@global.tidb_accelerate_user_creation_update", zap.Int("len", l))
+	}
 
 	err = p.LoadGlobalPrivTable(ctx)
 	if err != nil {
@@ -2160,7 +2163,6 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
-	logutil.BgLogger().Warn("update all called")
 	priv := newMySQLPrivilege()
 	res, err := h.sctx.Get()
 	if err != nil {
