@@ -1816,10 +1816,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 
 	res, exists := res.Extract([]types.JSONPathExpression{pathExpr})
-	if !exists {
-		return res, true, nil
-	}
-	if res.TypeCode != types.JSONTypeCodeObject {
+	if !exists || res.TypeCode != types.JSONTypeCodeObject {
 		return res, true, nil
 	}
 

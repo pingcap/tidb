@@ -291,9 +291,9 @@ explain select c, sum(a) from (select a+b as c, a from t) t1 group by c having c
 id	estRows	task	access object	operator info
 Sort_7	6400.00	root		Column#3
 └─Projection_9	6400.00	root		Column#3, Column#4
-  └─HashAgg_15	6400.00	root		group by:Column#6, funcs:sum(Column#7)->Column#4, funcs:firstrow(Column#6)->Column#3
+  └─HashAgg_15	6400.00	root		group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3
     └─TableReader_16	6400.00	root		data:HashAgg_10
-      └─HashAgg_10	6400.00	cop[tikv]		group by:plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), funcs:sum(planner__cascades__integration.t.a)->Column#7
+      └─HashAgg_10	6400.00	cop[tikv]		group by:plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), funcs:sum(planner__cascades__integration.t.a)->Column#8
         └─Selection_14	8000.00	cop[tikv]		gt(plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b), 1)
           └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c;
@@ -458,8 +458,8 @@ count(b)	sum(b)	avg(b)	b	max(b)	min(b)	bit_and(b)	bit_or(b)	bit_xor(b)
 explain select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__cascades__integration.t.a
-└─HashAgg_8	8000.00	root		group by:Column#10, Column#11, funcs:group_concat(Column#6, Column#7 separator ",")->Column#3, funcs:min(Column#8)->Column#4, funcs:avg(Column#9)->Column#5, funcs:firstrow(Column#10)->planner__cascades__integration.t.a
-  └─Projection_16	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#6, cast(planner__cascades__integration.t.b, var_string(20))->Column#7, planner__cascades__integration.t.b->Column#8, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#9, planner__cascades__integration.t.a->Column#10, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#11
+└─HashAgg_8	8000.00	root		group by:Column#11, Column#12, funcs:group_concat(Column#7, Column#8 separator ",")->Column#3, funcs:min(Column#9)->Column#4, funcs:avg(Column#10)->Column#5, funcs:firstrow(Column#11)->planner__cascades__integration.t.a
+  └─Projection_16	10000.00	root		cast(planner__cascades__integration.t.a, var_string(20))->Column#7, cast(planner__cascades__integration.t.b, var_string(20))->Column#8, planner__cascades__integration.t.b->Column#9, div(cast(planner__cascades__integration.t.a, decimal(10,0) BINARY), cast(planner__cascades__integration.t.b, decimal(10,0) BINARY))->Column#10, planner__cascades__integration.t.a->Column#11, plus(planner__cascades__integration.t.a, planner__cascades__integration.t.b)->Column#12
     └─TableReader_12	10000.00	root		data:TableFullScan_11
       └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a;
@@ -871,7 +871,14 @@ Projection_22	1.00	root		Column#7, planner__cascades__integration.t1.a, planner_
 select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
 sum(a)	(select t1.a from t1 where t1.a = t2.a limit 1)	(select t1.b from t1 where t1.b = t2.b limit 1)
 6	1	11
-explain select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
+explain select /*+ set_var(tidb_hash_join_version=legacy) */ a from t1 where exists(select 1 from t2 where t1.a = t2.a);
+id	estRows	task	access object	operator info
+MergeJoin_17	8000.00	root		semi join, left side:TableReader_29, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+├─TableReader_31(Build)	10000.00	root		data:TableFullScan_30
+│ └─TableFullScan_30	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader_29(Probe)	10000.00	root		data:TableFullScan_28
+  └─TableFullScan_28	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+explain select /*+ set_var(tidb_hash_join_version=optimized) */ a from t1 where exists(select 1 from t2 where t1.a = t2.a);
 id	estRows	task	access object	operator info
 MergeJoin_17	8000.00	root		semi join, left side:TableReader_30, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
 ├─TableReader_32(Build)	10000.00	root		data:TableFullScan_31
