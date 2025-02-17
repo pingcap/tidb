@@ -2,6 +2,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -10,11 +11,11 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 )
 
-func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
+func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error) {
 	// TODO: improve the scan performance
-	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
+	stmtQuery := fmt.Sprintf(`select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
 				from information_schema.statements_summary
-				where stmt_type='Select' and exec_count > 0 and plan_hint != ""`
+				where stmt_type='Select' and exec_count > 0 and plan_hint != "" and summary_begin_time >= '%s'`, since.Format("2006-01-02 15:04:05"))
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)

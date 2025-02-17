@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -60,6 +61,6 @@ func TestXXX(t *testing.T) {
 	tk.MustExec(`select a from t where a=1`)
 
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.RecordInactiveBindings()
+	err := bindHandle.RecordInactiveBindings(time.Time{})
 	fmt.Println("????????? ", err)
 }
