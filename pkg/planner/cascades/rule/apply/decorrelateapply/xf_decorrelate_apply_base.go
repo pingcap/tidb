@@ -35,5 +35,5 @@ func (*XFDeCorrelateApplyBase) PreCheck(applyGE base.LogicalPlan) bool {
 		return !(apply.NoDecorrelate)
 	}
 	// true
-	return apply.NoDecorrelate
+	return !apply.NoDecorrelate
 }
