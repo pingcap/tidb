@@ -152,13 +152,24 @@ func extractNumberFromStr(sqlType string) int {
 }
 
 func extractLenFromSQL(col *Column, s string) {
+	if !strings.HasPrefix(col.Type, "VARBINARY") &&
+		!strings.HasPrefix(col.Type, "VARCHAR") &&
+		!strings.HasPrefix(col.Type, "TEXT") {
+		return
+	}
+
 	// from type
 	if l := extractNumberFromStr(col.Type); l != -1 {
 		col.Len = l
 		return
 	}
 	// from comment
-	if l := extractNumberFromStr(s); l != -1 {
+	strs := strings.Split(s, "--")
+	if len(strs) != 2 {
+		log.Printf("No comment or Invalid comment: %s", s)
+		return
+	}
+	if l := extractNumberFromStr(strs[1]); l != -1 {
 		col.Len = l
 	}
 }
