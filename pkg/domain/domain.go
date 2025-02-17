@@ -2548,11 +2548,11 @@ func (do *Domain) gcStatsWorker(owner owner.Manager) {
 	lease := do.statsLease
 	gcStatsTicker := time.NewTicker(100 * lease)
 	updateStatsHealthyTicker := time.NewTicker(20 * lease)
-	readMemTicker := time.NewTicker(memory.ReadMemInterval)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		gcStatsTicker.Stop()
-		readMemTicker.Stop()
+		readMemTricker.Stop()
 		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("gcStatsWorker exited.")
@@ -2572,7 +2572,7 @@ func (do *Domain) gcStatsWorker(owner owner.Manager) {
 			if err != nil {
 				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
-		case <-readMemTicker.C:
+		case <-readMemTricker.C:
 			memory.ForceReadMemStats()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
