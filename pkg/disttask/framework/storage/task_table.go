@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -55,26 +56,35 @@ var (
 	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = goerrors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
 	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound = goerrors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
-	ErrTaskAlreadyExists = errors.New("task already exists")
+	ErrTaskAlreadyExists = goerrors.New("task already exists")
 
 	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
-	ErrTaskStateNotAllow = errors.New("task state not allow to do the operation")
+	ErrTaskStateNotAllow = goerrors.New("task state not allow to do the operation")
 
 	// ErrTaskChanged is the error when task changed by other operation.
-	ErrTaskChanged = errors.New("task changed by other operation")
+	ErrTaskChanged = goerrors.New("task changed by other operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
-	ErrSubtaskNotFound = errors.New("subtask not found")
+	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
+
+// Manager is the interface for task manager.
+// those methods are used by application side, we expose them through interface
+// to make tests easier.
+type Manager interface {
+	GetCPUCountOfNode(ctx context.Context) (int, error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error
+}
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
@@ -141,12 +151,20 @@ func SetTaskManager(is *TaskManager) {
 
 // WithNewSession executes the function with a new session.
 func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
-	se, err := mgr.sePool.Get()
+	v, err := mgr.sePool.Get()
 	if err != nil {
 		return err
 	}
-	defer mgr.sePool.Put(se)
-	return fn(se.(sessionctx.Context))
+	// when using global sort, the subtask meta might quite large as it include
+	// filenames of all the generated kv/stat files.
+	se := v.(sessionctx.Context)
+	limitBak := se.GetSessionVars().TxnEntrySizeLimit
+	defer func() {
+		se.GetSessionVars().TxnEntrySizeLimit = limitBak
+		mgr.sePool.Put(v)
+	}()
+	se.GetSessionVars().TxnEntrySizeLimit = vardef.TxnEntrySizeLimit.Load()
+	return fn(se)
 }
 
 // WithNewTxn executes the fn in a new transaction.
@@ -268,27 +286,55 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+`, max(st.concurrency)
-			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
-				on t.id = st.task_key and t.step = st.step
-			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
-			group by t.id
+	var res []*TaskExecInfo
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		// as the task will not go into next step when there are subtasks in those
+		// states, so their steps will be current step of their corresponding task,
+		// so we don't need to query by step here.
+		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
+			where st.exec_id = %? and st.state in (%?, %?)
+			group by st.task_key`,
+			execID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
+		if err != nil {
+			return err
+		}
+		if len(rs) == 0 {
+			return nil
+		}
+		maxSubtaskCon := make(map[int64]int, len(rs))
+		var taskIDsBuf strings.Builder
+		for i, r := range rs {
+			taskIDStr := r.GetString(0)
+			taskID, err2 := strconv.ParseInt(taskIDStr, 10, 0)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			maxSubtaskCon[taskID] = int(r.GetInt64(1))
+			if i > 0 {
+				taskIDsBuf.WriteString(",")
+			}
+			taskIDsBuf.WriteString(taskIDStr)
+		}
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select `+basicTaskColumns+` from mysql.tidb_global_task t
+			where t.id in (`+taskIDsBuf.String()+`) and t.state in (%?, %?, %?)
 			order by priority asc, create_time asc, id asc`,
-		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
-		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make([]*TaskExecInfo, 0, len(rs))
-	for _, r := range rs {
-		res = append(res, &TaskExecInfo{
-			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(9)),
-		})
-	}
-	return res, nil
+			proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing)
+		if err != nil {
+			return err
+		}
+		res = make([]*TaskExecInfo, 0, len(rs))
+		for _, r := range rs {
+			taskBase := row2TaskBasic(r)
+			res = append(res, &TaskExecInfo{
+				TaskBase:           taskBase,
+				SubtaskConcurrency: maxSubtaskCon[taskBase.ID],
+			})
+		}
+		return nil
+	})
+	return res, err
 }
 
 // GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
