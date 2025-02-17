@@ -61,12 +61,13 @@ func init() {
 }
 
 type Column struct {
-	Name     string
-	Type     string
-	Enum     []string // For ENUM type
-	IsPK     bool
-	IsUnique bool
-	Order    string
+	Name           string
+	Type           string
+	Enum           []string // For ENUM type
+	IsPK           bool
+	IsUnique       bool
+	Order          string
+	LenFromComment int
 }
 
 // Read SQL schema file
@@ -130,6 +131,7 @@ func parseSQLSchema(schema string) []Column {
 		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
 			col.Order = partialOrdered
 		}
+		extractLenFromSQLComment(&col, line)
 		columns = append(columns, col)
 	}
 	return columns
@@ -149,6 +151,12 @@ func extractNumberFromSQLType(sqlType string) int {
 	return -1
 }
 
+func extractLenFromSQLComment(col *Column, s string) {
+	if l := extractNumberFromSQLType(s); l != -1 {
+		col.LenFromComment = l
+	}
+}
+
 func generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "BIGINT"):
@@ -164,6 +172,8 @@ func generateValueByCol(col Column, num int, res []string) {
 		generateMediumblob(num, res)
 	case strings.HasPrefix(col.Type, "JSON"):
 		generateJSONObject(num, res)
+	case strings.HasPrefix(col.Type, "TEXT"):
+		generateVarbinary(num, col.LenFromComment, res, col.IsUnique)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
@@ -218,6 +228,11 @@ func generateTinyint1(num int, res []string) {
 }
 
 func generateVarbinary(num, len int, res []string, unique bool) {
+	if len <= 0 {
+		log.Printf("Invalid length: %d", len)
+		return
+	}
+
 	for i := 0; i < num; i++ {
 		if unique {
 			uuid := faker.UUID()
