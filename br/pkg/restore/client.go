@@ -1756,6 +1756,11 @@ func (rc *Client) IsFull() bool {
 	return !rc.IsIncremental()
 }
 
+// NeedCheckFreshCluster is every time. except user has not set filter argument.
+func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool) bool {
+	return rc.IsFull() && !ExplicitFilter
+}
+
 // IsIncremental returns whether this backup is incremental.
 func (rc *Client) IsIncremental() bool {
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
