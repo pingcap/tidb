@@ -163,6 +163,8 @@ func generateValueByCol(col Column, num int, res []string) {
 		generateVarbinary(num, extractNumberFromSQLType(col.Type), res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
 		generateMediumblob(num, res)
+	case strings.HasPrefix(col.Type, "JSON"):
+		generateJSONObject(num, res)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
@@ -248,6 +250,31 @@ func generatePrimaryKey(begin, end int, res []string) {
 		// Uncomment the following line for debugging:
 		// log.Printf("Primary key at index %d has value %d", idx, key)
 		idx++
+	}
+}
+
+func generateJSONObject(num int, res []string) {
+	jsonOpt := &gofakeit.JSONOptions{
+		Type: "object",
+		Fields: []gofakeit.Field{
+			{Name: "id", Function: "number", Params: gofakeit.MapParams{"min": {"1"}}},
+			{Name: "first_name", Function: "firstname"},
+			{Name: "last_name", Function: "lastname"},
+			{Name: "password", Function: "password", Params: gofakeit.MapParams{"special": {"false"}}},
+			{Name: "email", Function: "email"},
+			{Name: "phone", Function: "phone"},
+			{Name: "born_date", Function: "date"},
+			{Name: "address", Function: "address"},
+		},
+		Indent: false,
+	}
+
+	for i := 0; i < num; i++ {
+		r, err := faker.JSON(jsonOpt)
+		if err != nil {
+			fmt.Println(err)
+		}
+		res[i] = string(r)
 	}
 }
 
