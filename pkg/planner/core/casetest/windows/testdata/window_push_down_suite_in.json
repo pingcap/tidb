@@ -24,7 +24,7 @@
       "explain select *, dense_rank() over () FROM employee",
       "explain select *, lead(empid) over () FROM employee",
       "explain select *, lag(empid) over () FROM employee",
-      "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame",
+      "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame"
     ]
   },
   {
