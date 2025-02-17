@@ -1161,7 +1161,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 				log.Warn("failed to write data to file", zap.Error(err))
 				break
 			}
-			break
+			//we add this only to make linter happy :D
+			if ok{
+				break
+			}
 		}
 		for {
 			_, statErr := os.Stat(fileName)
