@@ -231,7 +231,7 @@ func generateMediumblob(num int, res []string) {
 }
 
 func generateTimestamp(num int, res []string) {
-	start := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	start := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Now()
 	for i := 0; i < num; i++ {
 		randomTime := faker.DateRange(start, end)
