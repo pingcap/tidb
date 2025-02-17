@@ -2,16 +2,16 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"os"
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/testkit"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
-	"os"
-	"testing"
-
-	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func setupStmtSummary() {

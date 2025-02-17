@@ -8,7 +8,7 @@ import (
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
-	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint
+	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
 				from information_schema.statements_summary
 				where stmt_type='Select' and exec_count > 0 and plan_hint != ""`
 	var rows []chunk.Row
@@ -26,8 +26,21 @@ func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
 		charset := row.GetString(2)
 		collation := row.GetString(3)
 		hint := row.GetString(4)
+		planDigest := row.GetString(5)
+		defaultDB := row.GetString(6)
 		fmt.Println(">>>>>>>>>>>>", digest, sql, charset, collation, hint)
-	}
 
+		originalSQL := sql
+		bindSQL := sql
+		sqlDigest := ""
+
+		stmtInsert := fmt.Sprintf("insert ignore into mysql.bind_info values ('%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')",
+			originalSQL, bindSQL, defaultDB, charset, collation, sqlDigest, planDigest)
+		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+			_, err = exec(sctx, stmtInsert)
+			return err
+		})
+
+	}
 	return nil
 }
