@@ -61,13 +61,13 @@ func init() {
 }
 
 type Column struct {
-	Name           string
-	Type           string
-	Enum           []string // For ENUM type
-	IsPK           bool
-	IsUnique       bool
-	Order          string
-	LenFromComment int
+	Name     string
+	Type     string
+	Enum     []string // For ENUM type
+	IsPK     bool
+	IsUnique bool
+	Order    string
+	Len      int // varchar(999)
 }
 
 // Read SQL schema file
@@ -120,10 +120,11 @@ func parseSQLSchema(schema string) []Column {
 			hasPk = true
 			col.IsPK = true
 		}
+		extractLenFromSQL(&col, line)
+
 		if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") &&
 			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
-			extractNumberFromSQLType(colType) > uuidLen &&
-			extractNumberFromSQLType(colType) < maxIndexLen {
+			col.Len > uuidLen && col.Len < maxIndexLen {
 			col.IsUnique = true
 		}
 		if strings.Contains(strings.ToUpper(line), totalOrdered) {
@@ -131,14 +132,13 @@ func parseSQLSchema(schema string) []Column {
 		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
 			col.Order = partialOrdered
 		}
-		extractLenFromSQLComment(&col, line)
 		columns = append(columns, col)
 	}
 	return columns
 }
 
 // Extract length from SQL type definition
-func extractNumberFromSQLType(sqlType string) int {
+func extractNumberFromStr(sqlType string) int {
 	start := strings.Index(sqlType, "(")
 	end := strings.Index(sqlType, ")")
 	if start != -1 && end != -1 && start < end {
@@ -151,9 +151,15 @@ func extractNumberFromSQLType(sqlType string) int {
 	return -1
 }
 
-func extractLenFromSQLComment(col *Column, s string) {
-	if l := extractNumberFromSQLType(s); l != -1 {
-		col.LenFromComment = l
+func extractLenFromSQL(col *Column, s string) {
+	// from type
+	if l := extractNumberFromStr(col.Type); l != -1 {
+		col.Len = l
+		return
+	}
+	// from comment
+	if l := extractNumberFromStr(s); l != -1 {
+		col.Len = l
 	}
 }
 
@@ -167,13 +173,13 @@ func generateValueByCol(col Column, num int, res []string) {
 		generateTimestamp(num, res)
 	case strings.HasPrefix(col.Type, "VARBINARY"):
 	case strings.HasPrefix(col.Type, "VARCHAR"):
-		generateVarbinary(num, extractNumberFromSQLType(col.Type), res, col.IsUnique)
+		generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
 		generateMediumblob(num, res)
 	case strings.HasPrefix(col.Type, "JSON"):
 		generateJSONObject(num, res)
 	case strings.HasPrefix(col.Type, "TEXT"):
-		generateVarbinary(num, col.LenFromComment, res, col.IsUnique)
+		generateVarbinary(num, col.Len, res, col.IsUnique)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
