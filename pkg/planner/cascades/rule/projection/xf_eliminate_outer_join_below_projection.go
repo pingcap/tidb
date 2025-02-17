@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -33,10 +34,10 @@ type XFEliminateOuterJoinBelowProjection struct {
 
 // NewXFEliminateOuterJoinBelowProjection creates a new EliminateProjection rule.
 func NewXFEliminateOuterJoinBelowProjection() *XFEliminateOuterJoinBelowProjection {
-	pa1 := pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly)
-	pa1.SetChildren(pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly))
+	pa := pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly))
 	return &XFEliminateOuterJoinBelowProjection{
-		BaseRule: rule.NewBaseRule(rule.XFEliminateOuterJoinBelowProjection, pa1),
+		BaseRule: rule.NewBaseRule(rule.XFEliminateOuterJoinBelowProjection, pa),
 	}
 }
 
@@ -53,19 +54,25 @@ func (*XFEliminateOuterJoinBelowProjection) PreCheck(projGE corebase.LogicalPlan
 
 // XForm implements the Rule interface.
 func (xf *XFEliminateOuterJoinBelowProjection) XForm(projGE corebase.LogicalPlan) ([]corebase.LogicalPlan, bool, error) {
-	//projOp := projGE.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
-	//joinGE := projGE.Children()[0]
-	//joinOp := joinGE.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-	//ok, innerChildIdx, outerGE, innerGE, outerUniqueIDs := xf.prepareForEliminateOuterJoin(joinGE)
-	//if !ok {
-	//	return nil, false, nil
-	//}
-	//// only when proj only use the columns from outer table can eliminate outer join.
-	//if !ruleutil.IsColsAllFromOuterTable(projOp.GetUsedCols(), outerUniqueIDs) {
-	//	return nil, false, nil
-	//}
-	////
-	//innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx
+	projOp := projGE.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
+	joinGE := projGE.Children()[0]
+	joinOp := joinGE.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
+	ok, innerChildIdx, outerGE, innerGE, outerUniqueIDs := xf.prepareForEliminateOuterJoin(joinGE)
+	if !ok {
+		return nil, false, nil
+	}
+	// only when proj only use the columns from outer table can eliminate outer join.
+	if !ruleutil.IsColsAllFromOuterTable(projOp.GetUsedCols(), &outerUniqueIDs) {
+		return nil, false, nil
+	}
+	// check whether join inner side covers the unique key.
+	innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx)
+	if xf.isInnerJoinKeysContainUniqueKey(innerGE, innerJoinKeys) {
+		clonedProjOp := *projOp
+		clonedProjOp.SetChildren(outerGE)
+		// since eliminate outer join is always good, eliminate the old one.
+		return []corebase.LogicalPlan{&clonedProjOp}, true, nil
+	}
 	return nil, false, nil
 }
 
@@ -92,26 +99,16 @@ func (*XFEliminateOuterJoinBelowProjection) prepareForEliminateOuterJoin(joinGE 
 }
 
 // check whether one of unique keys sets is contained by inner join keys.
-func (*XFEliminateOuterJoinBelowProjection) isInnerJoinKeysContainUniqueKey(innerGroup *memo.GroupExpression, joinKeys *expression.Schema) (bool, error) {
+func (*XFEliminateOuterJoinBelowProjection) isInnerJoinKeysContainUniqueKey(innerGE corebase.LogicalPlan, joinKeys *expression.Schema) bool {
 	// builds UniqueKey info of innerGroup.
-	//fds := innerGroup.GetGroup().GetLogicalProperty().FD
-	//// PK or UK(without nullability) can be used as strict key.
-	//closure, ok := fds.FindPrimaryKey()
-	//if !ok {
-	//	return false, nil
-	//}
-	//
-	//for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
-	//	joinKeysContainKeyInfo := true
-	//	for _, col := range keyInfo {
-	//		if !joinKeys.Contains(col) {
-	//			joinKeysContainKeyInfo = false
-	//			break
-	//		}
-	//	}
-	//	if joinKeysContainKeyInfo {
-	//		return true, nil
-	//	}
-	//}
-	return false, nil
+	fds := innerGE.(*memo.GroupExpression).GetGroup().GetLogicalProperty().FD
+	// PK or UK(without nullability) can be used as strict key.
+	ids := intset.NewFastIntSet()
+	for _, key := range joinKeys.Columns {
+		ids.Insert(int(key.UniqueID))
+	}
+	if fds.StrictKeyCovered(ids) {
+		return true
+	}
+	return false
 }
