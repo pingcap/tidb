@@ -11,6 +11,7 @@ import (
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
+	// TODO: improve the scan performance
 	stmtQuery := `select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
 				from information_schema.statements_summary
 				where stmt_type='Select' and exec_count > 0 and plan_hint != ""`
@@ -47,6 +48,7 @@ func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
 		db := utilparser.GetDefaultDB(originNode, schema)
 		originalSQL, sqlDigest := parser.NormalizeDigestForBinding(restoredSQL)
 
+		// TODO: improve the write performance
 		stmtInsert := fmt.Sprintf("insert ignore into mysql.bind_info values ('%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')",
 			originalSQL, bindSQL, db, charset, collation, sqlDigest, planDigest)
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
