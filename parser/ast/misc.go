@@ -3287,6 +3287,31 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
+// if the url is not a valid url, return the original string.
+func RedactURL(str string) string {
+	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	u, err := url.Parse(str)
+	if err != nil {
+		return str
+	}
+	scheme := u.Scheme
+	switch strings.ToLower(scheme) {
+	case "s3", "ks3":
+		values := u.Query()
+		for k := range values {
+			// see below on why we normalize key
+			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
+				values[k] = []string{"xxxxxx"}
+			}
+		}
+		u.RawQuery = values.Encode()
+	}
+	return u.String()
+}
+
 // SecureText implements SensitiveStmtNode
 func (n *BRIEStmt) SecureText() string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.

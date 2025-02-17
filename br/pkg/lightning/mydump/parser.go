@@ -54,11 +54,17 @@ type blockParser struct {
 
 	// cache
 	remainBuf *bytes.Buffer
+	// holds the cached parsable data after last readBlock. all data inside is
+	// unparsed at the moment of the return of last readBlock, for current unparsed
+	// data, use buf.
 	appendBuf *bytes.Buffer
 
 	// the Logger associated with this parser for reporting failure
 	Logger  log.Logger
 	metrics *metric.Metrics
+
+	checkRowLen bool
+	rowStartPos int64
 }
 
 func makeBlockParser(
@@ -162,6 +168,15 @@ func NewChunkParser(
 		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
 		escFlavor:   escFlavor,
 	}
+}
+
+func (parser *blockParser) beginRowLenCheck() {
+	parser.checkRowLen = true
+	parser.rowStartPos = parser.pos
+}
+
+func (parser *blockParser) endRowLenCheck() {
+	parser.checkRowLen = false
 }
 
 // SetPos changes the reported position and row ID.

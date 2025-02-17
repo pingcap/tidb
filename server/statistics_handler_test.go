@@ -275,3 +275,57 @@ func checkData(t *testing.T, path string, client *testServerClient) {
 	require.Equal(t, int64(4), count)
 	require.NoError(t, rows.Close())
 }
+
+// fix issue 53966
+func TestLoadNullStatsFile(t *testing.T) {
+	// Setting up the mock store
+	store := testkit.CreateMockStore(t)
+
+	// Creating a new TiDB driver and client
+	driver := NewTiDBDriver(store)
+	client := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Port = client.port
+	cfg.Status.StatusPort = client.statusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+	RunInGoTestChan = make(chan struct{})
+	server, err := NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.waitUntilServerOnline()
+
+	// Creating the stats file
+	path := "/tmp/stats.json"
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	fp.Write([]byte("null"))
+	require.NoError(t, err)
+
+	// Connecting to the database and executing SQL commands
+	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}))
+
+	require.NoError(t, err, "Error connecting")
+	tk := testkit.NewDBTestKit(t, db)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
+}

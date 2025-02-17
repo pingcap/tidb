@@ -17,13 +17,10 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -222,45 +219,12 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
-func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
-	if err != nil || readTS > latestTS {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		if readTS > currentVer.Ver {
-			return errors.Errorf("cannot set read timestamp to a future time")
-		}
-	}
-	return nil
-}
-
-// How far future from now ValidateStaleReadTS allows at most
-const allowedTimeFromNow = 100 * time.Millisecond
-
-// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
-	if currentTS == 0 || err != nil {
-		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	}
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
-	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
-	}
-	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
-		return errors.Errorf("cannot set read timestamp to a future time")
-	}
-	return nil
+// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
+// For read requests to the storage, the check can be implicitly performed when sending the RPC request. So this
+// function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`
+// statements that don't make reading operation immediately).
+func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
+	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }
 
 // SysProcTracker is used to track background sys processes

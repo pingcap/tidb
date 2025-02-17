@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
@@ -231,9 +232,8 @@ func TestCreateView(t *testing.T) {
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
-	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[schema:1050]Table 'test.v1' already exists")
-	tk.MustExec("drop view v1")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1", "[ddl:1351]View's SELECT contains a variable or parameter")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[ddl:1351]View's SELECT contains a variable or parameter")
 	// view with different col counts
 	tk.MustGetErrCode("create view v1 (c,d,e) as select a,b from t1 ", errno.ErrViewWrongList)
 	tk.MustGetErrCode("create view v1 (c) as select a,b from t1 ", errno.ErrViewWrongList)
@@ -1304,6 +1304,31 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
+}
+
+func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.Equal(t, int64(variable.DefTiDBDDLReorgMaxWriteSpeed), variable.DDLReorgMaxWriteSpeed.Load())
+
+	// valid values
+	for _, val := range []int64{1, 0, 100, 1024 * 1024, 2147483647, units.PiB} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = %d", val))
+		require.Equal(t, val, variable.DDLReorgMaxWriteSpeed.Load())
+		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(val, 10)))
+	}
+	for _, val := range []string{"1", "0", "100", "2KB", "3MiB", "4 gb", "2147483647", "1125899906842624" /* 1PiB */} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = '%s'", val))
+		expected, err := units.RAMInBytes(val)
+		require.NoError(t, err)
+		require.Equal(t, expected, variable.DDLReorgMaxWriteSpeed.Load())
+		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(expected, 10)))
+	}
+
+	// invalid values
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = -1")
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = invalid_val")
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = %d", units.PiB+1)
 }
 
 // Test issue #9205, fix the precision problem for time type default values
