@@ -239,9 +239,9 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	valueMarshaler func(*RangeGroup[K, SV]) ([]byte, error),
 ) (*CheckpointRunner[K, SV], error) {
 	runner := newCheckpointRunner(
-		newTableCheckpointStorage(manager.se, manager.dbName),
+		newTableCheckpointStorage(manager.runnerSe, manager.dbName),
 		nil, valueMarshaler)
-
+	manager.runnerSe = nil
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(
 		ctx,
