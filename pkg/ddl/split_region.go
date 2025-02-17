@@ -33,17 +33,20 @@ import (
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
-	regionIDs := make([]uint64, 0, len(parts))
+	var regionIDs []uint64
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
+		regionIDs = make([]uint64, 0, len(parts)*(len(tbInfo.Indices)+1))
 		scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
+		// Try to split global index here.
 		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
 	} else {
+		regionIDs = make([]uint64, 0, len(parts))
 		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatterScope))
 		}
