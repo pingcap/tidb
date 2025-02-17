@@ -133,7 +133,7 @@ func (pq *AnalysisPriorityQueue) IsInitialized() bool {
 
 // Initialize initializes the priority queue.
 // Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) Initialize() error {
+func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 	pq.syncFields.mu.Lock()
 	if pq.syncFields.initialized {
 		statslogutil.StatsLogger().Warn("Priority queue already initialized")
@@ -148,13 +148,12 @@ func (pq *AnalysisPriorityQueue) Initialize() error {
 	}()
 
 	pq.syncFields.mu.Lock()
-	ctx, cancel := context.WithCancel(context.Background())
 	if err := pq.rebuildWithoutLock(ctx); err != nil {
 		pq.syncFields.mu.Unlock()
 		pq.Close()
-		cancel()
 		return errors.Trace(err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	pq.ctx = ctx
 	pq.syncFields.cancel = cancel
 	pq.syncFields.runningJobs = make(map[int64]struct{})
