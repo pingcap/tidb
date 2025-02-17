@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
+// SetType is the type of rule set.
 type SetType uint
 
 const (
@@ -43,6 +44,7 @@ type OperandRules struct {
 	setList []rule.Rule
 }
 
+// ListRules is a list of rules.
 type ListRules []rule.Rule
 
 // Filter mask out rules which is in mask uint64.
