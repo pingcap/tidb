@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/csv"
@@ -41,6 +42,7 @@ var (
 	pkEnd               = flag.Int("pkEnd", 10, "End of primary key [begin, end)")
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
 	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
+	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
 )
 
 const (
@@ -356,6 +358,54 @@ func glanceFiles(credentialPath, fileName string) {
 	fmt.Println(string(b))
 }
 
+func fetchFileFromGCS(credentialPath, fileName string) {
+	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	s, err := storage.ParseBackend(*gcsDir, &op)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	if err != nil {
+		panic(err)
+	}
+	if exist, _ := store.FileExists(context.Background(), fileName); !exist {
+		panic(fmt.Errorf("file %s does not exist", fileName))
+	}
+	res, err := store.ReadFile(context.Background(), fileName)
+	if err != nil {
+		panic(err)
+	}
+
+	// Open the local file where the content will be written
+	file, err := os.Create(*localPath + fileName)
+	if err != nil {
+		panic(fmt.Errorf("failed to create file %s: %v", localPath, err))
+	}
+	defer file.Close() // Ensure the file is closed after writing
+
+	// Assuming res contains CSV data as []byte, convert it to string and split by newlines
+	// (In case the file is already in CSV format, or you need to write CSV data)
+	reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
+	writer := csv.NewWriter(file)                 // Prepare to write to file
+	defer writer.Flush()                          // Ensure data is written to file
+
+	// Read the CSV records from the []byte data
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err.Error() != "EOF" {
+				panic(fmt.Errorf("failed to read CSV from file: %v", err))
+			}
+			break
+		}
+		// Write the CSV record to the file
+		if err := writer.Write(record); err != nil {
+			panic(fmt.Errorf("failed to write CSV row: %v", err))
+		}
+	}
+	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, localPath)
+}
+
 // Write CSV to local disk (column-oriented)
 func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) error {
 	file, err := os.Create(filename)
@@ -557,6 +607,15 @@ func main() {
 	// Glance at the first 128*1024 bytes of the specified file if glanceFile is provided
 	if *glanceFile != "" {
 		glanceFiles(*credentialPath, *glanceFile)
+		return
+	}
+
+	// Fetch file from GCS if fetchFile is provided
+	if *fetchFile != "" {
+		if *localPath == "" {
+			log.Fatal("localPath must be provided when fetching a file")
+		}
+		fetchFileFromGCS(*credentialPath, *fetchFile)
 		return
 	}
 
