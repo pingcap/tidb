@@ -2,13 +2,12 @@ package bindinfo
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
-
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
@@ -25,7 +24,6 @@ func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
 	}
 
 	for _, row := range rows {
-		digest := row.GetString(0)
 		query := row.GetString(1)
 		charset := row.GetString(2)
 		collation := row.GetString(3)
@@ -49,14 +47,12 @@ func (h *globalBindingHandle) RecordInactiveBindings() (err error) {
 		db := utilparser.GetDefaultDB(originNode, schema)
 		originalSQL, sqlDigest := parser.NormalizeDigestForBinding(restoredSQL)
 
-
 		stmtInsert := fmt.Sprintf("insert ignore into mysql.bind_info values ('%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')",
 			originalSQL, bindSQL, db, charset, collation, sqlDigest, planDigest)
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 			_, err = exec(sctx, stmtInsert)
 			return err
 		})
-
 	}
 	return nil
 }
