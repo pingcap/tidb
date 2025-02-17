@@ -613,11 +613,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
