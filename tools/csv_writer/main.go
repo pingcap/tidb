@@ -301,7 +301,6 @@ func generateJSONObject(num int, res []string) {
 			{Name: "password", Function: "password", Params: gofakeit.MapParams{"special": {"false"}}},
 			{Name: "email", Function: "email"},
 			{Name: "phone", Function: "phone"},
-			{Name: "born_date", Function: "date"},
 			{Name: "address", Function: "address"},
 		},
 		Indent: false,
