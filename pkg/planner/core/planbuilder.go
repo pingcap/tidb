@@ -843,12 +843,12 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
 		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
 	if rs == nil {
 		return "", "", "", "", "",
 			errors.New("can't find any records for '" + planDigest + "' in statement summary")
-	}
-	if err != nil {
-		return "", "", "", "", "", err
 	}
 
 	var rows []chunk.Row
@@ -863,7 +863,7 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
 			// Empty auth users means that it is an internal queries.
 			schema = row.GetString(1)
-			query = row.GetString(2)
+			query = row.GetString(5)
 			planHint = row.GetString(8)
 			charset = row.GetString(6)
 			collation = row.GetString(7)
