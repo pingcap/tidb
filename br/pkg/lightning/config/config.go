@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -160,6 +161,16 @@ func (cfg *Config) String() string {
 		log.L().Error("marshal config to json error", log.ShortError(err))
 	}
 	return string(bytes)
+}
+
+// Redact redacts the sensitive information.
+func (cfg *Config) Redact() string {
+	originDir := cfg.Mydumper.SourceDir
+	defer func() {
+		cfg.Mydumper.SourceDir = originDir
+	}()
+	cfg.Mydumper.SourceDir = ast.RedactURL(cfg.Mydumper.SourceDir)
+	return cfg.String()
 }
 
 func (cfg *Config) ToTLS() (*common.TLS, error) {
