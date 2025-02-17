@@ -1,0 +1,18 @@
+# TestResourceGroupHint
+drop table if exists t;
+drop resource group if exists rg1;
+create table t1(c1 int);
+set global tidb_enable_resource_control='on';
+create resource group rg1 ru_per_sec=1000;
+select /*+ resource_group(default) */ * from t1;
+select /*+ resource_group(rg1) */ * from t1;
+select /*+ resource_group(rg1) resource_group(default) */ * from t1;
+show warnings;
+select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist where DB = "ddl__resource_group";
+select DB, RESOURCE_GROUP from information_schema.processlist;
+set global tidb_enable_resource_control='off';
+select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist where DB = "ddl__resource_group";
+show warnings;
+set global tidb_enable_resource_control=default;
+drop resource group rg1;
+

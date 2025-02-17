@@ -7,14 +7,16 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -26,7 +28,14 @@ type ExecutorBuilder struct {
 
 	oldTable *metautil.Table
 
-	concurrency uint
+	concurrency   uint
+	backoffWeight int
+
+	oldKeyspace []byte
+	newKeyspace []byte
+
+	resourceGroupName         string
+	explicitRequestSourceType string
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -35,7 +44,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 		table: table,
 		ts:    ts,
 
-		concurrency: variable.DefDistSQLScanConcurrency,
+		concurrency: vardef.DefDistSQLScanConcurrency,
 	}
 }
 
@@ -51,13 +60,48 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 	return builder
 }
 
+// SetBackoffWeight set the backoffWeight of the checksum executing.
+func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
+	builder.backoffWeight = backoffWeight
+	return builder
+}
+
+func (builder *ExecutorBuilder) SetOldKeyspace(keyspace []byte) *ExecutorBuilder {
+	builder.oldKeyspace = keyspace
+	return builder
+}
+
+func (builder *ExecutorBuilder) SetNewKeyspace(keyspace []byte) *ExecutorBuilder {
+	builder.newKeyspace = keyspace
+	return builder
+}
+
+func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuilder {
+	builder.resourceGroupName = name
+	return builder
+}
+
+func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *ExecutorBuilder {
+	builder.explicitRequestSourceType = name
+	return builder
+}
+
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
-	reqs, err := buildChecksumRequest(builder.table, builder.oldTable, builder.ts, builder.concurrency)
+	reqs, err := buildChecksumRequest(
+		builder.table,
+		builder.oldTable,
+		builder.ts,
+		builder.concurrency,
+		builder.oldKeyspace,
+		builder.newKeyspace,
+		builder.resourceGroupName,
+		builder.explicitRequestSourceType,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Executor{reqs: reqs}, nil
+	return &Executor{reqs: reqs, backoffWeight: builder.backoffWeight}, nil
 }
 
 func buildChecksumRequest(
@@ -65,6 +109,9 @@ func buildChecksumRequest(
 	oldTable *metautil.Table,
 	startTS uint64,
 	concurrency uint,
+	oldKeyspace []byte,
+	newKeyspace []byte,
+	resourceGroupName, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -76,7 +123,8 @@ func buildChecksumRequest(
 	if oldTable != nil {
 		oldTableID = oldTable.Info.ID
 	}
-	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency)
+	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
+		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -91,7 +139,8 @@ func buildChecksumRequest(
 				}
 			}
 		}
-		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency)
+		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
+			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -108,9 +157,13 @@ func buildRequest(
 	oldTableID int64,
 	startTS uint64,
 	concurrency uint,
+	oldKeyspace []byte,
+	newKeyspace []byte,
+	resourceGroupName, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
-	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency)
+	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
+		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -139,7 +192,8 @@ func buildRequest(
 			}
 		}
 		req, err = buildIndexRequest(
-			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency)
+			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
+			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -156,12 +210,15 @@ func buildTableRequest(
 	oldTableID int64,
 	startTS uint64,
 	concurrency uint,
+	oldKeyspace []byte,
+	newKeyspace []byte,
+	resourceGroupName, explicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
-			NewPrefix: tablecodec.GenTableRecordPrefix(tableID),
+			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.GenTableRecordPrefix(oldTableID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.GenTableRecordPrefix(tableID)...),
 		}
 	}
 
@@ -181,10 +238,12 @@ func buildTableRequest(
 	var builder distsql.RequestBuilder
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
-	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges, nil).
+	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges).
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
+		SetResourceGroupName(resourceGroupName).
+		SetExplicitRequestSourceType(explicitRequestSourceType).
 		Build()
 }
 
@@ -195,12 +254,17 @@ func buildIndexRequest(
 	oldIndexInfo *model.IndexInfo,
 	startTS uint64,
 	concurrency uint,
+	oldKeyspace []byte,
+	newKeyspace []byte,
+	resourceGroupName, ExplicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID),
-			NewPrefix: tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID),
+			OldPrefix: append(append([]byte{}, oldKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -218,6 +282,8 @@ func buildIndexRequest(
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
+		SetResourceGroupName(resourceGroupName).
+		SetExplicitRequestSourceType(ExplicitRequestSourceType).
 		Build()
 }
 
@@ -262,7 +328,8 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 
 // Executor is a checksum executor.
 type Executor struct {
-	reqs []*kv.Request
+	reqs          []*kv.Request
+	backoffWeight int
 }
 
 // Len returns the total number of checksum requests.
@@ -308,12 +375,43 @@ func (exec *Executor) Execute(
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
-		resp, err := sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+		var (
+			resp *tipb.ChecksumResponse
+			err  error
+		)
+		err = utils.WithRetry(ctx, func() error {
+			vars := kv.NewVariables(&killed)
+			if exec.backoffWeight > 0 {
+				vars.BackOffWeight = exec.backoffWeight
+			}
+			resp, err = sendChecksumRequest(ctx, client, req, vars)
+			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
+				// first time reach here. return error
+				if val.(bool) {
+					err = errors.New("inject checksum error")
+				}
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}, utils.NewChecksumBackoffStrategy())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		updateChecksumResponse(checksumResp, resp)
 		updateFn()
 	}
-	return checksumResp, nil
+	return checksumResp, checkContextDone(ctx)
+}
+
+// The coprocessor won't return the error if the context is done,
+// so sometimes BR would get the incomplete result.
+// checkContextDone makes sure the result is not affected by CONTEXT DONE.
+func checkContextDone(ctx context.Context) error {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return errors.Annotate(ctxErr, "context is cancelled by other error")
+	}
+	return nil
 }

@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "globalconfigsync",
+    srcs = ["globalconfig.go"],
+    importpath = "github.com/pingcap/tidb/pkg/domain/globalconfigsync",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "globalconfigsync_test",
+    timeout = "short",
+    srcs = ["globalconfig_test.go"],
+    flaky = True,
+    deps = [
+        ":globalconfigsync",
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

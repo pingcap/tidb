@@ -1,0 +1,551 @@
+# TestJsonObjectCompare
+select json_object('k', -1) > json_object('k', 2);
+select json_object('k', -1) < json_object('k', 2);
+drop table if exists tx;
+create table tx(a double, b int);
+insert into tx values (3.0, 3);
+select json_object('k', a) = json_object('k', b) from tx;
+
+# TestBuiltinFuncJsonPretty
+drop table if exists t;
+CREATE TABLE t  (`id` int NOT NULL AUTO_INCREMENT, `j` json, vc VARCHAR(500) ,  PRIMARY KEY (`id`));
+INSERT INTO t ( id, j, vc ) VALUES
+	( 1, '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}', '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}' ),
+	( 2, '[1,2,34]', '{' );
+select JSON_PRETTY(t.j), JSON_PRETTY(vc) from t where id = 1;
+-- error 3140
+select JSON_PRETTY(t.j), JSON_PRETTY(vc) from t where id = 2;
+-- error 3140
+select JSON_PRETTY(t.j), JSON_PRETTY(vc) from t where id in (1,2);
+-- error 3140
+select JSON_PRETTY("[1,2,3]}");
+
+# TestAggregationBuiltinJSONArrayagg
+drop table if exists t;
+CREATE TABLE t (
+		a int(11),
+		b varchar(100),
+		c decimal(3,2),
+		d json,
+		e date,
+		f time,
+		g datetime DEFAULT '2012-01-01',
+		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		i char(36),
+		j text(50));
+insert into t values(1, 'ab', 5.5, '{"id": 1}', '2020-01-10', '11:12:13', '2020-01-11', '2020-10-18 00:00:00', 'first', 'json_arrayagg_test');
+select a, json_arrayagg(b) from t group by a order by a;
+select b, json_arrayagg(c) from t group by b order by b;
+select e, json_arrayagg(f) from t group by e order by e;
+select f, json_arrayagg(g) from t group by f order by f;
+select g, json_arrayagg(h) from t group by g order by g;
+select h, json_arrayagg(i) from t group by h order by h;
+select i, json_arrayagg(j) from t group by i order by i;
+select json_arrayagg(23) from t group by a order by a;
+select json_arrayagg(null) from t group by a order by a;
+
+# TestAggregationBuiltinJSONObjectAgg
+drop table if exists t;
+CREATE TABLE t (
+		a int(11),
+		b varchar(100),
+		c decimal(3,2),
+		d json,
+		e date,
+		f time,
+		g datetime DEFAULT '2012-01-01',
+		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		i char(36),
+		j text(50));
+insert into t values(1, 'ab', 5.5, '{"id": 1}', '2020-01-10', '11:12:13', '2020-01-11', '2020-10-18 00:00:00', 'first', 'json_objectagg_test');
+select json_objectagg(a, b) from t group by a order by a;
+select json_objectagg(b, c) from t group by b order by b;
+select json_objectagg(e, f) from t group by e order by e;
+select json_objectagg(f, g) from t group by f order by f;
+select json_objectagg(g, h) from t group by g order by g;
+select json_objectagg(h, i) from t group by h order by h;
+select json_objectagg(i, j) from t group by i order by i;
+select json_objectagg(a, null) from t group by a order by a;
+# For issue: https://github.com/pingcap/tidb/issues/39806
+select a from (
+	select JSON_OBJECT('number', number, 'name', name)  'a' from
+	(
+		select 1  as number, 'name-1' as name  union
+		(select 2, 'name-2' ) union
+		(select 3, 'name-3' ) union
+		(select 4, 'name-4' ) union
+		(select 5, 'name-5' ) union
+		(select 6, 'name-2' )
+	) temp1
+) temp where  a ->> '$.number' = 1;
+
+# TestJSONBuiltin
+DROP TABLE IF EXISTS my_collection;
+CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`));
+-- error 1582
+UPDATE `my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');
+select json_valid(null);
+select json_valid("null");
+select json_valid(0);
+select json_valid("0");
+select json_valid("hello");
+select json_valid('"hello"');
+select json_valid('{"a":1}');
+select json_valid('{}');
+select json_valid('[]');
+select json_valid('2019-8-19');
+select json_valid('"2019-8-19"');
+-- error 3146
+select json_merge(1, 2);
+-- error 3146
+select json_merge_preserve(1, 2);
+-- error 3146
+select json_merge_patch(1, 2);
+-- error 3146
+select JSON_CONTAINS_PATH(1, 'one', '$.a');
+-- error 3146
+select json_search(1, 'one', '$.a');
+-- error 3146
+select json_keys(1, '$.a');
+-- error 3146
+select JSON_extract(1, '$.a');
+
+# TestFuncJSON
+DROP TABLE IF EXISTS table_json;
+CREATE TABLE table_json(a json, b VARCHAR(255));
+INSERT INTO table_json values('{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}', '{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}');
+INSERT INTO table_json values('[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]', '[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]');
+select json_type(a), json_type(b) from table_json;
+-- error 1582
+select json_quote();
+-- error 1582
+select json_quote('abc', 'def');
+-- error 1582
+select json_quote(NULL, 'def');
+-- error 1582
+select json_quote('abc', NULL);
+-- error 1582
+select json_unquote();
+-- error 1582
+select json_unquote('abc', 'def');
+-- error 1582
+select json_unquote(NULL, 'def');
+-- error 1582
+select json_unquote('abc', NULL);
+select json_quote(NULL);
+select json_unquote(NULL);
+select json_quote('abc');
+select json_quote(convert('"abc"' using ascii));
+select json_quote(convert('"abc"' using latin1));
+select json_quote(convert('"abc"' using utf8));
+select json_quote(convert('"abc"' using utf8mb4));
+select json_unquote('abc');
+select json_unquote('"abc"');
+select json_unquote(convert('"abc"' using ascii));
+select json_unquote(convert('"abc"' using latin1));
+select json_unquote(convert('"abc"' using utf8));
+select json_unquote(convert('"abc"' using utf8mb4));
+select json_quote('"');
+select json_unquote('"');
+select json_unquote('""');
+select char_length(json_unquote('""'));
+select json_unquote('"" ');
+select json_unquote(cast(json_quote('abc') as json));
+select json_unquote(cast('{"abc": "foo"}' as json));
+select json_unquote(json_extract(cast('{"abc": "foo"}' as json), '$.abc'));
+select json_unquote('["a", "b", "c"]');
+select json_unquote(cast('["a", "b", "c"]' as json));
+select json_quote(convert(X'e68891' using utf8));
+select json_quote(convert(X'e68891' using utf8mb4));
+select cast(json_quote(convert(X'e68891' using utf8)) as json);
+select json_unquote(convert(X'e68891' using utf8));
+select json_quote(json_quote(json_quote('abc')));
+select json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('abc'))))));
+-- error 3064
+select json_quote(123);
+-- error 3064
+select json_quote(-100);
+-- error 3064
+select json_quote(123.123);
+-- error 3064
+select json_quote(-100.000);
+-- error 3064
+select json_quote(true);
+-- error 3064
+select json_quote(false);
+-- error 3064
+select json_quote(cast("{}" as JSON));
+-- error 3064
+select json_quote(cast("[]" as JSON));
+-- error 3064
+select json_quote(cast("2015-07-29" as date));
+-- error 3064
+select json_quote(cast("12:18:29.000000" as time));
+-- error 3064
+select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));
+-- error 3064
+select json_unquote(123);
+-- error 3064
+select json_unquote(-100);
+-- error 3064
+select json_unquote(123.123);
+-- error 3064
+select json_unquote(-100.000);
+-- error 3064
+select json_unquote(true);
+-- error 3064
+select json_unquote(false);
+-- error 3064
+select json_unquote(cast("2015-07-29" as date));
+-- error 3064
+select json_unquote(cast("12:18:29.000000" as time));
+-- error 3064
+select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));
+select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json;
+select json_extract(json_set(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_set(b, '$.b', false), '$.b') from table_json;
+select json_extract(json_insert(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_insert(b, '$.b', false), '$.b') from table_json;
+select json_extract(json_replace(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_replace(b, '$.b', false), '$.b') from table_json;
+select json_extract(json_merge(a, cast(b as JSON)), '$[0].a[0]') from table_json;
+select json_extract(json_array(1,2,3), '$[1]');
+select json_extract(json_object(1,2,3,4), '$."1"');
+update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2';
+select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json;
+select json_contains(NULL, '1'), json_contains('1', NULL), json_contains('1', '1', NULL);
+select json_contains('{}','{}'), json_contains('[1]','1'), json_contains('[1]','"1"'), json_contains('[1,2,[1,[5,[3]]]]', '[1,3]', '$[2]'), json_contains('[1,2,[1,[5,{"a":[2,3]}]]]', '[1,{"a":[3]}]', "$[2]"), json_contains('{"a":1}', '{"a":1,"b":2}', "$");
+select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1', "$.a[2]"), json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b");
+-- error 3149
+select json_contains('1','1','$.*');
+select
+		json_contains_path(NULL, 'one', "$.c"),
+		json_contains_path(NULL, 'all', "$.c"),
+		json_contains_path('{"a": 1}', NULL, "$.c"),
+		json_contains_path('{"a": 1}', 'one', NULL),
+		json_contains_path('{"a": 1}', 'all', NULL);
+select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a.d');
+select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.b'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.b');
+select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$[*]'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]');
+select
+		json_keys('[]'),
+		json_keys('{}'),
+		json_keys('{"a": 1, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}', "$.a");
+select
+		json_length('1'),
+		json_length('{}'),
+		json_length('[]'),
+		json_length('{"a": 1}'),
+		json_length('{"a": 1, "b": 2}'),
+		json_length('[1, 2, 3]'),
+		json_length('{}', '$'),
+		json_length('1', '$'),
+		json_length(null, '$'),
+		json_length(null, 'fdfd'),
+		json_length('{}', null),
+		json_length('1', '$.a'),
+		json_length('{}', '$.a');
+-- error 3143
+select json_length('{}', 'fsdfds');
+-- error 3143
+select json_length('1', 'fsdfds');
+# issue 16267
+select json_array(922337203685477580) =  json_array(922337203685477581);
+
+select json_overlaps('[[1,2], 3]', '[1, 3]');
+select json_overlaps('[{"a":1}]', '{"a":1}');
+select json_overlaps('{"a":1}', '[{"a":1}]');
+select json_overlaps('[1,[2,3]]', '[[1,2], 3]');
+select json_overlaps('{"a":[1,2]}', '{"a":[2,1]}');
+select json_overlaps('{"a":[1,2]}', '{"a":[2,1]}');
+# issue 10461
+drop table if exists tx1;
+create table tx1(id int key, a double, b double, c double, d double);
+insert into tx1 values (1, 0.1, 0.2, 0.3, 0.0);
+select a+b, c from tx1;
+select json_array(a+b) = json_array(c) from tx1;
+
+SELECT '{"a":1}' MEMBER OF('{"a":1}');
+SELECT '{"a":1}' MEMBER OF('[{"a":1}]');
+SELECT 1 MEMBER OF('1');
+SELECT '{"a":1}' MEMBER OF('{"a":1}');
+SELECT '[4,5]' MEMBER OF('[[3,4],[4,5]]');
+SELECT '[4,5]' MEMBER OF('[[3,4],"[4,5]"]');
+drop table if exists t;
+create table t(a enum('a', 'b'), b time, c binary(10));
+insert into t values ('a', '11:00:00', 'a');
+select a member of ('"a"') from t;
+select b member of (json_array(cast('11:00:00' as time))) from t;
+select b member of ('"11:00:00"') from t;
+select c member of ('"a"') from t;
+-- error 3140
+select 'a' member of ('a');
+
+# TestJSONObjectWithBinaryCharset
+drop table if exists t;
+create table t(a char(20), b blob);
+insert into t values ('a string', 'a binary string');
+select json_object(a, b) from t;
+select json_objectagg(a, b) from t;
+-- error 3144
+select json_object(b, a) from t;
+-- error 3144
+select json_objectagg(b, a) from t;
+
+# TestCastJSONOpaqueValueToNumeric
+--enable_warnings
+select cast(cast(b'010101' as json) as signed);
+select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);
+select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);
+--disable_warnings
+
+# TestCompareJSONWithOtherType
+drop table if exists t;
+create table t(a JSON);
+insert into t values ('{}'), ('true'), ('5');
+select * from t where a = TRUE;
+select * from t where a < 6;
+select * from t where a > 5;
+
+# TestJSONDepth
+drop table if exists t;
+create table t(a JSON);
+-- error 3157
+insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 101)
+select a from c1 where c > 100;
+insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
+                      union
+                      select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
+                      from c1
+                      where c < 100)
+select a from c1 where c > 99;
+-- error 3157
+select json_array(a, 1) from t;
+# FIXME: mysql client shows the error.
+# -- error
+# select json_objectagg(1, a) from t;
+-- error 3157
+select json_object(1, a) from t;
+-- error 3157
+select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;
+-- error 3157
+select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;
+# FIXME: mysql client shows the error.
+# -- error
+# select json_arrayagg(a) from t;
+
+# TestJSONStorageFree
+select json_storage_free(NULL);
+select json_storage_free('{}');
+select json_storage_free('1');
+select json_storage_free('{"a": "b"}');
+-- error 3140
+select json_storage_free('{"c":["a","b"]');
+
+# TestJSONExtractFromLast
+select json_extract('[{"a": [1,2,3,4]}]', '$[0] . a[last]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0] . a [last - 1]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a [last - 100]');
+
+# TestJSONExtractRange
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last - 1]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to last - 100]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to 100]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to last]');
+select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]');
+
+# TestCastJSONStringToInteger
+drop table if exists t;
+create table t (a json);
+insert into t values ('"-1"');
+insert into t values ('"18446744073709551615"');
+insert into t values ('"18446744073709552000"');
+-- sorted_result
+select a, cast(a as unsigned) from t;
+-- sorted_result
+select a, cast(a as signed) from t;
+
+# TestCastBinaryStringToJSON
+select cast(binary 'aa' as json);
+drop table if exists t;
+create table t (vb VARBINARY(10), b BINARY(10), vc VARCHAR(10), c CHAR(10));
+insert into t values ('1', '1', '1', '1');
+select cast(vb as json), cast(b as json), cast(vc as json), cast(c as json) from t;
+select 1 from t where cast(vb as json) = '1';
+select 1 from t where cast(b as json) = '1';
+select 1 from t where cast(vc as json) = '1';
+select 1 from t where cast(c as json) = '1';
+select 1 from t where cast(BINARY vc as json) = '1';
+select 1 from t where cast(BINARY c as json) = '1';
+
+# TestCastJSONToTimeWithCorrectFsp
+drop table if exists t;
+create table t (j json);
+insert into t values (cast(cast("2024-10-24 11:11:11.12346" as datetime(6)) as json));
+select cast(j as datetime(6)) from t;
+select cast(j as datetime(3)) from t;
+select cast(j as datetime) from t;
+
+# TestJSONSchemaValid
+SELECT JSON_SCHEMA_VALID(NULL, NULL);
+SELECT JSON_SCHEMA_VALID('{}', NULL);
+SELECT JSON_SCHEMA_VALID(NULL, '{}');
+SELECT JSON_SCHEMA_VALID(NULL, '');
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}');
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}');
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '{}');
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '"foo"');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
+
+# TestJSONQuote
+SELECT JSON_QUOTE("<html>");
+SELECT JSON_QUOTE("&");
+SELECT JSON_QUOTE(CONVERT(0x10 USING utf8mb4));
+SELECT JSON_QUOTE("O'Neil");
+
+# Test argment errors
+# https://github.com/pingcap/tidb/issues/53799
+-- error 3146
+SELECT JSON_CONTAINS(123, '');
+-- error 3146
+SELECT JSON_CONTAINS('{}', 123);
+-- error 3146
+SELECT JSON_OVERLAPS(123, '');
+-- error 3146
+SELECT JSON_OVERLAPS('{}', 123);
+-- error 3146
+SELECT 'abc' MEMBER OF(123);
+-- error 3154
+SELECT JSON_SEARCH('{}',3,4);
+-- error 3143
+SELECT JSON_ARRAY_APPEND('[]','abc','def');
+-- error 3143
+SELECT JSON_ARRAY_INSERT('{}','abc','def');
+-- error 3153
+SELECT JSON_REMOVE('{}','$');
+-- error 3149
+SELECT JSON_REMOVE('{}','$.*');
+-- error 3149
+SELECT JSON_SET('{}','$.*','');
+-- error 3154
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+-- error 3154
+SELECT JSON_SEARCH('{}', 'on', '$.a');
+-- error 3158
+SELECT JSON_OBJECT(NULL,'abc');
+-- error 3146
+SELECT JSON_SCHEMA_VALID(1, '{}');
+-- error 3146
+SELECT JSON_SCHEMA_VALID('{}', 1);
+-- error 3141
+SELECT JSON_SCHEMA_VALID('','{}');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('{}','');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('', NULL);
+-- error 3853
+SELECT JSON_SCHEMA_VALID('1','{}');
+-- error 3157
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
+
+# errorIsRetryable() requires the right errors. Otherwise it might retry DDL statements that should not be retried,
+# e.g. adding a constraint with this function.
+#
+# Note that TiDB expects a number for exclusiveMinimum where MySQL expects a bool. This is due to MySQL using an older draft of the standard.
+#
+# - https://github.com/pingcap/tidb/issues/54273
+# - https://github.com/pingcap/tidb/issues/54207
+# - https://bugs.mysql.com/bug.php?id=106454
+-- error 3853
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
+
+# TestIssue54494
+# https://github.com/pingcap/tidb/issues/54494
+select json_type(cast(cast('2024' as year) as json));
+
+# TestJSONValidForNull
+drop table if exists t;
+create table t(j json, str varchar(255), other int);
+insert into t values (NULL, NULL, NULL);
+select json_valid(j), json_valid(str), json_valid(other) from t;
+
+# TestIssue54029
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(id INT PRIMARY KEY, d1 DATE, d2 DATETIME, t1 TIME, t2 TIMESTAMP, b1 BIT, b2 BINARY);
+INSERT INTO t1 VALUES (1, '2024-06-14', '2024-06-14 09:37:00', '09:37:00', '2024-06-14 09:37:00', b'0', 0x41);
+-- error 3146
+SELECT JSON_TYPE(d1) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(d2) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(t1) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(t2) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(b1) FROM t1;
+-- error 3144
+SELECT JSON_TYPE(b2) FROM t1;
+-- error 3144
+SELECT JSON_EXTRACT(b2, '$') FROM t1;
+-- error 3144
+SELECT JSON_MERGE(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_CONTAINS_PATH(b2, 'one', '$.a') FROM t1;
+-- error 3144
+SELECT '1' member of(b2) FROM t1;
+-- error 3144
+SELECT JSON_CONTAINS(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_OVERLAPS(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PATCH(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PATCH('{a:"b"}', b2) FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PRESERVE(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PRESERVE('{a:"b"}', b2) FROM t1;
+-- error 3144
+SELECT JSON_SEARCH(b2, 'one', '1') FROM t1;
+-- error 3144
+SELECT JSON_KEYS(b2) FROM t1;
+-- error 3144
+SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
+
+# TestIssue54044
+prepare stmt from 'select json_object(?, ?)';
+set @a=1;
+execute stmt using @a, @a;
+
+# TestIssue58888
+select json_extract("0.0", "$");
+select json_extract("[1E17]", "$");
+
+# TestIssue58894
+select json_extract('[1E27]', '$');
+
+# TestIssue58897
+select json_extract("{\"\\b\":\"\"}", "$");
+select json_extract("{\"\\f\":\"\"}", "$");

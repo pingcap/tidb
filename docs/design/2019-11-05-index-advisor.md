@@ -57,7 +57,7 @@ for {
 Note that executing `Swap and Re-evaluate` algorithm is necessary as the `reduced_cost` sometimes is a joint effect of several indexes and it's hard to tell each index's independent contribution to the final `reduced_cost`. For example, assume there is an extremely slow query in input workload and the desired indexes for this query is `a` and `b`. However, the number of allowed recommended indexes for the whole workload is limited and for some reason, `a` ranks top `n` in the final score list while `b` is not. But there are chances that without `b`, `a` can no more optimize that extremely slow query. 
 
 ----------------------------------------------
-### A quick exmaple for single-column index recommendation
+### A quick example for single-column index recommendation
 
 **Workload**:
 

@@ -1,0 +1,445 @@
+drop table if exists t1;
+CREATE TABLE t1 (
+a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+b varchar(10),
+PRIMARY KEY (a)
+) PARTITION BY RANGE (UNIX_TIMESTAMP(a)) (
+PARTITION p1 VALUES LESS THAN (1199134800),
+PARTITION pmax VALUES LESS THAN MAXVALUE);
+ALTER TABLE t1 REORGANIZE PARTITION pmax INTO (
+PARTITION p3 VALUES LESS THAN (1247688000),
+PARTITION pmax VALUES LESS THAN MAXVALUE);
+drop table if exists t;
+CREATE TABLE t (
+a int NOT NULL primary key ,
+b varchar(100),
+key (b)
+) PARTITION BY hash (a) PARTITIONS 1;
+insert into t values (1,"a"),(2,"bye"),(3,"Hi");
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 1
+ALTER TABLE t REMOVE PARTITIONING;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select * from t;
+a	b
+3	Hi
+1	a
+2	bye
+drop table if exists t;
+create table t (a int primary key, b varchar(255), key (b));
+insert into t values (0,'filler0'), (1,'filler0'), (2,'filler0'), (3,'filler1'), (4,'filler1'), (5,'filler1'), (6,'filler2'), (7,'filler2'), (8,'filler2'), (9,'filler3'), (10,'filler3'), (11,'filler3'), (12,'filler4'), (13,'filler4'), (14,'filler4'), (15,'filler5'), (16,'filler5'), (17,'filler5'), (18,'filler6'), (19,'filler6'), (20,'filler6'), (21,'filler7'), (22,'filler7'), (23,'filler7'), (24,'filler8'), (25,'filler8'), (26,'filler8'), (27,'filler9'), (28,'filler9'), (29,'filler9'), (30,'filler10'), (31,'filler10'), (32,'filler10'), (33,'filler11'), (34,'filler11'), (35,'filler11'), (36,'filler12'), (37,'filler12'), (38,'filler12'), (39,'filler13'), (40,'filler13'), (41,'filler13'), (42,'filler14'), (43,'filler14'), (44,'filler14'), (45,'filler15'), (46,'filler15'), (47,'filler15'), (48,'filler16'), (49,'filler16'), (50,'filler16'), (51,'filler17'), (52,'filler17'), (53,'filler17'), (54,'filler18'), (55,'filler18'), (56,'filler18'), (57,'filler19'), (58,'filler19'), (59,'filler19'), (60,'filler20'), (61,'filler20'), (62,'filler20'), (63,'filler21'), (64,'filler21'), (65,'filler21'), (66,'filler22'), (67,'filler22'), (68,'filler22'), (69,'filler23'), (70,'filler23'), (71,'filler23'), (72,'filler24'), (73,'filler24'), (74,'filler24'), (75,'filler25'), (76,'filler25'), (77,'filler25'), (78,'filler26'), (79,'filler26'), (80,'filler26'), (81,'filler27'), (82,'filler27'), (83,'filler27'), (84,'filler28'), (85,'filler28'), (86,'filler28'), (87,'filler29'), (88,'filler29'), (89,'filler29'), (90,'filler30'), (91,'filler30'), (92,'filler30'), (93,'filler31'), (94,'filler31'), (95,'filler31'), (96,'filler32'), (97,'filler32'), (98,'filler32'), (99,'filler33');
+alter table t partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition pMax values less than (maxvalue));
+show warnings;
+Level	Code	Message
+Warning	1105	The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (1000000),
+ PARTITION `p1` VALUES LESS THAN (2000000),
+ PARTITION `pMax` VALUES LESS THAN (MAXVALUE))
+alter table t partition by hash(a) partitions 7;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 7
+alter table t partition by key(a) partitions 5;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`a`) PARTITIONS 5
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int) PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+CREATE TABLE test.issue50972_2 (id2 int) PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+CREATE TABLE test.issue50972_3 (id3 int) PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int);
+CREATE TABLE test.issue50972_2 (id2 int);
+CREATE TABLE test.issue50972_3 (id3 int);
+ALTER TABLE test.issue50972_1 PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+ALTER TABLE test.issue50972_2 PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+ALTER TABLE test.issue50972_3 PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+id INT NOT NULL PRIMARY KEY,
+name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+Table	Create Table
+k1	CREATE TABLE `k1` (
+  `id` int NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k2 (
+id INT NOT NULL,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+Table	Create Table
+k2	CREATE TABLE `k2` (
+  `id` int NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k3 (
+id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+Table	Create Table
+k3	CREATE TABLE `k3` (
+  `id` int NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k4(
+id INT NOT NULL,
+id1 int,
+name VARCHAR(20),
+UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;
+Error 1105 (HY000): Table partition metadata not correct, neither partition expression or list of partition columns
+set character_set_connection=gbk;
+drop table if exists t;
+create table t (col1 varbinary(16) unique key) partition by list columns(col1)
+(partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`)
+(PARTITION `p0` VALUES IN (_binary 0xc4e3bac3,_binary 0xced2bac3),
+ PARTITION `p1` VALUES IN (_binary 0xb4f3bcd2bac3),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p1);
+hex(col1)
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varbinary(16) unique key) partition by range columns(col1)
+(partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`)
+(PARTITION `p0` VALUES LESS THAN (_binary 0xc4e3bac3),
+ PARTITION `p1` VALUES LESS THAN (_binary 0xced2bac3),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE))
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+select hex(col1) from t partition(p1);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by list columns(col1)
+(partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`)
+(PARTITION `p0` VALUES IN ('你好','我好'),
+ PARTITION `p1` VALUES IN ('大家好'),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p1);
+hex(col1)
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by range columns(col1)
+(partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`)
+(PARTITION `p0` VALUES LESS THAN ('你好'),
+ PARTITION `p1` VALUES LESS THAN ('我好'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE))
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+select hex(col1) from t partition(p1);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by list columns(col1, col2)
+(partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  `col2` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES IN ((_binary 0xc4e3bac3,_binary 0xc4e3bac3),(_binary 0xced2bac3,_binary 0xced2bac3)),
+ PARTITION `p1` VALUES IN ((_binary 0xb4f3bcd2bac3,_binary 0xb4f3bcd2bac3)),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by range columns(col1, col2)
+(partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  `col2` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES LESS THAN (_binary 0xc4e3bac3,_binary 0xc4e3bac3),
+ PARTITION `p1` VALUES LESS THAN (_binary 0xced2bac3,_binary 0xced2bac3),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE,MAXVALUE))
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by list columns(col1, col2)
+(partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  `col2` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES IN (('你好','你好'),('我好','我好')),
+ PARTITION `p1` VALUES IN (('大家好','大家好')),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by range columns(col1, col2)
+(partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE) );
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  `col2` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES LESS THAN ('你好','你好'),
+ PARTITION `p1` VALUES LESS THAN ('我好','我好'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE,MAXVALUE))
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+set character_set_connection=DEFAULT;
+create table a (col1 int, col2 int, unique key (col1, col2)) partition by range  columns (col1, col2) (partition p0 values less than (NULL, 1 ));
+Error 1566 (HY000): Not allowed to use NULL value in VALUES LESS THAN
+drop table if exists parent, child, child_with_partition;
+create table parent (id int unique);
+create table child (id int, parent_id int, foreign key (parent_id) references parent(id));
+create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));
+alter table child_with_partition exchange partition p1 with table child;
+Error 1740 (HY000): Table to exchange with partition has foreign key references: 'child'
+alter table child drop foreign key fk_1;
+alter table child drop key fk_1;
+alter table child_with_partition exchange partition p1 with table child;
+drop table if exists t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+drop table t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8193);
+Error 1499 (HY000): Too many partitions (including subpartitions) were defined
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8192);
+drop table if exists tp1;
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (500);
+select QUERY from information_schema.ddl_jobs limit 1;
+QUERY
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) (PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500))
+drop table tp1;
+create table tp1(id int);
+ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
+select QUERY from information_schema.ddl_jobs limit 1;
+QUERY
+ALTER TABLE tp1 PARTITION BY RANGE (id) (PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600))
+drop table tp1;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int NOT NULL, b varchar(20) NOT NULL, c datetime NOT NULL ) PARTITION BY RANGE COLUMNS (c) INTERVAL (1 MINUTE) FIRST PARTITION LESS THAN ('2024-01-01') LAST PARTITION LESS THAN ('2024-01-01 00:10:00');
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(20) NOT NULL,
+  `c` datetime NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`c`)
+(PARTITION `P_LT_2024-01-01 00:00:00` VALUES LESS THAN ('2024-01-01 00:00:00'),
+ PARTITION `P_LT_2024-01-01 00:01:00` VALUES LESS THAN ('2024-01-01 00:01:00'),
+ PARTITION `P_LT_2024-01-01 00:02:00` VALUES LESS THAN ('2024-01-01 00:02:00'),
+ PARTITION `P_LT_2024-01-01 00:03:00` VALUES LESS THAN ('2024-01-01 00:03:00'),
+ PARTITION `P_LT_2024-01-01 00:04:00` VALUES LESS THAN ('2024-01-01 00:04:00'),
+ PARTITION `P_LT_2024-01-01 00:05:00` VALUES LESS THAN ('2024-01-01 00:05:00'),
+ PARTITION `P_LT_2024-01-01 00:06:00` VALUES LESS THAN ('2024-01-01 00:06:00'),
+ PARTITION `P_LT_2024-01-01 00:07:00` VALUES LESS THAN ('2024-01-01 00:07:00'),
+ PARTITION `P_LT_2024-01-01 00:08:00` VALUES LESS THAN ('2024-01-01 00:08:00'),
+ PARTITION `P_LT_2024-01-01 00:09:00` VALUES LESS THAN ('2024-01-01 00:09:00'),
+ PARTITION `P_LT_2024-01-01 00:10:00` VALUES LESS THAN ('2024-01-01 00:10:00'))
+ALTER TABLE t FIRST PARTITION LESS THAN ('2024-01-01 00:02:00');
+ALTER TABLE t LAST PARTITION LESS THAN ('2024-01-01 00:12:00');
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(20) NOT NULL,
+  `c` datetime NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`c`)
+(PARTITION `P_LT_2024-01-01 00:02:00` VALUES LESS THAN ('2024-01-01 00:02:00'),
+ PARTITION `P_LT_2024-01-01 00:03:00` VALUES LESS THAN ('2024-01-01 00:03:00'),
+ PARTITION `P_LT_2024-01-01 00:04:00` VALUES LESS THAN ('2024-01-01 00:04:00'),
+ PARTITION `P_LT_2024-01-01 00:05:00` VALUES LESS THAN ('2024-01-01 00:05:00'),
+ PARTITION `P_LT_2024-01-01 00:06:00` VALUES LESS THAN ('2024-01-01 00:06:00'),
+ PARTITION `P_LT_2024-01-01 00:07:00` VALUES LESS THAN ('2024-01-01 00:07:00'),
+ PARTITION `P_LT_2024-01-01 00:08:00` VALUES LESS THAN ('2024-01-01 00:08:00'),
+ PARTITION `P_LT_2024-01-01 00:09:00` VALUES LESS THAN ('2024-01-01 00:09:00'),
+ PARTITION `P_LT_2024-01-01 00:10:00` VALUES LESS THAN ('2024-01-01 00:10:00'),
+ PARTITION `P_LT_2024-01-01 00:11:00` VALUES LESS THAN ('2024-01-01 00:11:00'),
+ PARTITION `P_LT_2024-01-01 00:12:00` VALUES LESS THAN ('2024-01-01 00:12:00'))

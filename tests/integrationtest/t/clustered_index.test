@@ -1,0 +1,45 @@
+set @@tidb_enable_outer_join_reorder=true;
+drop database if exists with_cluster_index;
+create database with_cluster_index;
+drop database if exists wout_cluster_index;
+create database wout_cluster_index;
+
+use with_cluster_index;
+create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col_3 datetime default '1986-07-01' , col_4 bigint unsigned default 1504335725690712365 , primary key idx_0 ( col_3,col_2(1),col_1(6) ) clustered, key idx_1 ( col_3 ), unique key idx_2 ( col_3 ) , unique key idx_3 ( col_0 ) , key idx_4 ( col_1(1),col_2(1) ) , key idx_5 ( col_2(1) ) )  ;
+create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) clustered, key idx_9 ( col_11 ) )  ;
+load stats 's/with_cluster_index_tbl_0.json';
+load stats 's/with_cluster_index_tbl_2.json';
+
+use wout_cluster_index;
+create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col_3 datetime default '1986-07-01' , col_4 bigint unsigned default 1504335725690712365 , primary key idx_0 ( col_3,col_2(1),col_1(6) ) nonclustered, key idx_1 ( col_3 ) , unique key idx_2 ( col_3 ) , unique key idx_3 ( col_0 ) , key idx_4 ( col_1(1),col_2(1) ) , key idx_5 ( col_2(1) ) )  ;
+create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) nonclustered, key idx_9 ( col_11 ) )  ;
+load stats 's/wout_cluster_index_tbl_0.json';
+load stats 's/wout_cluster_index_tbl_2.json';
+
+explain select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
+
+explain select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
+
+explain select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+explain select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+
+explain select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+explain select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+
+explain select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
+explain select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
+
+explain select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+
+explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
+explain select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
+
+explain select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
+
+explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
+set @@tidb_enable_outer_join_reorder=false;

@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"golang.org/x/exp/slices"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
@@ -35,8 +35,9 @@ func getPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
 
 func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (bool, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   pdAddrs,
-		DialTimeout: defaultEtcdDialTimeOut,
+		Endpoints:        pdAddrs,
+		DialTimeout:      defaultEtcdDialTimeOut,
+		AutoSyncInterval: 30 * time.Second,
 	})
 	if err != nil {
 		return false, errors.Trace(err)
@@ -77,4 +78,45 @@ func string2Map(a, b []string) map[string]string {
 
 func needRepeatableRead(serverType version.ServerType, consistency string) bool {
 	return consistency != ConsistencyTypeSnapshot || serverType != version.ServerTypeTiDB
+}
+
+func infiniteChan[T any]() (chan<- T, <-chan T) {
+	in, out := make(chan T), make(chan T)
+
+	go func() {
+		var (
+			q  []T
+			e  T
+			ok bool
+		)
+		handleRead := func() bool {
+			if !ok {
+				for _, e = range q {
+					out <- e
+				}
+				close(out)
+				return true
+			}
+			q = append(q, e)
+			return false
+		}
+		for {
+			if len(q) > 0 {
+				select {
+				case e, ok = <-in:
+					if handleRead() {
+						return
+					}
+				case out <- q[0]:
+					q = q[1:]
+				}
+			} else {
+				e, ok = <-in
+				if handleRead() {
+					return
+				}
+			}
+		}
+	}()
+	return in, out
 }

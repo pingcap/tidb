@@ -1,0 +1,4 @@
+set tidb_cost_model_version=1;
+# test show output field name
+show tables like '%xx';
+show databases like '%xx';

@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +37,7 @@ func ParseKey(format, key string) ([]byte, error) {
 // Ref PD: https://github.com/pingcap/pd/blob/master/tools/pd-ctl/pdctl/command/region_command.go#L334
 func unescapedKey(text string) ([]byte, error) {
 	var buf []byte
-	r := bytes.NewBuffer([]byte(text))
+	r := bytes.NewBufferString(text)
 	for {
 		c, err := r.ReadByte()
 		if err != nil {
@@ -143,13 +143,6 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 	return rng, successClamp
 }
 
-// CloneSlice sallowly clones a slice.
-func CloneSlice[T any](s []T) []T {
-	r := make([]T, len(s))
-	copy(r, s)
-	return r
-}
-
 // IntersectAll returns the intersect of two set of segments.
 // OWNERSHIP INFORMATION:
 // For running faster, this function would MUTATE the input slice. (i.e. takes its ownership.)
@@ -163,7 +156,7 @@ func CloneSlice[T any](s []T) []T {
 // toClampIn:   |_____| |____|   |________________|
 // result:      |_____| |_|      |______________|
 // we are assuming the arguments are sorted by the start key and no overlaps.
-// you can call CollapseRanges to get key ranges fits this requirements.
+// you can call spans.Collapse to get key ranges fits this requirements.
 // Note: this algorithm is pretty like the `checkIntervalIsSubset`, can we get them together?
 func IntersectAll(s1 []kv.KeyRange, s2 []kv.KeyRange) []kv.KeyRange {
 	currentClamping := 0

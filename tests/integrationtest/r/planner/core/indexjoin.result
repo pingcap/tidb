@@ -1,0 +1,238 @@
+set @@tidb_enable_inl_join_inner_multi_pattern=on;
+create table t(a int, b int, index idx(a, b));
+create table t1 like t;
+insert into t values(1, 1), (1, 2), (1, 3);
+insert into t1 values(1, 1), (1, 2);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7), other cond:eq(planner__core__indexjoin.t.b, plus(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.b))
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+└─Projection(Probe)	99800100.00	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+  └─IndexReader	12487.50	root		index:Selection
+    └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
+      └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+begin;
+insert into t1 values(1, 3);
+insert into t values(1, 4);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7), other cond:eq(planner__core__indexjoin.t.b, plus(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.b))
+├─UnionScan(Build)	9990.00	root		not(isnull(planner__core__indexjoin.t.a))
+│ └─IndexReader	9990.00	root		index:IndexFullScan
+│   └─IndexFullScan	9990.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+└─Projection(Probe)	99800100.00	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+  └─UnionScan	12487.50	root		not(isnull(planner__core__indexjoin.t1.a))
+    └─IndexReader	12487.50	root		index:Selection
+      └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
+        └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+1	4	1	3
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+1	4	1	3
+rollback;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	9990.00	root		Column#4, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─IndexJoin	9990.00	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+    │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	79840080.00	root		group by:planner__core__indexjoin.t.a, funcs:count(Column#8)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+      └─IndexReader	79840080.00	root		index:HashAgg
+        └─HashAgg	79840080.00	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#8
+          └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+            └─IndexRangeScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(tmp) */ t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a order by t1.a, tmp.count_b;
+a	count_b
+1	3
+1	3
+select /*+ HASH_JOIN(tmp) */ t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a order by t1.a, tmp.count_b;
+a	count_b
+1	3
+1	3
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
+id	estRows	task	access object	operator info
+Projection	9980.01	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	9980.01	root		Column#4, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─IndexJoin	9980.01	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, Column#4)
+    ├─IndexReader(Build)	9980.01	root		index:Selection
+    │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+    │   └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	79760239.92	root		group by:planner__core__indexjoin.t.a, funcs:count(Column#8)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+      └─IndexReader	79760239.92	root		index:HashAgg
+        └─HashAgg	79760239.92	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#8
+          └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+            └─IndexRangeScan	9990.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
+a	count_b
+select /*+ HASH_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
+a	count_b
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.count_b = t1.b;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	9990.00	root		Column#4, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column#4)]
+    ├─HashAgg(Build)	8000.00	root		group by:planner__core__indexjoin.t.a, funcs:count(Column#8)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+    │ └─IndexReader	8000.00	root		index:HashAgg
+    │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#8
+    │     └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	9990.00	root		index:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+        └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+Projection	1.25	root		planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─IndexJoin	1.25	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+  ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+  │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	9990.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+    └─IndexReader	9990.00	root		index:HashAgg
+      └─HashAgg	9990.00	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+        └─Selection	1.25	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+          └─IndexRangeScan	1.25	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+a	b
+1	1
+1	1
+1	1
+1	2
+1	2
+1	2
+select /*+ HASH_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+a	b
+1	1
+1	1
+1	1
+1	2
+1	2
+1	2
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+IndexJoin	1.25	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+├─IndexReader(Build)	3333.33	root		index:IndexRangeScan
+│ └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:idx(a, b)	range:(0,+inf], keep order:false, stats:pseudo
+└─HashAgg(Probe)	3333.33	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+  └─IndexReader	3333.33	root		index:HashAgg
+    └─HashAgg	3333.33	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+      └─Selection	1.25	cop[tikv]		eq(planner__core__indexjoin.t.a, 1)
+        └─IndexRangeScan	1250.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+a	b
+1	1
+1	1
+1	1
+1	2
+1	2
+1	2
+select /*+ HASH_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+a	b
+1	1
+1	1
+1	1
+1	2
+1	2
+1	2
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a;
+id	estRows	task	access object	operator info
+IndexHashJoin	1.25	root		inner join, inner:IndexReader, outer key:Column#4, inner key:planner__core__indexjoin.t1.a, equal cond:eq(Column#4, planner__core__indexjoin.t1.a)
+├─Projection(Build)	1.00	root		plus(planner__core__indexjoin.t.a, 1)->Column#4, planner__core__indexjoin.t.b
+│ └─StreamAgg	1.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+│   └─IndexReader	1.00	root		index:StreamAgg
+│     └─StreamAgg	1.00	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+│       └─Selection	8000.00	cop[tikv]		not(isnull(plus(planner__core__indexjoin.t.a, 1)))
+│         └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	keep order:true, stats:pseudo
+└─IndexReader(Probe)	1.25	root		index:Selection
+  └─Selection	1.25	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
+    └─IndexRangeScan	1.25	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, Column#4)], keep order:false, stats:pseudo
+create table t3 (a int, b float, index idx (b));
+create table t4 (a int, b double);
+insert into t3 values (1, 1.0), (1, 2.0), (2, 3.0);
+insert into t4 values (1, 1.11111111);
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.t3.b, planner__core__indexjoin.t4.a, planner__core__indexjoin.t4.b
+└─IndexJoin	9990.00	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t4.b, inner key:planner__core__indexjoin.t3.b, equal cond:eq(planner__core__indexjoin.t4.b, planner__core__indexjoin.t3.b)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t4.b))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	79840080.00	root		group by:planner__core__indexjoin.t3.b, funcs:firstrow(planner__core__indexjoin.t3.b)->planner__core__indexjoin.t3.b
+    └─IndexReader	79840080.00	root		index:HashAgg
+      └─HashAgg	79840080.00	cop[tikv]		group by:planner__core__indexjoin.t3.b, 
+        └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t3.b))
+          └─IndexRangeScan	10000.00	cop[tikv]	table:t3, index:idx(b)	range: decided by [eq(planner__core__indexjoin.t3.b, planner__core__indexjoin.t4.b)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(tmp) */ tmp.b, t4.b from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b order by tmp.b, t4.b;
+b	b
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a>=1 group by a, b) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+IndexJoin	1.25	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+└─HashAgg(Probe)	9990.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+  └─IndexReader	9990.00	root		index:HashAgg
+    └─HashAgg	9990.00	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+      └─Selection	1.25	cop[tikv]		ge(planner__core__indexjoin.t.a, 1), not(isnull(planner__core__indexjoin.t.a))
+        └─IndexRangeScan	3.75	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a+1 as a1, b from t where a>=1 group by a, b having a=1) tmp, t1 where tmp.a1=t1.b;
+id	estRows	task	access object	operator info
+HashJoin	1.25	root		inner join, equal:[eq(Column#4, planner__core__indexjoin.t1.b)]
+├─Projection(Build)	1.00	root		plus(planner__core__indexjoin.t.a, 1)->Column#4, planner__core__indexjoin.t.b
+│ └─StreamAgg	1.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+│   └─IndexReader	1.00	root		index:StreamAgg
+│     └─StreamAgg	1.00	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+│       └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:true, stats:pseudo
+└─IndexReader(Probe)	9990.00	root		index:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+    └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+Projection	9990.00	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	9990.00	root		Column#4, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─IndexJoin	9990.00	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+    │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+    └─StreamAgg(Probe)	79840080.00	root		group by:planner__core__indexjoin.t.a, funcs:count(Column#8)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+      └─IndexReader	79840080.00	root		index:StreamAgg
+        └─StreamAgg	79840080.00	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#8
+          └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+            └─IndexRangeScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a;
+id	estRows	task	access object	operator info
+Projection	1.25	root		planner__core__indexjoin.t.b, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	1.25	root		planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─IndexJoin	1.25	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+    │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	9990.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+      └─IndexReader	9990.00	root		index:HashAgg
+        └─HashAgg	9990.00	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+          └─Selection	1.25	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+            └─IndexRangeScan	1.25	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:false, stats:pseudo
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a and tmp.b=t1.b;
+id	estRows	task	access object	operator info
+Projection	9980.01	root		planner__core__indexjoin.t.b, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─Projection	9980.01	root		planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+  └─IndexJoin	9980.01	root		inner join, inner:HashAgg, outer key:planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, inner key:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, planner__core__indexjoin.t.b)
+    ├─IndexReader(Build)	9980.01	root		index:Selection
+    │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+    │   └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	9980.01	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+      └─IndexReader	9980.01	root		index:HashAgg
+        └─HashAgg	9980.01	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+          └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.t.a)), not(isnull(planner__core__indexjoin.t.b))
+            └─IndexRangeScan	10000.00	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a) eq(planner__core__indexjoin.t.b, planner__core__indexjoin.t1.b)], keep order:false, stats:pseudo
+set @@tidb_enable_inl_join_inner_multi_pattern=default;

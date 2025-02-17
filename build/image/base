@@ -1,0 +1,77 @@
+# Copyright 2023 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Base image
+FROM quay.io/rockylinux/rockylinux:8.10.20240528
+
+# setup mariadb repo
+#   ref: https://mariadb.com/docs/server/connect/clients/mariadb-client/#Linux_(Repository)
+RUN curl -LsSO https://r.mariadb.com/downloads/mariadb_repo_setup \
+    && echo "6083ef1974d11f49d42ae668fb9d513f7dc2c6276ffa47caed488c4b47268593  mariadb_repo_setup" | sha256sum -c - \
+    && chmod +x mariadb_repo_setup \
+    && ./mariadb_repo_setup \
+    && rm mariadb_repo_setup
+
+# install OS packages.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    dnf upgrade-minimal -y && \
+    dnf install -y make git gcc wget unzip psmisc lsof jq MariaDB-client
+
+# install golang toolchain
+# renovate: datasource=docker depName=golang
+ARG GOLANG_VERSION=1.23.6
+RUN OS=linux; ARCH=$([ "$(arch)" = "x86_64" ] && echo amd64 || echo arm64); \
+    curl -fsSL https://dl.google.com/go/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz | tar -C /usr/local -xz
+ENV PATH /usr/local/go/bin/:$PATH
+LABEL go-version="${GOLANG_VERSION}"
+
+# install rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s - -y --default-toolchain nightly
+ENV PATH /root/.cargo/bin:$PATH
+
+# install nodejs toolchain
+ARG NODE_VERSION=18
+RUN curl -fsSL https://rpm.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && dnf install -y nsolid \
+    && npm install -g yarn@1.22.22 pnpm@8.15.9
+
+#### install java tool chains: open-jdk, gradle, apache-maven
+#   -> open-jdk
+ARG JAVA_VER=17
+RUN --mount=type=cache,target=/var/cache/dnf \
+    dnf install -y java-${JAVA_VER}-openjdk-devel
+ENV JAVA_HOME=/usr/lib/jvm/jre-openjdk
+
+#   -> gradle
+ARG GRADLE_VER=7.4.2
+RUN wget https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip && \
+    unzip gradle-${GRADLE_VER}-bin.zip -d /opt && \
+    rm gradle-${GRADLE_VER}-bin.zip
+ENV PATH=$PATH:/opt/gradle-${GRADLE_VER}/bin
+
+#### install tools: bazelisk, codecov, oras
+# renovate: datasource=github-tags depName=bazelbuild/bazelisk
+ADD https://github.com/bazelbuild/bazel/releases/download/6.5.0/bazel-6.5.0-linux-x86_64 /usr/bin/bazel
+RUN chmod +x /usr/bin/bazel
+
+# codecov tool
+# renovate: datasource=github-tags depName=codecov/uploader
+ARG CODECOV_VERSION=v0.8.0
+RUN folder=$([ "$(arch)" = "x86_64" ] && echo linux || echo aarch64); \
+    curl -fsSL https://uploader.codecov.io/${CODECOV_VERSION}/${folder}/codecov -o /usr/local/bin/codecov && \
+    chmod +x /usr/local/bin/codecov
+
+# oras tool
+# renovate: datasource=github-tags depName=oras-project/oras
+COPY --from=bitnami/oras:1.2.0 /oras /usr/local/bin/oras

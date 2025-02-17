@@ -20,6 +20,7 @@ import (
 
 	"github.com/daixiang0/gci/pkg/config"
 	"github.com/daixiang0/gci/pkg/gci"
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -64,4 +65,8 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

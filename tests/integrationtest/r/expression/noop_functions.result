@@ -1,0 +1,120 @@
+set tidb_enable_non_prepared_plan_cache=0;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY);
+INSERT INTO t1 VALUES (1),(2),(3);
+SET @@tidb_enable_noop_functions='ON';
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+a
+1
+SELECT * FROM t1 LOCK IN SHARE MODE;
+a
+1
+2
+3
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+a
+1
+SELECT * FROM t1 GROUP BY a DESC;
+a
+1
+2
+3
+SELECT * FROM t1 GROUP BY a ASC;
+a
+1
+2
+3
+SET @@tidb_enable_noop_functions='WARN';
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+a
+1
+Level	Code	Message
+Warning	1235	function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 LOCK IN SHARE MODE;
+a
+1
+2
+3
+Level	Code	Message
+Warning	1235	function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+a
+1
+Level	Code	Message
+Warning	1235	function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 GROUP BY a DESC;
+a
+1
+2
+3
+Level	Code	Message
+Warning	1235	function GROUP BY expr ASC|DESC has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 GROUP BY a ASC;
+a
+1
+2
+3
+Level	Code	Message
+Warning	1235	function GROUP BY expr ASC|DESC has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET @@tidb_enable_noop_functions='OFF';
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+Error 1235 (42000): function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 LOCK IN SHARE MODE;
+Error 1235 (42000): function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+Error 1235 (42000): function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 GROUP BY a DESC;
+Error 1235 (42000): function GROUP BY expr ASC|DESC has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SELECT * FROM t1 GROUP BY a ASC;
+Error 1235 (42000): function GROUP BY expr ASC|DESC has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET @@tidb_enable_noop_functions='ON';
+START TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET tx_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET transaction_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET @@tidb_enable_noop_functions='WARN';
+START TRANSACTION READ ONLY;
+Level	Code	Message
+Warning	1235	function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET TRANSACTION READ ONLY;
+Level	Code	Message
+Warning	1235	function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET tx_read_only = 1;
+Level	Code	Message
+Warning	1235	function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET transaction_read_only = 1;
+Level	Code	Message
+Warning	1235	function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET @@tidb_enable_noop_functions='OFF';
+START TRANSACTION READ ONLY;
+Error 1235 (42000): function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET TRANSACTION READ ONLY;
+Error 1235 (42000): function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET tx_read_only = 1;
+Error 1235 (42000): function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+SET transaction_read_only = 1;
+Error 1235 (42000): function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+SET tx_read_only = 0;
+SET transaction_read_only = 0;

@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "operator.go",
+        "testutil.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/logutil",
+        "//pkg/disttask/operator",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/sessiontxn",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)

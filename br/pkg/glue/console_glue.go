@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
@@ -32,13 +34,18 @@ type ExtraField func() [2]string
 // WithTimeCost adds the task information of time costing for `ShowTask`.
 func WithTimeCost() ExtraField {
 	start := time.Now()
+	var cached time.Duration
+
 	return func() [2]string {
-		return [2]string{"take", time.Since(start).Round(time.Millisecond).String()}
+		if cached == 0 {
+			cached = time.Since(start).Round(time.Millisecond)
+		}
+		return [2]string{"take", cached.String()}
 	}
 }
 
 // WithConstExtraField adds an extra field with constant values.
-func WithConstExtraField(key string, value interface{}) ExtraField {
+func WithConstExtraField(key string, value any) ExtraField {
 	return func() [2]string {
 		return [2]string{key, fmt.Sprint(value)}
 	}
@@ -65,14 +72,10 @@ func printFinalMessage(extraFields []ExtraField) func() string {
 // ShowTask prints a task start information, and mark as finished when the returned function called.
 // This is for TUI presenting.
 func (ops ConsoleOperations) ShowTask(message string, extraFields ...ExtraField) func() {
-	ops.Print(message)
+	bar := ops.StartProgressBar(message, OnlyOneTask, extraFields...)
 	return func() {
-		fields := make([]string, 0, len(extraFields))
-		for _, fieldFunc := range extraFields {
-			field := fieldFunc()
-			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
-		}
-		ops.Printf("%s { %s }\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
+		bar.Inc()
+		bar.Close()
 	}
 }
 
@@ -81,6 +84,21 @@ func (ops ConsoleOperations) RootFrame() Frame {
 		width:   ops.GetWidth(),
 		offset:  0,
 		console: ops,
+	}
+}
+
+func PrintList[T any](ops ConsoleOperations, title string, items []T, maxItemsDisplay int) {
+	log.Info("Print list: all items.", zap.String("title", title), zap.Any("items", items))
+	ops.Println(title)
+	toPrint := items
+	if maxItemsDisplay > 0 {
+		toPrint = items[:min(len(items), maxItemsDisplay)]
+	}
+	for _, item := range toPrint {
+		ops.Printf("- %v\n", item)
+	}
+	if len(items) > len(toPrint) {
+		ops.Printf("... and %d more ...", len(items)-len(toPrint))
 	}
 }
 
@@ -114,7 +132,7 @@ func (ops ConsoleOperations) IsInteractive() bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-func (ops ConsoleOperations) Scanln(args ...interface{}) (int, error) {
+func (ops ConsoleOperations) Scanln(args ...any) (int, error) {
 	return fmt.Fscanln(ops.In(), args...)
 }
 
@@ -136,15 +154,15 @@ func (ops ConsoleOperations) CreateTable() *Table {
 	}
 }
 
-func (ops ConsoleOperations) Print(args ...interface{}) {
+func (ops ConsoleOperations) Print(args ...any) {
 	_, _ = fmt.Fprint(ops.Out(), args...)
 }
 
-func (ops ConsoleOperations) Println(args ...interface{}) {
+func (ops ConsoleOperations) Println(args ...any) {
 	_, _ = fmt.Fprintln(ops.Out(), args...)
 }
 
-func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
+func (ops ConsoleOperations) Printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(ops.Out(), format, args...)
 }
 
@@ -313,12 +331,11 @@ func (ps PrettyString) slicePointOf(s int) (realSlicePoint, endAt int) {
 	for i, m := range ps.escapeSequencePlace {
 		start, end := m[0], m[1]
 		length := end - start
-		if realSlicePoint > start {
-			realSlicePoint += length
-		} else {
+		if realSlicePoint <= start {
 			endAt = i
 			return
 		}
+		realSlicePoint += length
 	}
 	return
 }

@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -42,7 +44,7 @@ func NewDebugCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			utils.LogEnvVariables()
+			tidblogutil.LogEnvVariables()
 			task.LogArguments(c)
 			return nil
 		},
@@ -80,66 +82,57 @@ func newCheckSumCommand() *cobra.Command {
 			}
 
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := utils.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			for _, schema := range backupMeta.Schemas {
-				dbInfo := &model.DBInfo{}
-				err = json.Unmarshal(schema.Db, dbInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if schema.Table == nil {
-					continue
-				}
-				tblInfo := &model.TableInfo{}
-				err = json.Unmarshal(schema.Table, tblInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				tbl := dbs[dbInfo.Name.String()].GetTable(tblInfo.Name.String())
+			for _, db := range dbs {
+				for _, tbl := range db.Tables {
+					var calCRC64 uint64
+					var totalKVs uint64
+					var totalBytes uint64
+					for _, file := range tbl.Files {
+						calCRC64 ^= file.Crc64Xor
+						totalKVs += file.GetTotalKvs()
+						totalBytes += file.GetTotalBytes()
+						log.Info("file info", zap.Stringer("table", tbl.Info.Name),
+							zap.String("file", file.GetName()),
+							zap.Uint64("crc64xor", file.GetCrc64Xor()),
+							zap.Uint64("totalKvs", file.GetTotalKvs()),
+							zap.Uint64("totalBytes", file.GetTotalBytes()),
+							zap.Uint64("startVersion", file.GetStartVersion()),
+							zap.Uint64("endVersion", file.GetEndVersion()),
+							logutil.Key("startKey", file.GetStartKey()),
+							logutil.Key("endKey", file.GetEndKey()),
+						)
 
-				var calCRC64 uint64
-				var totalKVs uint64
-				var totalBytes uint64
-				for _, file := range tbl.Files {
-					calCRC64 ^= file.Crc64Xor
-					totalKVs += file.GetTotalKvs()
-					totalBytes += file.GetTotalBytes()
-					log.Info("file info", zap.Stringer("table", tblInfo.Name),
-						zap.String("file", file.GetName()),
-						zap.Uint64("crc64xor", file.GetCrc64Xor()),
-						zap.Uint64("totalKvs", file.GetTotalKvs()),
-						zap.Uint64("totalBytes", file.GetTotalBytes()),
-						zap.Uint64("startVersion", file.GetStartVersion()),
-						zap.Uint64("endVersion", file.GetEndVersion()),
-						logutil.Key("startKey", file.GetStartKey()),
-						logutil.Key("endKey", file.GetEndKey()),
-					)
-
-					var data []byte
-					data, err = s.ReadFile(ctx, file.Name)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					s := sha256.Sum256(data)
-					if !bytes.Equal(s[:], file.Sha256) {
-						return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
+						var data []byte
+						data, err = s.ReadFile(ctx, file.Name)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						s := sha256.Sum256(data)
+						if !bytes.Equal(s[:], file.Sha256) {
+							return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
 backup data checksum failed: %s may be changed
 calculated sha256 is %s,
 origin sha256 is %s`,
-							file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+						}
+					}
+					if tbl.Info == nil {
+						log.Info("table info(empty)", zap.Stringer("db", db.Info.Name))
+					} else {
+						log.Info("table info", zap.Stringer("table", tbl.Info.Name),
+							zap.Uint64("CRC64", calCRC64),
+							zap.Uint64("totalKvs", totalKVs),
+							zap.Uint64("totalBytes", totalBytes),
+							zap.Uint64("schemaTotalKvs", tbl.TotalKvs),
+							zap.Uint64("schemaTotalBytes", tbl.TotalBytes),
+							zap.Uint64("schemaCRC64", tbl.Crc64Xor))
 					}
 				}
-				log.Info("table info", zap.Stringer("table", tblInfo.Name),
-					zap.Uint64("CRC64", calCRC64),
-					zap.Uint64("totalKvs", totalKVs),
-					zap.Uint64("totalBytes", totalBytes),
-					zap.Uint64("schemaTotalKvs", schema.TotalKvs),
-					zap.Uint64("schemaTotalBytes", schema.TotalBytes),
-					zap.Uint64("schemaCRC64", schema.Crc64Xor))
 			}
 			cmd.Println("backup data checksum succeed!")
 			return nil
@@ -182,7 +175,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := utils.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
 				return errors.Trace(err)
@@ -215,7 +208,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			for offset := uint64(0); offset < tableIDOffset; offset++ {
 				_, _ = tableIDAllocator.Alloc() // Ignore error
 			}
-			rewriteRules := &restore.RewriteRules{
+			rewriteRules := &restoreutils.RewriteRules{
 				Data: make([]*import_sstpb.RewriteRule, 0),
 			}
 			tableIDMap := make(map[int64]int64)
@@ -238,13 +231,28 @@ func newBackupMetaValidateCommand() *cobra.Command {
 						Name: indexInfo.Name,
 					}
 				}
-				rules := restore.GetRewriteRules(newTable, table.Info, 0, true)
+				if table.Info.Partition != nil {
+					if table.Info.Partition != nil {
+						newTable.Partition = &model.PartitionInfo{
+							Definitions: make([]model.PartitionDefinition, len(table.Info.Partition.Definitions)),
+						}
+					}
+					for _, old := range table.Info.Partition.Definitions {
+						partitionID, _ := tableIDAllocator.Alloc()
+						newTable.Partition.Definitions = append(newTable.Partition.Definitions, model.PartitionDefinition{
+							ID:   int64(partitionID),
+							Name: old.Name,
+						})
+					}
+				}
+
+				rules := restoreutils.GetRewriteRules(newTable, table.Info, 0, true)
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)
 			}
 			// Validate rewrite rules
 			for _, file := range files {
-				err = restore.ValidateFileRewriteRule(file, rewriteRules)
+				err = restoreutils.ValidateFileRewriteRule(file, rewriteRules)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -277,6 +285,19 @@ func decodeBackupMetaCommand() *cobra.Command {
 
 			fieldName, _ := cmd.Flags().GetString("field")
 			if fieldName == "" {
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.FileIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.RawRangeIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.SchemaIndex); err != nil {
+					return errors.Trace(err)
+				}
+				if err := metautil.DecodeStatsFile(ctx, s, &cfg.CipherInfo, backupMeta.Schemas); err != nil {
+					return errors.Trace(err)
+				}
+
 				// No field flag, write backupmeta to external storage in JSON format.
 				backupMetaJSON, err := utils.MarshalBackupMeta(backupMeta)
 				if err != nil {
@@ -286,7 +307,7 @@ func decodeBackupMetaCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
-				cmd.Printf("backupmeta decoded at %s\n", path.Join(cfg.Storage, metautil.MetaJSONFile))
+				cmd.Printf("backupmeta decoded at %s\n", path.Join(s.URI(), metautil.MetaJSONFile))
 				return nil
 			}
 
@@ -345,6 +366,9 @@ func encodeBackupMetaCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if backupMetaJSON.Version == metautil.MetaV2 {
+				return errors.Errorf("encoding backupmeta v2 is unimplemented")
+			}
 			backupMeta, err := proto.Marshal(backupMetaJSON)
 			if err != nil {
 				return errors.Trace(err)
@@ -385,7 +409,8 @@ func setPDConfigCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			mgr, err := task.NewMgr(ctx, tidbGlue, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
+			mgr, err := task.NewMgr(ctx, tidbGlue, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg),
+				cfg.CheckRequirements, false, conn.NormalVersionChecker)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -439,8 +464,8 @@ func searchStreamBackupCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			comparator := restore.NewStartWithComparator()
-			bs := restore.NewStreamBackupSearch(s, comparator, keyBytes)
+			comparator := stream.NewStartWithComparator()
+			bs := stream.NewStreamBackupSearch(s, comparator, keyBytes)
 			bs.SetStartTS(startTs)
 			bs.SetEndTs(endTs)
 

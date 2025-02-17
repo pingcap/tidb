@@ -6,9 +6,11 @@ import "context"
 
 // Interface describes the lifetime hook of a daemon application.
 type Interface interface {
-	// OnStart would be called once become the owner.
-	// The context passed in would be canceled once it is no more the owner.
+	// OnStart start the service whatever the tidb-server is owner or not.
 	OnStart(ctx context.Context)
+	// OnBecomeOwner would be called once become the owner.
+	// The context passed in would be canceled once it is no more the owner.
+	OnBecomeOwner(ctx context.Context)
 	// OnTick would be called periodically.
 	// The error can be recorded.
 	OnTick(ctx context.Context) error

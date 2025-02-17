@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +47,7 @@ func TestBasicTxnState(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/beforePessimisticLock")) }()
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("select * from t for update;")
 		ch <- nil
@@ -74,9 +74,9 @@ func TestBasicTxnState(t *testing.T) {
 	require.Equal(t, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String()}, info.AllSQLDigests)
 
 	// len and size will be covered in TestLenAndSize
-	require.Equal(t, tk.Session().GetSessionVars().ConnectionID, info.ConnectionID)
-	require.Equal(t, "", info.Username)
-	require.Equal(t, "test", info.CurrentDB)
+	require.Equal(t, tk.Session().GetSessionVars().ConnectionID, info.ProcessInfo.ConnectionID)
+	require.Equal(t, "", info.ProcessInfo.Username)
+	require.Equal(t, "test", info.ProcessInfo.CurrentDB)
 	require.Equal(t, startTS, info.StartTS)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
@@ -128,12 +128,28 @@ func TestEntriesCountAndSize(t *testing.T) {
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Session().TxnInfo()
 	require.Equal(t, uint64(1), info.EntriesCount)
-	require.Equal(t, uint64(29), info.EntriesSize)
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Session().TxnInfo()
 	require.Equal(t, uint64(2), info.EntriesCount)
-	require.Equal(t, uint64(58), info.EntriesSize)
 	tk.MustExec("commit;")
+}
+
+func TestMemDBTracker(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	session := tk.Session()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("begin")
+	for i := 0; i < (1 << 10); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(10+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+	require.Greater(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+	for i := 0; i < (1 << 14); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
 }
 
 func TestRunning(t *testing.T) {
@@ -144,7 +160,7 @@ func TestRunning(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "return(200)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockStmtSlow", "return(200)"))
 	ch := make(chan struct{})
 	go func() {
 		tk.MustExec("select * from t for update /* sleep */;")
@@ -154,7 +170,7 @@ func TestRunning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	info := tk.Session().TxnInfo()
 	require.Equal(t, txninfo.TxnRunning, info.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockStmtSlow"))
 	<-ch
 }
 
@@ -201,13 +217,13 @@ func TestCommitting(t *testing.T) {
 		tk2.MustExec("begin pessimistic")
 		require.NotNil(t, tk2.Session().TxnInfo())
 		tk2.MustExec("select * from t where a = 2 for update;")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowCommit", "pause"))
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, txninfo.TxnCommitting, tk2.Session().TxnInfo().State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowCommit"))
 	tk1.MustExec("commit;")
 	<-ch
 }
@@ -223,12 +239,12 @@ func TestRollbackTxnState(t *testing.T) {
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowRollback", "pause"))
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowRollback"))
 	require.Equal(t, txninfo.TxnRollingBack, tk.Session().TxnInfo().State)
 	<-ch
 }
@@ -244,7 +260,7 @@ func TestTxnInfoWithPreparedStmt(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("execute s1 using @v")
 		ch <- nil
@@ -278,7 +294,7 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
 		ch <- nil
@@ -307,7 +323,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)

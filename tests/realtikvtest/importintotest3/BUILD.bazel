@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "importintotest3_test",
+    timeout = "moderate",
+    srcs = [
+        "file_compression_test.go",
+        "from_server_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/config",
+        "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/testutil",
+        "//pkg/disttask/importinto",
+        "//pkg/kv",
+        "//pkg/lightning/mydump",
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_golang_snappy//:snappy",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_tikv_client_go_v2//util",
+    ],
+)

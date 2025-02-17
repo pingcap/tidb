@@ -1,0 +1,18 @@
+drop table if exists t;
+drop view if exists tv;
+drop temporary table if exists t;
+create table t(a int);
+insert into t values(1);
+create view tv as select a from t;
+create temporary table t(a int);
+insert into t values(2);
+select * from tv;
+a
+1
+select * from t;
+a
+2
+select * from (select a from t union all select a from tv) t1 order by a;
+a
+1
+2

@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "analyze_test",
+    timeout = "short",
+    srcs = [
+        "analyze_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 5,
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

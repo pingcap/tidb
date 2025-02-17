@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ddl-checker",
+    srcs = [
+        "ddl_syncer.go",
+        "executable_checker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/ddl-checker",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/store/mockstore",
+        "//pkg/util/dbutil",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "ddl-checker_test",
+    timeout = "short",
+    srcs = ["executable_checker_test.go"],
+    embed = [":ddl-checker"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

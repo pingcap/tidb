@@ -34,5 +34,6 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

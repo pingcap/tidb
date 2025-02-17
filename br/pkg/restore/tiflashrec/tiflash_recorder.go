@@ -16,15 +16,16 @@ package tiflashrec
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"go.uber.org/zap"
 )
 
@@ -50,6 +51,14 @@ func New() *TiFlashRecorder {
 	return &TiFlashRecorder{
 		items: map[int64]model.TiFlashReplicaInfo{},
 	}
+}
+
+func (r *TiFlashRecorder) Load(items map[int64]model.TiFlashReplicaInfo) {
+	r.items = items
+}
+
+func (r *TiFlashRecorder) GetItems() map[int64]model.TiFlashReplicaInfo {
+	return r.items
 }
 
 func (r *TiFlashRecorder) AddTable(tableID int64, replica model.TiFlashReplicaInfo) {
@@ -79,20 +88,33 @@ func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
 	}
 }
 
-func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
+func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
 	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(id)
+		table, ok := info.TableByID(context.Background(), id)
 		if !ok {
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
 		}
-		schema, ok := info.SchemaByTable(table.Meta())
+		schema, ok := infoschema.SchemaByTable(info, table.Meta())
 		if !ok {
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
-		altTableSpec, err := alterTableSpecOf(replica)
+		// Currently, we didn't backup tiflash cluster volume during volume snapshot backup,
+		// But the table has replica info after volume restoration.
+		// We should reset it to 0, then set it back. otherwise, it will return error when alter tiflash replica.
+		altTableSpec, err := alterTableSpecOf(replica, true)
+		if err != nil {
+			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
+			return
+		}
+		items = append(items, fmt.Sprintf(
+			"ALTER TABLE %s %s",
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
+			altTableSpec),
+		)
+		altTableSpec, err = alterTableSpecOf(replica, false)
 		if err != nil {
 			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
 			return
@@ -106,13 +128,48 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 	return items
 }
 
-func alterTableSpecOf(replica model.TiFlashReplicaInfo) (string, error) {
+func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
+	items := make([]string, 0, len(r.items))
+	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
+		table, ok := info.TableByID(context.Background(), id)
+		if !ok {
+			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
+			return
+		}
+		schema, ok := infoschema.SchemaByTable(info, table.Meta())
+		if !ok {
+			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
+			return
+		}
+		altTableSpec, err := alterTableSpecOf(replica, false)
+		if err != nil {
+			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
+			return
+		}
+		items = append(items, fmt.Sprintf(
+			"ALTER TABLE %s %s",
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
+			altTableSpec),
+		)
+	})
+	return items
+}
+
+func alterTableSpecOf(replica model.TiFlashReplicaInfo, reset bool) (string, error) {
 	spec := &ast.AlterTableSpec{
 		Tp: ast.AlterTableSetTiFlashReplica,
 		TiFlashReplica: &ast.TiFlashReplicaSpec{
 			Count:  replica.Count,
 			Labels: replica.LocationLabels,
 		},
+	}
+	if reset {
+		spec = &ast.AlterTableSpec{
+			Tp: ast.AlterTableSetTiFlashReplica,
+			TiFlashReplica: &ast.TiFlashReplicaSpec{
+				Count: 0,
+			},
+		}
 	}
 
 	buf := bytes.NewBuffer(make([]byte, 0, 32))

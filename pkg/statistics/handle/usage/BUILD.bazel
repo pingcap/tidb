@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "usage",
+    srcs = [
+        "index_usage.go",
+        "predicate_column.go",
+        "session_stats_collect.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/metrics",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/statistics/handle/usage/predicatecolumn",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/intest",
+        "//pkg/util/sqlescape",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "usage_test",
+    timeout = "short",
+    srcs = [
+        "index_usage_integration_test.go",
+        "predicate_column_test.go",
+        "session_stats_collect_test.go",
+    ],
+    embed = [":usage"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

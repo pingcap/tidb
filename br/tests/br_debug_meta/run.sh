@@ -17,9 +17,10 @@
 set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 table_region_sql="SELECT COUNT(*) FROM information_schema.tikv_region_status WHERE db_name = '$DB' AND table_name = '$TABLE';"
 for i in $(seq 10); do
@@ -31,36 +32,49 @@ run_sql "$table_region_sql"
 
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
-# backup table
+# backup table with backupmetav2
 echo "backup start..."
 run_br --pd $PD_ADDR backup table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB"
-
-run_sql "DROP DATABASE $DB;"
 
 # Test validate decode
 run_br validate decode -s "local://$TEST_DIR/$DB"
 
 # should generate backupmeta.json
-if [ ! -f "$TEST_DIR/$DB/backupmeta.json" ]; then
+if [ ! -f "$TEST_DIR/$DB/jsons/backupmeta.json" ]; then
+    echo "TEST: [$TEST_NAME] decode failed!"
+    exit 1
+fi
+
+# backup table with backupmetav1
+echo "backup start..."
+run_br --pd $PD_ADDR backup table --db $DB --table $TABLE -s "local://$TEST_DIR/${DB}_2" --use-backupmeta-v2=false
+
+
+# Test validate decode
+run_br validate decode -s "local://$TEST_DIR/${DB}_2"
+
+# should generate backupmeta.json
+if [ ! -f "$TEST_DIR/${DB}_2/jsons/backupmeta.json" ]; then
     echo "TEST: [$TEST_NAME] decode failed!"
     exit 1
 fi
 
 # Test validate encode
-run_br validate encode -s "local://$TEST_DIR/$DB"
+run_br validate encode -s "local://$TEST_DIR/${DB}_2"
 
 # should generate backupmeta_from_json
-if [ ! -f "$TEST_DIR/$DB/backupmeta_from_json" ]; then
+if [ ! -f "$TEST_DIR/${DB}_2/backupmeta_from_json" ]; then
     echo "TEST: [$TEST_NAME] encode failed!"
     exit 1
 fi
 
 # replace backupmeta
-mv "$TEST_DIR/$DB/backupmeta_from_json" "$TEST_DIR/$DB/backupmeta"
+mv "$TEST_DIR/${DB}_2/backupmeta_from_json" "$TEST_DIR/${DB}_2/backupmeta"
 
 # restore table
 echo "restore start..."
-run_br --pd $PD_ADDR restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB"
+run_sql "DROP DATABASE $DB;"
+run_br --pd $PD_ADDR restore table --db $DB --table $TABLE -s "local://$TEST_DIR/${DB}_2"
 
 row_count_new=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 

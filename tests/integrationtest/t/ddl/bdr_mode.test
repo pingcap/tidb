@@ -1,0 +1,572 @@
+# NOTE:
+# 1. lock/unlock table is a experimental feature, and it need be configured
+#       in configuration file. So we do not test it.
+# 2. ActionAlterTableStatsOptions is not used.
+
+# *******TestPrimaryRole*******
+create database bdr_mode;
+use bdr_mode;
+admin set bdr role primary;
+
+create table t(a int);
+alter table t add column b int;
+-- error 8263
+alter table t drop column b;
+alter table t add index idx_a(a);
+alter table t alter index idx_a invisible;
+alter table t alter index idx_a visible;
+alter table t rename index idx_a to idx_a_2;
+alter table t drop index idx_a_2;
+
+create table t2(a int, primary key (a));
+-- error 8263
+rename table t to t3, t2 to t4;
+-- error 8263
+alter table t add foreign key (a) references t2(a);
+admin unset bdr role;
+alter table t add foreign key (a) references t2(a);
+admin set bdr role primary;
+-- error 8263
+alter table t drop foreign key fk_1;
+admin unset bdr role;
+alter table t drop foreign key fk_1;
+alter table t drop index fk_1;
+admin set bdr role primary;
+-- error 8263
+truncate table t2;
+-- error 8263
+drop table t2;
+
+-- error 8263
+alter table t modify column a bigint;
+-- error 8263
+alter table t auto_increment = 6000;
+alter table t alter column a set default 1;
+-- error 8263
+alter table t shard_row_id_bits = 4;
+alter table t comment = 'test';
+admin unset bdr role;
+drop table t;
+drop table t2;
+admin set bdr role primary;
+
+# add partition
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+alter table t add partition (partition p3 values less than (100));
+
+# placement rule
+create placement policy pp4 followers=4;
+-- error 8263
+alter table t placement policy=pp4;
+-- error 8263
+alter table t partition p3 placement policy=pp4;
+-- error 8263
+alter database bdr_mode placement policy=pp4;
+alter placement policy pp4 followers=3;
+-- error 8263
+alter table t placement policy=default;
+-- error 8263
+alter table t partition p3 placement policy=default;
+-- error 8263
+alter database bdr_mode placement policy=default;
+drop placement policy pp4;
+
+-- error 8263
+alter table t attributes="merge_option=allow";
+-- error 8263
+alter table t partition p3 attributes="key1=value1";
+
+# exchange/truncate/drop partition
+create table t2(a int);
+-- error 8263
+alter table t exchange partition p0 with table t2;
+-- error 8263
+alter table t truncate partition p0;
+-- error 8263
+alter table t reorganize partition p0 into
+(
+    partition p4 values less than (0),
+    partition p5 values less than (5)
+);
+-- error 8263
+alter table t drop partition p0;
+admin unset bdr role;
+drop table t2;
+admin set bdr role primary;
+
+create placement policy pp1 followers=1;
+-- error 8263
+alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
+admin unset bdr role;
+drop table t;
+admin set bdr role primary;
+drop placement policy pp1;
+
+create table t(a int);
+# add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
+-- error 8263
+alter table t add constraint `a_check` check(a > 0);
+admin unset bdr role;
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role primary;
+-- error 8263
+alter table t alter constraint `a_check` enforced;
+-- error 8263
+alter table t drop constraint `a_check`;
+admin unset bdr role;
+alter table t drop constraint `a_check`;
+admin set bdr role primary;
+set global tidb_enable_check_constraint=OFF;
+
+# cache
+-- error 8263
+alter table t cache;
+admin unset bdr role;
+alter table t cache;
+admin set bdr role primary;
+-- error 8263
+alter table t nocache;
+admin unset bdr role;
+alter table t nocache;
+admin set bdr role primary;
+
+# alter ttl
+CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
+alter table ttl_test remove ttl;
+admin unset bdr role;
+drop table ttl_test;
+admin set bdr role primary;
+
+-- error 8263
+alter table t add primary key (a);
+admin unset bdr role;
+alter table t add primary key (a);
+admin set bdr role primary;
+alter table t drop primary key;
+-- error 8263
+alter table t add unique index (a);
+-- error 8263
+alter table t auto_id_cache = 10;
+
+create table t_random(a bigint auto_random, primary key (a));
+-- error 8263
+alter table t_random auto_random_base = 10;
+admin unset bdr role;
+drop table t_random;
+admin set bdr role primary;
+
+-- error 8263
+create sequence seq;
+admin unset bdr role;
+create sequence seq;
+admin set bdr role primary;
+-- error 8263
+alter sequence seq restart;
+-- error 8263
+drop sequence seq;
+admin unset bdr role;
+drop sequence seq;
+admin set bdr role primary;
+
+create view v as select 1 as b;
+drop view v;
+
+-- error 8263
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+-- error 8263
+alter database bdr_mode default character set = utf8;
+admin unset bdr role;
+drop database bdr_mode;
+admin set bdr role primary;
+
+# resource group
+create resource group rg1 ru_per_sec = 100;
+create user user1;
+alter user `user1` resource group `rg1`;
+alter resource group rg1 ru_per_sec = 200;
+drop user user1;
+drop resource group if exists rg1;
+
+# *******TestSecondaryRole*******
+create database bdr_mode;
+use bdr_mode;
+
+create table t(a int, b int);
+admin set bdr role secondary;
+-- error 8263
+alter table t add column c int;
+-- error 8263
+alter table t drop column b;
+-- error 8263
+alter table t add index idx_a(a);
+admin unset bdr role;
+alter table t add index idx_a(a);
+admin set bdr role secondary;
+-- error 8263
+alter table t alter index idx_a invisible;
+admin unset bdr role;
+alter table t alter index idx_a invisible;
+admin set bdr role secondary;
+-- error 8263
+alter table t alter index idx_a visible;
+-- error 8263
+alter table t rename index idx_a to idx_a_2;
+-- error 8263
+alter table t drop index idx_a;
+admin unset bdr role;
+alter table t drop index idx_a;
+
+create table t2(a int, primary key (a));
+admin set bdr role secondary;
+-- error 8263
+rename table t to t3, t2 to t4;
+-- error 8263
+alter table t add foreign key (a) references t2(a);
+admin unset bdr role;
+alter table t add foreign key (a) references t2(a);
+admin set bdr role secondary;
+-- error 8263
+alter table t drop foreign key fk_1;
+admin unset bdr role;
+alter table t drop foreign key fk_1;
+alter table t drop index fk_1;
+admin set bdr role secondary;
+-- error 8263
+truncate table t2;
+-- error 8263
+drop table t2;
+
+-- error 8263
+alter table t modify column a bigint;
+-- error 8263
+alter table t auto_increment = 6000;
+-- error 8263
+alter table t alter column a set default 1;
+-- error 8263
+alter table t shard_row_id_bits = 4;
+-- error 8263
+alter table t comment = 'test';
+admin unset bdr role;
+drop table t;
+drop table t2;
+admin set bdr role secondary;
+
+# add partition
+-- error 8263
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+admin unset bdr role;
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+admin set bdr role secondary;
+-- error 8263
+alter table t add partition (partition p3 values less than (100));
+
+# placement rule
+create placement policy pp4 followers=4;
+-- error 8263
+alter table t placement policy=pp4;
+-- error 8263
+alter table t partition p2 placement policy=pp4;
+-- error 8263
+alter database bdr_mode placement policy=pp4;
+alter placement policy pp4 followers=3;
+-- error 8263
+alter table t placement policy=default;
+-- error 8263
+alter table t partition p2 placement policy=default;
+-- error 8263
+alter database bdr_mode placement policy=default;
+drop placement policy pp4;
+
+-- error 8263
+alter table t attributes="merge_option=allow";
+-- error 8263
+alter table t partition p2 attributes="key1=value1";
+
+# exchange/truncate/drop partition
+admin unset bdr role;
+create table t2(a int);
+admin set bdr role secondary;
+-- error 8263
+alter table t exchange partition p0 with table t2;
+-- error 8263
+alter table t truncate partition p0;
+-- error 8263
+alter table t reorganize partition p0 into
+(
+    partition p4 values less than (0),
+    partition p5 values less than (5)
+);
+-- error 8263
+alter table t drop partition p2;
+admin unset bdr role;
+drop table t2;
+admin set bdr role secondary;
+
+create placement policy pp1 followers=1;
+-- error 8263
+alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
+admin unset bdr role;
+drop table t;
+admin set bdr role secondary;
+drop placement policy pp1;
+
+admin unset bdr role;
+create table t(a int);
+admin set bdr role secondary;
+# add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
+-- error 8263
+alter table t add constraint `a_check` check(a > 0);
+admin unset bdr role;
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role secondary;
+-- error 8263
+alter table t alter constraint `a_check` enforced;
+-- error 8263
+alter table t drop constraint `a_check`;
+admin unset bdr role;
+alter table t drop constraint `a_check`;
+admin set bdr role secondary;
+set global tidb_enable_check_constraint=OFF;
+
+# cache
+-- error 8263
+alter table t cache;
+admin unset bdr role;
+alter table t cache;
+admin set bdr role secondary;
+-- error 8263
+alter table t nocache;
+admin unset bdr role;
+alter table t nocache;
+
+# alter ttl
+CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+admin set bdr role secondary;
+-- error 8263
+ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
+-- error 8263
+alter table ttl_test remove ttl;
+-- error 8263
+drop table ttl_test;
+
+-- error 8263
+alter table t add primary key (a);
+admin unset bdr role;
+alter table t add primary key (a);
+admin set bdr role secondary;
+-- error 8263
+alter table t drop primary key;
+admin unset bdr role;
+alter table t drop primary key;
+admin set bdr role secondary;
+-- error 8263
+alter table t add unique index (a);
+-- error 8263
+alter table t auto_id_cache = 10;
+
+admin unset bdr role;
+create table t_random(a bigint auto_random, primary key (a));
+admin set bdr role secondary;
+-- error 8263
+alter table t_random auto_random_base = 10;
+admin unset bdr role;
+drop table t_random;
+admin set bdr role secondary;
+
+-- error 8263
+create sequence seq;
+admin unset bdr role;
+create sequence seq;
+admin set bdr role secondary;
+-- error 8263
+alter sequence seq restart;
+-- error 8263
+drop sequence seq;
+admin unset bdr role;
+drop sequence seq;
+admin set bdr role secondary;
+
+-- error 8263
+create view v as select 1 as b;
+admin unset bdr role;
+create view v as select 1 as b;
+admin set bdr role secondary;
+-- error 8263
+drop view v;
+admin unset bdr role;
+drop view v;
+admin set bdr role secondary;
+
+-- error 8263
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+-- error 8263
+alter database bdr_mode default character set = utf8;
+-- error 8263
+drop database bdr_mode;
+admin unset bdr role;
+drop database bdr_mode;
+admin set bdr role secondary;
+
+# resource group
+create resource group rg1 ru_per_sec = 100;
+create user user1;
+alter user `user1` resource group `rg1`;
+alter resource group rg1 ru_per_sec = 200;
+drop user user1;
+drop resource group if exists rg1;
+
+# *******TestNoneRole*******
+admin unset bdr role;
+create database bdr_mode;
+use bdr_mode;
+create table t(a int);
+alter table t add column b int;
+alter table t drop column b;
+alter table t add index idx_a(a);
+alter table t alter index idx_a invisible;
+alter table t alter index idx_a visible;
+alter table t rename index idx_a to idx_a_2;
+alter table t drop index idx_a_2;
+
+create table t2(a int, primary key (a));
+rename table t to t3, t2 to t4;
+rename table t3 to t, t4 to t2;
+alter table t add foreign key (a) references t2(a);
+alter table t drop foreign key fk_1;
+alter table t drop index fk_1;
+truncate table t2;
+drop table t2;
+
+alter table t modify column a bigint;
+alter table t auto_increment = 6000;
+alter table t alter column a set default 1;
+alter table t shard_row_id_bits = 4;
+alter table t comment = 'test';
+drop table t;
+
+# add partition
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+alter table t add partition (partition p3 values less than (100));
+
+# placement rule
+create placement policy pp4 followers=4;
+alter table t placement policy=pp4;
+alter table t partition p3 placement policy=pp4;
+alter database bdr_mode placement policy=pp4;
+alter placement policy pp4 followers=3;
+alter table t placement policy=default;
+alter table t partition p3 placement policy=default;
+alter database bdr_mode placement policy=default;
+drop placement policy pp4;
+
+alter table t attributes="merge_option=allow";
+alter table t partition p3 attributes="key1=value1";
+
+# exchange/truncate/drop partition
+create table t2(a int);
+alter table t exchange partition p0 with table t2;
+alter table t truncate partition p0;
+alter table t reorganize partition p0 into
+(
+    partition p4 values less than (0),
+    partition p5 values less than (5)
+);
+alter table t drop partition p5;
+drop table t2;
+
+create placement policy pp1 followers=1;
+alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
+drop table t;
+drop placement policy pp1;
+
+create table t(a int);
+# add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
+alter table t add constraint `a_check` check(a > 0);
+alter table t alter constraint `a_check` enforced;
+alter table t drop constraint `a_check`;
+set global tidb_enable_check_constraint=OFF;
+
+# cache
+alter table t cache;
+alter table t nocache;
+
+# alter ttl
+CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
+alter table ttl_test remove ttl;
+drop table ttl_test;
+
+alter table t add primary key (a);
+alter table t drop primary key;
+alter table t add unique index (a);
+alter table t drop index a;
+alter table t auto_id_cache = 10;
+
+create table t_random(a bigint auto_random, primary key (a));
+alter table t_random auto_random_base = 10;
+drop table t_random;
+
+create sequence seq;
+alter sequence seq restart;
+drop sequence seq;
+
+create view v as select 1 as b;
+drop view v;
+
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+alter database bdr_mode default character set = utf8;
+drop database bdr_mode;
+
+# resource group
+create resource group rg1 ru_per_sec = 100;
+create user user1;
+alter user `user1` resource group `rg1`;
+alter resource group rg1 ru_per_sec = 200;
+drop user user1;
+drop resource group if exists rg1;
+admin unset bdr role;
+
+# *******TestModifyColumn*******
+create database bdr_mode;
+use bdr_mode;
+admin set bdr role primary;
+create table t(a int);
+-- error 8263
+alter table t modify column a bigint;
+alter table t modify column a int default 10;
+-- error 8263
+alter table t modify column a int comment "test";
+alter table t modify column a int default 100 comment "test";
+admin unset bdr role;
+drop table t;
+
+# *******TestAddColumn*******
+admin set bdr role primary;
+create table t(a int);
+alter table t add column b int;
+alter table t add column c int null;
+-- error 8263
+alter table t add column d int not null;
+alter table t add column d int not null default 10;
+alter table t add column e int default 10;
+alter table t add column f int comment "test";
+alter table t add column g int default 10 comment "test";
+alter table t add column h int as (a + 1) virtual;
+admin unset bdr role;
+drop database bdr_mode;

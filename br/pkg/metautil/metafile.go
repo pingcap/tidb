@@ -23,11 +23,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/statistics/util"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -36,7 +39,7 @@ const (
 	// MetaFile represents file name
 	MetaFile = "backupmeta"
 	// MetaJSONFile represents backup meta json file name
-	MetaJSONFile = "backupmeta.json"
+	MetaJSONFile = "jsons/backupmeta.json"
 	// MaxBatchSize represents the internal channel buffer size of MetaWriter and MetaReader.
 	MaxBatchSize = 1024
 
@@ -55,9 +58,9 @@ const (
 	MetaV2
 )
 
-// CreateMetaFileName is the name of meta file.
-func CreateMetaFileName(ts uint64) string {
-	return fmt.Sprintf("%s_%d", MetaFile, ts)
+// PitrIDMapsFilename is filename that used to save id maps in pitr.
+func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
+	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
 }
 
 // Encrypt encrypts the content according to CipherInfo.
@@ -85,24 +88,21 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
-// Decrypt decrypts the content according to CipherInfo and IV.
-func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
-	if len(content) == 0 || cipher == nil {
-		return content, nil
+func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherInfo) ([]byte, error) {
+	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
+		return metaData, nil
 	}
-
-	switch cipher.CipherType {
-	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return content, nil
-	case encryptionpb.EncryptionMethod_AES128_CTR,
-		encryptionpb.EncryptionMethod_AES192_CTR,
-		encryptionpb.EncryptionMethod_AES256_CTR:
-		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
-	default:
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
+	iv := metaData[:CrypterIvLen]
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}
+	return decryptBackupMeta, nil
 }
 
+// walkLeafMetaFile walks the leaves of the given metafile, and deal with it by calling the function `output`.
+// Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -116,49 +116,54 @@ func walkLeafMetaFile(
 		output(file)
 		return nil
 	}
+	eg, ectx := errgroup.WithContext(ctx)
+	workers := tidbutil.NewWorkerPool(8, "download files workers")
 	for _, node := range file.MetaFiles {
-		content, err := storage.ReadFile(ctx, node.Name)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		workers.ApplyOnErrorGroup(eg, func() error {
+			content, err := storage.ReadFile(ectx, node.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		decryptContent, err := Decrypt(content, cipher, node.CipherIv)
-		if err != nil {
-			return errors.Trace(err)
-		}
+			decryptContent, err := utils.Decrypt(content, cipher, node.CipherIv)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		checksum := sha256.Sum256(decryptContent)
-		if !bytes.Equal(node.Sha256, checksum[:]) {
-			return errors.Annotatef(berrors.ErrInvalidMetaFile,
-				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:])
-		}
+			checksum := sha256.Sum256(decryptContent)
+			if !bytes.Equal(node.Sha256, checksum[:]) {
+				return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+					"checksum mismatch expect %x, got %x", node.Sha256, checksum[:]))
+			}
 
-		child := &backuppb.MetaFile{}
-		if err = proto.Unmarshal(decryptContent, child); err != nil {
-			return errors.Trace(err)
-		}
-		if err = walkLeafMetaFile(ctx, storage, child, cipher, output); err != nil {
-			return errors.Trace(err)
-		}
+			child := &backuppb.MetaFile{}
+			if err = proto.Unmarshal(decryptContent, child); err != nil {
+				return errors.Trace(err)
+			}
+
+			// the max depth of the root metafile is only 1.
+			// ASSERT: len(child.MetaFiles) == 0
+			if err = walkLeafMetaFile(ectx, storage, child, cipher, output); err != nil {
+				return errors.Trace(err)
+			}
+
+			return nil
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
 // Table wraps the schema and files of a table.
 type Table struct {
-	DB              *model.DBInfo
-	Info            *model.TableInfo
-	Crc64Xor        uint64
-	TotalKvs        uint64
-	TotalBytes      uint64
-	Files           []*backuppb.File
-	TiFlashReplicas int
-	Stats           *handle.JSONTable
-}
-
-// NoChecksum checks whether the table has a calculated checksum.
-func (tbl *Table) NoChecksum() bool {
-	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
+	DB               *model.DBInfo
+	Info             *model.TableInfo
+	Crc64Xor         uint64
+	TotalKvs         uint64
+	TotalBytes       uint64
+	Files            []*backuppb.File
+	TiFlashReplicas  int
+	Stats            *util.JSONTable
+	StatsFileIndexes []*backuppb.StatsFileIndex
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -170,12 +175,12 @@ type MetaReader struct {
 
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
-	backpMeta *backuppb.BackupMeta,
+	backupMeta *backuppb.BackupMeta,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
-		backupMeta: backpMeta,
+		backupMeta: backupMeta,
 		cipher:     cipher,
 	}
 }
@@ -225,7 +230,7 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
+func ArchiveSize(files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
@@ -233,11 +238,35 @@ func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64
 	return total
 }
 
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+func (stats ChecksumStats) ChecksumExists() bool {
+	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
+		return false
+	}
+	return true
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
+}
+
 // ReadDDLs reads the ddls from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	var err error
-	ch := make(chan interface{}, MaxBatchSize)
+	ch := make(chan any, MaxBatchSize)
 	errCh := make(chan error)
 	go func() {
 		if err = reader.readDDLs(ctx, func(s []byte) { ch <- s }); err != nil {
@@ -250,7 +279,7 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	var ddlBytesArray [][]byte
 	for {
 		itemCount := 0
-		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
+		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item any) error {
 			itemCount++
 			if reader.backupMeta.Version == MetaV1 {
 				ddlBytes = item.([]byte)
@@ -274,83 +303,154 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	}
 }
 
+type readSchemaConfig struct {
+	skipFiles bool
+	skipStats bool
+}
+
+// ReadSchemaOption describes some extra option of reading the config.
+type ReadSchemaOption func(*readSchemaConfig)
+
+// SkipFiles is the configuration which will make the schema reader skip all files.
+// This is useful when only schema information is needed.
+func SkipFiles(conf *readSchemaConfig) {
+	conf.skipFiles = true
+}
+
+func SkipStats(conf *readSchemaConfig) {
+	conf.skipStats = true
+}
+
+// GetBasic returns a basic copy of the backup meta.
+func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
+	return *reader.backupMeta
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
-func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table) error {
-	ch := make(chan interface{}, MaxBatchSize)
-	errCh := make(chan error, 1)
+func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	cfg := readSchemaConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	ch := make(chan any, MaxBatchSize)
+	schemaCh := make(chan *backuppb.Schema, MaxBatchSize)
+	// Make sure these 2 goroutine avoid to blocked by the errCh.
+	// And the second error in the errCh is not the root cause error.
+	errCh := make(chan error, 2)
+	// download and parse metafile
 	go func() {
-		if err := reader.readSchemas(ctx, func(s *backuppb.Schema) { ch <- s }); err != nil {
+		defer close(schemaCh)
+		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
+			if cfg.skipStats {
+				s.Stats = nil
+				s.StatsIndex = nil
+			}
+			select {
+			case <-cctx.Done():
+			case schemaCh <- s:
+			}
+		}); err != nil {
 			errCh <- errors.Trace(err)
 		}
-		close(ch)
+	}()
+	// parse the schema
+	go func() {
+		defer close(ch)
+		eg, ectx := errgroup.WithContext(cctx)
+		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
+		for {
+			select {
+			case <-ectx.Done():
+				errCh <- errors.Trace(ectx.Err())
+				return
+			case s, ok := <-schemaCh:
+				if !ok {
+					if err := eg.Wait(); err != nil {
+						errCh <- err
+					}
+					return
+				}
+				workers.ApplyOnErrorGroup(eg, func() error {
+					table, err := parseSchemaFile(s)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					select {
+					case <-ectx.Done():
+					case ch <- table:
+					}
+					return nil
+				})
+			}
+		}
 	}()
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
-	fileMap := make(map[int64][]*backuppb.File)
-	outputFn := func(file *backuppb.File) {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		if tableID == 0 {
-			log.Panic("tableID must not equal to 0", logutil.File(file))
+	var fileMap map[int64][]*backuppb.File
+	if !cfg.skipFiles {
+		fileCh := make(chan *backuppb.File, MaxBatchSize)
+		fileErrCh := make(chan error, 1)
+		fileMap = make(map[int64][]*backuppb.File)
+		go func() {
+			defer close(fileCh)
+			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
+				select {
+				case <-cctx.Done():
+				case fileCh <- file:
+				}
+			})
+			if err != nil {
+				fileErrCh <- err
+			}
+		}()
+	generateFileMapDone:
+		for {
+			select {
+			case <-cctx.Done():
+				return errors.Trace(cctx.Err())
+			case err := <-fileErrCh:
+				return errors.Trace(err)
+			case file, ok := <-fileCh:
+				if !ok {
+					break generateFileMapDone
+				}
+				tableID := tablecodec.DecodeTableID(file.GetStartKey())
+				if tableID == 0 {
+					log.Panic("tableID must not equal to 0", logutil.File(file))
+				}
+				fileMap[tableID] = append(fileMap[tableID], file)
+			}
 		}
-		fileMap[tableID] = append(fileMap[tableID], file)
-	}
-	err := reader.readDataFiles(ctx, outputFn)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	for {
 		// table ID -> *Table
 		tableMap := make(map[int64]*Table, MaxBatchSize)
-		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
-			s := item.(*backuppb.Schema)
-			dbInfo := &model.DBInfo{}
-			if err := json.Unmarshal(s.Db, dbInfo); err != nil {
-				return errors.Trace(err)
-			}
-
-			var tableInfo *model.TableInfo
-			if s.Table != nil {
-				tableInfo = &model.TableInfo{}
-				if err := json.Unmarshal(s.Table, tableInfo); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			var stats *handle.JSONTable
-			if s.Stats != nil {
-				stats = &handle.JSONTable{}
-				if err := json.Unmarshal(s.Stats, stats); err != nil {
-					return errors.Trace(err)
-				}
-			}
-
-			table := &Table{
-				DB:              dbInfo,
-				Info:            tableInfo,
-				Crc64Xor:        s.Crc64Xor,
-				TotalKvs:        s.TotalKvs,
-				TotalBytes:      s.TotalBytes,
-				TiFlashReplicas: int(s.TiflashReplicas),
-				Stats:           stats,
-			}
-			if tableInfo != nil {
-				if files, ok := fileMap[tableInfo.ID]; ok {
-					table.Files = append(table.Files, files...)
-				}
-				if tableInfo.Partition != nil {
-					// Partition table can have many table IDs (partition IDs).
-					for _, p := range tableInfo.Partition.Definitions {
-						if files, ok := fileMap[p.ID]; ok {
-							table.Files = append(table.Files, files...)
+		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item any) error {
+			table := item.(*Table)
+			if table.Info != nil {
+				if fileMap != nil {
+					if files, ok := fileMap[table.Info.ID]; ok {
+						table.Files = append(table.Files, files...)
+					}
+					if table.Info.Partition != nil {
+						// Partition table can have many table IDs (partition IDs).
+						for _, p := range table.Info.Partition.Definitions {
+							if files, ok := fileMap[p.ID]; ok {
+								table.Files = append(table.Files, files...)
+							}
 						}
 					}
 				}
-				tableMap[tableInfo.ID] = table
+				tableMap[table.Info.ID] = table
 			} else {
 				// empty database
-				tableMap[dbInfo.ID] = table
+				tableMap[table.DB.ID] = table
 			}
 			return nil
 		})
@@ -367,9 +467,46 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	}
 }
 
+func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
+	dbInfo := &model.DBInfo{}
+	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tableInfo *model.TableInfo
+	if s.Table != nil {
+		tableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var stats *util.JSONTable
+	if s.Stats != nil {
+		stats = &util.JSONTable{}
+		if err := json.Unmarshal(s.Stats, stats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var statsFileIndexes []*backuppb.StatsFileIndex
+	if len(s.StatsIndex) > 0 {
+		statsFileIndexes = s.StatsIndex
+	}
+
+	return &Table{
+		DB:               dbInfo,
+		Info:             tableInfo,
+		Crc64Xor:         s.Crc64Xor,
+		TotalKvs:         s.TotalKvs,
+		TotalBytes:       s.TotalBytes,
+		TiFlashReplicas:  int(s.TiflashReplicas),
+		Stats:            stats,
+		StatsFileIndexes: statsFileIndexes,
+	}, nil
+}
+
 func receiveBatch(
-	ctx context.Context, errCh chan error, ch <-chan interface{}, maxBatchSize int,
-	collectItem func(interface{}) error,
+	ctx context.Context, errCh chan error, ch <-chan any, maxBatchSize int,
+	collectItem func(any) error,
 ) error {
 	batchSize := 0
 	for {
@@ -427,7 +564,7 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize int, size int, itemCount int) {
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b any) (dataFileSize int, size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
 		metaFile := b.(*backuppb.File)
@@ -476,7 +613,7 @@ func NewSizedMetaFile(sizeLimit int) *sizedMetaFile {
 	}
 }
 
-func (f *sizedMetaFile) append(file interface{}, op AppendOp) bool {
+func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 	// append to root
 	// 	TODO maybe use multi level index
 	dataFileSize, size, itemCount := op.appendFile(f.root, file)
@@ -504,7 +641,7 @@ type MetaWriter struct {
 	// wg waits StartWriterMetas exits
 	wg sync.WaitGroup
 	// internal item channel
-	metasCh chan interface{}
+	metasCh chan any
 	errCh   chan error
 
 	// records the total item of in one write meta job.
@@ -517,6 +654,9 @@ type MetaWriter struct {
 
 	// records the total datafile size
 	totalDataFileSize int
+
+	// records the total metafile size for backupmeta v2
+	totalMetaFileSize uint64
 }
 
 // NewMetaWriter creates MetaWriter.
@@ -548,7 +688,7 @@ func NewMetaWriter(
 }
 
 func (writer *MetaWriter) reset() {
-	writer.metasCh = make(chan interface{}, MaxBatchSize)
+	writer.metasCh = make(chan any, MaxBatchSize)
 	writer.errCh = make(chan error)
 
 	// reset flushedItemNum for next meta.
@@ -561,7 +701,7 @@ func (writer *MetaWriter) Update(f func(m *backuppb.BackupMeta)) {
 }
 
 // Send sends the item to buffer.
-func (writer *MetaWriter) Send(m interface{}, _ AppendOp) error {
+func (writer *MetaWriter) Send(m any, _ AppendOp) error {
 	select {
 	case writer.metasCh <- m:
 	// receive an error from StartWriteMetasAsync
@@ -654,6 +794,9 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		writer.backupMeta.Version = MetaV1
 	}
 
+	// update the total size of backup files (include data files and meta files)
+	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())
+
 	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)
 	if err != nil {
@@ -678,6 +821,12 @@ func (writer *MetaWriter) fillMetasV1(_ context.Context, op AppendOp) {
 		writer.backupMeta.Files = writer.metafiles.root.DataFiles
 	case AppendSchema:
 		writer.backupMeta.Schemas = writer.metafiles.root.Schemas
+		// calculate the stats file size
+		for _, schema := range writer.metafiles.root.Schemas {
+			for _, statsIndex := range schema.StatsIndex {
+				writer.totalMetaFileSize += statsIndex.SizeEnc
+			}
+		}
 	case AppendDDL:
 		writer.backupMeta.Ddls = mergeDDLs(writer.metafiles.root.Ddls)
 	default:
@@ -692,6 +841,12 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	case AppendSchema:
 		if len(writer.metafiles.root.Schemas) == 0 {
 			return nil
+		}
+		// calculate the stats file size
+		for _, schema := range writer.metafiles.root.Schemas {
+			for _, statsIndex := range schema.StatsIndex {
+				writer.totalMetaFileSize += statsIndex.SizeEnc
+			}
 		}
 		// Add the metafile to backupmeta and reset metafiles.
 		if writer.backupMeta.SchemaIndex == nil {
@@ -734,6 +889,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 		return errors.Trace(err)
 	}
 
+	writer.totalMetaFileSize += uint64(len(encyptedContent))
 	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
 		return errors.Trace(err)
 	}
@@ -761,10 +917,21 @@ func (writer *MetaWriter) ArchiveSize() uint64 {
 	return total
 }
 
+// MetaFilesSize represents the size of meta files from backupmeta v2,
+// must be called after everything finishes by `FinishWriteMetas`.
+func (writer *MetaWriter) MetaFilesSize() uint64 {
+	return writer.totalMetaFileSize
+}
+
 // Backupmeta clones a backupmeta.
 func (writer *MetaWriter) Backupmeta() *backuppb.BackupMeta {
 	clone := proto.Clone(writer.backupMeta)
 	return clone.(*backuppb.BackupMeta)
+}
+
+// NewStatsWriter wraps the new function of stats writer
+func (writer *MetaWriter) NewStatsWriter() *StatsWriter {
+	return newStatsWriter(writer.storage, writer.cipher)
 }
 
 func mergeDDLs(ddls [][]byte) []byte {

@@ -1,0 +1,225 @@
+# TestExplainCartesianJoin
+drop table if exists t;
+create table t (v int);
+explain format = 'brief' select * from t t1, t t2;
+explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v);
+explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2));
+explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v;
+
+# TestExplainWrite
+drop table if exists t;
+create table t (a int);
+--disable_result_log
+explain analyze insert into t select 1;
+--enable_result_log
+select * from t;
+--disable_result_log
+explain analyze update t set a=2 where a=1;
+--enable_result_log
+select * from t;
+--disable_result_log
+explain format = 'brief' insert into t select 1;
+--enable_result_log
+select * from t;
+--disable_result_log
+explain analyze insert into t select 1;
+explain analyze replace into t values (3);
+--enable_result_log
+select * from t order by a;
+
+# TestExplainStatementsSummary
+desc format='brief' select * from information_schema.statements_summary;
+desc format='brief' select * from information_schema.statements_summary where digest is null;
+desc format='brief' select * from information_schema.statements_summary where digest = 'abcdefg';
+desc format='brief' select * from information_schema.statements_summary where digest in ('a','b','c');
+
+# TestFix29401
+drop table if exists tt123;
+CREATE TABLE tt123 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+ explain format='brief' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
+
+# TestIssue35105
+drop table if exists t;
+create table t (a int primary key);
+insert into t values (2);
+set @@tidb_constraint_check_in_place=1;
+-- error 1062
+explain analyze insert into t values (1), (2), (3);
+select * from t;
+set @@tidb_constraint_check_in_place=DEFAULT;
+
+# TestExplainFormatPlanCache
+drop table if exists t;
+create table t(a int);
+set @@session.tidb_enable_non_prepared_plan_cache = 1;
+select * from t limit 1;
+select * from t limit 1;
+explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
+show warnings;
+explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
+select @@last_plan_from_cache;
+--disable_result_log
+explain analyze format = 'plan_cache' select * from (select * from t) t1 limit 1;
+--enable_result_log
+show warnings;
+--disable_result_log
+explain analyze format = 'plan_cache' select * from (select * from t) t1 limit 1;
+--enable_result_log
+select @@last_plan_from_cache;
+explain format = 'plan_cache' select * from t;
+show warnings;
+explain format = 'plan_cache' select * from t;
+select @@last_plan_from_cache;
+--disable_result_log
+explain analyze format = 'plan_cache' select * from t;
+--enable_result_log
+show warnings;
+--disable_result_log
+explain analyze format = 'plan_cache' select * from t;
+--enable_result_log
+select @@last_plan_from_cache;
+explain select * from t;
+select @@last_plan_from_cache;
+explain format = 'brief' select * from t;
+select @@last_plan_from_cache;
+explain format = 'dot' select * from t;
+select @@last_plan_from_cache;
+explain format = 'hint' select * from t;
+select @@last_plan_from_cache;
+explain format = 'row' select * from t;
+select @@last_plan_from_cache;
+explain format = 'verbose' select * from t;
+select @@last_plan_from_cache;
+explain format = 'traditional' select * from t;
+select @@last_plan_from_cache;
+explain format = 'binary' select * from t;
+select @@last_plan_from_cache;
+explain format = 'tidb_json' select * from t;
+select @@last_plan_from_cache;
+explain format = 'cost_trace' select * from t;
+select @@last_plan_from_cache;
+set @@session.tidb_enable_non_prepared_plan_cache = DEFAULT;
+
+# TestExplainPrivileges
+drop table if exists t;
+drop view if exists v;
+drop user if exists 'explain'@'%';
+create table t (id int);
+create view v as select * from t;
+create user 'explain'@'%';
+grant select on executor__explain.v to 'explain'@'%';
+
+connect (conn1, localhost, explain,,);
+show databases;
+use executor__explain;
+select * from v;
+-- error 1345
+explain format = 'brief' select * from v;
+
+connection default;
+grant show view on executor__explain.v to 'explain'@'%';
+connection conn1;
+explain format = 'brief' select * from v;
+
+connection default;
+revoke select on executor__explain.v from 'explain'@'%';
+connection conn1;
+-- error 1142
+explain format = 'brief' select * from v;
+
+connection default;
+create table t1 (i int);
+create table t2 (j int);
+create table t3 (k int, secret int);
+create view v1 as select * from t1;
+create view v2 as select * from v1, t2;
+create view v3 as select k from t3;
+grant select, show view on executor__explain.v2 to 'explain'@'%';
+grant         show view on executor__explain.v1 to 'explain'@'%';
+grant select, show view on executor__explain.t3 to 'explain'@'%';
+grant select, show view on executor__explain.v3 to 'explain'@'%';
+
+connection conn1;
+-- error 1142
+explain select * from v1;
+-- error 1345
+explain select * from v2;
+explain select * from t3;
+explain select * from v3;
+disconnect conn1;
+
+
+# TestIssue47331
+drop table if exists t1;
+create table t1(
+  id1 varchar(2) DEFAULT '00',
+  id2 varchar(30) NOT NULL,
+  id3 datetime DEFAULT NULL,
+  id4 varchar(100) NOT NULL DEFAULT 'ecifdata',
+  id5 datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id6 int(11) DEFAULT NULL,
+  id7 int(11) DEFAULT NULL,
+  UNIQUE KEY UI_id2 (id2),
+  KEY ix_id1 (id1)
+);
+drop table if exists t2;
+create table t2(
+  id10 varchar(40) NOT NULL,
+  id2 varchar(30) NOT NULL,
+  KEY IX_id2 (id2),
+  PRIMARY KEY (id10)
+);
+drop table if exists t3;
+create table t3(
+  id20 varchar(40) DEFAULT NULL,
+  UNIQUE KEY IX_id20 (id20)
+);
+explain UPDATE t1 a
+SET a.id1 = '04',
+  a.id3 = CURRENT_TIMESTAMP,
+  a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
+  a.id5 = CURRENT_TIMESTAMP
+WHERE a.id1 = '03'
+  AND a.id6 - IFNULL(a.id7, 0) =
+      (
+        SELECT COUNT(1)
+        FROM t2 b, t3 c
+        WHERE b.id10 = c.id20
+          AND b.id2 = a.id2
+          AND b.id2 in (
+            SELECT rn.id2
+            FROM t1 rn
+            WHERE rn.id1 = '03'
+          )
+      );
+
+
+# TestExplainAnalyzeActRowsNotEmpty
+drop table if exists t;
+create table t (a int, b int, index (a));
+insert into t values (1, 1);
+--replace_column 6 <execution_info> 8 <memory> 9 <disk>
+explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
+
+# TestIssue49605
+drop table if exists t;
+CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1;
+INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');
+explain format='brief' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
+select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
+explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
+select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;

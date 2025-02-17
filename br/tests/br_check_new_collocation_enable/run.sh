@@ -14,11 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS for this script as not working with brv4.0.8
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eu
 DB="$TEST_NAME"
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-source $cur/../_utils/run_services
+source $UTILS_DIR/run_services
 
 PROGRESS_FILE="$TEST_DIR/progress_unit_file"
 rm -rf $PROGRESS_FILE
@@ -54,7 +60,7 @@ bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
 # restore db from v4.0.8 version without `newCollationEnable`
 echo "restore start ... without NewCollactionEnable in backupmeta"
 restore_fail=0
-error_str="the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta"
+error_str="the value 'new_collation_enabled' not found in backupmeta"
 test_log="new_collotion_enable_test.log"
 unset BR_LOG_TO_TERM
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $test_log || restore_fail=1
@@ -84,7 +90,7 @@ start_services --tidb-cfg $cur/config/new_collation_enable_true.toml
 echo "restore start ... with NewCollactionEnable=True in TiDB"
 restore_fail=0
 test_log2="new_collotion_enable_test2.log"
-error_str="the config 'new_collations_enabled_on_first_bootstrap' not match"
+error_str="the config 'new_collation_enabled' not match"
 unset BR_LOG_TO_TERM
 run_br restore db --db $DB -s "local://$cur/${DB}_2" --pd $PD_ADDR --log-file $test_log2 || restore_fail=1
 if [ $restore_fail -ne 1 ]; then

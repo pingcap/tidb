@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "generic",
+    srcs = ["sync_map.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/generic",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "generic_test",
+    timeout = "short",
+    srcs = ["sync_map_test.go"],
+    flaky = True,
+    deps = [
+        ":generic",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,62 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stmtsummary",
+    srcs = [
+        "column.go",
+        "logger.go",
+        "reader.go",
+        "record.go",
+        "stmtsummary.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/stmtsummary/v2",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/model",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/execdetails",
+        "//pkg/util/kvcache",
+        "//pkg/util/logutil",
+        "//pkg/util/plancodec",
+        "//pkg/util/ppcpuusage",
+        "//pkg/util/set",
+        "//pkg/util/stmtsummary",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//buffer",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "stmtsummary_test",
+    timeout = "short",
+    srcs = [
+        "column_test.go",
+        "main_test.go",
+        "reader_test.go",
+        "record_test.go",
+        "stmtsummary_test.go",
+    ],
+    embed = [":stmtsummary"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/set",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

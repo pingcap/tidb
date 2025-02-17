@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +31,7 @@ func TestExternalFileWriter(t *testing.T) {
 		storage, err := Create(ctx, backend, true)
 		require.NoError(t, err)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt"
-		writer, err := storage.Create(ctx, fileName)
+		writer, err := storage.Create(ctx, fileName, nil)
 		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
@@ -102,9 +104,10 @@ func TestCompressReaderWriter(t *testing.T) {
 		ctx := context.Background()
 		storage, err := Create(ctx, backend, true)
 		require.NoError(t, err)
-		storage = WithCompression(storage, Gzip)
-		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt.gz"
-		writer, err := storage.Create(ctx, fileName)
+		storage = WithCompression(storage, test.compressType, DecompressConfig{})
+		suffix := createSuffixString(test.compressType)
+		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
+		writer, err := storage.Create(ctx, fileName, nil)
 		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
@@ -118,16 +121,15 @@ func TestCompressReaderWriter(t *testing.T) {
 		// make sure compressed file is written correctly
 		file, err := os.Open(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		r, err := newCompressReader(test.compressType, file)
+		r, err := newCompressReader(test.compressType, DecompressConfig{}, file)
 		require.NoError(t, err)
 		var bf bytes.Buffer
 		_, err = bf.ReadFrom(r)
 		require.NoError(t, err)
 		require.Equal(t, strings.Join(test.content, ""), bf.String())
-		require.Nil(t, r.Close())
 
 		// test withCompression Open
-		r, err = storage.Open(ctx, fileName)
+		r, err = storage.Open(ctx, fileName, nil)
 		require.NoError(t, err)
 		content, err := io.ReadAll(r)
 		require.NoError(t, err)
@@ -135,7 +137,8 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []CompressType{Gzip}
+	compressTypeArr := []CompressType{Gzip, Snappy, Zstd}
+
 	tests := []testcase{
 		{
 			name: "long text medium chunks",
@@ -166,4 +169,37 @@ func TestCompressReaderWriter(t *testing.T) {
 			testFn(&tests[i], t)
 		}
 	}
+}
+
+func TestNewCompressReader(t *testing.T) {
+	var buf bytes.Buffer
+	var w io.WriteCloser
+	var err error
+	w, err = zstd.NewWriter(&buf)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("data"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	compressedData := buf.Bytes()
+
+	// default cfg(decode asynchronously)
+	prevRoutineCnt := runtime.NumGoroutine()
+	r, err := newCompressReader(Zstd, DecompressConfig{}, bytes.NewReader(compressedData))
+	currRoutineCnt := runtime.NumGoroutine()
+	require.NoError(t, err)
+	require.Greater(t, currRoutineCnt, prevRoutineCnt)
+	allData, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, "data", string(allData))
+
+	// sync decode
+	prevRoutineCnt = runtime.NumGoroutine()
+	config := DecompressConfig{ZStdDecodeConcurrency: 1}
+	r, err = newCompressReader(Zstd, config, bytes.NewReader(compressedData))
+	require.NoError(t, err)
+	currRoutineCnt = runtime.NumGoroutine()
+	require.Equal(t, prevRoutineCnt, currRoutineCnt)
+	allData, err = io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, "data", string(allData))
 }

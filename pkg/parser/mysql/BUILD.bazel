@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mysql",
+    srcs = [
+        "charset.go",
+        "const.go",
+        "errcode.go",
+        "errname.go",
+        "error.go",
+        "locale_format.go",
+        "privs.go",
+        "state.go",
+        "type.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/mysql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/format",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "mysql_test",
+    timeout = "short",
+    srcs = [
+        "const_test.go",
+        "error_test.go",
+        "privs_test.go",
+        "type_test.go",
+    ],
+    embed = [":mysql"],
+    flaky = True,
+    shard_count = 9,
+    deps = ["@com_github_stretchr_testify//require"],
+)

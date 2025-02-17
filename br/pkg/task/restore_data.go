@@ -13,12 +13,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/data"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -51,17 +57,17 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// read the backup meta resolved ts and total tikvs from backup storage
-	var resolveTs uint64
+	var resolveTS uint64
 	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	resolveTs, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
+	resolveTS, numStores, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	summary.CollectUint("resolve-ts", resolveTs)
+	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
@@ -71,9 +77,12 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	defer mgr.Close()
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	tc := tidbconfig.GetGlobalConfig()
+	tc.SkipRegisterToDashboard = true
+	tc.EnableGlobalKill = false
+	tidbconfig.StoreGlobalConfig(tc)
 
-	restoreTS, err := client.GetTS(ctx)
+	restoreTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -85,6 +94,8 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		ID:       utils.MakeSafePointID(),
 	}
 
+	// TODO: since data restore does not have tidb up, it looks we can remove this keeper
+	// it requires to do more test, then remove this part of code.
 	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
@@ -114,31 +125,28 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			if err != nil {
 				return errors.Trace(err)
 			}
-			numOnlineStore := len(allStores)
-			// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
-			if numOnlineStore != numBackupStore {
-				log.Warn("the restore meta contains the number of tikvs inconsist with the resore cluster, retry ...", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
-				return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
-					"number of tikvs mismatch")
-			}
 			return nil
 		},
-		utils.NewPDReqBackofferExt(),
+		utils.NewConservativePDBackoffStrategy(),
 	)
+	restoreNumStores := len(allStores)
+	if restoreNumStores != numStores {
+		log.Warn("the number of stores in the cluster has changed", zap.Int("origin", numStores), zap.Int("current", restoreNumStores))
+	}
 
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
-	// progress = read meta + send recovery + iterate tikv + resolve kv data.
-	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
+	log.Debug("total tikv", zap.Int("total", restoreNumStores), zap.String("progress file", cfg.ProgressFile))
+	// progress = read meta + send recovery + iterate tikv + (1 * prepareflashback + 1 * flashback)
+	progress := g.StartProgress(ctx, cmdName, int64(restoreNumStores*3+2), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(restoreNumStores*3+2), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
 
-	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
+	totalRegions, err = data.RecoverData(ctx, resolveTS, allStores, mgr, progress, restoreTS, cfg.Concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -152,8 +160,78 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	//TODO: restore volume type into origin type
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
 
+	// since we cannot reset tiflash automaticlly. so we should start it manually
+	if err = resetTiFlashReplicas(ctx, g, mgr.GetStorage(), mgr.GetPDClient()); err != nil {
+		return errors.Trace(err)
+	}
+
 	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, pdClient pd.Client) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
+	for _, s := range tableInfoRes {
+		for _, t := range s.TableInfos {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := getTiFlashNodeCount(ctx, pdClient)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, utils.NewBackoffRetryAllErrorStrategy(30, 4*time.Second, 32*time.Second))
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
 }

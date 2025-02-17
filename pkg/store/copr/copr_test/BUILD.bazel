@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "copr_test_test",
+    timeout = "short",
+    srcs = [
+        "coprocessor_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/resourcegroup/runaway",
+        "//pkg/store/copr",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/meta_storagepb",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//resource_group/controller",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

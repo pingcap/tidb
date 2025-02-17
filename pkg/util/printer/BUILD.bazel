@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "printer",
+    srcs = ["printer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/printer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/mysql",
+        "//pkg/util/israce",
+        "//pkg/util/logutil",
+        "//pkg/util/versioninfo",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "printer_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "printer_test.go",
+    ],
+    embed = [":printer"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

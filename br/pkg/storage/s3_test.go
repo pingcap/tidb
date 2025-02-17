@@ -12,18 +12,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 const bucketRegionHeader = "X-Amz-Bucket-Region"
@@ -144,6 +147,7 @@ func TestApplyUpdate(t *testing.T) {
 		if test.setEnv {
 			require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
 			require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+			require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 		}
 		u, err := ParseBackend("s3://bucket/prefix/", &BackendOptions{S3: test.options})
 		require.NoError(t, err)
@@ -210,6 +214,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: true,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "ceph",
 			},
 		},
 		{
@@ -224,6 +229,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "alibaba",
 			},
 		},
 		{
@@ -238,6 +244,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "netease",
 			},
 		},
 		{
@@ -260,11 +267,13 @@ func TestApplyUpdate(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 			},
 			s3: &backuppb.S3{
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
 			},
@@ -285,6 +294,9 @@ func TestS3Storage(t *testing.T) {
 		sendCredential bool
 	}
 
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 	s := createGetBucketRegionServer("us-west-2", 200, true)
 	defer s.Close()
 
@@ -314,10 +326,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no region",
 			s3: &backuppb.S3{
-				Region:   "",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -325,10 +338,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "wrong region",
 			s3: &backuppb.S3{
-				Region:   "us-east-2",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "us-east-2",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      true,
 			sendCredential: true,
@@ -336,10 +350,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "right region",
 			s3: &backuppb.S3{
-				Region:   "us-west-2",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -351,8 +366,10 @@ func TestS3Storage(t *testing.T) {
 				Endpoint:        s.URL,
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
+				ForcePathStyle:  true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -365,6 +382,7 @@ func TestS3Storage(t *testing.T) {
 				SecretAccessKey: "cd",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
+				ForcePathStyle:  true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -372,11 +390,12 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no secret access key",
 			s3: &backuppb.S3{
-				Region:    "us-west-2",
-				Endpoint:  s.URL,
-				AccessKey: "ab",
-				Bucket:    "bucket",
-				Prefix:    "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				AccessKey:      "ab",
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -384,11 +403,12 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no secret access key",
 			s3: &backuppb.S3{
-				Region:    "us-west-2",
-				Endpoint:  s.URL,
-				AccessKey: "ab",
-				Bucket:    "bucket",
-				Prefix:    "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				AccessKey:      "ab",
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: false,
@@ -400,7 +420,17 @@ func TestS3Storage(t *testing.T) {
 }
 
 func TestS3URI(t *testing.T) {
-	backend, err := ParseBackend("s3://bucket/prefix/", nil)
+	accessKey := "ab"
+	secretAccessKey := "cd"
+	sessionToken := "ef"
+	options := &BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
+		},
+	}
+	backend, err := ParseBackend("s3://bucket/prefix/", options)
 	require.NoError(t, err)
 	storage, err := New(context.Background(), backend, &ExternalStorageOptions{})
 	require.NoError(t, err)
@@ -453,6 +483,24 @@ func TestWriteNoError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
+}
+
+func TestMultiUploadErrorNotOverwritten(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		CreateMultipartUploadWithContext(ctx, gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mock error"))
+
+	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
+	require.NoError(t, err)
+	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
+	data := make([]byte, 5*1024*1024+6716)
+	n, err := w.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, 5*1024*1024+6716, n)
+	require.ErrorContains(t, w.Close(ctx), "mock error")
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
@@ -612,7 +660,7 @@ func TestOpenAsBufio(t *testing.T) {
 			}, nil
 		})
 
-	reader, err := s.storage.Open(ctx, "plain-text-file")
+	reader, err := s.storage.Open(ctx, "plain-text-file", nil)
 	require.NoError(t, err)
 	require.Nil(t, reader.Close())
 	bufReader := bufio.NewReaderSize(reader, 5)
@@ -657,11 +705,36 @@ func TestOpenReadSlowly(t *testing.T) {
 			ContentLength: aws.Int64(26),
 		}, nil)
 
-	reader, err := s.storage.Open(ctx, "alphabets")
+	reader, err := s.storage.Open(ctx, "alphabets", nil)
 	require.NoError(t, err)
 	res, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	require.Equal(t, []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), res)
+}
+
+func TestPutAndDeleteObjectCheck(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	require.NoError(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}))
+
+	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
+	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock put error")
+
+	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
+	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock del error")
+
+	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, awserr.New("AccessDenied", "", nil))
+	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "AccessDenied")
+
+	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
+	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
+	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock put error")
 }
 
 // TestOpenSeek checks that Seek is implemented correctly.
@@ -670,14 +743,15 @@ func TestOpenSeek(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 1000000)
-	rand.Read(someRandomBytes)
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes)
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
 	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 998000, 990100}, func(data []byte, offset int) io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(data[offset:]))
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -788,14 +862,15 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
-	rand.Read(someRandomBytes) //nolint:gosec
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
 	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 20, 50, 75}, func(data []byte, offset int) io.ReadCloser {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -828,20 +903,71 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 }
 
+type alwaysFailReader struct{}
+
+func (alwaysFailReader) Read([]byte) (n int, err error) {
+	return 0, errors.New("always fail read")
+}
+
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.
 func TestS3ReaderWithRetryFailed(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
-	rand.Read(someRandomBytes) //nolint:gosec
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
-	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 20, 40, 60}, func(data []byte, offset int) io.ReadCloser {
-		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
+	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 0, 0, 0}, func(data []byte, offset int) io.ReadCloser {
+		return io.NopCloser(alwaysFailReader{})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, reader.Close())
+	}()
+
+	slice := make([]byte, 100)
+	// this Read will internally retry 3 times, and then return error
+	_, err = reader.Read(slice)
+	require.EqualError(t, err, "always fail read")
+	require.True(t, s.controller.Satisfied())
+}
+
+type failEvenReadReader struct {
+	r   io.Reader
+	cnt int
+}
+
+func (f *failEvenReadReader) Read(p []byte) (n int, err error) {
+	f.cnt++
+	if f.cnt%2 == 1 {
+		return 0, errors.New("mock read error")
+	}
+	return f.r.Read(p)
+}
+
+func TestS3ReaderResetRetry(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	someRandomBytes := make([]byte, 100)
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
+	// ^ we just want some random bytes for testing, we don't care about its security.
+
+	mockReader := &failEvenReadReader{r: bytes.NewReader(someRandomBytes)}
+	s.expectedCalls(
+		ctx,
+		t,
+		someRandomBytes,
+		[]int{0, 0, 20, 40, 60, 80},
+		func([]byte, int) io.ReadCloser { return io.NopCloser(mockReader) },
+	)
+
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -856,13 +982,11 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
 	}
 
-	// we can retry 3 times, so read will succeed for 4 times
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		readAndCheck(20, i*20)
 	}
 
-	_, err = reader.Read(slice)
-	require.EqualError(t, err, "read exceeded limit")
+	require.Equal(t, 10, mockReader.cnt)
 }
 
 // TestWalkDir checks WalkDir retrieves all directory content under a prefix.
@@ -1105,10 +1229,12 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 func TestSendCreds(t *testing.T) {
 	accessKey := "ab"
 	secretAccessKey := "cd"
+	sessionToken := "ef"
 	backendOpt := BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1121,12 +1247,15 @@ func TestSendCreds(t *testing.T) {
 	sentAccessKey := backend.GetS3().AccessKey
 	require.Equal(t, accessKey, sentAccessKey)
 	sentSecretAccessKey := backend.GetS3().SecretAccessKey
-	require.Equal(t, sentSecretAccessKey, sentSecretAccessKey)
+	require.Equal(t, secretAccessKey, sentSecretAccessKey)
+	sentSessionToken := backend.GetS3().SessionToken
+	require.Equal(t, sessionToken, sentSessionToken)
 
 	backendOpt = BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1140,4 +1269,233 @@ func TestSendCreds(t *testing.T) {
 	require.Equal(t, "", sentAccessKey)
 	sentSecretAccessKey = backend.GetS3().SecretAccessKey
 	require.Equal(t, "", sentSecretAccessKey)
+	sentSessionToken = backend.GetS3().SessionToken
+	require.Equal(t, "", sentSessionToken)
+}
+
+func TestObjectLock(t *testing.T) {
+	s := createS3Suite(t)
+	// resp is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(nil, nil)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp is not nil, but resp.ObjectLockConfiguration is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: nil,
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: nil,
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("EnaBled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("Enabled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, true, s.storage.IsObjectLockEnabled())
+}
+
+func TestS3StorageBucketRegion(t *testing.T) {
+	type testcase struct {
+		name         string
+		expectRegion string
+		s3           *backuppb.S3
+	}
+
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
+
+	cases := []testcase{
+		{
+			"empty region from aws",
+			"us-east-1",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+		{
+			"region from different provider",
+			"sdg",
+			&backuppb.S3{
+				Region:   "sdg",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"empty region from different provider",
+			"",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"region from aws",
+			"us-west-2",
+			&backuppb.S3{
+				Region:   "us-west-2",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+	}
+	for _, ca := range cases {
+		func(name string, region string, s3 *backuppb.S3) {
+			s := createGetBucketRegionServer(region, 200, true)
+			defer s.Close()
+			s3.ForcePathStyle = true
+			s3.Endpoint = s.URL
+
+			t.Log(name)
+			es, err := New(context.Background(),
+				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
+				&ExternalStorageOptions{})
+			require.NoError(t, err)
+			ss, ok := es.(*S3Storage)
+			require.True(t, ok)
+			require.Equal(t, region, ss.GetOptions().Region)
+		}(ca.name, ca.expectRegion, ca.s3)
+	}
+}
+
+func TestRetryError(t *testing.T) {
+	var count int32 = 0
+	var errString string = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
+	var lock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			var curCnt int32
+			t.Log(r.URL)
+			lock.Lock()
+			count += 1
+			curCnt = count
+			lock.Unlock()
+			if curCnt < 2 {
+				// write an cannot-retry error, but we modify the error to specific error, so client would retry.
+				w.WriteHeader(403)
+				return
+			}
+		}
+
+		w.WriteHeader(200)
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer", "return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer")
+	}()
+
+	ctx := context.Background()
+	s, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:        server.URL,
+		Bucket:          "test",
+		Prefix:          "retry",
+		AccessKey:       "none",
+		SecretAccessKey: "none",
+		Provider:        "skip check region",
+		ForcePathStyle:  true,
+	}, &ExternalStorageOptions{})
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, "reset", []byte(errString))
+	require.NoError(t, err)
+	require.Equal(t, count, int32(2))
+}
+
+func TestS3ReadFileRetryable(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	errMsg := "just some unrelated error"
+	expectedErr := errors.New(errMsg)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		Return(nil, expectedErr)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed", "2*return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed")
+	}()
+	_, err := s.storage.ReadFile(ctx, "file")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), errMsg))
+}
+
+func TestOpenRangeMismatchErrorMsg(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	start, end := int64(10), int64(30)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentRange: aws.String("bytes 10-20/20"),
+			}, nil
+		})
+	reader, err := s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
+	require.Nil(t, reader)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{}, nil
+		})
+	reader, err = s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	// other function will throw error
+	require.ErrorContains(t, err, "ContentRange is empty")
+	require.Nil(t, reader)
 }

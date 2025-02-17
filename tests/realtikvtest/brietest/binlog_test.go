@@ -15,39 +15,13 @@
 package brietest
 
 import (
-	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 )
-
-type mockBinlogPump struct {
-}
-
-var _ binlog.PumpClient = &mockBinlogPump{}
-
-func (p *mockBinlogPump) WriteBinlog(_ context.Context, _ *binlog.WriteBinlogReq, _ ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
-	return &binlog.WriteBinlogResp{}, nil
-}
-
-func (p *mockBinlogPump) PullBinlogs(_ context.Context, _ *binlog.PullBinlogReq, _ ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPumpPullBinlogsClient{mockcopr.MockGRPCClientStream()}, nil
-}
-
-type mockPumpPullBinlogsClient struct {
-	grpc.ClientStream
-}
-
-func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
-	return nil, nil
-}
 
 func TestForCoverage(t *testing.T) {
 	// Just for test coverage.
@@ -62,10 +36,12 @@ func TestForCoverage(t *testing.T) {
 	tk.MustExec("insert t values ()")
 
 	// Normal request will not cover txn.Seek.
+	tk.MustExec("set @@tidb_enable_fast_table_check=false")
+	tk.MustExec("admin check table t")
+	tk.MustExec("set @@tidb_enable_fast_table_check=true")
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
 	tk.MustExec("begin")
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values ()")

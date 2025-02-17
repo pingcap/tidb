@@ -28,13 +28,17 @@ const (
 	BackupDataSize = "backup data size(after compressed)"
 	// RestoreDataSize is a field we collection after restore finish
 	RestoreDataSize = "restore data size(after compressed)"
+	// SkippedKVCountByCheckpoint is a field we skip during backup/restore
+	SkippedKVCountByCheckpoint = "skipped kv count by checkpoint"
+	// SkippedBytesByCheckpoint is a field we skip during backup/restore
+	SkippedBytesByCheckpoint = "skipped bytes by checkpoint"
 )
 
 // LogCollector collects infos into summary log.
 type LogCollector interface {
 	SetUnit(unit string)
 
-	CollectSuccessUnit(name string, unitCount int, arg interface{})
+	CollectSuccessUnit(name string, unitCount int, arg any)
 
 	CollectFailureUnit(name string, reason error)
 
@@ -45,6 +49,10 @@ type LogCollector interface {
 	CollectUInt(name string, t uint64)
 
 	SetSuccessStatus(success bool)
+
+	NowDureTime() time.Duration
+
+	AdjustStartTimeToEarlierTime(t time.Duration)
 
 	Summary(name string)
 
@@ -113,7 +121,7 @@ func (tc *logCollector) SetUnit(unit string) {
 	tc.unit = unit
 }
 
-func (tc *logCollector) CollectSuccessUnit(name string, unitCount int, arg interface{}) {
+func (tc *logCollector) CollectSuccessUnit(name string, unitCount int, arg any) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
@@ -161,6 +169,18 @@ func (tc *logCollector) SetSuccessStatus(success bool) {
 
 func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
+}
+
+func (tc *logCollector) NowDureTime() time.Duration {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return time.Since(tc.startTime)
+}
+
+func (tc *logCollector) AdjustStartTimeToEarlierTime(t time.Duration) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.startTime = tc.startTime.Add(-t)
 }
 
 func (tc *logCollector) Summary(name string) {
@@ -215,8 +235,13 @@ func (tc *logCollector) Summary(name string) {
 				zap.String("average-speed", units.HumanSize(float64(data)/totalDureTime.Seconds())+"/s"))
 			continue
 		}
+		if name == SkippedBytesByCheckpoint {
+			logFields = append(logFields,
+				zap.String("skipped-kv-size-by-checkpoint", units.HumanSize(float64(data))))
+			continue
+		}
 		if name == BackupDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to bakcup"))
 			} else {
 				logFields = append(logFields,
@@ -225,7 +250,7 @@ func (tc *logCollector) Summary(name string) {
 			continue
 		}
 		if name == RestoreDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to restore"))
 			} else {
 				logFields = append(logFields,

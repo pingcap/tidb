@@ -1,0 +1,65 @@
+# TestReadWriteExternalTimestamp
+select @@tidb_external_ts;
+set global tidb_external_ts=19980613;
+select @@tidb_external_ts;
+set global tidb_external_ts=20220930;
+select @@tidb_external_ts;
+
+# TestExternalTimestampRead
+drop table if exists t;
+create table t (id INT NOT NULL,d double,PRIMARY KEY (id));
+insert into t values (0, 100);
+insert into t values (1, 100);
+insert into t values (2, 100);
+insert into t values (3, 100);
+select * from t;
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (4, 100);
+# as the `tidb_external_ts` is set an old value, the newest row (4, 100) cannot be read
+set tidb_enable_external_ts_read=ON;
+select * from t;
+set tidb_enable_external_ts_read=OFF;
+select * from t;
+
+# TestExternalTimestampReadWithTransaction
+drop table if exists t;
+create table t (id INT NOT NULL,PRIMARY KEY (id));
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (0);
+select * from t;
+set tidb_enable_external_ts_read=ON;
+select * from t;
+start transaction;
+select * from t;
+commit;
+set tidb_enable_external_ts_read=OFF;
+start transaction;
+select * from t;
+commit;
+start transaction;
+select * from t;
+set tidb_enable_external_ts_read=ON;
+select * from t;
+set tidb_enable_external_ts_read=OFF;
+commit;
+
+# TestExternalTimestampNotAffectPrepare
+drop table if exists t;
+create table t (id INT NOT NULL,PRIMARY KEY (id));
+insert into t values (0);
+select * from t;
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (1);
+select * from t;
+set tidb_enable_external_ts_read=on;
+prepare my_select from 'select * from t';
+execute my_select;
+set tidb_enable_external_ts_read=off;
+execute my_select;
+

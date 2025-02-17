@@ -1,0 +1,66 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+exports_files([
+    "go.mod",
+    "go.sum",
+])
+
+go_library(
+    name = "parser",
+    srcs = [
+        "digester.go",
+        "generate.go",
+        "hintparser.go",
+        "hintparserimpl.go",
+        "keywords.go",
+        "lexer.go",
+        "misc.go",
+        "parser.go",
+        "yy_parser.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/charset",
+        "//pkg/parser/duration",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
+        "//pkg/parser/terror",
+        "//pkg/parser/tidb",
+        "//pkg/parser/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "parser_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "consistent_test.go",
+        "digester_test.go",
+        "hintparser_test.go",
+        "keywords_test.go",
+        "lexer_test.go",
+        "main_test.go",
+        "parser_test.go",
+    ],
+    data = glob(["**"]),
+    embed = [":parser"],
+    flaky = True,
+    shard_count = 50,
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
+        "//pkg/parser/terror",
+        "//pkg/parser/test_driver",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

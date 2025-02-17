@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pdhelper",
+    srcs = ["pd.go"],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/pdhelper",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/store/helper",
+        "//pkg/util",
+        "//pkg/util/sqlescape",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "pdhelper_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "pd_test.go",
+    ],
+    embed = [":pdhelper"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/sessionctx",
+        "//pkg/testkit/testsetup",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

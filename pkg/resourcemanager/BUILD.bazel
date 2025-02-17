@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "resourcemanager",
+    srcs = [
+        "rm.go",
+        "schedule.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/resourcemanager",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/resourcemanager/scheduler",
+        "//pkg/resourcemanager/util",
+        "//pkg/util",
+        "//pkg/util/cpu",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "resourcemanager_test",
+    timeout = "short",
+    srcs = ["schedule_test.go"],
+    embed = [":resourcemanager"],
+    flaky = True,
+    deps = [
+        "//pkg/resourcemanager/scheduler",
+        "//pkg/resourcemanager/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)

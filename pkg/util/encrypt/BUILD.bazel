@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "encrypt",
+    srcs = [
+        "aes.go",
+        "aes_layer.go",
+        "crypt.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/encrypt",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "encrypt_test",
+    timeout = "short",
+    srcs = [
+        "aes_layer_test.go",
+        "aes_test.go",
+        "crypt_test.go",
+        "main_test.go",
+    ],
+    embed = [":encrypt"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "//pkg/util/checksum",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

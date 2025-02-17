@@ -19,10 +19,11 @@ DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
 LOG=/$TEST_DIR/backup.log
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 for i in $(seq $DB_COUNT); do
@@ -40,7 +41,7 @@ echo "backup start..."
 # Do not log to terminal
 unset BR_LOG_TO_TERM
 # do not backup stats to test whether we can restore without stats.
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --ignore-stats=true --log-file $LOG || cat $LOG
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --ignore-stats=true --log-file $LOG --checksum=true || cat $LOG
 BR_LOG_TO_TERM=1
 
 checksum_count=$(cat $LOG | grep "checksum success" | wc -l | xargs)

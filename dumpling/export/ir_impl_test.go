@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +19,7 @@ func newSimpleRowReceiver(length int) *simpleRowReceiver {
 	return &simpleRowReceiver{data: make([]string, length)}
 }
 
-func (s *simpleRowReceiver) BindAddress(args []interface{}) {
+func (s *simpleRowReceiver) BindAddress(args []any) {
 	for i := range args {
 		args[i] = &s.data[i]
 	}

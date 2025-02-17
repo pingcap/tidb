@@ -21,8 +21,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
@@ -107,97 +110,6 @@ func TestCheckLogRange(t *testing.T) {
 	}
 }
 
-type fakeResolvedInfo struct {
-	storeID    int64
-	resolvedTS uint64
-}
-
-func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
-	backupMetaDir := filepath.Join(tempDir, stream.GetStreamBackupMetaPrefix())
-	s, err := storage.NewLocalStorage(backupMetaDir)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, info := range infos {
-		meta := &backuppb.Metadata{
-			StoreId:    info.storeID,
-			ResolvedTs: info.resolvedTS,
-		}
-		buff, err := meta.Marshal()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		filename := fmt.Sprintf("%d_%d.meta", info.storeID, info.resolvedTS)
-		if err = s.WriteFile(ctx, filename, buff); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func TestGetGlobalResolvedTS(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-	helper := stream.NewMetadataHelper()
-
-	stores := []fakeResolvedInfo{
-		{
-			storeID:    1,
-			resolvedTS: 100,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 101,
-		},
-		{
-			storeID:    1,
-			resolvedTS: 70,
-		},
-	}
-
-	err = fakeMetaFiles(ctx, tmpdir, stores)
-	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
-	require.Nil(t, err)
-	require.Equal(t, uint64(101), globalResolvedTS)
-}
-
-func TestGetGlobalResolvedTS2(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-	helper := stream.NewMetadataHelper()
-
-	stores := []fakeResolvedInfo{
-		{
-			storeID:    1,
-			resolvedTS: 95,
-		},
-		{
-			storeID:    1,
-			resolvedTS: 98,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 90,
-		},
-		{
-			storeID:    2,
-			resolvedTS: 99,
-		},
-	}
-
-	err = fakeMetaFiles(ctx, tmpdir, stores)
-	require.Nil(t, err)
-	globalResolvedTS, err := getGlobalResolvedTS(ctx, s, helper)
-	require.Nil(t, err)
-	require.Equal(t, uint64(99), globalResolvedTS)
-}
-
 func fakeCheckpointFiles(
 	ctx context.Context,
 	tmpDir string,
@@ -213,8 +125,8 @@ func fakeCheckpointFiles(
 	for _, info := range infos {
 		filename := fmt.Sprintf("%v.ts", info.storeID)
 		buff := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buff, info.global_checkpoint)
-		if _, err := s.Create(ctx, filename); err != nil {
+		binary.LittleEndian.PutUint64(buff, info.globalCheckpoint)
+		if _, err := s.Create(ctx, filename, nil); err != nil {
 			return errors.Trace(err)
 		}
 		if err := s.WriteFile(ctx, filename, buff); err != nil {
@@ -229,8 +141,8 @@ func fakeCheckpointFiles(
 }
 
 type fakeGlobalCheckPoint struct {
-	storeID           int64
-	global_checkpoint uint64
+	storeID          int64
+	globalCheckpoint uint64
 }
 
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
@@ -241,16 +153,16 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 
 	infos := []fakeGlobalCheckPoint{
 		{
-			storeID:           1,
-			global_checkpoint: 98,
+			storeID:          1,
+			globalCheckpoint: 98,
 		},
 		{
-			storeID:           2,
-			global_checkpoint: 90,
+			storeID:          2,
+			globalCheckpoint: 90,
 		},
 		{
-			storeID:           2,
-			global_checkpoint: 99,
+			storeID:          2,
+			globalCheckpoint: 99,
 		},
 	}
 
@@ -260,4 +172,63 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ts, err := getGlobalCheckpointFromStorage(ctx, s)
 	require.Nil(t, err)
 	require.Equal(t, ts, uint64(99))
+}
+
+func TestGetLogRangeWithFullBackupDir(t *testing.T) {
+	var fullBackupTS uint64 = 123456
+	testDir := t.TempDir()
+	storage, err := storage.NewLocalStorage(testDir)
+	require.Nil(t, err)
+
+	m := backuppb.BackupMeta{
+		EndVersion: fullBackupTS,
+	}
+	data, err := proto.Marshal(&m)
+	require.Nil(t, err)
+
+	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	require.Nil(t, err)
+
+	cfg := Config{
+		Storage: testDir,
+	}
+	_, err = getLogRange(context.TODO(), &cfg)
+	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
+	require.ErrorContains(t, err, "the storage has been used for full backup")
+}
+
+func TestGetLogRangeWithLogBackupDir(t *testing.T) {
+	var startLogBackupTS uint64 = 123456
+	testDir := t.TempDir()
+	storage, err := storage.NewLocalStorage(testDir)
+	require.Nil(t, err)
+
+	m := backuppb.BackupMeta{
+		StartVersion: startLogBackupTS,
+	}
+	data, err := proto.Marshal(&m)
+	require.Nil(t, err)
+
+	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	require.Nil(t, err)
+
+	cfg := Config{
+		Storage: testDir,
+	}
+	logInfo, err := getLogRange(context.TODO(), &cfg)
+	require.Nil(t, err)
+	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
+}
+
+func TestGetExternalStorageOptions(t *testing.T) {
+	cfg := Config{}
+	u, err := storage.ParseBackend("s3://bucket/path", nil)
+	require.NoError(t, err)
+	options := getExternalStorageOptions(&cfg, u)
+	require.NotNil(t, options.HTTPClient)
+
+	u, err = storage.ParseBackend("gs://bucket/path", nil)
+	require.NoError(t, err)
+	options = getExternalStorageOptions(&cfg, u)
+	require.Nil(t, options.HTTPClient)
 }

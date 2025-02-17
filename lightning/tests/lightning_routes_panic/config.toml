@@ -1,0 +1,9 @@
+[tikv-importer]
+backend = 'local'
+
+# here we're verifying that routes does not panic for csv data load.
+[[routes]]
+schema-pattern = "test1"
+table-pattern = "d*"
+target-schema = "test"
+target-table = "u"

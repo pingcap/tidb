@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/cmd/benchkv",
     visibility = ["//visibility:private"],
     deps = [
-        "//kv",
-        "//parser/terror",
-        "//store/driver",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/store/driver",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

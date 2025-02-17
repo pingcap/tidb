@@ -2,11 +2,15 @@ package storage
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/snappy"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // CompressType represents the type of compression.
@@ -17,7 +21,18 @@ const (
 	NoCompression CompressType = iota
 	// Gzip will compress given bytes in gzip format.
 	Gzip
+	// Snappy will compress given bytes in snappy format.
+	Snappy
+	// Zstd will compress given bytes in zstd format.
+	Zstd
 )
+
+// DecompressConfig is the config used for decompression.
+type DecompressConfig struct {
+	// ZStdDecodeConcurrency only used for ZStd decompress, see WithDecoderConcurrency.
+	// if not 1, ZStd will decode file asynchronously.
+	ZStdDecodeConcurrency int
+}
 
 type flusher interface {
 	Flush() error
@@ -39,6 +54,21 @@ type interceptBuffer interface {
 	Compressed() bool
 }
 
+func createSuffixString(compressType CompressType) string {
+	txtSuffix := ".txt"
+	switch compressType {
+	case Gzip:
+		txtSuffix += ".gz"
+	case Snappy:
+		txtSuffix += ".snappy"
+	case Zstd:
+		txtSuffix += ".zst"
+	default:
+		return ""
+	}
+	return txtSuffix
+}
+
 func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {
 	if compressType == NoCompression {
 		return newNoCompressionBuffer(chunkSize)
@@ -50,15 +80,31 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	switch compressType {
 	case Gzip:
 		return gzip.NewWriter(w)
+	case Snappy:
+		return snappy.NewBufferedWriter(w)
+	case Zstd:
+		newWriter, err := zstd.NewWriter(w)
+		if err != nil {
+			log.Warn("Met error when creating new writer for Zstd type file", zap.Error(err))
+		}
+		return newWriter
 	default:
 		return nil
 	}
 }
 
-func newCompressReader(compressType CompressType, r io.Reader) (io.ReadCloser, error) {
+func newCompressReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.Reader, error) {
 	switch compressType {
 	case Gzip:
 		return gzip.NewReader(r)
+	case Snappy:
+		return snappy.NewReader(r), nil
+	case Zstd:
+		options := []zstd.DOption{}
+		if cfg.ZStdDecodeConcurrency > 0 {
+			options = append(options, zstd.WithDecoderConcurrency(cfg.ZStdDecodeConcurrency))
+		}
+		return zstd.NewReader(r, options...)
 	default:
 		return nil, nil
 	}

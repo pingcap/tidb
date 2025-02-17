@@ -21,13 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	_ "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -237,7 +237,8 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.name = stmt.Table.Name.L
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
-	mockTbl, err := ddl.MockTableInfo(mock.NewContext(), stmt, 1)
+	mockTbl, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), stmt)
+	mockTbl.ID = 1
 	if err != nil {
 		return errors.Trace(err)
 	}

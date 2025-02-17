@@ -17,9 +17,10 @@ package stream
 import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
 // RawMetaKey specified a transaction meta key.
@@ -51,6 +52,14 @@ func ParseTxnMetaKeyFrom(txnKey kv.Key) (*RawMetaKey, error) {
 		Field: field,
 		Ts:    ts,
 	}, nil
+}
+
+func ParseDBIDFromTableKey(key []byte) (int64, error) {
+	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return meta.ParseDBKey(rawMetaKey.Key)
 }
 
 // UpdateKey updates `key` field in `RawMetaKey` struct.
@@ -111,15 +120,34 @@ const (
 	flagShortValuePrefix   = byte('v')
 	flagOverlappedRollback = byte('R')
 	flagGCFencePrefix      = byte('F')
+	flagLastChangePrefix   = byte('l')
+	flagTxnSourcePrefix    = byte('S')
 )
 
+// RawWriteCFValue represents the value in write columnFamily.
+// Detail see line: https://github.com/tikv/tikv/blob/release-6.5/components/txn_types/src/write.rs#L70
 type RawWriteCFValue struct {
 	t                     WriteType
 	startTs               uint64
 	shortValue            []byte
 	hasOverlappedRollback bool
-	hasGCFence            bool
-	gcFence               uint64
+
+	// Records the next version after this version when overlapping rollback
+	// happens on an already existed commit record.
+	//
+	// See [`Write::gc_fence`] for more detail.
+	hasGCFence bool
+	gcFence    uint64
+
+	// The number of versions that need skipping from this record
+	// to find the latest PUT/DELETE record.
+	// If versions_to_last_change > 0 but last_change_ts == 0, the key does not
+	// have a PUT/DELETE record before this write record.
+	lastChangeTs         uint64
+	versionsToLastChange uint64
+
+	// The source of this txn.
+	txnSource uint64
 }
 
 // ParseFrom decodes the value to get the struct `RawWriteCFValue`.
@@ -146,6 +174,10 @@ l_for:
 		switch data[0] {
 		case flagShortValuePrefix:
 			vlen := data[1]
+			if len(data[2:]) < int(vlen) {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"the length of short value is invalid, vlen: %v", int(vlen))
+			}
 			v.shortValue = data[2 : vlen+2]
 			data = data[vlen+2:]
 		case flagOverlappedRollback:
@@ -157,11 +189,35 @@ l_for:
 			if err != nil {
 				return errors.Annotate(berrors.ErrInvalidArgument, "decode gc fence failed")
 			}
+		case flagLastChangePrefix:
+			data, v.lastChangeTs, err = codec.DecodeUint(data[1:])
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode last change ts failed")
+			}
+			data, v.versionsToLastChange, err = codec.DecodeUvarint(data)
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode versions to last change failed")
+			}
+		case flagTxnSourcePrefix:
+			data, v.txnSource, err = codec.DecodeUvarint(data[1:])
+			if err != nil {
+				return errors.Annotate(berrors.ErrInvalidArgument, "decode txn source failed")
+			}
 		default:
 			break l_for
 		}
 	}
 	return nil
+}
+
+// IsRollback checks whether the value in cf is a `rollback` record.
+func (v *RawWriteCFValue) IsRollback() bool {
+	return v.GetWriteType() == WriteTypeRollback
+}
+
+// IsRollback checks whether the value in cf is a `delete` record.
+func (v *RawWriteCFValue) IsDelete() bool {
+	return v.GetWriteType() == WriteTypeDelete
 }
 
 // HasShortValue checks whether short value is stored in write cf.
@@ -203,6 +259,15 @@ func (v *RawWriteCFValue) EncodeTo() []byte {
 	if v.hasGCFence {
 		data = append(data, flagGCFencePrefix)
 		data = codec.EncodeUint(data, v.gcFence)
+	}
+	if v.lastChangeTs > 0 || v.versionsToLastChange > 0 {
+		data = append(data, flagLastChangePrefix)
+		data = codec.EncodeUint(data, v.lastChangeTs)
+		data = codec.EncodeUvarint(data, v.versionsToLastChange)
+	}
+	if v.txnSource > 0 {
+		data = append(data, flagTxnSourcePrefix)
+		data = codec.EncodeUvarint(data, v.txnSource)
 	}
 	return data
 }

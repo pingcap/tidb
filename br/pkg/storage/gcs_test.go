@@ -3,18 +3,25 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -32,7 +39,7 @@ func TestGCS(t *testing.T) {
 		PredefinedAcl:   "private",
 		CredentialsBlob: "Fake Credentials",
 	}
-	stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 		SendCredentials:  false,
 		CheckPermissions: []Permission{AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
@@ -45,7 +52,8 @@ func TestGCS(t *testing.T) {
 	err = stg.WriteFile(ctx, "key1", []byte("data1"))
 	require.NoError(t, err)
 
-	err = stg.WriteFile(ctx, "key2", []byte("data22223346757222222222289722222"))
+	key2Data := []byte("data22223346757222222222289722222")
+	err = stg.WriteFile(ctx, "key2", key2Data)
 	require.NoError(t, err)
 
 	rc, err := server.Client().Bucket(bucketName).Object("a/b/key").NewReader(ctx)
@@ -86,12 +94,12 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exist)
 
-	checkWalkDir := func(stg *gcsStorage, opt *WalkOption) {
+	checkWalkDir := func(stg *GCSStorage, opt *WalkOption) {
 		var totalSize int64 = 0
 		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
 			totalSize += size
 			// also test can use this path open file
-			_, err := stg.Open(ctx, name)
+			_, err := stg.Open(ctx, name, nil)
 			require.NoError(t, err)
 			return nil
 		})
@@ -112,7 +120,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -130,7 +138,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -147,7 +155,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -181,7 +189,7 @@ func TestGCS(t *testing.T) {
 		require.True(t, ok)
 	}
 
-	efr, err := stg.Open(ctx, "key2")
+	efr, err := stg.Open(ctx, "key2", nil)
 	require.NoError(t, err)
 
 	p := make([]byte, 10)
@@ -216,17 +224,36 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, 5, n)
 	require.Equal(t, "67572", string(p))
 
-	/* Since fake_gcs_server hasn't support for negative offset yet.
 	p = make([]byte, 5)
 	offs, err = efr.Seek(int64(-7), io.SeekEnd)
 	require.NoError(t, err)
-	require.Equal(t, int64(-7), offs)
+	require.Equal(t, int64(26), offs)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
 	require.Equal(t, "97222", string(p))
-	*/
+
+	offs, err = efr.Seek(int64(100), io.SeekStart)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	offs, err = efr.Seek(int64(0), io.SeekEnd)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(key2Data)), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	offs, err = efr.Seek(int64(1), io.SeekCurrent)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(key2Data)+1), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	_, err = efr.Seek(int64(-10000), io.SeekEnd)
+	require.Error(t, err)
 
 	err = efr.Close()
 	require.NoError(t, err)
@@ -235,6 +262,7 @@ func TestGCS(t *testing.T) {
 }
 
 func TestNewGCSStorage(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -254,7 +282,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -271,7 +299,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -279,7 +307,7 @@ func TestNewGCSStorage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", gcs.CredentialsBlob)
 	}
-
+	mustReportCredErr = true
 	{
 		fakeCredentialsFile, err := os.CreateTemp(testDir, "fakeCredentialsFile")
 		require.NoError(t, err)
@@ -302,7 +330,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err = newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err = NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -333,7 +361,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		s, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		s, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -352,14 +380,29 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.Error(t, err)
 	}
-
+	// without http client
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/b",
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: `{"type": "service_account"}`,
+		}
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+		})
+		require.NoError(t, err)
+	}
+	mustReportCredErr = false
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
@@ -368,7 +411,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		s, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		s, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -377,4 +420,153 @@ func TestNewGCSStorage(t *testing.T) {
 		require.Equal(t, "", gcs.CredentialsBlob)
 		require.Equal(t, "a/b/x", s.objectName("x"))
 	}
+}
+
+func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	opts := fakestorage.Options{
+		NoListener: true,
+	}
+	server, err := fakestorage.NewServerWithOptions(opts)
+	require.NoError(t, err)
+	bucketName := "testbucket"
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
+
+	gcs := &backuppb.GCS{
+		Bucket:          bucketName,
+		Prefix:          "a/b/",
+		StorageClass:    "NEARLINE",
+		PredefinedAcl:   "private",
+		CredentialsBlob: "Fake Credentials",
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		SendCredentials:  false,
+		CheckPermissions: []Permission{AccessBuckets},
+		HTTPClient:       server.HTTPClient(),
+	})
+	require.NoError(t, err)
+
+	filename := "key"
+	err = stg.WriteFile(ctx, filename, []byte("0123456789"))
+	require.NoError(t, err)
+
+	start := int64(2)
+	end := int64(5)
+	r, err := stg.Open(ctx, filename, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+
+	content := make([]byte, 10)
+	n, err := r.Read(content)
+	require.NoError(t, err)
+	require.Equal(t, []byte("234"), content[:n])
+}
+
+var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
+
+func openTestingStorage(t *testing.T) ExternalStorage {
+	if *testingStorageURI == "" {
+		t.Skip("testingStorageURI is not set")
+	}
+	s, err := NewFromURL(context.Background(), *testingStorageURI)
+	require.NoError(t, err)
+	return s
+}
+
+func TestMultiPartUpload(t *testing.T) {
+	ctx := context.Background()
+
+	s := openTestingStorage(t)
+	if _, ok := s.(*GCSStorage); !ok {
+		t.Skipf("only test GCSStorage, got %T", s)
+	}
+
+	filename := "TestMultiPartUpload"
+	// just get some random content, use any seed is enough
+	data := make([]byte, 100*1024*1024)
+	rand.Read(data)
+	w, err := s.Create(ctx, filename, &WriterOption{Concurrency: 10})
+	require.NoError(t, err)
+	_, err = w.Write(ctx, data)
+	require.NoError(t, err)
+	err = w.Close(ctx)
+	require.NoError(t, err)
+
+	got, err := s.ReadFile(ctx, filename)
+	require.NoError(t, err)
+	cmp := bytes.Compare(data, got)
+	require.Zero(t, cmp)
+}
+
+func TestSpeedReadManyFiles(t *testing.T) {
+	ctx := context.Background()
+
+	s := openTestingStorage(t)
+	if _, ok := s.(*GCSStorage); !ok {
+		t.Skipf("only test GCSStorage, got %T", s)
+	}
+
+	fileNum := 1000
+	filenames := make([]string, fileNum)
+	for i := 0; i < fileNum; i++ {
+		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
+	}
+	fileSize := 1024
+	data := make([]byte, fileSize)
+	eg := &errgroup.Group{}
+	for i := 0; i < fileNum; i++ {
+		filename := filenames[i]
+		eg.Go(func() error {
+			return s.WriteFile(ctx, filename, data)
+		})
+	}
+	require.NoError(t, eg.Wait())
+
+	testSize := []int{10, 100, 1000}
+	for _, size := range testSize {
+		testFiles := filenames[:size]
+		now := time.Now()
+		for i := range testFiles {
+			filename := testFiles[i]
+			eg.Go(func() error {
+				_, err := s.ReadFile(ctx, filename)
+				return err
+			})
+		}
+		require.NoError(t, eg.Wait())
+		t.Logf("read %d small files cost %v", len(testFiles), time.Since(now))
+	}
+
+	// test read 10 * 100MB files
+
+	fileNum = 30
+	filenames = make([]string, fileNum)
+	for i := 0; i < fileNum; i++ {
+		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
+	}
+	fileSize = 100 * 1024 * 1024
+	data = make([]byte, fileSize)
+	for i := 0; i < fileNum; i++ {
+		filename := filenames[i]
+		eg.Go(func() error {
+			return s.WriteFile(ctx, filename, data)
+		})
+	}
+	require.NoError(t, eg.Wait())
+
+	testFiles := filenames
+	now := time.Now()
+	for i := range testFiles {
+		filename := testFiles[i]
+		eg.Go(func() error {
+			_, err := s.ReadFile(ctx, filename)
+			return err
+		})
+	}
+	require.NoError(t, eg.Wait())
+	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
 }

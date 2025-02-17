@@ -1,20 +1,29 @@
 codecov:
+  require_ci_to_pass: no
   notify:
-    require_ci_to_pass: yes
+    wait_for_ci: no
 
 coverage:
   precision: 4
   round: down
   range: "65...90"
 
+  # status:
+  #   project:
+  #     default:
+  #       threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
+  #   patch:
+  #     default:
+  #       target: 0% # trial operation
+
+  # Ref: https://docs.codecov.com/docs/commit-status#disabling-a-status
   status:
-    project: 
-      default:
-        threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
-    patch: 
-      default:
-        target: 0% # trial operation
+    project: off # disable it
+    patch: off # disable it
     changes: no
+
+# Ref: https://docs.codecov.com/docs/github-checks#disabling-github-checks-completely-via-yaml
+github_checks: false
 
 parsers:
   gcov:
@@ -25,23 +34,62 @@ parsers:
       macro: no
 
 comment:
-  layout: "header, diff"
+  layout: "header, diff, flags, components"
   behavior: default
   require_changes: no
 
+component_management:
+  default_rules:  # default rules that will be inherited by all components
+    statuses:
+      - type: project # in this case every component that doens't have a status defined will have a project type one
+        target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
+  individual_components:
+    - component_id: component_dumpling # this is an identifier that should not be changed
+      name: dumpling # this is a display name, and can be changed freely
+      paths:
+        - dumpling/**
+    - component_id: component_parser
+      name: parser
+      paths:
+        - parser/**
+    - component_id: component_br
+      name: br
+      paths:
+        - br/**
+    # more components.
+
+flag_management:
+  default_rules: # the rules that will be followed for any flag added, generally
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
+      - type: patch
+        target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
+
 ignore:
   - "LICENSES"
-  - "*_test.go"       
+  - "**/*_test.go"
   - ".git"
-  - "*.yml"
-  - "*.md"
-  - "cmd/.*"       
-  - "docs/.*"
-  - "vendor/.*"
-  - "ddl/failtest/.*"
-  - "ddl/testutil/.*"
-  - "executor/seqtest/.*"
-  - "metrics/.*"
-  - "expression/generator/.*"
-  - "br/pkg/mock/.*"
+  - "**/*.yml"
+  - "**/*.md"
+  - "cmd"
+  - "docs"
+  - "vendor"
+  - "pkg/ddl/failtest"
+  - "pkg/ddl/testutil"
+  - "pkg/executor/seqtest"
+  - "pkg/metrics"
+  - "pkg/expression/generator"
+  - "br/pkg/mock"
+  - "pkg/testkit"
+  - "pkg/server/internal/testutil"
+  - "pkg/statistics/handle/cache/internal/testutil"
+  - "pkg/session/testutil.go"
+  - "pkg/store/mockstore/unistore/testutil.go"
+  - "k8s.io/apimachinery/pkg"
+  - "build"
 

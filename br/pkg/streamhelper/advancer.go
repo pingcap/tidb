@@ -5,22 +5,30 @@ package streamhelper
 import (
 	"bytes"
 	"context"
-	"math"
-	"reflect"
-	"sort"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -60,65 +68,89 @@ type CheckpointAdvancer struct {
 	// once tick begin, this should not be changed for now.
 	cfg config.Config
 
-	// the cache of region checkpoints.
-	// so we can advance only ranges with huge gap.
-	cache CheckpointsCache
-
-	// the internal state of advancer.
-	state advancerState
 	// the cached last checkpoint.
 	// if no progress, this cache can help us don't to send useless requests.
-	lastCheckpoint uint64
+	lastCheckpoint   *checkpoint
+	lastCheckpointMu sync.Mutex
+	inResolvingLock  atomic.Bool
+	isPaused         atomic.Bool
+
+	checkpoints   *spans.ValueSortedFull
+	checkpointsMu sync.Mutex
+
+	subscriber   *FlushSubscriber
+	subscriberMu sync.Mutex
 }
 
-// advancerState is the sealed type for the state of advancer.
-// the advancer has two stage: full scan and update small tree.
-type advancerState interface {
-	// Note:
-	// Go doesn't support sealed classes or ADTs currently.
-	// (it can only be used at generic constraints...)
-	// Leave it empty for now.
+// HasTask returns whether the advancer has been bound to a task.
+func (c *CheckpointAdvancer) HasTask() bool {
+	c.taskMu.Lock()
+	defer c.taskMu.Unlock()
 
-	// ~*fullScan | ~*updateSmallTree
+	return c.task != nil
 }
 
-// fullScan is the initial state of advancer.
-// in this stage, we would "fill" the cache:
-// insert ranges that union of them become the full range of task.
-type fullScan struct {
-	fullScanTick int
+// HasSubscriptions returns whether the advancer is associated with a subscriber.
+func (c *CheckpointAdvancer) HasSubscriptions() bool {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+
+	return c.subscriber != nil && len(c.subscriber.subscriptions) > 0
 }
 
-// updateSmallTree is the "incremental stage" of advancer.
-// we have build a "filled" cache, and we can pop a subrange of it,
-// try to advance the checkpoint of those ranges.
-type updateSmallTree struct {
-	consistencyCheckTick int
+// checkpoint represents the TS with specific range.
+// it's only used in advancer.go.
+type checkpoint struct {
+	StartKey []byte
+	EndKey   []byte
+	TS       uint64
+
+	// It's better to use PD timestamp in future, for now
+	// use local time to decide the time to resolve lock is ok.
+	resolveLockTime time.Time
+}
+
+func newCheckpointWithTS(ts uint64) *checkpoint {
+	return &checkpoint{
+		TS:              ts,
+		resolveLockTime: time.Now(),
+	}
+}
+
+func newCheckpointWithSpan(s spans.Valued) *checkpoint {
+	return &checkpoint{
+		StartKey:        s.Key.StartKey,
+		EndKey:          s.Key.EndKey,
+		TS:              s.Value,
+		resolveLockTime: time.Now(),
+	}
+}
+
+func (c *checkpoint) safeTS() uint64 {
+	return c.TS - 1
+}
+
+func (c *checkpoint) equal(o *checkpoint) bool {
+	return bytes.Equal(c.StartKey, o.StartKey) &&
+		bytes.Equal(c.EndKey, o.EndKey) && c.TS == o.TS
+}
+
+// if a checkpoint stay in a time too long(3 min)
+// we should try to resolve lock for the range
+// to keep the RPO in 5 min.
+func (c *checkpoint) needResolveLocks() bool {
+	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
+		failpoint.Return(val.(bool))
+	})
+	return time.Since(c.resolveLockTime) > 3*time.Minute
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
-		env:   env,
-		cfg:   config.Default(),
-		cache: NewCheckpoints(),
-		state: &fullScan{},
+		env: env,
+		cfg: config.Default(),
 	}
-}
-
-// disableCache removes the cache.
-// note this won't lock the checkpoint advancer at `fullScan` state forever,
-// you may need to change the config `AdvancingByCache`.
-func (c *CheckpointAdvancer) disableCache() {
-	c.cache = NoOPCheckpointCache{}
-	c.state = &fullScan{}
-}
-
-// enable the cache.
-// also check `AdvancingByCache` in the config.
-func (c *CheckpointAdvancer) enableCache() {
-	c.cache = NewCheckpoints()
-	c.state = &fullScan{}
 }
 
 // UpdateConfig updates the config for the advancer.
@@ -126,15 +158,7 @@ func (c *CheckpointAdvancer) enableCache() {
 // TODO: support updating config when advancer starts working.
 // (Maybe by applying changes at begin of ticking, and add locks.)
 func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
-	needRefreshCache := newConf.AdvancingByCache != c.cfg.AdvancingByCache
 	c.cfg = newConf
-	if needRefreshCache {
-		if c.cfg.AdvancingByCache {
-			c.enableCache()
-		} else {
-			c.disableCache()
-		}
-	}
 }
 
 // UpdateConfigWith updates the config by modifying the current config.
@@ -144,14 +168,27 @@ func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
 	c.UpdateConfig(cfg)
 }
 
+// UpdateLastCheckpoint modify the checkpoint in ticking.
+func (c *CheckpointAdvancer) UpdateLastCheckpoint(p *checkpoint) {
+	c.lastCheckpointMu.Lock()
+	c.lastCheckpoint = p
+	c.lastCheckpointMu.Unlock()
+}
+
 // Config returns the current config.
 func (c *CheckpointAdvancer) Config() config.Config {
 	return c.cfg
 }
 
+// GetInResolvingLock only used for test.
+func (c *CheckpointAdvancer) GetInResolvingLock() bool {
+	return c.inResolvingLock.Load()
+}
+
 // GetCheckpointInRange scans the regions in the range,
 // collect them to the collector.
-func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
+func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
+	collector *clusterCollector) error {
 	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
 	iter := IterateRegion(c.env, start, end)
 	for !iter.Done() {
@@ -161,7 +198,7 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
 		for _, r := range rs {
-			err := collector.collectRegion(r)
+			err := collector.CollectRegion(r)
 			if err != nil {
 				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 				return err
@@ -183,28 +220,24 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 }
 
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
-func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS) (err error) {
-	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
-	defer func() {
-		if err != nil {
-			log.Warn("failed to advance", logutil.ShortError(err), zap.Object("target", rst.Zap()))
-			c.cache.InsertRanges(rst)
-		}
-	}()
+func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
+	getRange func(int) kv.KeyRange) (err error) {
+	defer c.recordTimeCost("try advance", zap.Int("len", length))()
 	defer utils.PanicToErr(&err)
 
-	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange {
-		return rst.Ranges[i]
-	})
-	workers := utils.NewWorkerPool(4, "sub ranges")
+	ranges := spans.Collapse(length, getRange)
+	workers := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
-	collector.setOnSuccessHook(c.cache.InsertRange)
-	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
+	collector.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
+		c.checkpointsMu.Lock()
+		defer c.checkpointsMu.Unlock()
+		c.checkpoints.Merge(spans.Valued{Key: kr, Value: u})
+	})
+	clampedRanges := utils.IntersectAll(ranges, slices.Clone(c.taskRange))
 	for _, r := range clampedRanges {
-		r := r
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
-			defer c.recordTimeCost("get regions in range", zap.Uint64("checkpoint", rst.TS))()
+			defer c.recordTimeCost("get regions in range")()
 			defer utils.PanicToErr(&e)
 			return c.GetCheckpointInRange(cx, r.StartKey, r.EndKey, collector)
 		})
@@ -214,119 +247,80 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 		return err
 	}
 
-	result, err := collector.Finish(ctx)
+	_, err = collector.Finish(ctx)
 	if err != nil {
 		return err
-	}
-	fr := result.FailureSubRanges
-	if len(fr) != 0 {
-		log.Debug("failure regions collected", zap.Int("size", len(fr)))
-		c.cache.InsertRanges(RangesSharesTS{
-			TS:     rst.TS,
-			Ranges: fr,
-		})
 	}
 	return nil
 }
 
-// CalculateGlobalCheckpointLight tries to advance the global checkpoint by the cache.
-func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
-	log.Info("[log backup advancer hint] advancer with cache: current tree", zap.Stringer("ct", c.cache))
-	rsts := c.cache.PopRangesWithGapGT(config.DefaultTryAdvanceThreshold)
-	if len(rsts) == 0 {
-		return 0, nil
-	}
-	samples := rsts
-	if len(rsts) > 3 {
-		samples = rsts[:3]
-	}
-	for _, sample := range samples {
-		log.Info("[log backup advancer hint] sample range.", zap.Object("range", sample.Zap()), zap.Int("total-len", len(rsts)))
-	}
+func tsoBefore(n time.Duration) uint64 {
+	now := time.Now()
+	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
+}
 
-	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "regions")
-	eg, cx := errgroup.WithContext(ctx)
-	for _, rst := range rsts {
-		rst := rst
-		workers.ApplyOnErrorGroup(eg, func() (err error) {
-			return c.tryAdvance(cx, *rst)
-		})
-	}
-	err := eg.Wait()
+func tsoAfter(ts uint64, n time.Duration) uint64 {
+	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
+}
+
+func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
+	c.checkpointsMu.Lock()
+	defer c.checkpointsMu.Unlock()
+
+	f(c.checkpoints)
+}
+
+func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byte) string {
+	region, err := locateKeyOfRegion(ctx, c.env, startKey)
 	if err != nil {
-		return 0, err
+		return errors.Annotate(err, "failed to fetch region").Error()
 	}
-	ts := c.cache.CheckpointTS()
-	return ts, nil
+	r := region.Region
+	l := region.Leader
+	prs := []int{}
+	for _, p := range r.GetPeers() {
+		prs = append(prs, int(p.StoreId))
+	}
+	metrics.LogBackupCurrentLastRegionID.Set(float64(r.Id))
+	metrics.LogBackupCurrentLastRegionLeaderStoreID.Set(float64(l.StoreId))
+	return fmt.Sprintf("ID=%d,Leader=%d,ConfVer=%d,Version=%d,Peers=%v,RealRange=%s",
+		r.GetId(), l.GetStoreId(), r.GetRegionEpoch().GetConfVer(), r.GetRegionEpoch().GetVersion(),
+		prs, logutil.StringifyRangeOf(r.GetStartKey(), r.GetEndKey()))
 }
 
-// CalculateGlobalCheckpoint calculates the global checkpoint, which won't use the cache.
-func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uint64, error) {
-	var (
-		cp                    = uint64(math.MaxInt64)
-		thisRun []kv.KeyRange = c.taskRange
-		nextRun []kv.KeyRange
-	)
-	defer c.recordTimeCost("record all")
-	for {
-		coll := NewClusterCollector(ctx, c.env)
-		coll.setOnSuccessHook(c.cache.InsertRange)
-		for _, u := range thisRun {
-			err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
-			if err != nil {
-				return 0, err
-			}
-		}
-		result, err := coll.Finish(ctx)
-		if err != nil {
-			return 0, err
-		}
-		log.Debug("full: a run finished", zap.Any("checkpoint", result))
-
-		nextRun = append(nextRun, result.FailureSubRanges...)
-		if cp > result.Checkpoint {
-			cp = result.Checkpoint
-		}
-		if len(nextRun) == 0 {
-			return cp, nil
-		}
-		thisRun = nextRun
-		nextRun = nil
-		log.Debug("backoffing with subranges", zap.Int("subranges", len(thisRun)))
-		time.Sleep(c.cfg.BackoffTime)
-	}
-}
-
-// CollapseRanges collapse ranges overlapping or adjacent.
-// Example:
-// CollapseRanges({[1, 4], [2, 8], [3, 9]}) == {[1, 9]}
-// CollapseRanges({[1, 3], [4, 7], [2, 3]}) == {[1, 3], [4, 7]}
-func CollapseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
-	frs := make([]kv.KeyRange, 0, length)
-	for i := 0; i < length; i++ {
-		frs = append(frs, getRange(i))
-	}
-
-	sort.Slice(frs, func(i, j int) bool {
-		return bytes.Compare(frs[i].StartKey, frs[j].StartKey) < 0
+func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
+	threshold time.Duration) (spans.Valued, error) {
+	var targets []spans.Valued
+	var minValue spans.Valued
+	thresholdTso := tsoBefore(threshold)
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		vsf.TraverseValuesLessThan(thresholdTso, func(v spans.Valued) bool {
+			targets = append(targets, v)
+			return true
+		})
+		minValue = vsf.Min()
 	})
-
-	result := make([]kv.KeyRange, 0, len(frs))
-	i := 0
-	for i < len(frs) {
-		item := frs[i]
-		for {
-			i++
-			if i >= len(frs) || (len(item.EndKey) != 0 && bytes.Compare(frs[i].StartKey, item.EndKey) > 0) {
-				break
-			}
-			if len(item.EndKey) != 0 && bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
-				item.EndKey = frs[i].EndKey
-			}
-		}
-		result = append(result, item)
+	sctx, cancel := context.WithTimeout(ctx, time.Second)
+	// Always fetch the hint and update the metrics.
+	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
+	logger := log.Debug
+	if minValue.Value < thresholdTso {
+		logger = log.Info
 	}
-	return result
+	logger("current last region", zap.String("category", "log backup advancer hint"),
+		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
+		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)),
+		zap.String("region-hint", hint),
+	)
+	cancel()
+	if len(targets) == 0 {
+		return minValue, nil
+	}
+	err := c.tryAdvance(ctx, len(targets), func(i int) kv.KeyRange { return targets[i].Key })
+	if err != nil {
+		return minValue, err
+	}
+	return minValue, nil
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -392,19 +386,28 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				return
 			case e, ok := <-ch:
 				if !ok {
+					log.Info("Task watcher exits due to stream ends.", zap.String("category", "log backup advancer"))
 					return
 				}
-				log.Info("meet task event", zap.Stringer("event", &e))
+				log.Info("Meet task event", zap.String("category", "log backup advancer"), zap.Stringer("event", &e))
 				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
 					}
+					log.Info("Task watcher exits due to some error.", zap.String("category", "log backup advancer"),
+						logutil.ShortError(err))
 					return
 				}
 			}
 		}
 	}()
+}
+
+func (c *CheckpointAdvancer) setCheckpoints(cps *spans.ValueSortedFull) {
+	c.checkpointsMu.Lock()
+	c.checkpoints = cps
+	c.checkpointsMu.Unlock()
 }
 
 func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error {
@@ -414,104 +417,327 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventAdd:
 		utils.LogBackupTaskCountInc()
 		c.task = e.Info
-		c.taskRange = CollapseRanges(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
-		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
+		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
+		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
+		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
+		if err != nil {
+			// ignore the error, just log it
+			log.Warn("failed to get global checkpoint, skipping.", logutil.ShortError(err))
+		}
+		if globalCheckpointTs < c.task.StartTs {
+			globalCheckpointTs = c.task.StartTs
+		}
+		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
+		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
+		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs-1)
+		if err != nil {
+			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
+		}
+		log.Info("added event", zap.Stringer("task", redact.TaskInfoRedacted{Info: e.Info}),
+			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
+		c.isPaused.Store(false)
 		c.taskRange = nil
-		c.state = &fullScan{}
+		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
+		// Do the null check because some of test cases won't equip the advancer with subscriber.
+		if c.subscriber != nil {
+			c.subscriber.Clear()
+		}
+		c.setCheckpoints(nil)
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
+		if err := c.env.UnblockGC(ctx); err != nil {
+			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
+		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
-		c.cache.Clear()
+	case EventPause:
+		if c.task.GetName() == e.Name {
+			c.isPaused.Store(true)
+		}
+	case EventResume:
+		if c.task.GetName() == e.Name {
+			c.isPaused.Store(false)
+		}
 	case EventErr:
 		return e.Err
 	}
 	return nil
 }
 
+func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
+	cp := newCheckpointWithSpan(s)
+	if cp.TS < c.lastCheckpoint.TS {
+		log.Warn("failed to update global checkpoint: stale",
+			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
+		return false
+	}
+	// Need resolve lock for different range and same TS
+	// so check the range and TS here.
+	if cp.equal(c.lastCheckpoint) {
+		return false
+	}
+	c.UpdateLastCheckpoint(cp)
+	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
+	return true
+}
+
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
-func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
+func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
+	getCheckpoint func(context.Context) (spans.Valued, error)) error {
 	start := time.Now()
 	cp, err := getCheckpoint(ctx)
 	if err != nil {
 		return err
 	}
-	log.Info("get checkpoint", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	if cp < c.lastCheckpoint {
-		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	}
-	if cp <= c.lastCheckpoint {
-		return nil
-	}
 
-	log.Info("uploading checkpoint for task",
-		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
-		zap.Uint64("checkpoint", cp),
-		zap.String("task", c.task.Name),
-		zap.Stringer("take", time.Since(start)))
-	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, cp); err != nil {
-		return errors.Annotate(err, "failed to upload global checkpoint")
+	if c.setCheckpoint(cp) {
+		log.Info("uploading checkpoint for task",
+			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp.Value)),
+			zap.Uint64("checkpoint", cp.Value),
+			zap.String("task", c.task.Name),
+			zap.Stringer("take", time.Since(start)))
 	}
-	c.lastCheckpoint = cp
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
 }
 
-func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
-	if s.consistencyCheckTick > 0 {
-		s.consistencyCheckTick--
+func (c *CheckpointAdvancer) stopSubscriber() {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+	c.subscriber.Drop()
+	c.subscriber = nil
+}
+
+func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+	c.subscriber = NewSubscriber(c.env, c.env, WithMasterContext(ctx))
+	es := c.subscriber.Events()
+	log.Info("Subscription handler spawned.", zap.String("category", "log backup subscription manager"))
+
+	go func() {
+		defer utils.CatchAndLogPanic()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-es:
+				if !ok {
+					return
+				}
+				failpoint.Inject("subscription-handler-loop", func() {})
+				c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+					if vsf == nil {
+						log.Warn("Span tree not found, perhaps stale event of removed tasks.",
+							zap.String("category", "log backup subscription manager"))
+						return
+					}
+					log.Debug("Accepting region flush event.",
+						zap.Stringer("range", logutil.StringifyRange(event.Key)),
+						zap.Uint64("checkpoint", event.Value))
+					vsf.Merge(event)
+				})
+			}
+		}
+	}()
+}
+
+func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
+	if c.subscriber == nil {
 		return nil
 	}
-	defer c.recordTimeCost("consistency check")()
-	err := c.cache.ConsistencyCheck(c.taskRange)
-	if err != nil {
-		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
-		c.state = &fullScan{}
-		return err
+	failpoint.Inject("get_subscriber", nil)
+	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
+		log.Warn("Error when updating store topology.",
+			zap.String("category", "log backup advancer"), logutil.ShortError(err))
 	}
-	log.Debug("consistency check passed.")
-	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
+	c.subscriber.HandleErrors(ctx)
+	return c.subscriber.PendingErrors()
+}
+
+func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, error) {
+	if c.cfg.CheckPointLagLimit <= 0 {
+		return false, nil
+	}
+	globalTs, err := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
+	if err != nil {
+		return false, err
+	}
+	if globalTs < c.task.StartTs {
+		// unreachable.
+		return false, nil
+	}
+
+	now, err := c.env.FetchCurrentTS(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(globalTs))
+	if lagDuration > c.cfg.CheckPointLagLimit {
+		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
+			zap.Stringer("lag", lagDuration))
+		return true, nil
+	}
+	return false, nil
+}
+
+func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
+	c.checkpointsMu.Lock()
+	c.setCheckpoint(c.checkpoints.Min())
+	c.checkpointsMu.Unlock()
+	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
+		return errors.Annotate(err, "failed to upload global checkpoint")
+	}
+	isLagged, err := c.isCheckpointLagged(ctx)
+	if err != nil {
+		// ignore the error, just log it
+		log.Warn("failed to check timestamp", logutil.ShortError(err))
+	}
+	if isLagged {
+		err := c.env.PauseTask(ctx, c.task.Name)
+		if err != nil {
+			return errors.Annotate(err, "failed to pause task")
+		}
+		return errors.Annotate(errors.Errorf("check point lagged too large"), "check point lagged too large")
+	}
+	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
+	if err != nil {
+		return errors.Annotatef(err,
+			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
+			c.lastCheckpoint.safeTS(), p)
+	}
+	if p <= c.lastCheckpoint.safeTS() {
+		log.Info("updated log backup GC safe point.",
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
+	}
+	if p > c.lastCheckpoint.safeTS() {
+		log.Warn("update log backup GC safe point failed: stale.",
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
+	}
 	return nil
+}
+
+func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
+	// lastCheckpoint is not increased too long enough.
+	// assume the cluster has expired locks for whatever reasons.
+	var targets []spans.Valued
+	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() && c.inResolvingLock.CompareAndSwap(false, true) {
+		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+			// when get locks here. assume these locks are not belong to same txn,
+			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
+			vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
+				targets = append(targets, v)
+				return true
+			})
+		})
+		if len(targets) != 0 {
+			log.Info("Advancer starts to resolve locks", zap.Int("targets", len(targets)))
+			// use new context here to avoid timeout
+			ctx := context.Background()
+			c.asyncResolveLocksForRanges(ctx, targets)
+		} else {
+			// don't forget set state back
+			c.inResolvingLock.Store(false)
+		}
+	}
+	threshold := c.Config().GetDefaultStartPollThreshold()
+	if err := c.subscribeTick(cx); err != nil {
+		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
+			logutil.ShortError(err))
+		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
+	}
+
+	return c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
+		return c.CalculateGlobalCheckpointLight(cx, threshold)
+	})
 }
 
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
-
-	switch s := c.state.(type) {
-	case *fullScan:
-		if s.fullScanTick > 0 {
-			s.fullScanTick--
-			break
-		}
-		if c.task == nil {
-			log.Debug("No tasks yet, skipping advancing.")
-			return nil
-		}
-		defer func() {
-			s.fullScanTick = c.cfg.FullScanTick
-		}()
-		err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpoint)
-		if err != nil {
-			return err
-		}
-
-		if c.cfg.AdvancingByCache {
-			c.state = &updateSmallTree{}
-		}
-	case *updateSmallTree:
-		if err := c.onConsistencyCheckTick(s); err != nil {
-			return err
-		}
-		err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpointLight)
-		if err != nil {
-			return err
-		}
-	default:
-		log.Error("Unknown state type, skipping tick", zap.Stringer("type", reflect.TypeOf(c.state)))
+	if c.task == nil || c.isPaused.Load() {
+		log.Info("No tasks yet, skipping advancing.")
+		return nil
 	}
-	return nil
+
+	var errs error
+
+	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
+	defer cancel()
+	err := c.optionalTick(cx)
+	if err != nil {
+		log.Warn("option tick failed.", zap.String("category", "log backup advancer"), logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	err = c.importantTick(ctx)
+	if err != nil {
+		log.Warn("important tick failed.", zap.String("category", "log backup advancer"), logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	return errs
+}
+
+func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, targets []spans.Valued) {
+	// run in another goroutine
+	// do not block main tick here
+	go func() {
+		failpoint.Inject("AsyncResolveLocks", func() {})
+		maxTs := uint64(0)
+		for _, t := range targets {
+			maxTs = max(maxTs, t.Value)
+		}
+		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			// we will scan all locks and try to resolve them by check txn status.
+			return tikv.ResolveLocksForRange(
+				ctx, c.env, maxTs+1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+		}
+		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+		var wg sync.WaitGroup
+		for _, r := range targets {
+			targetRange := r
+			wg.Add(1)
+			workerPool.Apply(func() {
+				defer wg.Done()
+				// Run resolve lock on the whole TiKV cluster.
+				// it will use startKey/endKey to scan region in PD.
+				// but regionCache already has a codecPDClient. so just use decode key here.
+				// and it almost only include one region here. so set concurrency to 1.
+				runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
+					c.env.GetStore(), 1, handler)
+				err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
+				if err != nil {
+					// wait for next tick
+					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
+						zap.String("uuid", "log backup advancer"),
+						zap.Error(err))
+				}
+			})
+		}
+		wg.Wait()
+		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
+			zap.String("uuid", "log backup advancer"),
+			logutil.Key("StartKey", c.lastCheckpoint.StartKey),
+			logutil.Key("EndKey", c.lastCheckpoint.EndKey),
+			zap.Int("targets", len(targets)))
+		c.lastCheckpointMu.Lock()
+		c.lastCheckpoint.resolveLockTime = time.Now()
+		c.lastCheckpointMu.Unlock()
+		c.inResolvingLock.Store(false)
+	}()
+}
+
+func (c *CheckpointAdvancer) TEST_registerCallbackForSubscriptions(f func()) int {
+	cnt := 0
+	for _, sub := range c.subscriber.subscriptions {
+		sub.onDaemonExit = f
+		cnt += 1
+	}
+	return cnt
 }

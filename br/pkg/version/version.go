@@ -16,11 +16,12 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -32,6 +33,14 @@ var (
 	compatibleTiFlashMajor4 = semver.New("4.0.0")
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
+
+	checkpointSupportError error = nil
+	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
+	pitrSupportBatchKVFiles bool = false
+
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // NextMajorVersion returns the next major version.
@@ -78,7 +87,7 @@ type VerChecker func(store *metapb.Store, ver *semver.Version) error
 
 // CheckClusterVersion check TiKV version.
 func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerChecker) error {
-	stores, err := client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := client.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -124,6 +133,9 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -133,6 +145,12 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor == 0) {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
 			s.Address, tikvVersion)
+	}
+	// If tikv version < 6.5, PITR do not support restoring batch kv files.
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		pitrSupportBatchKVFiles = false
+	} else {
+		pitrSupportBatchKVFiles = true
 	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
@@ -149,6 +167,13 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		}
 	}
 
+	if BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 4) {
+		if tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 4) {
+			return errors.Annotatef(berrors.ErrVersionMismatch,
+				"TiKV node %s version %s is too old because the PITR id map is written into the cluster system table mysql.tidb_pitr_id_map, please use the tikv with version v8.4.0+",
+				s.Address, tikvVersion)
+		}
+	}
 	return nil
 }
 
@@ -157,15 +182,25 @@ func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
 	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
 	requireVersion := semver.New("6.2.0-alpha")
 	if tikvVersion.Compare(*requireVersion) < 0 {
-		log.Info("detected the old version of tidb cluster. set enable concurrent ddl to false")
-		variable.EnableConcurrentDDL.Store(false)
-		return nil
+		return errors.Errorf("detected the old version of tidb cluster, require: >= 6.2.0, but got %s", tikvVersion.String())
+	}
+	return nil
+}
+
+// CheckVersionForKeyspaceBR checks whether the cluster is support Backup/Restore keyspace data.
+func CheckVersionForKeyspaceBR(_ *metapb.Store, tikvVersion *semver.Version) error {
+	requireVersion := semver.New("6.6.0-alpha")
+	if tikvVersion.Compare(*requireVersion) < 0 {
+		return errors.Errorf("detected the old version of tidb cluster, require: >= 6.6.0, but got %s", tikvVersion.String())
 	}
 	return nil
 }
 
 // CheckVersionForBR checks whether version of the cluster and BR itself is compatible.
 func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -197,6 +232,23 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
+	}
+
+	// reset the checkpoint support error
+	checkpointSupportError = nil
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		// checkpoint mode only support after v6.5.0
+		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
+			s.Address, tikvVersion)
+	}
+
+	// 8.2 br(store based backup) does not support tikv <= 8.1
+	// due to the performance issue https://github.com/tikv/tikv/issues/17168
+	// TODO: we can remove this check if the performance issue is fixed and cherry-pick
+	if (BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 2)) &&
+		(tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 2)) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
+			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
@@ -288,7 +340,7 @@ func NormalizeBackupVersion(version string) *semver.Version {
 // NOTE: the executed query will be:
 // - `select tidb_version()` if target db is tidb
 // - `select version()` if target db is not tidb
-func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
+func FetchVersion(ctx context.Context, db dbutil.QueryExecutor) (string, error) {
 	var versionInfo string
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)
@@ -304,6 +356,14 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return versionInfo, nil
+}
+
+func CheckCheckpointSupport() error {
+	return checkpointSupportError
+}
+
+func CheckPITRSupportBatchKVFiles() bool {
+	return pitrSupportBatchKVFiles
 }
 
 type ServerType int

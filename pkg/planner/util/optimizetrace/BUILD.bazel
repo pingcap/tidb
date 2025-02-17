@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "optimizetrace",
+    srcs = ["opt_tracer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/optimizetrace",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/util/tracing"],
+)

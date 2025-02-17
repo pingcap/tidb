@@ -16,6 +16,18 @@ import (
 	"golang.org/x/term"
 )
 
+const OnlyOneTask int = -1
+
+func coloredSpinner(s []string) []string {
+	c := color.New(color.Bold, color.FgGreen)
+	for i := range s {
+		s[i] = c.Sprint(s[i])
+	}
+	return s
+}
+
+var spinnerText []string = coloredSpinner([]string{"/", "-", "\\", "|"})
+
 type pbProgress struct {
 	bar      *mpb.Bar
 	progress *mpb.Progress
@@ -40,6 +52,13 @@ func (p pbProgress) GetCurrent() int64 {
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
+	// This wait shouldn't block.
+	// We are just waiting the progress bar refresh to the finished state.
+	defer func() {
+		p.bar.Wait()
+		p.progress.Wait()
+	}()
+
 	if p.bar.Completed() || p.bar.Aborted() {
 		return
 	}
@@ -107,27 +126,15 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
-func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
+	extraFields ...ExtraField) ProgressWaiter {
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
 }
 
-func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int,
+	extraFields ...ExtraField) ProgressWaiter {
 	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
-	greenTitle := color.GreenString(title)
-	bar := pb.New(int64(total),
-		// Play as if the old BR style.
-		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "\\", "|", "/", "-").TipOnComplete("-"),
-		mpb.BarFillerMiddleware(func(bf mpb.BarFiller) mpb.BarFiller {
-			return mpb.BarFillerFunc(func(w io.Writer, reqWidth int, stat decor.Statistics) {
-				if stat.Aborted || stat.Completed {
-					return
-				}
-				bf.Fill(w, reqWidth, stat)
-			})
-		}),
-		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
-		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields))), color.RedString("ABORTED"))),
-	)
+	bar := adjustTotal(pb, title, total, extraFields...)
 
 	// If total is zero, finish right now.
 	if total == 0 {
@@ -139,4 +146,45 @@ func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int, ex
 		ops:      ops,
 		progress: pb,
 	}
+}
+
+func adjustTotal(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	if total == OnlyOneTask {
+		return buildOneTaskBar(pb, title, 1)
+	}
+	return buildProgressBar(pb, title, total, extraFields...)
+}
+
+func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	greenTitle := color.GreenString(title)
+	return pb.New(int64(total),
+		// Play as if the old BR style.
+		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").
+			Tip("-", "\\", "|", "/", "-").TipOnComplete("-"),
+		mpb.BarFillerMiddleware(func(bf mpb.BarFiller) mpb.BarFiller {
+			return mpb.BarFillerFunc(func(w io.Writer, reqWidth int, stat decor.Statistics) {
+				if stat.Aborted || stat.Completed {
+					return
+				}
+				bf.Fill(w, reqWidth, stat)
+			})
+		}),
+		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle),
+			fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
+		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"),
+			printFinalMessage(extraFields))), color.RedString("ABORTED"))),
+	)
+}
+
+var (
+	spinnerDoneText = fmt.Sprintf(":: %s", color.GreenString("DONE"))
+)
+
+func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
+	return pb.New(int64(total),
+		mpb.NopStyle(),
+		mpb.PrependDecorators(decor.Name(title)),
+		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
+			color.RedString("ABORTED"))),
+	)
 }

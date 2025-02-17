@@ -14,15 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 function create_db_with_table(){
     for i in $(seq $DB_COUNT); do
         run_sql "CREATE DATABASE $DB${i};"
-        go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+        go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
     done
 }
 

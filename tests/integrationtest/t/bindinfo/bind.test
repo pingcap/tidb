@@ -1,0 +1,335 @@
+# TestBindingInListEffect
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+# binding created with `in (?)` can work for `in (?,?,?)`
+begin;
+select a from t where a in (1, 2, 3);
+select @@last_plan_from_binding;
+create binding for select a from t where a in (1) using select a from t where a in (1);
+select a from t where a in (1, 2, 3);
+select @@last_plan_from_binding;
+select a from t where a in (1, 2);
+select @@last_plan_from_binding;
+select a from t where a in (1);
+select @@last_plan_from_binding;
+# binding created with `in (?,?,?)` can work for `in (?)`
+select b from t where b in (1);
+select @@last_plan_from_binding;
+create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3);
+select b from t where b in (1);
+select @@last_plan_from_binding;
+# bindings with multiple in-lists can take effect
+select * from t where a in (1) and b in (1) and c in (1);
+select @@last_plan_from_binding;
+create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+select * from t where a in (1) and b in (1) and c in (1);
+select @@last_plan_from_binding;
+select * from t where a in (1) and b in (1,2) and c in (1,2,3);
+select @@last_plan_from_binding;
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+select @@last_plan_from_binding;
+commit;
+
+drop binding for select a from t where a in (1);
+drop binding for select b from t where b in (1,2,3);
+drop binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3);
+
+
+# TestExplain
+set tidb_cost_model_version=2;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+create index index_id on t1(id);
+explain format='brief' SELECT * from t1 union SELECT * from t1;
+explain format='brief' SELECT * from t1 use index(index_id) union SELECT * from t1;
+create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
+explain format='brief' SELECT * from t1 union SELECT * from t1;
+drop global binding for SELECT * from t1 union SELECT * from t1;
+set tidb_cost_model_version=default;
+
+# TestBindSemiJoinRewrite
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+explain format='brief' select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+create global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+drop global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+
+# TestBindCTEMerge
+drop table if exists t1;
+create table t1(id int);
+explain format='brief' with cte as (select * from t1) select * from cte a, cte b;
+explain format='brief' with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b;
+create global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+explain format='brief' with cte as (select * from t1) select * from cte;
+drop global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+
+# TestBindNoDecorrelate
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='brief' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+create global binding for
+	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+drop global binding for
+	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+
+# TestDefaultSessionVars
+-- sorted_result
+show variables like "%baselines%";
+-- sorted_result
+show global variables like "%baselines%";
+
+# TestSPMHitInfo
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain SELECT * from t1,t2 where t1.id = t2.id;
+explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+begin;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+set binding disabled for SELECT * from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+commit;
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+
+# TestExplainShowBindSQL
+drop table if exists t;
+create table t(a int, b int, key(a));
+create global binding for select * from t using select * from t use index(a);
+select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
+--enable_warnings;
+explain format = 'verbose' select * from t;
+--disable_warnings;
+drop global binding for select * from t using select * from t use index(a);
+
+# TestExplainTableStmts
+drop table if exists t;
+create table t(id int, value decimal(5,2));
+table t;
+explain table t;
+desc table t;
+
+# TestBindingInListOperation
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+
+## only 1 binding will be left
+create binding for select * from t where a in(1) using select * from t where a in(1);
+create binding for select * from t where a in(1,2) using select * from t where a in(1);
+create binding for select * from t where a in(1) using select * from t where a in(1,2);
+create binding for select * from t where a in(1,2) using select * from t where a in(1,2);
+create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+drop binding for select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+
+## create and drop
+create binding for select * from t where a in(1,2,3) using select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+drop binding for select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+create binding for select * from t where a in(1) using select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+drop binding for select * from t where a in(1,2,3);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+create binding for select * from t where a in(1) using select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12);
+--replace_column 5 <create_time> 6 <update_time>
+show bindings where default_db='bindinfo__bind';
+
+## create and set status
+create global binding for select * from t where a in(1,2,3) using select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+set binding disabled for select * from t where a in(1);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+set binding enabled for select * from t where a in(1,2,3,4,5);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+
+drop global binding for select * from t where a in(1,2,3);
+
+# TestBindingWithoutCharset
+drop table if exists t;
+create table t (a varchar(10) CHARACTER SET utf8);
+create global binding for select * from t where a = 'aa' using select * from t where a = 'aa';
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+
+drop global binding for select * from t where a = 'aa';
+
+# TestBindingWithMultiParenthesis
+drop table if exists t;
+create table t (a int);
+create global binding for select * from (select * from t where a = 1) tt using select * from (select * from t where a = 1) tt;
+create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+
+drop global binding for select * from ((select * from t where a = 1)) tt;
+
+# TestPrivileges
+drop table if exists t;
+drop user if exists test@'%';
+create table t(a int, b int, index idx(a));
+create global binding for select * from t using select * from t use index(idx);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+
+create user test@'%';
+connect (conn1, localhost, test,,);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind%';
+disconnect conn1;
+
+drop global binding for select * from t;
+
+# TestSPMWithoutUseDatabase
+drop table if exists t;
+create table t(a int, b int, key(a));
+create global binding for select * from t using select * from t force index(a);
+
+connect (conn1, localhost, root,);
+--error 1046
+select * from t;
+select @@last_plan_from_binding;
+explain format ='brief' select * from bindinfo__bind.t;
+select * from bindinfo__bind.t;
+select @@last_plan_from_binding;
+set binding disabled for select * from bindinfo__bind.t;
+select * from bindinfo__bind.t;
+select @@last_plan_from_binding;
+disconnect conn1;
+
+drop global binding for select * from t;
+
+# TestDMLIndexHintBind
+drop table if exists t;
+create table t(a int, b int, c int, key idx_b(b), key idx_c(c));
+explain format='brief' delete from t where b = 1 and c > 1;
+create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1;
+explain format='brief' delete from t where b = 1 and c > 1;
+
+drop global binding for delete from t where b = 1 and c > 1;
+
+# TestCaptureBaselinesScope
+show session variables like "tidb_capture_plan_baselines";
+show global variables like "tidb_capture_plan_baselines";
+select @@global.tidb_capture_plan_baselines;
+SET GLOBAL tidb_capture_plan_baselines = on;
+show variables like "tidb_capture_plan_baselines";
+show global variables like "tidb_capture_plan_baselines";
+
+connect (conn1, localhost, root,, bindinfo__bind);
+show global variables like "tidb_capture_plan_baselines";
+select @@global.tidb_capture_plan_baselines;
+disconnect conn1;
+
+set GLOBAL tidb_capture_plan_baselines = default;
+
+# TestReCreateBind
+drop database if exists bindinfo__bind_test;
+create database bindinfo__bind_test;
+use bindinfo__bind_test;
+create table t(a int, b int, index idx(a));
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind_test%';
+create global binding for select * from t using select * from t;
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind_test%';
+create global binding for select * from t using select * from t;
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%bindinfo__bind_test%';
+
+drop global binding for select * from t;
+use bindinfo__bind;
+drop database bindinfo__bind_test;
+
+# TestDMLSQLBind
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, key idx_b(b), key idx_c(c));
+create table t2(a int, b int, c int, key idx_b(b), key idx_c(c));
+explain format='brief' delete from t1 where b = 1 and c > 1;
+create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1;
+explain format='brief' delete from t1 where b = 1 and c > 1;
+
+explain format='brief' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b;
+explain format='brief' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+
+explain format='brief' update t1 set a = 1 where b = 1 and c > 1;
+create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1;
+explain format='brief' update t1 set a = 1 where b = 1 and c > 1;
+
+explain format='brief' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b;
+explain format='brief' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+
+explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
+explain format='brief' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+
+explain format='brief' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
+explain format='brief' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+
+drop global binding for delete from t1 where b = 1 and c > 1;
+drop global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+drop global binding for update t1 set a = 1 where b = 1 and c > 1;
+drop global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b;
+drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+drop global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+

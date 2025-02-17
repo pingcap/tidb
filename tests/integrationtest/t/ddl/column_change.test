@@ -1,0 +1,19 @@
+# TestIssue40150
+drop table if exists t40150;
+CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2;
+-- error 3855
+alter table t40150 rename column a to c;
+
+# TestIssue38988
+drop table if exists t;
+create table t (a int, b int as (a+3));
+-- error 3108
+alter table t change a c int not null;
+
+# TestIssue24321
+# Note, the result is not the same with MySQL, since the limitation of the current modify column implementation.
+drop table if exists t2;
+create table t2(id int, a int, b int generated always as (abs(a)) virtual);
+-- error 3106
+alter table t2 modify column a bigint;
+

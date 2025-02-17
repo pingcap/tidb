@@ -1,0 +1,71 @@
+# TestPushLimitDownIndexLookUpReader
+set tidb_cost_model_version=2;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists tbl;
+create table tbl(a int, b int, c int, key idx_b_c(b,c));
+insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
+analyze table tbl all columns;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1;
+
+# TestPushDownProjectionForTiKV
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
+create table t2(a json);
+analyze table t;
+analyze table t2;
+set session tidb_opt_projection_push_down=1;
+desc format = 'brief' select a from t2;
+desc format = 'brief' select a->'$.key0' from t2;
+desc format = 'brief' select a->>'$.key0' from t2;
+desc format = 'brief' select json_length(a) from t2;
+desc format = 'brief' select json_valid(a) from t2;
+desc format = 'brief' select json_type(a) from t2;
+desc format = 'brief' select json_depth(a) from t2;
+desc format = 'brief' select json_contains(a, '$.key0')from t2;
+desc format = 'brief' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
+desc format = 'brief' select json_keys(a) from t2;
+desc format = 'brief' select 'ab' MEMBER OF(a) from t2;
+desc format = 'brief' select json_overlaps(a, a) from t2;
+desc format = 'brief' select json_search(a, 'one', 'key0') from t2;
+desc format = 'brief' select json_unquote(a) from t2;
+desc format = 'brief' select i * 2 from t;
+desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
+desc format = 'brief' select md5(s) from t;
+desc format = 'brief' select c from t where a+1=3;
+desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A;
+desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A;
+desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A;
+desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A;
+desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
+desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id;
+desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id;
+desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id;
+desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
+desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id);
+desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id);
+desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;
+
+# TestIssue55012
+CREATE TABLE `t4a8656d1` (
+  `col_73` json NOT NULL,
+  `col_74` date DEFAULT '1984-06-10',
+  KEY `idx_39` ((cast(`col_73` as double array)),`col_74`),
+  KEY `idx_40` ((cast(`col_73` as double array)),`col_74`),
+  UNIQUE KEY `idx_41` (`col_74`,(cast(`col_73` as double array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `tld47bc815` (
+  `col_1` text NOT NULL,
+  PRIMARY KEY (`col_1`(3)) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx_2` (`col_1`(5)),
+  UNIQUE KEY `idx_3` (`col_1`(5)),
+  KEY `idx_4` (`col_1`(4))
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+explain select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0);

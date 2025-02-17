@@ -1,0 +1,1320 @@
+create database list_partition_dml;
+use list_partition_dml;
+drop table if exists tlist;
+create table tlist (a int) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist partition(p0) values (0), (1);
+insert into tlist partition(p0, p1) values (2), (3), (8), (9);
+insert into tlist partition(p0) values (9);
+Error 1748 (HY000): Found a row not matching the given partition set
+insert into tlist partition(p3) values (20);
+Error 1735 (HY000): Unknown partition 'p3' in table 'tlist'
+update tlist partition(p0) set a=a+1;
+select a from tlist order by a;
+a
+1
+2
+3
+4
+8
+9
+update tlist partition(p0, p1) set a=a-1;
+select a from tlist order by a;
+a
+0
+1
+2
+3
+7
+8
+delete from tlist partition(p1);
+select a from tlist order by a;
+a
+0
+1
+2
+3
+delete from tlist partition(p0, p2);
+select a from tlist order by a;
+a
+create table tcollist (a int) partition by list columns(a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist partition(p0) values (0), (1);
+insert into tcollist partition(p0, p1) values (2), (3), (8), (9);
+insert into tcollist partition(p0) values (9);
+Error 1748 (HY000): Found a row not matching the given partition set
+insert into tcollist partition(p3) values (20);
+Error 1735 (HY000): Unknown partition 'p3' in table 'tcollist'
+update tcollist partition(p0) set a=a+1;
+select a from tcollist order by a;
+a
+1
+2
+3
+4
+8
+9
+update tcollist partition(p0, p1) set a=a-1;
+select a from tcollist order by a;
+a
+0
+1
+2
+3
+7
+8
+delete from tcollist partition(p1);
+select a from tcollist order by a;
+a
+0
+1
+2
+3
+delete from tcollist partition(p0, p2);
+select a from tcollist order by a;
+a
+create database list_partition_cre;
+use list_partition_cre;
+drop table if exists tlist;
+create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0));
+create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0));
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0));
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0));
+create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0));
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0));
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0));
+create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0));
+create table tcolpk1 (a int, b int, primary key(a)) partition by list columns(a) (partition p0 values in (0));
+create table tcolpk2 (a int, b int, primary key(a, b)) partition by list columns(a) (partition p0 values in (0));
+create table tidx1 (a int, b int, key(a), key(b)) partition by list (a) (partition p0 values in (0));
+create table tidx2 (a int, b int, key(a, b), key(b)) partition by list (a) (partition p0 values in (0));
+create table tcolidx1 (a int, b int, key(a), key(b)) partition by list columns(a) (partition p0 values in (0));
+create table tcolidx2 (a int, b int, key(a, b), key(b)) partition by list columns(a) (partition p0 values in (0));
+create table texp1 (a int, b int) partition by list(a-10000) (partition p0 values in (0));
+create table texp2 (a int, b int) partition by list(a%b) (partition p0 values in (0));
+create table texp3 (a int, b int) partition by list(a*b) (partition p0 values in (0));
+create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0));
+Error 1564 (HY000): This partition function is not allowed
+create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0));
+Error 1564 (HY000): This partition function is not allowed
+create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0));
+Error 1564 (HY000): This partition function is not allowed
+create database list_partition_ddl;
+use list_partition_ddl;
+drop table if exists tlist;
+create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
+alter table tlist add primary key (b);
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+alter table tlist add primary key (a);
+alter table tlist add unique key (b);
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+alter table tlist add key (b);
+alter table tlist rename index b to bb;
+alter table tlist drop index bb;
+create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
+alter table tcollist add primary key (b);
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+alter table tcollist add primary key (a);
+alter table tcollist add primary key (b);
+Error 1068 (42000): Multiple primary key defined
+alter table tcollist add unique key (b);
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+alter table tcollist add key (b);
+alter table tcollist rename index b to bb;
+alter table tcollist drop index bb;
+alter table tlist add column c varchar(8);
+alter table tlist rename column c to cc;
+alter table tlist drop column cc;
+alter table tcollist add column c varchar(8);
+alter table tcollist rename column c to cc;
+alter table tcollist drop column cc;
+alter table tlist rename to tlistxx;
+truncate tlistxx;
+drop table tlistxx;
+alter table tcollist rename to tcollistxx;
+truncate tcollistxx;
+drop table tcollistxx;
+create database list_partition_op;
+use list_partition_op;
+drop table if exists tlist;
+create table tlist (a int) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14),
+partition p3 values in (15, 16, 17, 18, 19));
+create table tcollist (a int) partition by list columns(a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14),
+partition p3 values in (15, 16, 17, 18, 19));
+insert into tlist values (0), (5), (10), (15);
+select * from tlist;
+a
+0
+10
+15
+5
+alter table tlist truncate partition p0;
+select * from tlist;
+a
+10
+15
+5
+alter table tlist truncate partition p1, p2;
+select * from tlist;
+a
+15
+insert into tcollist values (0), (5), (10), (15);
+select * from tcollist;
+a
+0
+10
+15
+5
+alter table tcollist truncate partition p0;
+select * from tcollist;
+a
+10
+15
+5
+alter table tcollist truncate partition p1, p2;
+select * from tcollist;
+a
+15
+insert into tlist values (0), (5), (10);
+select * from tlist;
+a
+0
+10
+15
+5
+alter table tlist drop partition p0;
+select * from tlist;
+a
+10
+15
+5
+select * from tlist partition (p0);
+Error 1735 (HY000): Unknown partition 'p0' in table 'tlist'
+alter table tlist drop partition p1, p2;
+select * from tlist;
+a
+15
+select * from tlist partition (p1);
+Error 1735 (HY000): Unknown partition 'p1' in table 'tlist'
+alter table tlist drop partition p3;
+Error 1508 (HY000): Cannot remove all partitions, use DROP TABLE instead
+insert into tcollist values (0), (5), (10);
+select * from tcollist;
+a
+0
+10
+15
+5
+alter table tcollist drop partition p0;
+select * from tcollist;
+a
+10
+15
+5
+select * from tcollist partition (p0);
+Error 1735 (HY000): Unknown partition 'p0' in table 'tcollist'
+alter table tcollist drop partition p1, p2;
+select * from tcollist;
+a
+15
+select * from tcollist partition (p1);
+Error 1735 (HY000): Unknown partition 'p1' in table 'tcollist'
+alter table tcollist drop partition p3;
+Error 1508 (HY000): Cannot remove all partitions, use DROP TABLE instead
+alter table tlist add partition (partition p0 values in (0, 1, 2, 3, 4));
+alter table tlist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (5), (10);
+select * from tlist;
+a
+0
+10
+15
+5
+alter table tlist add partition (partition pxxx values in (4));
+Error 1495 (HY000): Multiple definition of same constant in list partitioning
+alter table tcollist add partition (partition p0 values in (0, 1, 2, 3, 4));
+alter table tcollist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (5), (10);
+select * from tcollist;
+a
+0
+10
+15
+5
+alter table tcollist add partition (partition pxxx values in (4));
+Error 1495 (HY000): Multiple definition of same constant in list partitioning
+create database list_partition_shard_bits;
+use list_partition_shard_bits;
+drop table if exists tlist;
+create table tlist (a int) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10), (12);
+select * from tlist;
+a
+0
+1
+10
+12
+5
+6
+select * from tlist partition (p0);
+a
+0
+1
+select * from tlist partition (p1, p2);
+a
+10
+12
+5
+6
+create table tcollist (a int) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10), (12);
+select * from tcollist;
+a
+0
+1
+10
+12
+5
+6
+select * from tcollist partition (p0);
+a
+0
+1
+select * from tcollist partition (p1, p2);
+a
+10
+12
+5
+6
+create database list_partition_split_region;
+use list_partition_split_region;
+drop table if exists tlist;
+create table tlist (a int, key(a)) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10), (12);
+split table tlist index a between (2) and (15) regions 10;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+30	1
+select * from tlist;
+a
+0
+1
+10
+12
+5
+6
+select * from tlist partition (p0);
+a
+0
+1
+select * from tlist partition (p1, p2);
+a
+10
+12
+5
+6
+create table tcollist (a int, key(a)) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10), (12);
+split table tcollist index a between (2) and (15) regions 10;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+30	1
+select * from tcollist;
+a
+0
+1
+10
+12
+5
+6
+select * from tcollist partition (p0);
+a
+0
+1
+select * from tcollist partition (p1, p2);
+a
+10
+12
+5
+6
+create database list_partition_auto_incre;
+use list_partition_auto_incre;
+drop table if exists tlist;
+create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist (a) values (0);
+insert into tlist (a) values (5);
+insert into tlist (a) values (10);
+insert into tlist (a) values (1);
+create table tcollist1 (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist (a) values (0);
+insert into tcollist (a) values (5);
+insert into tcollist (a) values (10);
+insert into tcollist (a) values (1);
+create database list_partition_auto_rand;
+use list_partition_auto_rand;
+drop table if exists tlist;
+create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+Error 8216 (HY000): Invalid auto random: auto_random is only supported on the tables with clustered primary key
+create table tlist (a bigint auto_random, primary key(a)) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+create table tcollist (a int, b bigint AUTO_RANDOM) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+Error 8216 (HY000): Invalid auto random: auto_random is only supported on the tables with clustered primary key
+create table tcollist (a bigint auto_random, primary key(a)) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+create database list_partition_invisible_idx;
+use list_partition_invisible_idx;
+drop table if exists tlist;
+create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
+alter table tlist alter index a invisible;
+explain select a from tlist where a>=0 and a<=5;
+id	estRows	task	access object	operator info
+TableReader_7	250.00	root	partition:all	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tlist	keep order:false, stats:pseudo
+create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
+alter table tcollist alter index a invisible;
+explain select a from tcollist where a>=0 and a<=5;
+id	estRows	task	access object	operator info
+TableReader_7	250.00	root	partition:all	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
+create database list_partition_cte;
+use list_partition_cte;
+drop table if exists tlist;
+create table tlist (a int) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10);
+with tmp as (select a+1 as a from tlist) select * from tmp;
+a
+1
+11
+2
+6
+7
+create table tcollist (a int) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10);
+with tmp as (select a+1 as a from tcollist) select * from tmp;
+a
+1
+11
+2
+6
+7
+create database list_partition_temp_table;
+use list_partition_temp_table;
+drop table if exists tlist;
+create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
+Error 1562 (HY000): Cannot create temporary table with partitions
+create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
+Error 1562 (HY000): Cannot create temporary table with partitions
+create database list_partition_alter_pk;
+use list_partition_alter_pk;
+drop table if exists tlist;
+create table tlist (a int, b int) partition by list (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+alter table tlist add primary key(a);
+alter table tlist drop primary key;
+alter table tlist add primary key(b);
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create table tcollist (a int, b int) partition by list columns (a) (
+partition p0 values in (0, 1, 2, 3, 4),
+partition p1 values in (5, 6, 7, 8, 9),
+partition p2 values in (10, 11, 12, 13, 14));
+alter table tcollist add primary key(a);
+alter table tcollist drop primary key;
+alter table tcollist add primary key(b);
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+create database issue_27018;
+use issue_27018;
+CREATE TABLE PK_LP9326 (
+COL1 tinyint(45) NOT NULL DEFAULT '30' COMMENT 'NUMERIC PK',
+PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+PARTITION P0 VALUES IN (56,127,-128,-125,-40,-18,-10,-5,49,51),
+PARTITION P1 VALUES IN (-107,-97,-57,-37,4,43,99,-9,-6,45),
+PARTITION P2 VALUES IN (108,114,-85,-72,-38,-11,29,97,40,107),
+PARTITION P3 VALUES IN (-112,-95,-42,24,28,47,-103,-94,7,64),
+PARTITION P4 VALUES IN (-115,-101,-76,-47,1,19,-114,-23,-19,11),
+PARTITION P5 VALUES IN (44,95,-92,-89,-26,-21,25,-117,-116,27),
+PARTITION P6 VALUES IN (50,61,118,-110,-32,-1,111,125,-90,74),
+PARTITION P7 VALUES IN (75,121,-96,-87,-14,-13,37,-68,-58,81),
+PARTITION P8 VALUES IN (126,30,48,68)
+);
+insert into PK_LP9326 values(30),(48),(56);
+SELECT COL1 FROM PK_LP9326 WHERE COL1 NOT IN (621579514938,-17333745845828,2777039147338);
+COL1
+30
+48
+56
+create database issue_27017;
+use issue_27017;
+CREATE TABLE PK_LP9465 (
+COL1 mediumint(45) NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
+PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+PARTITION P0 VALUES IN (-5237720,2949267,6047247,-8317208,-6854239,-6612749,-6578207,-5649321,2450483,2953765),
+PARTITION P1 VALUES IN (5884439,-7816703,-6716210,-6050369,-5691207,6836620,5769359,-8237127,-1294367,-1228621),
+PARTITION P2 VALUES IN (-976130,-8351227,-8294140,-4800605,1370685,-7351802,-6447779,77,1367409,5965199),
+PARTITION P3 VALUES IN (7347944,7397124,8013414,-5737292,-3938813,-3687304,1307396,444598,1216072,1603451),
+PARTITION P4 VALUES IN (2518402,-8388608,-5291256,-3796824,121011,8388607,39191,2323510,3386861,4886727),
+PARTITION P5 VALUES IN (-6512367,-5922779,-3272589,-1313463,5751641,-3974640,2605656,3336269,4416436,-7975238),
+PARTITION P6 VALUES IN (-6693544,-6023586,-4201506,6416586,-3254125,-205332,1072201,2679754,1963191,2077718),
+PARTITION P7 VALUES IN (4205081,5170051,-8087893,-5805143,-1202286,1657202,8330979,5042855,7578575,-5830439),
+PARTITION P8 VALUES IN (-5244013,3837781,4246485,670906,5644986,5843443,7794811,7831812,-7704740,-2222984),
+PARTITION P9 VALUES IN (764108,3406142,8263677,248997,6129417,7556305,7939455,3526998,8239485,-5195482),
+PARTITION P10 VALUES IN (-3625794,69270,377245)
+);
+insert into PK_LP9465 values(8263677);
+SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530;
+COL1
+8263677
+create database issue_27544;
+use issue_27544;
+create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
+partition p0 values in (2),
+partition p1 values in (3),
+partition p3 values in (4));
+insert into t3 values ('1921-05-10 15:20:10');
+insert into t3 values ('1921-05-10 15:20:20');
+insert into t3 values ('1921-05-10 15:20:30');
+create database issue_27012;
+use issue_27012;
+CREATE TABLE IDT_LP24306 (
+COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+PARTITION P0 VALUES IN (-126,-36,-96,-6,-83,-123,-5,-52,-98,-124),
+PARTITION P1 VALUES IN (-2,-22,-88,-100,-60,-39,-69,-38,-11,-30),
+PARTITION P2 VALUES IN (-119,-13,-67,-91,-65,-16,0,-128,-73,-118),
+PARTITION P3 VALUES IN (-99,-56,-76,-110,-93,-114,-78,NULL)
+);
+insert into IDT_LP24306 values(-128);
+select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128;
+COL1
+-128
+drop table if exists IDT_LP24306;
+CREATE TABLE IDT_LP24306 (
+COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into IDT_LP24306 values(-128);
+select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128;
+COL1
+-128
+create database issue_27030;
+use issue_27030;
+CREATE TABLE PK_LCP9290 (
+COL1 varbinary(10) NOT NULL,
+PRIMARY KEY (COL1) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+PARTITION P5 VALUES IN (x'32d8fb9da8b63508a6b8'),
+PARTITION P6 VALUES IN (x'ffacadeb424179bc4b5c'),
+PARTITION P8 VALUES IN (x'ae9f733168669fa900be')
+);
+insert into PK_LCP9290 values(0xffacadeb424179bc4b5c),(0xae9f733168669fa900be),(0x32d8fb9da8b63508a6b8);
+SELECT COL1 FROM PK_LCP9290 WHERE COL1!=x'9f7ebdc957a36f2531b5' AND COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8');
+COL1
+2�����5��
+��s1hf�� �
+����BAy�K\
+SELECT COL1 FROM PK_LCP9290 WHERE COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8');
+COL1
+2�����5��
+��s1hf�� �
+����BAy�K\
+create database issue_27070;
+use issue_27070;
+create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") );
+create database issue_27031;
+use issue_27031;
+CREATE TABLE NT_LP27390 (
+COL1 mediumint(28) DEFAULT '114' COMMENT 'NUMERIC NO INDEX'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+PARTITION P9 VALUES IN (3376825,-7753310,-4123498,6483048,6953968,-996842,-7542484,320451,-8322717,-2426029)
+);
+insert into NT_LP27390 values(-4123498);
+SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751);
+COL1
+-4123498
+create database issue_27493;
+use issue_27493;
+CREATE TABLE UK_LP17321 (
+COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
+COL3 bigint(20) DEFAULT NULL,
+UNIQUE KEY UM_COL (COL1,COL3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (COL1 DIV COL3) (
+PARTITION P0 VALUES IN (NULL,0)
+);
+select * from UK_LP17321 where col1 is null;
+COL1	COL3
+create database issue_27532;
+use issue_27532;
+create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10;
+insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4);
+set @@tidb_partition_prune_mode="dynamic";
+set autocommit = 0;
+select * from t2;
+c1	c2	c3	c4
+1	1	1	1
+2	2	2	2
+3	3	3	3
+4	4	4	4
+select * from t2;
+c1	c2	c3	c4
+1	1	1	1
+2	2	2	2
+3	3	3	3
+4	4	4	4
+drop table t2;
+drop database issue_27532;
+set autocommit = DEFAULT;
+use planner__core__integration_partition;
+set @@tidb_partition_prune_mode = 'dynamic';
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+drop table if exists t1;
+create table t1 (id int, c date) partition by range (to_days(c))
+(partition p0 values less than (to_days('2022-01-11')),
+partition p1 values less than (to_days('2022-02-11')),
+partition p2 values less than (to_days('2022-03-11')));
+analyze table t1;
+explain select * from t1 where c in ('2022-01-23', '2022-01-22');
+id	estRows	task	access object	operator info
+TableReader_7	20.00	root	partition:p1	data:Selection_6
+└─Selection_6	20.00	cop[tikv]		in(planner__core__integration_partition.t1.c, 2022-01-23 00:00:00.000000, 2022-01-22 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 where c in ('2022-01-23', '2022-01-22');
+id	c
+explain select * from t1 where c in (NULL, '2022-01-23');
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root	partition:p0,p1	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		in(planner__core__integration_partition.t1.c, NULL, 2022-01-23 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 where c in (NULL, '2022-01-23');
+id	c
+drop table t1;
+create database RangeColumnsMulti;
+use RangeColumnsMulti;
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
+Error 1566 (HY000): Not allowed to use NULL value in VALUES LESS THAN
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
+Error 1654 (HY000): Partition column values of incorrect type
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483648,'0000-00-00',""),partition p2 values less than (10,'2022-01-01',"Wow"),partition p3 values less than (11,'2022-01-01',MAXVALUE),partition p4 values less than (MAXVALUE,'2022-01-01',"Wow"));
+insert into t values (-2147483648,'0000-00-00',null);
+Error 1292 (22007): Incorrect datetime value: '0000-00-00' for column 'b' at row 1
+insert into t values (NULL,NULL,NULL);
+set @@sql_mode = '';
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (-2147483648,'0000-00-00',"");
+insert into t values (5,'0000-00-00',null);
+insert into t values (5,'0000-00-00',"Hi");
+set @@sql_mode = DEFAULT;
+insert into t values (10,'2022-01-01',"Hi");
+insert into t values (10,'2022-01-01',"Wow");
+insert into t values (10,'2022-01-01',"Wowe");
+insert into t values (11,'2022-01-01',"Wow");
+insert into t values (1,null,"Wow");
+insert into t values (NULL,'2022-01-01',"Wow");
+insert into t values (11,null,"Wow");
+analyze table t;
+select a,b,c from t partition(p1);
+a	b	c
+NULL	NULL	NULL
+NULL	2022-01-01 00:00:00	Wow
+-2147483648	0000-00-00 00:00:00	NULL
+select a,b,c from t partition(p2);
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+1	NULL	Wow
+10	2022-01-01 00:00:00	Hi
+5	0000-00-00 00:00:00	NULL
+5	0000-00-00 00:00:00	Hi
+select a,b,c from t partition(p3);
+a	b	c
+10	2022-01-01 00:00:00	Wow
+10	2022-01-01 00:00:00	Wowe
+11	NULL	Wow
+11	2022-01-01 00:00:00	Wow
+select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Wow
+select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Hi
+10	2022-01-01 00:00:00	Wow
+select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Hi
+select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Wowe
+select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Wow
+10	2022-01-01 00:00:00	Wowe
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+id	estRows	task	access object	operator info
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
+id	estRows	task	access object	operator info
+TableReader	0.00	root	partition:p2,p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
+id	estRows	task	access object	operator info
+TableReader	0.00	root	partition:p2	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
+id	estRows	task	access object	operator info
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
+id	estRows	task	access object	operator info
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+10	2022-01-01 00:00:00	Hi
+5	0000-00-00 00:00:00	Hi
+select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Wow
+select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+10	2022-01-01 00:00:00	Hi
+10	2022-01-01 00:00:00	Wow
+5	0000-00-00 00:00:00	Hi
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+id	estRows	task	access object	operator info
+TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+10	2022-01-01 00:00:00	Hi
+5	0000-00-00 00:00:00	Hi
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+id	estRows	task	access object	operator info
+TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table tref (a int, b datetime, c varchar(255), key (a,b,c));
+set @@sql_mode = '';
+insert into tref select * from t;
+set @@sql_mode = DEFAULT;
+explain format = 'brief' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow";
+id	estRows	task	access object	operator info
+IndexReader	367.05	root		index:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.tref.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.tref.c, "Wow")
+  └─IndexRangeScan	3323.33	cop[tikv]	table:tref, index:a(a, b, c)	range:[-inf,10], keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
+id	estRows	task	access object	operator info
+TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or b = '2022-01-01' and c = "Wow";
+a	b	c
+NULL	2022-01-01 00:00:00	Wow
+10	2022-01-01 00:00:00	Wow
+11	2022-01-01 00:00:00	Wow
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or a = 10 and b = '2022-01-01' and c = "Wow";
+a	b	c
+10	2022-01-01 00:00:00	Wow
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi";
+a	b	c
+select * from t where a = 2 and b = "2022-01-02" and c < "Hi";
+a	b	c
+select * from t where a < 2;
+a	b	c
+-2147483648	0000-00-00 00:00:00	NULL
+-2147483648	0000-00-00 00:00:00	
+1	NULL	Wow
+select * from t where a <= 2 and b <= "2022-01-02" and c < "Hi";
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+explain format = 'brief' select * from t where a < 2;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:p1,p2	data:Selection
+└─Selection	3323.33	cop[tikv]		lt(rangecolumnsmulti.t.a, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a < 2 and a > -22;
+a	b	c
+1	NULL	Wow
+explain format = 'brief' select * from t where a < 2 and a > -22;
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p2	data:Selection
+└─Selection	250.00	cop[tikv]		gt(rangecolumnsmulti.t.a, -22), lt(rangecolumnsmulti.t.a, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where c = "";
+a	b	c
+-2147483648	0000-00-00 00:00:00	
+explain format = 'brief' select * from t where c = "";
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:all	data:Selection
+└─Selection	10.00	cop[tikv]		eq(rangecolumnsmulti.t.c, "")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create database RColumnsMulti;
+use RColumnsMulti;
+create table t (a int, b datetime, c varchar(255), key (a,b,c)) partition by range columns (a,b,c) (partition p0 values less than (-2147483648, '0000-01-01', ""), partition p1 values less than (-2147483648, '0001-01-01', ""), partition p2 values less than (-2, '0001-01-01', ""), partition p3 values less than (0, '0001-01-01', ""), partition p4 values less than (0, '2031-01-01', ""), partition p5 values less than (0, '2031-01-01', "Wow"), partition p6 values less than (0, '2031-01-01', MAXVALUE), partition p7 values less than (0, MAXVALUE, MAXVALUE), partition p8 values less than (MAXVALUE, MAXVALUE, MAXVALUE));
+insert into t values (-2147483648,'0000-00-00',null);
+Error 1292 (22007): Incorrect datetime value: '0000-00-00' for column 'b' at row 1
+insert into t values (NULL,NULL,NULL);
+set @@sql_mode = '';
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (-2147483648,'0000-00-00',"");
+insert into t values (5,'0000-00-00',null);
+insert into t values (5,'0000-00-00',"Hi");
+set @@sql_mode = DEFAULT;
+insert into t values (10,'2022-01-01',"Hi");
+insert into t values (10,'2022-01-01',"Wow");
+insert into t values (11,'2022-01-01',"Wow");
+insert into t values (0,'2020-01-01',"Wow");
+insert into t values (1,null,"Wow");
+insert into t values (NULL,'2022-01-01',"Wow");
+insert into t values (11,null,"Wow");
+analyze table t;
+select a,b from t where b = '2022-01-01';
+a	b
+NULL	2022-01-01 00:00:00
+10	2022-01-01 00:00:00
+10	2022-01-01 00:00:00
+11	2022-01-01 00:00:00
+select a,b,c from t where a = 1;
+a	b	c
+1	NULL	Wow
+select a,b,c from t where a = 1 AND c = "Wow";
+a	b	c
+1	NULL	Wow
+explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow";
+id	estRows	task	access object	operator info
+IndexReader	0.50	root	partition:p8	index:Selection
+└─Selection	0.50	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+  └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a, b, c)	range:[1,1], keep order:false
+select a,b,c from t where a = 0 AND c = "Wow";
+a	b	c
+0	2020-01-01 00:00:00	Wow
+explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow";
+id	estRows	task	access object	operator info
+IndexReader	0.50	root	partition:p3,p4,p5,p6,p7	index:Selection
+└─Selection	0.50	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+  └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a, b, c)	range:[0,0], keep order:false
+create database rce;
+use rce;
+create table tref (a int unsigned, b int, c int);
+create table t (a int unsigned, b int, c int) partition by range columns (a,b) (partition p0 values less than (3, MAXVALUE),  partition p1 values less than (4, -2147483648),  partition p2 values less than (4, 1),  partition p3 values less than (4, 4),  partition p4 values less than (4, 7),  partition p5 values less than (4, 11),  partition p6 values less than (4, 14),  partition p7 values less than (4, 17),  partition p8 values less than (4, MAXVALUE),  partition p9 values less than (7, 0),  partition p10 values less than (11, MAXVALUE),  partition p11 values less than (14, -2147483648),  partition p12 values less than (17, 17),  partition p13 values less than (MAXVALUE, -2147483648));
+insert into t values (0,0,0),(11,2147483647,2147483647),(14,10,4),(14,NULL,2),(14,NULL,NULL),(17,16,16),(17,17,17),(3,2147483647,9),(4,-2147483648,-2147483648),(4,1,1),(4,10,3),(4,13,1),(4,14,2),(4,2147483647,2147483647),(4,4,4),(4,5,6),(4,NULL,4),(5,0,0),(7,0,0),(NULL,-2147483648,NULL),(NULL,NULL,NULL);
+insert into tref select * from t;
+analyze table t;
+select * from tref;
+a	b	c
+NULL	NULL	NULL
+NULL	-2147483648	NULL
+0	0	0
+11	2147483647	2147483647
+14	NULL	NULL
+14	NULL	2
+14	10	4
+17	16	16
+17	17	17
+3	2147483647	9
+4	NULL	4
+4	-2147483648	-2147483648
+4	1	1
+4	10	3
+4	13	1
+4	14	2
+4	2147483647	2147483647
+4	4	4
+4	5	6
+5	0	0
+7	0	0
+select * from t;
+a	b	c
+NULL	NULL	NULL
+NULL	-2147483648	NULL
+0	0	0
+11	2147483647	2147483647
+14	NULL	NULL
+14	NULL	2
+14	10	4
+17	16	16
+17	17	17
+3	2147483647	9
+4	NULL	4
+4	-2147483648	-2147483648
+4	1	1
+4	10	3
+4	13	1
+4	14	2
+4	2147483647	2147483647
+4	4	4
+4	5	6
+5	0	0
+7	0	0
+select * from t partition (p0);
+a	b	c
+NULL	NULL	NULL
+NULL	-2147483648	NULL
+0	0	0
+3	2147483647	9
+select * from t partition (p1);
+a	b	c
+4	NULL	4
+select * from t partition (p2);
+a	b	c
+4	-2147483648	-2147483648
+select * from t partition (p3);
+a	b	c
+4	1	1
+select * from t partition (p4);
+a	b	c
+4	4	4
+4	5	6
+select * from t partition (p5);
+a	b	c
+4	10	3
+select * from t partition (p6);
+a	b	c
+4	13	1
+select * from t partition (p7);
+a	b	c
+4	14	2
+select * from t partition (p8);
+a	b	c
+4	2147483647	2147483647
+select * from t partition (p9);
+a	b	c
+5	0	0
+select * from t partition (p10);
+a	b	c
+11	2147483647	2147483647
+7	0	0
+select * from t partition (p11);
+a	b	c
+14	NULL	NULL
+14	NULL	2
+select * from t partition (p12);
+a	b	c
+14	10	4
+17	16	16
+select * from t partition (p13);
+a	b	c
+17	17	17
+explain format = 'brief' select * from t where c = 3;
+id	estRows	task	access object	operator info
+TableReader	10.00	root	partition:all	data:Selection
+└─Selection	10.00	cop[tikv]		eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where b > 3 and c = 3;
+id	estRows	task	access object	operator info
+TableReader	3.33	root	partition:all	data:Selection
+└─Selection	3.33	cop[tikv]		eq(rce.t.c, 3), gt(rce.t.b, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 5 and c = 3;
+id	estRows	task	access object	operator info
+TableReader	0.01	root	partition:p9	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rce.t.a, 5), eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 4 and c = 3;
+id	estRows	task	access object	operator info
+TableReader	0.01	root	partition:p1,p2,p3,p4,p5,p6,p7,p8	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rce.t.a, 4), eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a in (4,14) and c = 3;
+id	estRows	task	access object	operator info
+TableReader	0.02	root	partition:p1,p2,p3,p4,p5,p6,p7,p8,p11,p12	data:Selection
+└─Selection	0.02	cop[tikv]		eq(rce.t.c, 3), in(rce.t.a, 4, 14)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a in (4,14) and b in (null,10);
+id	estRows	task	access object	operator info
+TableReader	0.02	root	partition:p5,p12	data:Selection
+└─Selection	0.02	cop[tikv]		in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from tref where a in (4,14) and b in (null,10);
+a	b	c
+14	10	4
+4	10	3
+select * from t where a in (4,14) and b in (null,10);
+a	b	c
+14	10	4
+4	10	3
+explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null);
+id	estRows	task	access object	operator info
+TableReader	0.06	root	partition:p1,p5,p6,p11,p12	data:Selection
+└─Selection	0.06	cop[tikv]		in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from tref where a in (4,14) and (b in (11,10) OR b is null);
+a	b	c
+14	NULL	NULL
+14	NULL	2
+14	10	4
+4	NULL	4
+4	10	3
+select * from t where a in (4,14) and (b in (11,10) OR b is null);
+a	b	c
+14	NULL	NULL
+14	NULL	2
+14	10	4
+4	NULL	4
+4	10	3
+create database cwc;
+use cwc;
+create table t (a char(32) collate utf8mb4_unicode_ci) partition by range columns (a) (partition p0 values less than ('c'), partition p1 values less than ('F'), partition p2 values less than ('h'), partition p3 values less than ('L'), partition p4 values less than ('t'), partition p5 values less than (MAXVALUE));
+insert into t values ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),('l'),('L'),('t'),('T'),('z'),('Z');
+analyze table t;
+select * from t partition(p0);
+a
+A
+a
+select * from t partition(p1);
+a
+C
+c
+select * from t partition(p2);
+a
+F
+f
+select * from t partition(p3);
+a
+H
+h
+select * from t partition(p4);
+a
+L
+l
+select * from t partition(p5);
+a
+T
+Z
+t
+z
+select * from t where a > 'C' and a < 'q';
+a
+F
+H
+L
+f
+h
+l
+select * from t where a > 'c' and a < 'Q';
+a
+F
+H
+L
+f
+h
+l
+explain format = 'brief' select * from t where a > 'C' and a < 'q';
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
+└─Selection	250.00	cop[tikv]		gt(cwc.t.a, "C"), lt(cwc.t.a, "q")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a > 'c' and a < 'Q';
+id	estRows	task	access object	operator info
+TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
+└─Selection	250.00	cop[tikv]		gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop database if exists rcd;
+create database rcd;
+use rcd;
+set @@tidb_partition_prune_mode = 'dynamic';
+create table i (a int, b int, key (a,b));
+select * from i where a < 1 and a > 2;
+a	b
+explain format = 'brief' select * from i where a < 1 and a > 2;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+create table t (a date) partition by range columns (a) (partition p0 values less than ('19990601'), partition p1 values less than ('2000-05-01'), partition p2 values less than ('20080401'), partition p3 values less than ('2010-03-01'), partition p4 values less than ('20160201'), partition p5 values less than ('2020-01-01'), partition p6 values less than (MAXVALUE));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION `p0` VALUES LESS THAN ('1999-06-01'),
+ PARTITION `p1` VALUES LESS THAN ('2000-05-01'),
+ PARTITION `p2` VALUES LESS THAN ('2008-04-01'),
+ PARTITION `p3` VALUES LESS THAN ('2010-03-01'),
+ PARTITION `p4` VALUES LESS THAN ('2016-02-01'),
+ PARTITION `p5` VALUES LESS THAN ('2020-01-01'),
+ PARTITION `p6` VALUES LESS THAN (MAXVALUE))
+insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01');
+analyze table t;
+select * from t partition(p0);
+a
+1999-01-01
+select * from t partition(p1);
+a
+1999-06-01
+select * from t partition(p2);
+a
+2000-05-01
+select * from t partition(p3);
+a
+2008-04-01
+select * from t partition(p4);
+a
+2010-03-01
+select * from t partition(p5);
+a
+2016-02-01
+select * from t partition(p6);
+a
+2020-01-01
+explain select * from t where a < '1943-02-12';
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:p0	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a >= '19690213';
+id	estRows	task	access object	operator info
+TableReader_7	3333.33	root	partition:all	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a > '2003-03-13';
+id	estRows	task	access object	operator info
+TableReader_7	3333.33	root	partition:p2,p3,p4,p5,p6	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a < '2006-02-03';
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a = '20070707';
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root	partition:p2	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a > '1949-10-10';
+id	estRows	task	access object	operator info
+TableReader_7	3333.33	root	partition:all	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a > '2016-02-01' AND a < '20000103';
+id	estRows	task	access object	operator info
+TableReader_7	0.00	root	partition:dual	data:Selection_6
+└─Selection_6	0.00	cop[tikv]		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a < '19691112' or a >= '2019-09-18';
+id	estRows	task	access object	operator info
+TableReader_7	6656.67	root	partition:p0,p5,p6	data:Selection_6
+└─Selection_6	6656.67	cop[tikv]		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a is null;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root	partition:p0	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		isnull(rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where '2003-02-27' >= a;
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where '20141024' < a;
+id	estRows	task	access object	operator info
+TableReader_7	3333.33	root	partition:p4,p5,p6	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where '2003-03-30' > a;
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		gt(2003-03-30 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a between '2003-03-30' AND '2014-01-01';
+id	estRows	task	access object	operator info
+TableReader_7	250.00	root	partition:p2,p3,p4	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop database if exists rcd;
+create database rcd;
+use rcd;
+create table t1 (a char, b char, c char) partition by range columns (a,b,c) ( partition p0 values less than ('a','b','c'), partition p1 values less than ('b','c','d'), partition p2 values less than ('d','e','f'));
+insert into t1 values ('a', NULL, 'd');
+analyze table t1;
+explain format=brief select * from t1 where a = 'a' AND c = 'd';
+id	estRows	task	access object	operator info
+TableReader	0.01	root	partition:p0,p1	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rcd.t1.a, "a"), eq(rcd.t1.c, "d")
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 where a = 'a' AND c = 'd';
+a	b	c
+a	NULL	d
+drop table t1;
+drop table if exists q1, q2;
+create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+explain format=brief select * from q1,q2;
+id	estRows	task	access object	operator info
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
+analyze table q1;
+explain format=brief select * from q1,q2;
+id	estRows	task	access object	operator info
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
+analyze table q2;
+explain format=brief select * from q1,q2;
+id	estRows	task	access object	operator info
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
+create database issue42323;
+use issue42323;
+set @@session.tidb_partition_prune_mode = 'dynamic';
+CREATE TABLE t(col1 int(11) NOT NULL DEFAULT '0' ) PARTITION BY RANGE (FLOOR(col1))(
+PARTITION p2021 VALUES LESS THAN (202200),
+PARTITION p2022 VALUES LESS THAN (202300),
+PARTITION p2023 VALUES LESS THAN (202400));
+insert into t values(202303);
+analyze table t;
+select * from t where col1 = 202303;
+col1
+202303
+select * from t where col1 = floor(202303);
+col1
+202303
+drop database issue42323;
+drop database if exists list_partition_pri;
+create database list_partition_pri;
+use list_partition_pri;
+create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1));
+drop user if exists 'priv_test'@'%';
+create user 'priv_test'@'%';
+grant select on list_partition_pri.tlist to 'priv_test';
+use list_partition_pri;
+alter table tlist truncate partition p0;
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+alter table tlist drop partition p0;
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+alter table tlist add partition (partition p2 values in (2));
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+insert into tlist values (1);
+Error 1142 (42000): INSERT command denied to user 'priv_test'@'%' for table 'tlist'
+use planner__core__integration_partition;
+drop table if exists t;
+create table t(id int) PARTITION BY HASH(id) partitions 5;
+insert into t values(0),(0);
+analyze table t;
+explain select *,_tidb_rowid from t where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+TableReader_6	10000.00	root	partition:all	data:TableRangeScan_5
+└─TableRangeScan_5	10000.00	cop[tikv]	table:t	range:[1,1], keep order:false, stats:pseudo
+select *,_tidb_rowid from t where _tidb_rowid=1;
+id	_tidb_rowid
+0	1
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p0	handle:1
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	_tidb_rowid
+0	1
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p1	handle:1
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	_tidb_rowid
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+TableReader_6	10000.00	root	partition:p0,p1	data:TableRangeScan_5
+└─TableRangeScan_5	10000.00	cop[tikv]	table:t	range:[1,1], keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`a` bigint unsigned
+)
+PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (18446744073709551610,1),
+PARTITION `p1` VALUES IN (2,3));
+explain select * from t where a < 18446744073709551610 and a > 2;
+id	estRows	task	access object	operator info
+TableReader_7	250.00	root	partition:p1	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		gt(planner__core__integration_partition.t.a, 2), lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a < 18446744073709551610;
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root	partition:all	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where a not in (18446744073709551610, 1);
+id	estRows	task	access object	operator info
+TableReader_7	3833.33	root	partition:p1	data:Selection_6
+└─Selection_6	3833.33	cop[tikv]		not(in(planner__core__integration_partition.t.a, 18446744073709551610, 1))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

@@ -1,0 +1,149 @@
+set tidb_cost_model_version=1;
+drop table if exists t;
+create table t (a int);
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(black_list.t.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+insert into mysql.opt_rule_blacklist values('predicate_push_down');
+admin reload opt_rule_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		lt(black_list.t.a, 1)
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.opt_rule_blacklist where name='predicate_push_down';
+admin reload opt_rule_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(black_list.t.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+insert into mysql.expr_pushdown_blacklist values('<', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		lt(black_list.t.a, 1)
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist where name='<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(black_list.t.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+insert into mysql.expr_pushdown_blacklist values('lt', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		lt(black_list.t.a, 1)
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist where name='lt' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+explain format = 'brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(black_list.t.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+drop table if exists t;
+create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));
+insert into t values(1,1,1),(2,2,2),(3,3,3);
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:max(black_list.t.a)->Column#5
+└─IndexReader	10000.00	root		index:IndexFullScan
+  └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
+desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:max(black_list.t.a)->Column#5
+└─IndexReader	10000.00	root		index:IndexFullScan
+  └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:max(Column#7)->Column#5
+└─IndexReader	1.00	root		index:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#7
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
+desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:max(Column#7)->Column#5
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:max(black_list.t.a)->Column#7
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where a + b;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		plus(cast(black_list.t.a, double BINARY), cast(black_list.t.b, double BINARY))
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where a + b;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		plus(cast(black_list.t.a, double BINARY), cast(black_list.t.b, double BINARY))
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where a + b;
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		plus(cast(black_list.t.a, double BINARY), cast(black_list.t.b, double BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where a + b;
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		plus(cast(black_list.t.a, double BINARY), cast(black_list.t.b, double BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where b = 1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(black_list.t.b, 1)
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b = 'a';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(black_list.t.b, "a")
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b > 1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		gt(black_list.t.b, 1)
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b > 'a';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		gt(black_list.t.b, "a")
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where b = 1 and a = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	0.10	root		
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b = 'a' and a = 'a';
+id	estRows	task	access object	operator info
+IndexLookUp	0.10	root		
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, a)	range:["a" "a","a" "a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b = 1 and a > 1;
+id	estRows	task	access object	operator info
+IndexLookUp	33.33	root		
+├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t, index:idx(b, a)	range:("a" "a","a" +inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	33.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select * from t where b = 1 and a > 'a';
+id	estRows	task	access object	operator info
+IndexLookUp	0.20	root		
+├─IndexRangeScan(Build)	0.20	cop[tikv]	table:t, index:idx(b, a)	range:["a" "b","a" "b"], ["a" "c","a" "c"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo

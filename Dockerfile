@@ -12,17 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The current dockerfile is only used for development purposes. If used in a 
+# production environment, please refer to https://github.com/PingCAP-QE/artifacts/blob/main/dockerfiles/cd/builders/tidb/Dockerfile.
+
 # Builder image
-FROM alpine:edge as builder
+FROM golang:1.23 as builder
+WORKDIR /tidb
 
-ADD . https://raw.githubusercontent.com/njhallett/apk-fastest-mirror/c4ca44caef3385d830fea34df2dbc2ba4a17e021/apk-fastest-mirror.sh ./proxy
-RUN sh ./proxy/apk-fastest-mirror.sh -t 50 && apk add --no-cache git build-base go
+COPY . .
 
-COPY . /tidb
 ARG GOPROXY
-RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
+ENV GOPROXY ${GOPROXY}
 
-FROM alpine:latest
+RUN make server
+
+
+FROM rockylinux:9-minimal
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
 

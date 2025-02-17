@@ -1,0 +1,56 @@
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `idx1` (`b`) GLOBAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+
+begin;
+insert into t values (1, 2, 3);
+--error 1062
+insert into t values (2, 2, 3);
+rollback;
+
+drop table if exists t;
+create table t ( a int, b int, c int, unique key idx(b) global, unique index idx1(a) global)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than (30)
+);
+begin;
+insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+--error 1062
+update t set a = 2, b = 12 where a = 11;
+--error 1062
+update t set a = 8, b = 13 where a = 11;
+rollback;
+
+insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+update t set a = 2 where a = 11;
+update t set a = 13 where a = 12;
+explain select * from t use index(idx) order by a;
+select * from t use index(idx) order by a;
+explain select * from t use index(idx1) order by a;
+select * from t use index(idx1) order by a;
+
+# https://github.com/pingcap/tidb/issues/53750
+drop table t;
+create table t(a varchar(70), b mediumint(9), unique index idx_a(a) global, unique index idx_b(b)) partition by key(b) partitions 5;
+insert into t values ('',826534 );
+replace into t values ('',826536 );
+select * from t;
+
+# For global index + non-unique index
+drop table t;
+create table t(a int, b int, index idx(a) global) partition by hash(b) partitions 5;
+insert into t values (1, 2), (1, 3), (1, 4);
+
+# Replace will not affects, `idx` is a non-unique index.
+replace into t values (2, 3);
+update t set a = 3, b = 4 where a = 1;
+--sorted_result
+select * from t;

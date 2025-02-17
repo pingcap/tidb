@@ -80,21 +80,46 @@ echo "1st records count is ${cnt}"
 # run dumpling with compress option
 export DUMPLING_OUTPUT_DIR=s3://mybucket/dump-compress
 
-run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress "gzip"
+for compressType in "gzip" "snappy" "zst"
+do
+  echo -e "\nstart ${compressType} test"
+  run_dumpling --s3.endpoint="http://$S3_ENDPOINT/" --compress ${compressType}
 
-mkdir -p "${HOST_DIR}/compress"
+  mkdir -p "${HOST_DIR}/compress"
 
-bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.gz "${HOST_DIR}/compress/s3-schema-create.sql.gz"
-bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.gz "${HOST_DIR}/compress/s3.t-schema.sql.gz"
-bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.gz "${HOST_DIR}/compress/s3.t.000000000.sql.gz"
+  case $compressType in
+  "gzip")
+    suffix="gz"
+    binary=gzip
+  ;;
 
-gzip "${HOST_DIR}/compress/s3-schema-create.sql.gz" -d
-diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
+  "snappy")
+    suffix="snappy"
+    binary=snappy
+  ;;
 
-gzip "${HOST_DIR}/compress/s3.t-schema.sql.gz" -d
-diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
+  "zst")
+    suffix="zst"
+    binary=zstd
+  ;;
+  esac
 
-gzip "${HOST_DIR}/compress/s3.t.000000000.sql.gz" -d
-diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+  bin/mc cp minio/mybucket/dump-compress/s3-schema-create.sql.${suffix} "${HOST_DIR}/compress/s3-schema-create.sql.${suffix}"
+  bin/mc cp minio/mybucket/dump-compress/s3.t-schema.sql.${suffix} "${HOST_DIR}/compress/s3.t-schema.sql.${suffix}"
+  bin/mc cp minio/mybucket/dump-compress/s3.t.000000000.sql.${suffix} "${HOST_DIR}/compress/s3.t.000000000.sql.${suffix}"
+
+  ${binary} -d "${HOST_DIR}/compress/s3-schema-create.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3-schema-create.sql" "${HOST_DIR}/compress/s3-schema-create.sql"
+
+  ${binary} -d "${HOST_DIR}/compress/s3.t-schema.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3.t-schema.sql" "${HOST_DIR}/compress/s3.t-schema.sql"
+
+  ${binary} -d "${HOST_DIR}/compress/s3.t.000000000.sql.${suffix}"
+  diff "${HOST_DIR}/local/s3.t.000000000.sql" "${HOST_DIR}/compress/s3.t.000000000.sql"
+
+  rm "${HOST_DIR}/compress/s3-schema-create.sql"
+  rm "${HOST_DIR}/compress/s3.t-schema.sql"
+  rm "${HOST_DIR}/compress/s3.t.000000000.sql"
+done
 
 run_sql "drop database if exists \`$DB_NAME\`;"

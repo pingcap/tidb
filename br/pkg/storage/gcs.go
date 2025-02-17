@@ -3,7 +3,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	goerrors "errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -14,11 +17,19 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/net/http2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
 )
 
 const (
@@ -90,26 +101,65 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-type gcsStorage struct {
-	gcs    *backuppb.GCS
-	bucket *storage.BucketHandle
+// GCSStorage defines some standard operations for BR/Lightning on the GCS storage.
+// It implements the `ExternalStorage` interface.
+type GCSStorage struct {
+	gcs       *backuppb.GCS
+	idx       *atomic.Int64
+	clientCnt int64
+	clientOps []option.ClientOption
+
+	handles []*storage.BucketHandle
+	clients []*storage.Client
+}
+
+func (s *GCSStorage) MarkStrongConsistency() {
+	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+}
+
+// GetBucketHandle gets the handle to the GCS API on the bucket.
+func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
+	i := s.idx.Inc() % int64(len(s.handles))
+	return s.handles[i]
+}
+
+// getClient gets the GCS client.
+func (s *GCSStorage) getClient() *storage.Client {
+	i := s.idx.Inc() % int64(len(s.clients))
+	return s.clients[i]
+}
+
+// GetOptions gets the external storage operations for the GCS.
+func (s *GCSStorage) GetOptions() *backuppb.GCS {
+	return s.gcs
 }
 
 // DeleteFile delete the file in storage
-func (s *gcsStorage) DeleteFile(ctx context.Context, name string) error {
+func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
-	err := s.bucket.Object(object).Delete(ctx)
+	err := s.GetBucketHandle().Object(object).Delete(ctx)
 	return errors.Trace(err)
 }
 
-func (s *gcsStorage) objectName(name string) string {
+// DeleteFiles delete the files in storage.
+func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *GCSStorage) objectName(name string) string {
 	return path.Join(s.gcs.Prefix, name)
 }
 
 // WriteFile writes data to a file to storage.
-func (s *gcsStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	object := s.objectName(name)
-	wc := s.bucket.Object(object).NewWriter(ctx)
+	wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
 	wc.PredefinedACL = s.gcs.PredefinedAcl
 	_, err := wc.Write(data)
@@ -120,9 +170,9 @@ func (s *gcsStorage) WriteFile(ctx context.Context, name string, data []byte) er
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (s *gcsStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	object := s.objectName(name)
-	rc, err := s.bucket.Object(object).NewReader(ctx)
+	rc, err := s.GetBucketHandle().Object(object).NewReader(ctx)
 	if err != nil {
 		return nil, errors.Annotatef(err,
 			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
@@ -143,9 +193,9 @@ func (s *gcsStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 }
 
 // FileExists return true if file exists.
-func (s *gcsStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	object := s.objectName(name)
-	_, err := s.bucket.Object(object).Attrs(ctx)
+	_, err := s.GetBucketHandle().Object(object).Attrs(ctx)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
 			return false, nil
@@ -156,23 +206,44 @@ func (s *gcsStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	object := s.objectName(path)
-	handle := s.bucket.Object(object)
+	handle := s.GetBucketHandle().Object(object)
 
-	rc, err := handle.NewRangeReader(ctx, 0, -1)
+	attrs, err := handle.Attrs(ctx)
 	if err != nil {
+		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+			return nil, errors.Annotatef(err,
+				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
+				s.gcs.Bucket, path)
+		}
 		return nil, errors.Annotatef(err,
-			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
+			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
+	}
+	pos := int64(0)
+	endPos := attrs.Size
+	prefetchSize := 0
+	if o != nil {
+		if o.StartOffset != nil {
+			pos = *o.StartOffset
+		}
+		if o.EndOffset != nil {
+			endPos = *o.EndOffset
+		}
+		prefetchSize = o.PrefetchSize
 	}
 
 	return &gcsObjectReader{
-		storage:   s,
-		name:      path,
-		objHandle: handle,
-		reader:    rc,
-		ctx:       ctx,
+		storage:      s,
+		name:         path,
+		objHandle:    handle,
+		reader:       nil, // lazy create
+		ctx:          ctx,
+		pos:          pos,
+		endPos:       endPos,
+		prefetchSize: prefetchSize,
+		totalSize:    attrs.Size,
 	}, nil
 }
 
@@ -182,24 +253,25 @@ func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
 		opt = &WalkOption{}
-	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("gcs storage not support ObjPrefix for now")
 	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
+
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	iter := s.bucket.Objects(ctx, query)
+	iter := s.GetBucketHandle().Objects(ctx, query)
 	for {
 		attrs, err := iter.Next()
 		if err == iterator.Done {
@@ -221,21 +293,38 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-func (s *gcsStorage) URI() string {
+func (s *GCSStorage) URI() string {
 	return "gcs://" + s.gcs.Bucket + "/" + s.gcs.Prefix
 }
 
 // Create implements ExternalStorage interface.
-func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
-	object := s.objectName(name)
-	wc := s.bucket.Object(object).NewWriter(ctx)
-	wc.StorageClass = s.gcs.StorageClass
-	wc.PredefinedACL = s.gcs.PredefinedAcl
-	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
+	// NewGCSWriter requires real testing environment on Google Cloud.
+	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
+	if wo == nil || wo.Concurrency <= 1 || mockGCS {
+		object := s.objectName(name)
+		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
+		wc.StorageClass = s.gcs.StorageClass
+		wc.PredefinedACL = s.gcs.PredefinedAcl
+		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+	}
+	uri := s.objectName(name)
+	// 5MB is the minimum part size for GCS.
+	partSize := int64(gcsMinimumChunkSize)
+	if wo.PartSize > partSize {
+		partSize = wo.PartSize
+	}
+	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	return bw, nil
 }
 
 // Rename file name from oldFileName to newFileName.
-func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	data, err := s.ReadFile(ctx, oldFileName)
 	if err != nil {
 		return errors.Trace(err)
@@ -247,7 +336,22 @@ func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
+// Close implements ExternalStorage interface.
+func (s *GCSStorage) Close() {
+	for _, client := range s.clients {
+		if err := client.Close(); err != nil {
+			log.Warn("failed to close gcs client", zap.Error(err))
+		}
+	}
+}
+
+// used in tests
+var mustReportCredErr = false
+
+const gcsClientCnt = 16
+
+// NewGCSStorage creates a GCS external storage implementation.
+func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())
@@ -255,6 +359,10 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
+				if intest.InTest && !mustReportCredErr {
+					clientOps = append(clientOps, option.WithoutAuthentication())
+					goto skipHandleCred
+				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
@@ -271,16 +379,27 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 			clientOps = append(clientOps, option.WithCredentialsJSON([]byte(gcs.GetCredentialsBlob())))
 		}
 	}
+skipHandleCred:
 
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
+
 	if opts.HTTPClient != nil {
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
+		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+		if err != nil {
+			if intest.InTest && !mustReportCredErr {
+				goto skipHandleTransport
+			}
+			return nil, errors.Trace(err)
+		}
+		opts.HTTPClient.Transport = newTransport
+	skipHandleTransport:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
-	}
-	client, err := storage.NewClient(ctx, clientOps...)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	if !opts.SendCredentials {
@@ -288,55 +407,111 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		gcs.CredentialsBlob = ""
 	}
 
-	bucket := client.Bucket(gcs.Bucket)
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
+	ret := &GCSStorage{
+		gcs:       gcs,
+		idx:       atomic.NewInt64(0),
+		clientCnt: gcsClientCnt,
+		clientOps: clientOps,
 	}
-	return &gcsStorage{gcs: gcs, bucket: bucket}, nil
+	if err := ret.Reset(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return ret, nil
 }
 
-// only for unit test
-func NewGCSStorageForTest(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
-	return newGCSStorage(ctx, gcs, opts)
+// Reset resets the GCS storage.
+func (s *GCSStorage) Reset(ctx context.Context) error {
+	logutil.Logger(ctx).Info("resetting gcs storage")
+
+	for _, client := range s.clients {
+		_ = client.Close()
+	}
+
+	s.clients = make([]*storage.Client, gcsClientCnt)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	for i := range s.clients {
+		eg.Go(func() error {
+			client, err := storage.NewClient(egCtx, s.clientOps...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
+			s.clients[i] = client
+			return nil
+		})
+	}
+	err := eg.Wait()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
+	for i := range s.handles {
+		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
+	}
+	return nil
 }
 
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	if err == nil {
+		return false
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7440
+	if e := (http2.StreamError{}); goerrors.As(err, &e) {
+		if e.Code == http2.ErrCodeInternal {
+			log.Warn("retrying gcs request due to internal HTTP2 error", zap.Error(err))
 			return true
 		}
 	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+	errMsg := err.Error()
+	// workaround for strange unknown errors
+	retryableErrMsg := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"broken pipe",
+	}
+
+	for _, msg := range retryableErrMsg {
+		if strings.Contains(errMsg, msg) {
+			log.Warn("retrying gcs request", zap.Error(err))
+			return true
+		}
+	}
+
+	// just log the new unknown error, in case we can add it to this function
+	if !goerrors.Is(err, context.Canceled) {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+	}
+
 	return false
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
 type gcsObjectReader struct {
-	storage   *gcsStorage
+	storage   *GCSStorage
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
 	pos       int64
+	endPos    int64
+	totalSize int64
+
+	prefetchSize int
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -346,13 +521,20 @@ type gcsObjectReader struct {
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
-		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
+		length := int64(-1)
+		if r.endPos != r.totalSize {
+			length = r.endPos - r.pos
+		}
+		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
 		if err != nil {
 			return 0, errors.Annotatef(err,
 				"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
 				r.storage.gcs.Bucket, r.name)
 		}
 		r.reader = rc
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 	}
 	n, err = r.reader.Read(p)
 	r.pos += int64(n)
@@ -374,31 +556,35 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	var realOffset int64
 	switch whence {
 	case io.SeekStart:
-		if offset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
-		}
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
-		if r.pos < 0 && realOffset >= 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
-		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		// GCS supports `NewRangeReader(ctx, -10, -1)`, which means read the last 10 bytes.
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {
 		return realOffset, nil
 	}
 
-	_ = r.reader.Close()
+	if r.reader != nil {
+		_ = r.reader.Close()
+		r.reader = nil
+	}
 	r.pos = realOffset
+	if realOffset >= r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return realOffset, nil
+	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
 		return 0, errors.Annotatef(err,
@@ -406,6 +592,13 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 			r.storage.gcs.Bucket, r.name)
 	}
 	r.reader = rc
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 
 	return realOffset, nil
+}
+
+func (r *gcsObjectReader) GetFileSize() (int64, error) {
+	return r.totalSize, nil
 }

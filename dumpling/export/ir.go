@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -60,10 +61,10 @@ type Stringer interface {
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
 type RowReceiver interface {
-	BindAddress([]interface{})
+	BindAddress([]any)
 }
 
-func decodeFromRows(rows *sql.Rows, args []interface{}, row RowReceiver) error {
+func decodeFromRows(rows *sql.Rows, args []any, row RowReceiver) error {
 	row.BindAddress(args)
 	if err := rows.Scan(args...); err != nil {
 		rows.Close()
@@ -85,7 +86,7 @@ type MetaIR interface {
 	MetaSQL() string
 }
 
-func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
+func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableMeta, error) {
 	tps, err := rows.ColumnTypes()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -101,6 +102,6 @@ func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
 		colTypes:      tps,
 		selectedField: strings.Join(nms, ","),
 		selectedLen:   len(nms),
-		specCmts:      []string{"/*!40101 SET NAMES binary*/;"},
+		specCmts:      getSpecialComments(serverType),
 	}, nil
 }

@@ -1,0 +1,108 @@
+# TestRevokeTableSingle
+# ref issue #38421
+drop user if exists test;
+drop table if exists test1;
+CREATE USER test;
+CREATE TABLE executor__revoke.test1(c1 int);
+GRANT SELECT  ON executor__revoke.test1 TO test;
+REVOKE SELECT  ON executor__revoke.test1 from test;
+SELECT Column_priv FROM mysql.tables_priv WHERE User="test" ;
+
+# TestRevokeTableSingleColumn
+# ref issue #38421(column fix)
+drop user if exists test;
+CREATE USER test;
+GRANT SELECT(Host) ON mysql.db TO test;
+GRANT SELECT(DB) ON mysql.db TO test;
+REVOKE SELECT(Host) ON mysql.db FROM test;
+SELECT count(Column_priv) FROM mysql.columns_priv WHERE User="test" and Column_name ='Host' ;
+SELECT count(Column_priv) FROM mysql.columns_priv WHERE User="test" and Column_name ='DB' ;
+
+# TestRevokeDynamicPrivs
+DROP USER if exists dyn;
+create user dyn;
+GRANT BACKUP_Admin ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+
+## try revoking only on test.* - should fail:
+-- error 3619
+REVOKE BACKUP_Admin,system_variables_admin ON executor__revoke.* FROM dyn;
+
+## privs should still be intact:
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+## with correct usage, the privilege is revoked
+REVOKE BACKUP_Admin ON *.* FROM dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+
+## Revoke bogus is a warning in MySQL
+REVOKE bogus ON *.* FROM dyn;
+SHOW WARNINGS;
+
+## grant and revoke two dynamic privileges at once.
+GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+REVOKE BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN ON *.* FROM dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+
+## revoke a combination of dynamic + non-dynamic
+GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT, INSERT ON *.* TO dyn;
+REVOKE BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT, INSERT ON *.* FROM dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+
+## revoke grant option from privileges
+GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT ON *.* TO dyn WITH GRANT OPTION;
+REVOKE BACKUP_ADMIN, SELECT, GRANT OPTION ON *.* FROM dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+
+# TestRevokeOnNonExistTable
+# issue #28533
+drop DATABASE if exists d1;
+drop user if exists issue28533;
+CREATE DATABASE d1;
+USE d1;
+CREATE TABLE t1 (a int);
+CREATE USER issue28533;
+
+## GRANT ON existent table success 
+GRANT ALTER ON d1.t1 TO issue28533;
+
+## GRANT ON non-existent table success
+GRANT INSERT, CREATE ON d1.t2 TO issue28533;
+
+## REVOKE ON non-existent table success
+DROP TABLE t1;
+REVOKE ALTER ON d1.t1 FROM issue28533;
+
+DROP USER issue28533;
+DROP TABLE IF EXISTS t1;
+DROP DATABASE IF EXISTS d1;
+use executor__revoke;
+
+# TestIssue41773
+drop user if exists 't1234'@'%';
+create table if not exists xx (id int);
+CREATE USER 't1234'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';
+GRANT USAGE ON * TO 't1234'@'%';
+GRANT USAGE ON executor__revoke.* TO 't1234'@'%';
+GRANT USAGE ON executor__revoke.xx TO 't1234'@'%';
+REVOKE USAGE ON * FROM 't1234'@'%';
+REVOKE USAGE ON executor__revoke.* FROM 't1234'@'%';
+REVOKE USAGE ON executor__revoke.xx FROM 't1234'@'%';
+
+# TestCaseInsensitiveSchemaNames
+# Check https://github.com/pingcap/tidb/issues/41048
+drop table if exists TABLE_PRIV;
+CREATE TABLE executor__revoke.TABLE_PRIV(id int, name varchar(20));
+
+## Verify the case-insensitive updates for mysql.tables_priv table.
+GRANT SELECT ON executor__revoke.table_priv TO 'root'@'%';
+revoke SELECT ON executor__revoke.TABLE_PRIV from 'root'@'%';
+
+## Verify the case-insensitive updates for mysql.db table.
+GRANT SELECT ON executor__revoke.* TO 'root'@'%';
+revoke SELECT ON executor__revoke.* from 'root'@'%';
+
+## Verify the case-insensitive updates for mysql.columns_priv table.
+GRANT SELECT (id), INSERT (ID, name) ON executor__revoke.TABLE_PRIV TO 'root'@'%';
+REVOKE SELECT (ID) ON executor__revoke.taBle_priv from 'root'@'%';
+

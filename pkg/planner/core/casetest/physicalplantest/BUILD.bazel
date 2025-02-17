@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "physicalplantest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "physical_plan_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    race = "on",
+    shard_count = 35,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/executor",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner",
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/external",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/context",
+        "//pkg/util/hint",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

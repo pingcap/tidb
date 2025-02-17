@@ -15,15 +15,16 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
@@ -39,6 +40,7 @@ type Cluster struct {
 	*domain.Domain
 	DSN        string
 	PDClient   pd.Client
+	PDHTTPCli  pdhttp.Client
 	HttpServer *http.Server
 }
 
@@ -70,7 +72,6 @@ func NewCluster() (*Cluster, error) {
 	}
 	cluster.Storage = storage
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
@@ -79,17 +80,19 @@ func NewCluster() (*Cluster, error) {
 	cluster.Domain = dom
 
 	cluster.PDClient = storage.(tikv.Storage).GetRegionCache().PDClient()
+	cluster.PDHTTPCli = storage.(tikv.Storage).GetPDHTTPClient()
 	return cluster, nil
 }
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
@@ -100,10 +103,11 @@ func (mock *Cluster) Start() error {
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err1 != nil {
+		if err1 := svr.Run(nil); err1 != nil {
 			panic(err1)
 		}
 	}()
+	<-server.RunInGoTestChan
 	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
@@ -178,7 +182,8 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	if retry == retryTime {
 		log.Panic("failed to connect HTTP status in every 10 ms",
-			zap.Int("retryTime", retryTime))
+			zap.Int("retryTime", retryTime),
+			zap.String("url", statusURL))
 	}
 	return strings.SplitAfter(dsn, "/")[0]
 }

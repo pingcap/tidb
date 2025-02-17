@@ -19,10 +19,11 @@ DB="$TEST_NAME"
 TABLE="usertable"
 LOG="not-leader.log"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 for i in $(seq $DB_COUNT); do
@@ -47,7 +48,7 @@ echo "restore start..."
 unset BR_LOG_TO_TERM
 GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/split/not-leader-error=1*return(true)->1*return(false);\
 github.com/pingcap/tidb/br/pkg/restore/split/somewhat-retryable-error=3*return(true)" \
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024 --log-file $LOG || true
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024 --merge-region-key-count 1 --log-file $LOG || true
 BR_LOG_TO_TERM=1
 
 grep "a error occurs on split region" $LOG && \

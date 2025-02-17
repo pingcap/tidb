@@ -1,0 +1,62 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ast",
+    srcs = [
+        "ast.go",
+        "base.go",
+        "ddl.go",
+        "dml.go",
+        "expressions.go",
+        "flag.go",
+        "functions.go",
+        "misc.go",
+        "model.go",
+        "procedure.go",
+        "stats.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/ast",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
+        "//pkg/parser/terror",
+        "//pkg/parser/tidb",
+        "//pkg/parser/types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "ast_test",
+    timeout = "short",
+    srcs = [
+        "base_test.go",
+        "ddl_test.go",
+        "dml_test.go",
+        "expressions_test.go",
+        "flag_test.go",
+        "format_test.go",
+        "functions_test.go",
+        "misc_test.go",
+        "model_test.go",
+        "procedure_test.go",
+        "util_test.go",
+    ],
+    embed = [":ast"],
+    flaky = True,
+    shard_count = 50,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/test_driver",
+        "@com_github_stretchr_testify//require",
+    ],
+)

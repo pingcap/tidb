@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "parallelapply_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "parallel_apply_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

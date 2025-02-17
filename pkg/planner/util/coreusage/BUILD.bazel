@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "coreusage",
+    srcs = [
+        "cast_misc.go",
+        "correlated_misc.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/coreusage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/planner/core/base",
+        "//pkg/types",
+    ],
+)
