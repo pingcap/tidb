@@ -68,7 +68,7 @@ echo "Restore finished successfully."
 
 exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
          jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
-if [ "$exists" != "false" ]; then
+if [ "$exists" == "true" ]; then
     echo "Error: Region label rule (schedule=deny) should have been removed."
     exit 1
 fi
@@ -103,12 +103,86 @@ wait $RESTORE_PID
 
 exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
          jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
-if [ "$exists" != "false" ]; then
+if [ "$exists" == "true" ]; then
     echo "Error: Region label rule (schedule=deny) should have been removed (Test 2)."
     exit 1
 fi
 
 echo "Test 2: restore random tables without checkpoint finished successfully!"
+
+#Test 3: restore the whole db with checkpoint
+run_sql "drop schema $DB;"
+
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files=return(\"corrupt-last-table-files\")"
+run_br restore table --db "$DB" -s "local://$TEST_DIR/${DB}" --pd $PD_ADDR $TABLE_LIST &
+RESTORE_PID=$!
+
+echo "Monitoring for checkpoint stage (waiting for log file creation)..."
+# Wait for the checkpoint: the restore process will create $LOG_FILE when pausing.
+while [ ! -f "$LOG_FILE" ]; do
+    sleep 1
+done
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" != "true" ]; then
+    echo "Error: Expected region label rule (schedule=deny) not found."
+    # If the rule is missing, kill the restore process and exit with failure.
+    kill $RESTORE_PID
+    exit 1
+fi
+
+rm -f "$LOG_FILE"
+set +e
+wait $RESTORE_PID
+exit_code=$?
+set -e
+
+if [ $exit_code -eq 0 ]; then
+    echo 'restore unexpected success'
+    exit 1
+fi
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" == "true" ]; then
+    echo "Error: Region label rule (schedule=deny) should have been removed."
+    exit 1
+fi
+
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\")"
+
+run_br restore db --db "$DB" -s "local://$TEST_DIR/${DB}" --pd $PD_ADDR &
+RESTORE_PID=$!
+
+echo "Monitoring for checkpoint stage (waiting for log file creation)..."
+# Wait for the checkpoint: the restore process will create $LOG_FILE when pausing.
+while [ ! -f "$LOG_FILE" ]; do
+    sleep 1
+done
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" != "true" ]; then
+    echo "Error: Expected region label rule (schedule=deny) not found."
+    # If the rule is missing, kill the restore process and exit with failure.
+    kill $RESTORE_PID
+    exit 1
+fi
+
+rm -f "$LOG_FILE"
+wait $RESTORE_PID
+
+echo "Restore finished successfully."
+
+exists=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
+         jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
+if [ "$exists" == "true" ]; then
+    echo "Error: Region label rule (schedule=deny) should have been removed."
+    exit 1
+fi
+
+echo "Test 3: restore the whole db with checkpoint finished successfully!"
 
 export GO_FAILPOINTS=""
 exit 0
