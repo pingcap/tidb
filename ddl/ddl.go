@@ -1332,12 +1332,9 @@ func (d *ddl) wait4Switch(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		d.runningJobs.RLock()
-		if len(d.runningJobs.ids) == 0 {
-			d.runningJobs.RUnlock()
+		if len(d.runningJobs.allIDs()) == 0 {
 			return nil
 		}
-		d.runningJobs.RUnlock()
 		time.Sleep(time.Second * 1)
 	}
 }
