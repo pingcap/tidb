@@ -381,7 +381,7 @@ var (
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.String("cfg", taskCfg.Redact()))
 
 	utils.LogEnvVariables()
 
