@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,9 +44,12 @@ var (
 )
 
 const (
-	maxRetries  = 3
-	uuidLen     = 36
-	maxIndexLen = 3072
+	maxRetries     = 3
+	uuidLen        = 36
+	maxIndexLen    = 3072
+	totalOrdered   = "total ordered"
+	totalRandom    = "total random"
+	partialOrdered = "partial ordered"
 )
 
 var faker *gofakeit.Faker
@@ -180,7 +184,15 @@ func generateLetterWithNum(len int) string {
 
 func generateBigint(num int, res []string) {
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(1, 1000000000))
+		res[i] = strconv.Itoa(faker.Number(-9223372036854775808, 9223372036854775807))
+	}
+	order := ""
+	if order == totalRandom || order == "" {
+		return
+	} else if order == totalOrdered {
+		sort.Strings(res)
+	} else if order == partialOrdered {
+		sort.Strings(res[:len(res)-1])
 	}
 }
 
