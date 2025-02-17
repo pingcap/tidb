@@ -4180,6 +4180,7 @@ func checkExchangePartitionRecordValidation(
 		}
 		defer w.sessPool.Put(sctx)
 
+		logutil.DDLLogger().Info("checkExchangePartitionRecordValidation", zap.String("sql", sql), zap.Any("params", params))
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			ctx,
 			nil,
@@ -4191,6 +4192,7 @@ func checkExchangePartitionRecordValidation(
 		}
 		rowCount := len(rows)
 		if rowCount != 0 {
+			logutil.DDLLogger().Error("checkExchangePartitionRecordValidation", zap.Any("rows", rows), zap.Int("rowCount", rowCount), zap.String("sql", sql), zap.Any("params", params))
 			return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 		}
 		// Check warnings!
@@ -4220,7 +4222,9 @@ func checkExchangePartitionRecordValidation(
 	}
 
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where ")
+	// TODO: remove this debug code
+	buf.WriteString("select * from %n.%n where ")
+	// buf.WriteString("select 1 from %n.%n where ")
 	paramList := []any{nschemaName, ntbl.Meta().Name.L}
 	checkNt := true
 
@@ -4372,17 +4376,81 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 }
 
 func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []any) {
-	paramList := make([]any, 0, 2)
-	colName := pi.Columns[0].L
-	if index == 0 {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n >= %?", paramList
-	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
-		return "%n < %?", paramList
+	var buf strings.Builder
+	paramList := make([]any, 0, len(pi.Columns)*2)
+
+	hasLowerBound := index > 0
+	needOR := false
+
+	// Lower bound check (for all partitions except first)
+	if hasLowerBound {
+		currVals := pi.Definitions[index-1].LessThan
+		for i := 0; i < len(pi.Columns); i++ {
+			if strings.EqualFold(currVals[i], partitionMaxValue) {
+				break
+			}
+
+			if needOR {
+				buf.WriteString(" OR ")
+			}
+			if i > 0 {
+				buf.WriteString("(")
+				// All previous columns must be equal and non-NULL
+				for j := 0; j < i; j++ {
+					if j > 0 {
+						buf.WriteString(" AND ")
+					}
+					buf.WriteString("(%n = %?)")
+					paramList = append(paramList, pi.Columns[j].L, driver.UnwrapFromSingleQuotes(currVals[j]))
+				}
+				buf.WriteString(" AND ")
+			}
+			paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]))
+			buf.WriteString("(%n < %? OR %n IS NULL)")
+			paramList = append(paramList, pi.Columns[i].L)
+			if i > 0 {
+				buf.WriteString(")")
+			}
+			needOR = true
+		}
 	}
-	paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-	return "%n < %? or %n >= %?", paramList
+
+	currVals := pi.Definitions[index].LessThan
+	// Upper bound check (for all partitions)
+	for i := 0; i < len(pi.Columns); i++ {
+		if strings.EqualFold(currVals[i], partitionMaxValue) {
+			break
+		}
+
+		if needOR {
+			buf.WriteString(" OR ")
+		}
+		if i > 0 {
+			buf.WriteString("(")
+			// All previous columns must be equal and non-NULL
+			for j := 0; j < i; j++ {
+				if j > 0 {
+					buf.WriteString(" AND ")
+				}
+				paramList = append(paramList, pi.Columns[j].L, driver.UnwrapFromSingleQuotes(currVals[j]))
+				buf.WriteString("(%n = %?)")
+			}
+			buf.WriteString(" AND ")
+		}
+		isLastNonMaxValue := i == len(pi.Columns)-1
+		op := ">"
+		if isLastNonMaxValue {
+			op = ">="
+		}
+		paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]))
+		buf.WriteString(fmt.Sprintf("(%%n %s %%?)", op))
+		if i > 0 {
+			buf.WriteString(")")
+		}
+		needOR = true
+	}
+
+	return buf.String(), paramList
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {
@@ -4408,6 +4476,7 @@ func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) 
 
 func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, index int) string {
 	var buf strings.Builder
+	// TODO: Verify if this is correct!!!
 	// How to find a match?
 	// (row <=> vals1) OR (row <=> vals2)
 	// How to find a non-matching row:
@@ -4415,6 +4484,7 @@ func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, inde
 	buf.WriteString("not (")
 	colNames := make([]string, 0, len(pi.Columns))
 	for i := range pi.Columns {
+		// TODO: Add test for this!
 		// TODO: check if there are no proper quoting function for this?
 		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
 		colNames = append(colNames, n)
