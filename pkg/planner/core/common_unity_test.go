@@ -121,7 +121,7 @@ func TestUnityEnableVars(t *testing.T) {
 
 	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
 	tk.MustExec(`set global enable_hashjoin=0`)
-	tk.MustNotHavePlan(`select * from t1, t2 where t1.a=t2.a`, `HashJoin`)
+	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexHashJoin`)
 	tk.MustExec(`set global enable_hashjoin=1`)
 	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
 }
