@@ -118,10 +118,10 @@ func init() {
 // IsClusterTableByName used to check whether the table is a cluster memory table.
 // Export for PhysicalTableScan.ExplainID
 func IsClusterTableByName(dbName, tableName string) bool {
-	intest.Assert(dbName == strings.ToUpper(dbName))
+	dbName = strings.ToLower(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		intest.Assert(tableName == strings.ToUpper(tableName))
+		tableName = strings.ToUpper(tableName)
 		for _, name := range memTableToAllTiDBClusterTables {
 			intest.Assert(name == strings.ToUpper(name))
 			if name == tableName {
