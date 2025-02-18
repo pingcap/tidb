@@ -43,9 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const avgRowSizeForDistTask = 0
-
-type readIndexExecutor struct {
+type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	d       *ddl
 	job     *model.Job
@@ -78,8 +76,8 @@ func newReadIndexExecutor(
 	jc *ReorgContext,
 	cloudStorageURI string,
 	avgRowSize int,
-) (*readIndexExecutor, error) {
-	return &readIndexExecutor{
+) (*readIndexStepExecutor, error) {
+	return &readIndexStepExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
@@ -91,7 +89,7 @@ func newReadIndexExecutor(
 	}, nil
 }
 
-func (r *readIndexExecutor) Init(ctx context.Context) error {
+func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
@@ -105,7 +103,7 @@ func (r *readIndexExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.DDLLogger().Info("read index executor run subtask",
 		zap.Bool("use cloud", r.isGlobalSort()))
 
@@ -128,7 +126,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		if err != nil {
 			return err
 		}
-		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, avgRowSizeForDistTask); err != nil {
+		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
 			return errors.Trace(err)
 		}
 		return r.onFinished(ctx, subtask)
@@ -150,7 +148,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	defer func() {
 		r.currPipe.Store(nil)
 	}()
-	err = executeAndClosePipeline(opCtx, pipe, nil, nil, avgRowSizeForDistTask)
+	err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize)
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.
@@ -167,13 +165,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	return r.onFinished(ctx, subtask)
 }
 
-func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return &execute.SubtaskSummary{
 		RowCount: r.curRowCount.Load(),
 	}
 }
 
-func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
+func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	if r.backend != nil {
 		r.backend.Close()
@@ -181,7 +179,7 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+func (r *readIndexStepExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
 	if r.isGlobalSort() {
 		return goerrors.New("not support modify task meta for global sort")
 	}
@@ -203,7 +201,7 @@ func (r *readIndexExecutor) TaskMetaModified(_ context.Context, newMeta []byte) 
 	return nil
 }
 
-func (r *readIndexExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
 	if r.isGlobalSort() {
 		return goerrors.New("not support modify resource for global sort")
 	}
@@ -216,7 +214,7 @@ func (r *readIndexExecutor) ResourceModified(_ context.Context, newResource *pro
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	reader := opR.(*TableScanOperator)
 	writer := opW.(*IndexIngestOperator)
-	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), avgRowSizeForDistTask)
+	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize)
 	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 	if int32(targetReaderCnt) != currentReaderCnt {
 		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)
@@ -227,7 +225,7 @@ func (r *readIndexExecutor) ResourceModified(_ context.Context, newResource *pro
 	return nil
 }
 
-func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
@@ -263,11 +261,11 @@ func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	return nil
 }
 
-func (r *readIndexExecutor) isGlobalSort() bool {
+func (r *readIndexStepExecutor) isGlobalSort() bool {
 	return len(r.cloudStorageURI) > 0
 }
 
-func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
+func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	start, end kv.Key, tbl table.PhysicalTable, err error) {
 	currentVer, err1 := getValidCurrentVersion(r.d.store)
 	if err1 != nil {
@@ -289,7 +287,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	return start, end, tbl, nil
 }
 
-func (r *readIndexExecutor) buildLocalStorePipeline(
+func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
@@ -338,7 +336,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	)
 }
 
-func (r *readIndexExecutor) buildExternalStorePipeline(
+func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,
