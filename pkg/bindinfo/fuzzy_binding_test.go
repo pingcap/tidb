@@ -340,3 +340,20 @@ func TestFuzzyBindingPlanCache(t *testing.T) {
 	tk.MustExec(`execute stmt using @v`)
 	hasPlan("IndexFullScan", "index:c(c)")
 }
+<<<<<<< HEAD:pkg/bindinfo/fuzzy_binding_test.go
+=======
+
+type mockSessionPool struct {
+	se sessiontypes.Session
+}
+
+func (p *mockSessionPool) Get() (pools.Resource, error) {
+	return p.se, nil
+}
+
+func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Destroy(pools.Resource) {}
+
+func (p *mockSessionPool) Close() {}
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546)):pkg/bindinfo/tests/cross_db_binding_test.go
