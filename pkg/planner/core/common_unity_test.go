@@ -3,14 +3,14 @@ package core_test
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnity(t *testing.T) {
@@ -103,9 +103,9 @@ func TestUnityVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	for _, v := range []string {
+	for _, v := range []string{
 		"enable_hashjoin", "enable_mergejoin", "enable_nestloop", "enable_indexscan", "enable_seqscan", "enable_indexonlyscan",
-	}{
+	} {
 		tk.MustQuery(`select @@` + v).Check(testkit.Rows("1"))
 		tk.MustExec(`set global ` + v + `=0`)
 		tk.MustQuery(`select @@` + v).Check(testkit.Rows("0"))
@@ -161,6 +161,6 @@ func TestUnityEnableVars(t *testing.T) {
 	tk.MustExec(`set global enable_seqscan=0`)
 	tk.MustExec(`set global enable_indexonlyscan=0`)
 	tk.MustQuery(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`) // no error
-	tk.MustQuery(`select * from t1`) // no error
-	tk.MustQuery(`select a from t1`) // no error
+	tk.MustQuery(`select * from t1`)                                              // no error
+	tk.MustQuery(`select a from t1`)                                              // no error
 }

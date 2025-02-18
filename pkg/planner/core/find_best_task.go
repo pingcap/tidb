@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"math"
 	"slices"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
