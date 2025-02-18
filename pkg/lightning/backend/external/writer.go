@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -189,7 +190,7 @@ func (b *WriterBuilder) Build(
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
+		keyAdapter = common.DupDetectKeyAdapter{Logger: log.Logger{logutil.BgLogger()}}
 	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
