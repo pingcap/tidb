@@ -72,6 +72,19 @@ func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState 
 	return err
 }
 
+// AwaitingResolveTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		update mysql.tidb_global_task
+		set state = %?,
+			error = %?,
+			state_update_time = CURRENT_TIMESTAMP()
+		where id = %? and state = %?`,
+		proto.TaskStateAwaitingResolution, serializeErr(taskErr), taskID, taskState,
+	)
+	return err
+}
+
 // RevertedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,

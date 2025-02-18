@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -1189,4 +1190,50 @@ func (s *mockGCSSuite) TestZeroDateTime() {
 	s.tk.MustExec("truncate table import_into.zero_time_table")
 	err := s.tk.QueryToErr(sql)
 	s.ErrorContains(err, `Incorrect datetime value: '1990-01-00 00:00:00'`)
+}
+
+func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "resolution", Name: "a.csv"},
+		Content:     []byte("aaa,bbb"),
+	})
+	s.prepareAndUseDB("resolution")
+	s.tk.MustExec("create table t (a int primary key, b int);")
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://resolution/a.csv?endpoint=%s' with detached`, gcsEndpoint)
+	rows := s.tk.MustQuery(importSQL).Rows()
+	s.Len(rows, 1)
+	jobID, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	_, err = handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
+		return t.State == proto.TaskStateAwaitingResolution
+	})
+	return ctx, task
+}
+
+func (s *mockGCSSuite) TestResolutionFailTheTask() {
+	ctx, task := s.runTaskToAwaitingState()
+	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='reverting' where id=%d", task.ID))
+	_, err := handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
+		return t.State == proto.TaskStateReverted
+	})
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func (s *mockGCSSuite) TestResolutionSuccessAfterManualChangeData() {
+	ctx, task := s.runTaskToAwaitingState()
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "resolution", Name: "a.csv"},
+		Content:     []byte("1,2"),
+	})
+	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set state='pending' where task_key='%d'", task.ID))
+	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='running' where id=%d", task.ID))
+	s.NoError(handle.WaitTaskDoneOrPaused(ctx, task.ID))
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 }

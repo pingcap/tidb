@@ -536,10 +536,10 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 
 func (s *BaseScheduler) revertTask(taskErr error) error {
 	task := *s.GetTask()
-	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+	if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 		return err
 	}
-	task.State = proto.TaskStateReverting
+	task.State = proto.TaskStateAwaitingResolution
 	task.Error = taskErr
 	s.task.Store(&task)
 	return nil
