@@ -78,14 +78,14 @@ var memTableToAllTiDBClusterTables = map[string]string{
 	TableTiDBPlanCache:            ClusterTableTiDBPlanCache,
 }
 
-var memTableToAllTiDBClusterTablesWithLowerCase map[string]string
+var memTableToAllTiDBClusterTablesWithLowerCase = make(map[string]string)
 
 // memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
 var memTableToDDLOwnerClusterTables = map[string]string{
 	TableTiFlashReplica: TableTiFlashReplica,
 }
 
-var memTableToDDLOwnerClusterTablesWithLowerCase map[string]string
+var memTableToDDLOwnerClusterTablesWithLowerCase = make(map[string]string)
 
 // ClusterTableCopDestination means the destination that cluster tables will send cop requests to.
 type ClusterTableCopDestination int
