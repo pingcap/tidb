@@ -115,7 +115,7 @@ func NewHandle(
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	is infoschema.InfoSchema,
-	pool pkgutil.SessionPool,
+	pool pkgutil.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,

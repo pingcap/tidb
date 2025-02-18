@@ -81,20 +81,23 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
+		return errors.Trace(err)
 	}
 
 	wrapTxn := false
@@ -108,7 +111,7 @@ func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, 
 	} else {
 		err = f(sctx)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
@@ -189,7 +192,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool util.DestroyableSessionPool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
