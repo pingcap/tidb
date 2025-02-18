@@ -854,6 +854,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 }
 
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
