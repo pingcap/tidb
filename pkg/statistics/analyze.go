@@ -87,7 +87,8 @@ type AnalyzeResults struct {
 	Err      error
 	ExtStats *ExtendedStatsColl
 	Job      *AnalyzeJob
-	// The analyze results for the results of columns combine the results of indexes in version2.
+	// Ars: combine the analyze result of all columns and the analyze result of indexes.
+	// (In stats version2)
 	// For example:
 	// If the tableA (c1, c2, c3) has indexes (c1, c2), (c2, c3), the result will be:
 	// Ars: [AnalyzeResult1[c1, c2, c3], AnalyzeResult2[c1_c2, c2_c3]]
