@@ -4395,6 +4395,7 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
+	sessionStates.ResourceGroupName = s.sessionVars.ResourceGroupName
 
 	hasRestrictVarPriv := false
 	checker := privilege.GetPrivilegeManager(s)
@@ -4471,6 +4472,25 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
 			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
 				zap.String("name", name), zap.String("value", val), zap.Error(err))
+		}
+	}
+
+	// Put resource group privilege check from sessionVars to session to avoid circular dependency.
+	if sessionStates.ResourceGroupName != s.sessionVars.ResourceGroupName {
+		hasPriv := true
+		if vardef.EnableResourceControlStrictMode.Load() {
+			checker := privilege.GetPrivilegeManager(s)
+			if checker != nil {
+				hasRgAdminPriv := checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+				hasRgUserPriv := checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESOURCE_GROUP_USER", false)
+				hasPriv = hasRgAdminPriv || hasRgUserPriv
+			}
+		}
+		if hasPriv {
+			s.sessionVars.SetResourceGroupName(sessionStates.ResourceGroupName)
+		} else {
+			logutil.Logger(ctx).Warn("set session states error, no privilege to set resource group, skip changing resource group",
+				zap.String("source_resource_group", s.sessionVars.ResourceGroupName), zap.String("target_resource_group", sessionStates.ResourceGroupName))
 		}
 	}
 
