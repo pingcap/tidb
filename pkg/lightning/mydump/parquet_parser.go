@@ -843,17 +843,17 @@ type sampleAllocator struct {
 }
 
 func (sa *sampleAllocator) Allocate(size int, tp memory.BufferType) []byte {
-	size = AllocSize(size)
+	allocSize := AllocSize(size)
 	switch tp {
 	case memory.BufferCompressed:
-		sa.maxCompressedLength = max(sa.maxCompressedLength, size)
+		sa.maxCompressedLength = max(sa.maxCompressedLength, allocSize)
 	case memory.BufferDataPage:
-		sa.maxDataPage = max(sa.maxDataPage, size)
+		sa.maxDataPage = max(sa.maxDataPage, allocSize)
 	case memory.BufferDictionary:
 		// For each row group, we need to store all dictionary pages to decode data page.
-		sa.totalDictPage += size
+		sa.totalDictPage += allocSize
 	default:
-		sa.otherAllocated += size
+		sa.otherAllocated += allocSize
 	}
 	return make([]byte, size)
 }
