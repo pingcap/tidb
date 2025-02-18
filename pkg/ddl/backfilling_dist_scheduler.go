@@ -129,8 +129,9 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
-		availableDiskUsage := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
-		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDiskUsage))))
+		// TODO(tangenta): use available disk during adding index.
+		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
+		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)

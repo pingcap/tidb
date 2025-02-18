@@ -1805,7 +1805,6 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 			zap.String("after", units.BytesSize(float64(adjustedMem))))
 		totalMem = adjustedMem
 	}
-	// TODO(tangenta): refine the disk quota by considering available space.
 	var totalDisk uint64
 	cfg := config.GetGlobalConfig()
 	sz, err := lcom.GetStorageSize(cfg.TempDir)
