@@ -476,8 +476,12 @@ func shouldRetry(err error) bool {
 
 	errMsg := err.Error()
 	// workaround for strange unknown errors
+	// there are many error patterns of http2 errors, we choose to retry them when
+	// any "http2" substring is found. Currently they are
+	// - http2: client connection lost
+	// - http2: client connection force closed via ClientConn.Close
 	retryableErrMsg := []string{
-		"http2: client connection force closed via ClientConn.Close",
+		"http2",
 		"broken pipe",
 	}
 
