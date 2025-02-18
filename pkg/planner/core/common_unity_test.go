@@ -125,10 +125,15 @@ func TestUnityEnableVars(t *testing.T) {
 	tk.MustExec(`set global enable_hashjoin=1`)
 	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
 
-
 	tk.MustHavePlan(`select /*+ Merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `MergeJoin`)
 	tk.MustExec(`set global enable_mergejoin=0`)
 	tk.MustNotHavePlan(`select /*+ Merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `MergeJoin`)
 	tk.MustExec(`set global enable_mergejoin=1`)
 	tk.MustHavePlan(`select /*+ Merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `MergeJoin`)
+
+	tk.MustHavePlan(`select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexJoin`)
+	tk.MustExec(`set global enable_nestloop=0`)
+	tk.MustNotHavePlan(`select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexJoin`)
+	tk.MustExec(`set global enable_nestloop=1`)
+	tk.MustHavePlan(`select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexJoin`)
 }
