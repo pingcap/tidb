@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
@@ -68,7 +69,9 @@ type Column struct {
 	IsPK     bool
 	IsUnique bool
 	Order    string
-	Len      int // varchar(999)
+	Len      int     // varchar(999)
+	StdDev   float64 // stdDev=1.0, mean=0.0
+	Mean     float64
 }
 
 // Read SQL schema file
@@ -122,6 +125,7 @@ func parseSQLSchema(schema string) []Column {
 			col.IsPK = true
 		}
 		extractLenFromSQL(&col, line)
+		extractStdMeanFromSQL(&col, line)
 
 		if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") &&
 			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
@@ -175,10 +179,57 @@ func extractLenFromSQL(col *Column, s string) {
 	}
 }
 
+func extractStdMeanFromSQL(col *Column, s string) {
+	if !strings.HasPrefix(col.Type, "INT") {
+		return
+	}
+
+	// get comment
+	strs := strings.Split(s, "--")
+	if len(strs) == 1 { // no comment
+		return
+	}
+	if len(strs) != 2 {
+		log.Printf("No comment or Invalid comment: %s", s)
+		panic("extractStdMeanFromSQL")
+	}
+	strs = strings.Split(strs[1], ",")
+	if len(strs) < 2 {
+		log.Printf("Invalid stdDev, mean: %s", s)
+		panic("extractStdMeanFromSQL")
+	}
+	// handle stdDev
+	parts := strings.Split(strings.TrimSpace(strs[0]), "=")
+	if len(parts) != 2 {
+		log.Printf("Invalid stdDev comment: %s", s)
+		panic("extractStdMeanFromSQL")
+	}
+	stdDev, err := strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		log.Printf("Invalid stdDev: %s", s)
+		panic(err)
+	}
+	col.StdDev = stdDev
+	// handle mean
+	parts = strings.Split(strings.TrimSpace(strs[1]), "=")
+	if len(parts) != 2 {
+		log.Printf("Invalid mean comment: %s", s)
+		panic("extractStdMeanFromSQL")
+	}
+	mean, err := strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		log.Printf("Invalid mean: %s", s)
+		panic(err)
+	}
+	col.Mean = mean
+}
+
 func generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "BIGINT"):
 		generateBigint(num, res, col.Order)
+	case strings.HasPrefix(col.Type, "INT"):
+		generateInt(num, res, col.StdDev)
 	case strings.HasPrefix(col.Type, "TINYINT"):
 		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
@@ -243,6 +294,44 @@ func generateNormalFloat(num int, res []string) {
 	intRes := make([]float64, num)
 	for i := 0; i < num; i++ {
 		intRes[i] = rand.NormFloat64()
+	}
+}
+
+func generateInt(num int, res []string, stdDev float64) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	if stdDev == 0 {
+		generateInt32(num, res)
+	} else {
+		generateNormalInt32(num, res, stdDev, 0.0)
+	}
+}
+
+func generateInt32(num int, res []string) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	for i := 0; i < num; i++ {
+		res[i] = strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
+	}
+}
+
+func generateNormalInt32(num int, res []string, stdDev, mean float64) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	for i := 0; i < num; i++ {
+		randomFloat := rand.NormFloat64()*stdDev + mean
+		randomInt := int(math.Round(randomFloat))
+
+		// Limit to int32 range, https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#integer-%E7%B1%BB%E5%9E%8B
+		if randomInt > math.MaxInt32 {
+			randomInt = math.MaxInt32
+		} else if randomInt < math.MinInt32 {
+			randomInt = math.MinInt32
+		}
+		res[i] = strconv.Itoa(randomInt)
 	}
 }
 
