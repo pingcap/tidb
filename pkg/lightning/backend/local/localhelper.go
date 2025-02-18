@@ -48,6 +48,17 @@ func (local *Backend) splitAndScatterRegionInBatches(
 	splitKeys [][]byte,
 	batchCnt int,
 ) error {
+	// first split&scatter coarse grained regions for every sqrtCnt regions
+	sqrtCnt := int(math.Sqrt(float64(len(splitKeys))))
+	coarseGrainedSplitKeys := make([][]byte, 0, sqrtCnt)
+	for i := 0; i < len(splitKeys); i += sqrtCnt {
+		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[i])
+	}
+	if err := local.splitAndScatterRegionByRanges(ctx, coarseGrainedSplitKeys); err != nil {
+		return errors.Trace(err)
+	}
+
+	// then split&scatter fine-grained regions for all regions
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
