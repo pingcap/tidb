@@ -2120,6 +2120,11 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	}
 	joins = append(joins, hashJoins...)
 
+	if len(joins) == 0 {
+		hashJoins, _ := getHashJoins(p, prop)
+		joins = append(joins, hashJoins...)
+	}
+
 	if p.PreferJoinType > 0 {
 		// If we reach here, it means we have a hint that doesn't work.
 		// It might be affected by the required property, so we enforce
