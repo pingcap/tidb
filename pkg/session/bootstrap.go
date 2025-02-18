@@ -1248,14 +1248,11 @@ const (
 	// version 242
 	//   insert `cluster_id` into the `mysql.tidb` table.
 	version242 = 242
-
-	// version 243
-	version243 = 243
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version243
+var currentBootstrapVersion int64 = version242
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1433,7 +1430,6 @@ var (
 		upgradeToVer240,
 		upgradeToVer241,
 		upgradeToVer242,
-		upgradeToVer243,
 	}
 )
 
@@ -3350,16 +3346,8 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX plan_index (`plan_digest`)", dbterror.ErrDupKeyName)
-}
-
-
-func upgradeToVer243(s sessiontypes.Session, ver int64) {
-	if ver >= version243 {
-		return
-	}
-
 	writeClusterID(s)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX plan_index (`plan_digest`)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
