@@ -128,7 +128,7 @@ func init() {
 func IsClusterTableByName(dbName, tableName string) bool {
 	intest.Assert(dbName == strings.ToLower(dbName))
 	switch dbName {
-	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
+	case util.InformationSchemaName.L, util.PerformanceSchemaName.L:
 		intest.Assert(tableName == strings.ToLower(tableName))
 		for _, name := range memTableToAllTiDBClusterTablesWithLowerCase {
 			intest.Assert(name == strings.ToLower(name))
