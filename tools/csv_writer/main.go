@@ -238,6 +238,13 @@ func generateBigint(num int, res []string, order string) {
 	}
 }
 
+func generateNormalFloat(num int, res []string) {
+	intRes := make([]float64, num)
+	for i := 0; i < num; i++ {
+		intRes[i] = rand.NormFloat64()
+	}
+}
+
 func generateTinyint1(num int, res []string) {
 	for i := 0; i < num; i++ {
 		res[i] = strconv.Itoa(faker.Number(0, 1))
