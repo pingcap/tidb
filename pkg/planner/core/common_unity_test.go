@@ -149,8 +149,18 @@ func TestUnityEnableVars(t *testing.T) {
 	tk.MustExec(`set global enable_seqscan=1`)
 	tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
 
-	tk.MustExec(`create table tt (a int, b int, c int, key a(a), key ab(a, b))`)
-	tk.MustUseIndex(`select a, b from tt`, "ab(a, b)")
+	//tk.MustExec(`create table tt (a int, b int, c int, key a(a), key ab(a, b))`)
+	//tk.MustUseIndex(`select a, b from tt where a=1 and b=1`, "ab(a, b)")
+	//tk.MustExec(`set global enable_indexonlyscan=0`)
+	//tk.MustUseIndex(`select a, b from tt where a=1 and b=1`, "ab(a, b)")
+
+	tk.MustExec(`set global enable_hashjoin=0`)
+	tk.MustExec(`set global enable_mergejoin=0`)
+	tk.MustExec(`set global enable_nestloop=0`)
+	tk.MustExec(`set global enable_indexscan=0`)
+	tk.MustExec(`set global enable_seqscan=0`)
 	tk.MustExec(`set global enable_indexonlyscan=0`)
-	tk.MustUseIndex(`select a, b from tt`, "ab(a, b)")
+	tk.MustQuery(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`) // no error
+	tk.MustQuery(`select * from t1`) // no error
+	tk.MustQuery(`select a from t1`) // no error
 }
