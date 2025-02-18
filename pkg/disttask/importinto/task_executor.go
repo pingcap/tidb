@@ -239,7 +239,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
-	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
 		subtaskMeta.Checksum[id] = Checksum{
@@ -259,10 +258,13 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	sharedVars.mu.Unlock()
 
 	if s.tableImporter.IsGlobalSort() && s.tableImporter.GlobalSortLocalStore != nil {
+		sharedVars.mu.Lock()
 		dataFiles := sharedVars.SortedDataMeta.GetDataFiles()
 		sharedVars.SortedDataMeta = &external.SortedKVMeta{}
+		sharedVars.mu.Unlock()
 		dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(s.GetResource(), &s.taskMeta.Plan)
 		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
@@ -281,10 +283,14 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		sharedVars.SortedIndexMetas = make(map[int64]*external.SortedKVMeta)
-		for idxID, idxKVGroup := range sharedVars.SortedIndexMetas {
+		sharedVars.mu.Lock()
+		sortedIndexMetas := sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
+		for idxID, idxKVGroup := range sortedIndexMetas {
 			dataFiles := idxKVGroup.GetDataFiles()
+			sharedVars.mu.Lock()
 			sharedVars.SortedIndexMetas[idxID] = &external.SortedKVMeta{}
+			sharedVars.mu.Unlock()
 			err = external.MergeOverlappingFiles(
 				ctx,
 				dataFiles,
@@ -302,8 +308,10 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 				return err
 			}
 		}
+		sharedVars.mu.Lock()
 		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
