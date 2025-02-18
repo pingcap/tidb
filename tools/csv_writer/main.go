@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -299,31 +300,48 @@ func escapeJSONString(jsonStr string) string {
 }
 
 func generateJSONObject(num int, res []string) {
-	jsonOpt := &gofakeit.JSONOptions{
-		Type: "object",
-		Fields: []gofakeit.Field{
-			{Name: "id", Function: "number", Params: gofakeit.MapParams{"min": {"1"}}},
-			{Name: "first_name", Function: "firstname"},
-			{Name: "last_name", Function: "lastname"},
-			{Name: "password", Function: "password", Params: gofakeit.MapParams{"special": {"false"}}},
-			{Name: "email", Function: "email"},
-			{Name: "phone", Function: "phone"},
-			{Name: "address", Function: "address"},
-		},
-		Indent: false,
+	if len(res) != num {
+		res = make([]string, num)
 	}
 
 	for i := 0; i < num; i++ {
-		r, err := faker.JSON(jsonOpt)
-		if err != nil {
-			fmt.Println(err)
-		}
+		r := generateJSON()
 		if *localPath == "" {
-			res[i] = escapeJSONString(string(r))
+			res[i] = escapeJSONString(r)
 		} else {
-			res[i] = string(r)
+			res[i] = r
 		}
 	}
+}
+
+type UserInfo struct {
+	User     string   `json:"user"`
+	UserID   int      `json:"user_id"`
+	Zipcode  []int    `json:"zipcode"`    // more than 1 non-unique int
+	UniqueID []string `json:"unique_ids"` // more than 1 unique uuid string
+}
+
+func generateJSON() string {
+	zipCodeNum := faker.Number(1, 10)
+	uniqueIDNum := faker.Number(1, 5)
+	user := UserInfo{
+		User:     faker.Name(),
+		UserID:   faker.Number(1, 100000),
+		Zipcode:  make([]int, zipCodeNum),
+		UniqueID: make([]string, uniqueIDNum), // unique
+	}
+	for i := 0; i < zipCodeNum; i++ {
+		user.Zipcode[i] = faker.Number(100000, 999999)
+	}
+	for i := 0; i < uniqueIDNum; i++ {
+		user.UniqueID[i] = faker.UUID()
+	}
+
+	jsonData, err := json.Marshal(user)
+	if err != nil {
+		panic(err)
+	}
+	return string(jsonData)
 }
 
 // Write data to GCS with retry (column-oriented)
