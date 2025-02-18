@@ -639,10 +639,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = checkTableExistence(ctx, mgr, tables, g); err != nil {
 			return errors.Trace(err)
 		}
-	} else if !client.IsIncremental() && cfg.CheckRequirements {
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	sp := utils.BRServiceSafePoint{
