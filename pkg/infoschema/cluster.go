@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
 )
 
@@ -117,18 +118,18 @@ func init() {
 // IsClusterTableByName used to check whether the table is a cluster memory table.
 // Export for PhysicalTableScan.ExplainID
 func IsClusterTableByName(dbName, tableName string) bool {
-	dbName = strings.ToUpper(dbName)
+	intest.Assert(dbName == strings.ToUpper(dbName))
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		tableName = strings.ToUpper(tableName)
+		intest.Assert(tableName == strings.ToUpper(tableName))
 		for _, name := range memTableToAllTiDBClusterTables {
-			name = strings.ToUpper(name)
+			intest.Assert(name == strings.ToUpper(name))
 			if name == tableName {
 				return true
 			}
 		}
 		for _, name := range memTableToDDLOwnerClusterTables {
-			name = strings.ToUpper(name)
+			intest.Assert(name == strings.ToUpper(name))
 			if name == tableName {
 				return true
 			}
