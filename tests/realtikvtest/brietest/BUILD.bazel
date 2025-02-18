@@ -6,7 +6,6 @@ go_test(
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",
-        "brie_test.go",
         "flashback_test.go",
         "main_test.go",
         "operator_test.go",
@@ -30,7 +29,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
@@ -39,6 +37,5 @@ go_test(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//zapcore",
     ],
 )
