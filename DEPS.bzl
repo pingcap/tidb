@@ -4199,13 +4199,13 @@ def go_deps():
         name = "com_github_joechenrh_arrow_go_v18",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/joechenrh/arrow-go/v18",
-        sha256 = "fd8f195bd73fd66342c6bf66c3ce6977bcc7544a7aab7fc2e2002afbcf95c7a9",
-        strip_prefix = "github.com/joechenrh/arrow-go/v18@v18.0.0-20250107060625-e99480fe0ed9",
+        sha256 = "f0cfa403295cb81867af7282c5593654c2c659751460dc5d183560528c479fde",
+        strip_prefix = "github.com/joechenrh/arrow-go/v18@v18.0.0-20250215045230-203e420514b7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250107060625-e99480fe0ed9.zip",
-            "http://ats.apps.svc/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250107060625-e99480fe0ed9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250107060625-e99480fe0ed9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250107060625-e99480fe0ed9.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
+            "http://ats.apps.svc/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250215045230-203e420514b7.zip",
         ],
     )
     go_repository(
