@@ -31,6 +31,7 @@ type SessionPool interface {
 
 // DestroyableSessionPool is a session pool that can destroy the session resource.
 // If the caller meets an error when using the session, it can destroy the session.
+// See more by searching `StoreInternalSession`.
 type DestroyableSessionPool interface {
 	SessionPool
 	Destroy(pools.Resource)
