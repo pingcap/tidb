@@ -1960,7 +1960,7 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
-	_, aggCols := plannercore.GetDupAgnosticAggCols(agg, nil)
+	_, aggCols := ruleutil.GetDupAgnosticAggCols(agg, nil)
 	if len(aggCols) > 0 {
 		newAggExpr := memo.NewGroupExpr(agg)
 		newAggExpr.SetChildren(outerGroup)
