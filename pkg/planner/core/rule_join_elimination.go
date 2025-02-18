@@ -186,7 +186,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
 
-	if ok, newCols := ruleutil.GetDupAgnosticAggCols(p, aggCols); ok {
+	if ok, newCols := logicalop.GetDupAgnosticAggCols(p, aggCols); ok {
 		aggCols = newCols
 	}
 
