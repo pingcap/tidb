@@ -130,6 +130,7 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
 		return
 	}
+	// TODO to destroy the error session instead of put it back to the pool
 	defer handle.sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
