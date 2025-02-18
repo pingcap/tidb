@@ -2704,3 +2704,59 @@ func TestGetFuncName(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version241
+	ver241 := version241
+	seV241 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver241))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV241, ver241)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV241)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver241), ver)
+	seV241.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}

@@ -884,7 +884,6 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
-	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
 }
 

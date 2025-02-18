@@ -1056,6 +1056,8 @@ const (
 	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBEnableGlobalSortUseLocalStore indicates whether utilize the local disk before uploading to s3.
 	TiDBEnableGlobalSortUseLocalStore = "tidb_enable_global_sort_local_store"
+	// TiDBMaxDistTaskNodes indicates the max node count that could be used by distributed execution framework.
+	TiDBMaxDistTaskNodes = "tidb_max_dist_task_nodes"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
 	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
@@ -1449,6 +1451,7 @@ const (
 	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
 	DefTiDBEnableGlobalSortUseLocalStore              = false
+	DefTiDBMaxDistTaskNodes                           = -1
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true

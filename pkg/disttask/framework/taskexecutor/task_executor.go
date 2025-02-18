@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -257,7 +258,7 @@ func (e *BaseTaskExecutor) Run() {
 		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
 		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
 		if err != nil {
-			if errors.Cause(err) == storage.ErrTaskNotFound {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
 			e.logger.Error("refresh task failed", zap.Error(err))
@@ -425,7 +426,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		if err != nil {
 			// should ignore ErrSubtaskNotFound
 			// since it only means that the subtask not owned by current task executor.
-			if err != storage.ErrSubtaskNotFound {
+			if !goerrors.Is(err, storage.ErrSubtaskNotFound) {
 				e.logger.Warn("start subtask meets error", zap.Error(err))
 			}
 			return errors.Trace(err)
@@ -656,14 +657,14 @@ func (e *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) er
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, e.logger,
 		func(ctx context.Context) (bool, error) {
 			err := e.taskTable.StartSubtask(ctx, subtaskID, e.execID)
-			if err == storage.ErrSubtaskNotFound {
+			if goerrors.Is(err, storage.ErrSubtaskNotFound) {
 				// No need to retry.
 				return false, err
 			}
 			return true, err
 		},
 	)
-	if err != nil && err != storage.ErrSubtaskNotFound {
+	if err != nil && !goerrors.Is(err, storage.ErrSubtaskNotFound) {
 		e.logger.Error("failed to start subtask", zap.Int64("subtaskID", subtaskID),
 			zap.Duration("takes", time.Since(start)), zap.Error(err))
 	}

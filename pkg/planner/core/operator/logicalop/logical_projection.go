@@ -36,7 +36,7 @@ import (
 type LogicalProjection struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression `hash64-equals:"true"`
+	Exprs []expression.Expression `hash64-equals:"true" shallow-ref:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
@@ -465,7 +465,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
