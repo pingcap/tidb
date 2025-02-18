@@ -881,6 +881,7 @@ const (
 	ConstraintFulltext
 	ConstraintCheck
 	ConstraintVector
+	ConstraintColumnar
 )
 
 // Constraint is constraint for table definition.
@@ -955,6 +956,11 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	case ConstraintVector:
 		ctx.WriteKeyWord("VECTOR INDEX")
+		if n.IfNotExists {
+			ctx.WriteKeyWord(" IF NOT EXISTS")
+		}
+	case ConstraintColumnar:
+		ctx.WriteKeyWord("COLUMNAR INDEX")
 		if n.IfNotExists {
 			ctx.WriteKeyWord(" IF NOT EXISTS")
 		}
@@ -1846,6 +1852,7 @@ const (
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
 	IndexKeyTypeVector
+	IndexKeyTypeColumnar
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -1877,6 +1884,8 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("FULLTEXT ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")
+	case IndexKeyTypeColumnar:
+		ctx.WriteKeyWord("COLUMNAR ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {

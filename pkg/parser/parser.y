@@ -364,6 +364,7 @@ import (
 	clustered             "CLUSTERED"
 	coalesce              "COALESCE"
 	collation             "COLLATION"
+	columnar              "COLUMNAR"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
 	comment               "COMMENT"
@@ -736,6 +737,7 @@ import (
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	inverted              "INVERTED"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
@@ -1147,7 +1149,8 @@ import (
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"
-	ConstraintWithVectorIndex              "table constraint with vector index"
+	ConstraintColumnarIndex				   "columnar index"
+	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1655,6 +1658,7 @@ import (
 %precedence function
 %precedence constraint
 %precedence vectorType
+%precedence columnar
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -2268,15 +2272,7 @@ AlterTableSpec:
 			NewConstraints: constraints,
 		}
 	}
-|	"ADD" Constraint
-	{
-		constraint := $2.(*ast.Constraint)
-		$$ = &ast.AlterTableSpec{
-			Tp:         ast.AlterTableAddConstraint,
-			Constraint: constraint,
-		}
-	}
-|	"ADD" ConstraintVectorIndex
+|	"ADD" ConstraintWithColumnarIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -4240,13 +4236,22 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
-		isVectorIndex := keyType == ast.IndexKeyTypeVector
-		if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
-			indexOption.Tp = ast.IndexTypeHNSW
+		{
+			isVectorIndex := keyType == ast.IndexKeyTypeVector
+			if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
+				indexOption.Tp = ast.IndexTypeHNSW
+			}
+			if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
 		}
-		if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
-			yylex.AppendError(ErrSyntax)
-			return 1
+		{
+			isColumnarIndex := keyType == ast.IndexKeyTypeColumnar
+			if (isColumnarIndex && indexOption.Tp != ast.IndexTypeInverted) || (!isColumnarIndex && indexOption.Tp == ast.IndexTypeInverted) {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
 		}
 		partSpecs := $10.([]*ast.IndexPartSpecification)
 		if keyType == ast.IndexKeyTypeVector {
@@ -4348,6 +4353,10 @@ IndexKeyTypeOpt:
 |	"VECTOR"
 	{
 		$$ = ast.IndexKeyTypeVector
+	}
+|   "COLUMNAR"
+	{
+		$$ = ast.IndexKeyTypeColumnar
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -6744,6 +6753,10 @@ IndexTypeName:
 	{
 		$$ = ast.IndexTypeHNSW
 	}
+| 	"INVERTED"
+	{
+		$$ = ast.IndexTypeInverted
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -7135,6 +7148,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"VECTOR"
+|   "COLUMNAR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -7216,6 +7230,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+| 	"INVERTED"
 |	"LOG"
 |	"MIN"
 |	"MAX"
@@ -12471,17 +12486,48 @@ ConstraintVectorIndex:
 		$$ = c
 	}
 
-ConstraintWithVectorIndex:
-	ConstraintKeywordOpt ConstraintElem
+// ConstraintColumnarIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintColumnarIndex:
+	"COLUMNAR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
-		cst := $2.(*ast.Constraint)
-		if $1 != nil {
-			cst.Name = $1.(string)
-			cst.IsEmptyIndex = len(cst.Name) == 0
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintColumnar,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-		$$ = cst
+
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(ast.IndexType)
+		}
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: ast.IndexTypeInverted}
+		} else if c.Option.Tp == ast.IndexTypeInvalid {
+			c.Option.Tp = ast.IndexTypeInverted
+		}
+		if c.Option.Tp != ast.IndexTypeInverted {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Column == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
 	}
+
+ConstraintWithColumnarIndex:
+	Constraint
 |	ConstraintVectorIndex
+|   ConstraintColumnarIndex
 	{
 		$$ = $1.(*ast.Constraint)
 	}
@@ -12492,7 +12538,7 @@ CheckConstraintKeyword:
 
 TableElement:
 	ColumnDef
-|	ConstraintWithVectorIndex
+|	ConstraintWithColumnarIndex
 
 TableElementList:
 	TableElement
