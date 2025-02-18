@@ -159,7 +159,7 @@ type Domain struct {
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
 	// Note: If you no longer need the session, you must call Destroy to release it.
-	// Otherwise, the session will be leaked. Because there is a strong reference from the session to the domain.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	sysSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
