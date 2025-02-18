@@ -330,10 +330,6 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	return nil
 }
 
-func (e *ImportIntoExec) Close() error {
-	return e.BaseExecutor.Close()
-}
-
 // ImportIntoActionExec represents a import into action executor.
 type ImportIntoActionExec struct {
 	exec.BaseExecutor

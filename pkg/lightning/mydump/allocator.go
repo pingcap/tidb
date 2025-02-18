@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
@@ -30,49 +29,65 @@ import (
 	"go.uber.org/zap"
 )
 
-/*
- * There are two usage modes for the memory allocation:
- * 1. Call `GetDefaultAllocator` directly to get an allocator.
- * 2. Call `InitializeGlobalArena` to initialize the global arena pool,
- *    so the arena allocated in this node can be reused by subsequent allocation.
- *    User should remember to call `FreeMemory` after the execution is completed.
- */
-
 var (
-	maxArenaCount    = 0         // maximum arena count
-	defaultArenaSize = 256 << 20 // size of each arena
+	// size of each arena
+	defaultArenaSize = 256 << 20
 
-	memLimit   int             // memory limit for parquet reader
-	memLimiter *membuf.Limiter // memory limiter for parquet reader
+	// memory limit for parquet reader
+	readerMemoryLimit   int
+	readerMemoryLimiter *membuf.Limiter
 
-	// AllocSize returns actual allocated size in arena
+	// AllocSize returns actual allocated size from arena
 	AllocSize func(int) int
 
 	// GetArena creates a new arena
 	GetArena func(int) arena
 )
 
-// SetMemoryLimitForParquet set the memory limit for parquet reader and create a global memory pool if necessary.
-func SetMemoryLimitForParquet(percent int, useGlobal bool) {
+// InitializeGlobalArena initialize a global arena pool.
+func InitializeGlobalArena(size int, reuse bool) {
+	maxArenaCount := size / defaultArenaSize
+	if globalPool == nil {
+		globalPool = &arenaPool{
+			maxArenaCount: maxArenaCount,
+			reuse:         reuse,
+			arenas:        make(chan arena, 1024),
+		}
+		return
+	}
+
+	globalPool.adjustMaxArenaCount(maxArenaCount)
+}
+
+// FreeMemory free all the memory allocated for arenas.
+func FreeMemory() {
+	if globalPool != nil {
+		globalPool.free()
+	}
+}
+
+// SetMemoryLimitForParquet set the memory limit for parquet reader.
+// If reuse = true, remember to call FreeMemory to free the memory.
+func SetMemoryLimitForParquet(percent int, reuse bool) {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
-	memLimit = int(memTotal) * min(percent, 90) / 100
-	memLimiter = membuf.NewLimiter(memLimit)
-	InitializeGlobalArena(memLimit, useGlobal)
+	readerMemoryLimit = int(memTotal) * min(percent, 90) / 100
+	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
+	InitializeGlobalArena(readerMemoryLimit, reuse)
 
 	log.L().Info("set memory limit",
 		zap.Int("total memory", int(memTotal)),
-		zap.Int("memory limit", int(memLimit)),
+		zap.Int("memory limit", readerMemoryLimit),
 	)
 }
 
 // GetMemoryQuota get the memory quota for non-streaming mode read.
 // TODO(joechenrh): set a more proper memory quota
 func GetMemoryQuota(concurrency int) int {
-	quotaPerTask := memLimit / concurrency
+	quotaPerTask := readerMemoryLimit / concurrency
 
 	// Because other part like encoder also need memory,
 	// we assume that the reader can use up to 80% of the memroy.
@@ -86,8 +101,8 @@ func init() {
 	AllocSize = simpleGetAllocationSize
 	GetArena = getSimpleAllocator
 
-	// This is used for `IMPORT INTO``.
-	// We set the default memory usage to 40% and don't use a global arena pool.
+	// This is used for `IMPORT INTO`.
+	// We set the default memory usage to 40% and don't reuse arenas.
 	SetMemoryLimitForParquet(40, false)
 }
 
@@ -109,10 +124,11 @@ type arena interface {
 }
 
 type arenaPool struct {
-	arenas    chan arena
-	allocated int
-	reuse     bool
-	lock      sync.Mutex
+	arenas        chan arena
+	maxArenaCount int
+	allocated     int
+	reuse         bool
+	lock          sync.Mutex
 }
 
 func (ap *arenaPool) adjustGCPercent() {
@@ -123,8 +139,8 @@ func (ap *arenaPool) adjustGCPercent() {
 			debug.SetGCPercent(100)
 			return
 		}
-		percent := int(memTotal)*90/(ap.allocated*defaultArenaSize) - 100
-		percent = min(percent, 50) / 10 * 10
+		percent := int(memTotal)*100/(ap.allocated*defaultArenaSize) - 100
+		percent = min(percent, 50)
 		percent = max(percent, 5)
 
 		old := debug.SetGCPercent(percent)
@@ -139,6 +155,20 @@ func (ap *arenaPool) adjustGCPercent() {
 	}
 }
 
+func (ap *arenaPool) adjustMaxArenaCount(newCount int) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
+
+	ap.maxArenaCount = newCount
+	for ap.allocated > newCount && len(ap.arenas) > 0 {
+		a := <-ap.arenas
+		a.reset()
+		ap.allocated--
+	}
+
+	ap.adjustGCPercent()
+}
+
 func (ap *arenaPool) get() arena {
 	// First try to get cached arena
 	select {
@@ -151,7 +181,7 @@ func (ap *arenaPool) get() arena {
 	defer ap.lock.Unlock()
 
 	// Create a new one and return
-	if ap.allocated < maxArenaCount {
+	if ap.allocated < ap.maxArenaCount {
 		ap.allocated++
 		bd := GetArena(defaultArenaSize)
 		ap.adjustGCPercent()
@@ -166,19 +196,14 @@ func (ap *arenaPool) put(a arena) {
 	ap.lock.Lock()
 	defer ap.lock.Unlock()
 
-	// discard it if necessary
-	if ap.allocated > maxArenaCount {
-		a.reset()
-		ap.adjustGCPercent()
+	if ap.reuse && ap.allocated <= ap.maxArenaCount {
+		ap.arenas <- a
 		return
 	}
 
-	if ap.reuse {
-		ap.arenas <- a
-	} else {
-		ap.allocated--
-		ap.adjustGCPercent()
-	}
+	a.reset()
+	ap.allocated--
+	ap.adjustGCPercent()
 }
 
 func (ap *arenaPool) free() {
@@ -198,9 +223,6 @@ var globalPool *arenaPool
 type defaultAllocator struct {
 	arenas       []arena
 	allocatedBuf map[uintptr]int
-
-	allocatedOutside    atomic.Int64
-	allocatedOutsideNum atomic.Int64
 }
 
 func (alloc *defaultAllocator) init() {
@@ -215,15 +237,9 @@ func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
 		}
 	}
 
-	// If global pool is initialized, get arena from the pool.
-	// Otherwise, we just create a new one.
-	var na arena
-	if globalPool != nil {
-		if na = globalPool.get(); na == nil {
-			return make([]byte, size)
-		}
-	} else {
-		na = GetArena(defaultArenaSize)
+	na := globalPool.get()
+	if na == nil {
+		return make([]byte, size)
 	}
 
 	buf := na.allocate(size)
@@ -233,7 +249,7 @@ func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
 }
 
 func (alloc *defaultAllocator) Free(buf []byte) {
-	addr := addressOf(buf[:1])
+	addr := addressOf(buf)
 	if arenaID, ok := alloc.allocatedBuf[addr]; ok {
 		alloc.arenas[arenaID].free(buf)
 		delete(alloc.allocatedBuf, addr)
@@ -246,36 +262,17 @@ func (alloc *defaultAllocator) Reallocate(size int, buf []byte, tp memory.Buffer
 }
 
 func (alloc *defaultAllocator) Close() {
-	// If global pool is initialized, return allocated arena to the pool.
-	if globalPool != nil {
-		for _, a := range alloc.arenas {
-			a.reset()
-			globalPool.put(a)
-		}
+	for _, a := range alloc.arenas {
+		a.reset()
+		globalPool.put(a)
 	}
 
 	alloc.arenas = nil
 }
 
-// GetDefaultAllocator get a default allocator
-func GetDefaultAllocator() memory.Allocator {
+// GetAllocator get a default allocator
+func GetAllocator() memory.Allocator {
 	a := &defaultAllocator{}
 	a.init()
 	return a
-}
-
-// InitializeGlobalArena initialize a global arena pool.
-// If you call this function, remember to call FreeMemory.
-func InitializeGlobalArena(size int, reuse bool) {
-	maxArenaCount = size / defaultArenaSize
-	globalPool = &arenaPool{}
-	globalPool.reuse = reuse
-	globalPool.arenas = make(chan arena, maxArenaCount)
-}
-
-// FreeMemory free all the memory allocated for arenas.
-func FreeMemory() {
-	if globalPool != nil {
-		globalPool.free()
-	}
 }

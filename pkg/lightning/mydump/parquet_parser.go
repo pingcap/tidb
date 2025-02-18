@@ -15,7 +15,6 @@
 package mydump
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -41,10 +40,7 @@ import (
 const (
 	defaultBatchSize = 128
 
-	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
-	// optimize the read performance
-	smallParquetFileThreshold = 256 * 1024 * 1024
-	defaultBufSize            = 64 * 1024
+	defaultBufSize = 64 * 1024
 
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
@@ -232,33 +228,6 @@ func formatTime(v int64, unit string, format, utcFormat string, utc bool) string
 		return t.Format(utcFormat)
 	}
 	return t.Format(format)
-}
-
-// bytesReaderWrapper is a wrapper of bytes.Reader.
-type bytesReaderWrapper struct {
-	*bytes.Reader
-	rawBytes []byte
-	// current file path
-	path string
-}
-
-func (*bytesReaderWrapper) Close() error {
-	return nil
-}
-
-func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (r *bytesReaderWrapper) Open(name string) (parquet.ReaderAtSeeker, error) {
-	if len(name) > 0 && name != r.path {
-		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
-	}
-	return &bytesReaderWrapper{
-		Reader:   bytes.NewReader(r.rawBytes),
-		rawBytes: r.rawBytes,
-		path:     r.path,
-	}, nil
 }
 
 // parquetFileWrapper is a wrapper for storage.ReadSeekCloser
@@ -827,18 +796,6 @@ func OpenParquetReader(
 	path string,
 	size int64,
 ) (storage.ReadSeekCloser, error) {
-	if size <= smallParquetFileThreshold {
-		fileBytes, err := store.ReadFile(ctx, path)
-		if err != nil {
-			return nil, err
-		}
-		return &bytesReaderWrapper{
-			Reader:   bytes.NewReader(fileBytes),
-			rawBytes: fileBytes,
-			path:     path,
-		}, nil
-	}
-
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
@@ -941,14 +898,14 @@ func NewParquetParser(
 		memoryUsage = meta.MemoryUsageStream
 		meta.UseStreaming = true
 	}
-	memoryUsage = min(memoryUsage, memLimit)
-	memLimiter.Acquire(memoryUsage)
+	memoryUsage = min(memoryUsage, readerMemoryLimit)
+	readerMemoryLimiter.Acquire(memoryUsage)
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 		zap.String("memory usage full", fmt.Sprintf("%d MB", meta.MemoryUsageFull>>20)),
 		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryQuota>>20)),
-		zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
 		zap.Bool("streaming mode", meta.UseStreaming),
 		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
@@ -968,7 +925,7 @@ func NewParquetParser(
 	if meta.UseSampleAllocator {
 		allocator = &sampleAllocator{}
 	} else {
-		alloc := GetDefaultAllocator()
+		alloc := GetAllocator()
 		allocator = alloc
 	}
 
@@ -1026,7 +983,7 @@ func NewParquetParser(
 		logger:      log.FromContext(ctx),
 		base64:      meta.Base64,
 		memoryUsage: memoryUsage,
-		memLimiter:  memLimiter,
+		memLimiter:  readerMemoryLimiter,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)
