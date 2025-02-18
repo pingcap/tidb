@@ -336,3 +336,15 @@ func TestCreateDropCreateTable(t *testing.T) {
 	require.Less(t, create0TS, dropTS, "first create should finish before drop")
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
 }
+
+func TestFix56930(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t; create table posts (id int auto_increment primary key, title varchar(500) character set utf8, subtitle varchar(500) character set utf8, unique key(title, subtitle));")
+	tk.MustGetErrMsg("alter table posts convert to character set utf8mb4;", "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	tk.MustExec("drop table if exists t; create table t(a varchar(1000) character set utf8, primary key(a));")
+	tk.MustGetErrMsg("alter table t convert to character set utf8mb4;", "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	tk.MustExec("drop table if exists t; create table t(a varchar(1000) character set utf8, key(a));")
+	tk.MustGetErrMsg("alter table t convert to character set utf8mb4;", "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+}

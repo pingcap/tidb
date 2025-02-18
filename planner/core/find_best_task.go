@@ -635,6 +635,10 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 }
 
 func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if ds.table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+		// TableScan with cluster table can't keep order.
+		return false
+	}
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
@@ -964,6 +968,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
+			// prefer tiflash, while current table path is tikv, skip it.
+			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
+				continue
+			}
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err

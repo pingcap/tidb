@@ -22,7 +22,7 @@ import (
 
 func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+	if err := cfg.ParseFromFlags(command.Flags(), false); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
@@ -72,12 +72,12 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 	fmt.Println("#######################################################################")
 	switch {
 	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
-		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+		fmt.Println("# the target cluster is not fresh, cannot restore.")
+		fmt.Println("# you can drop existing databases and tables and start restore again")
 	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
 		fmt.Println("# the target cluster is not compatible with the backup data,")
-		fmt.Println("# br cannot restore system tables.")
+		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	}
-	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	fmt.Println("#######################################################################")
 }
 

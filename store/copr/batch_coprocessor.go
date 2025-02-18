@@ -869,7 +869,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.store.store.GetOracle(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())

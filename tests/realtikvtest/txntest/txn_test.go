@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
@@ -250,4 +252,20 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
 	err := tk1.ExecToErr("commit")
 	require.NotContains(t, err.Error(), "assertion")
+}
+
+func TestTxnScopeAndValidateReadTs(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{
+			"zone": "bj",
+		}
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	time.Sleep(time.Second)
+	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
 }

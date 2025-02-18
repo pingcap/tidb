@@ -361,8 +361,8 @@ func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
 	rc.rawKVClient = c
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *Client) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *Client) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
@@ -1397,7 +1397,7 @@ func (rc *Client) GoValidateChecksum(
 			elapsed := time.Since(start)
 			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1409,7 +1409,7 @@ func (rc *Client) GoValidateChecksum(
 	return outCh
 }
 
-func (rc *Client) execChecksum(
+func (rc *Client) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -1420,13 +1420,14 @@ func (rc *Client) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1449,22 +1450,25 @@ func (rc *Client) execChecksum(
 		return errors.Trace(err)
 	}
 
-	table := tbl.OldTable
-	if checksumResp.Checksum != table.Crc64Xor ||
-		checksumResp.TotalKvs != table.TotalKvs ||
-		checksumResp.TotalBytes != table.TotalBytes {
+	checksumMatch := checksumResp.Checksum == expectedChecksumStats.Crc64Xor &&
+		checksumResp.TotalKvs == expectedChecksumStats.TotalKvs &&
+		checksumResp.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("origin tidb crc64", checksumResp.Checksum),
 			zap.Uint64("calculated crc64", checksumResp.Checksum),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("origin tidb total kvs", checksumResp.TotalKvs),
 			zap.Uint64("calculated total kvs", checksumResp.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("origin tidb total bytes", checksumResp.TotalBytes),
 			zap.Uint64("calculated total bytes", checksumResp.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 
-	logger.Info("success in validate checksum")
+	logger.Info("success in validating checksum")
 	return nil
 }
 
@@ -1750,6 +1754,11 @@ func (rc *Client) IsFull() bool {
 		failpoint.Return(false)
 	})
 	return !rc.IsIncremental()
+}
+
+// NeedCheckFreshCluster is every time. except user has not set filter argument.
+func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool) bool {
+	return rc.IsFull() && !ExplicitFilter
 }
 
 // IsIncremental returns whether this backup is incremental.
@@ -2521,7 +2530,7 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
+		if err := PutRawKvWithRetry(ctx, rc.rawKVClient, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 
@@ -2932,4 +2941,14 @@ func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
 // Attempt returns the remain attempt times
 func (b *waitTiFlashBackoffer) Attempt() int {
 	return b.Attempts
+}
+
+func PutRawKvWithRetry(ctx context.Context, client *RawKVBatchClient, key, value []byte, originTs uint64) error {
+	err := utils.WithRetry(ctx, func() error {
+		return client.Put(ctx, key, value, originTs)
+	}, utils.NewRawClientBackoffStrategy())
+	if err != nil {
+		return errors.Errorf("failed to put raw kv after retry")
+	}
+	return nil
 }
