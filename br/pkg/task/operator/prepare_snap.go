@@ -123,7 +123,7 @@ func hintAllReady() {
 
 // AdaptEnvForSnapshotBackup blocks the current goroutine and pause the GC safepoint and remove the scheduler by the config.
 // This function will block until the context being canceled.
-func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
+func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig, spID string) error {
 	utils.DumpGoroutineWhenExit.Store(true)
 	mgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {
@@ -153,7 +153,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	defer cx.Close()
 
 	initChan := make(chan struct{})
-	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error { return pauseGCKeeper(cx, spID) })
 	cx.run(func() error {
 		log.Info("Pause scheduler waiting all connections established.")
 		select {
@@ -217,10 +217,10 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 	return nil
 }
 
-func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
+func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
-		ID:       utils.MakeSafePointID(),
+		ID:       spID,
 		TTL:      int64(cx.cfg.TTL.Seconds()),
 		BackupTS: cx.cfg.SafePoint,
 	}

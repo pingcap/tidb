@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -77,6 +78,27 @@ func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
 	for _, sp := range result.SPs {
 		if sp.ServiceID != "gc_worker" {
+			t.FailNowf("the service gc safepoint exists", "it is %#v", sp)
+		}
+	}
+}
+
+func verifyTargetGCSafePointExist(t *require.Assertions, cfg operator.PauseGcConfig, spID string) {
+	var result GcSafePoints
+	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
+	for _, sp := range result.SPs {
+		if sp.ServiceID == spID {
+			return
+		}
+	}
+	t.FailNowf("the service gc safepoint does not exist", "it is %#v", result)
+}
+
+func verifyTargetGCSafePointNotExist(t *require.Assertions, cfg operator.PauseGcConfig, spID string) {
+	var result GcSafePoints
+	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
+	for _, sp := range result.SPs {
+		if sp.ServiceID == spID {
 			t.FailNowf("the service gc safepoint exists", "it is %#v", sp)
 		}
 	}
@@ -192,13 +214,14 @@ func TestOperator(t *testing.T) {
 		},
 	}
 
-	verifyGCNotStopped(req, cfg)
+	spID := utils.MakeSafePointID()
+	verifyTargetGCSafePointNotExist(req, cfg, spID)
 	verifySchedulerNotStopped(req, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		req.NoError(operator.AdaptEnvForSnapshotBackup(ctx, &cfg))
+		req.NoError(operator.AdaptEnvForSnapshotBackup(ctx, &cfg, spID))
 	}()
 	req.Eventually(func() bool {
 		select {
@@ -210,6 +233,7 @@ func TestOperator(t *testing.T) {
 	}, 10*time.Second, time.Second)
 
 	verifyGCStopped(req, cfg)
+	verifyTargetGCSafePointExist(req, cfg, spID)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
 	cancel()
@@ -223,8 +247,8 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
-	verifySchedulerNotStopped(req, cfg)
-	verifyGCNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg, spID)
+	verifyTargetGCSafePointExist(req, cfg, spID)
 }
 
 func TestFailure(t *testing.T) {
@@ -245,14 +269,15 @@ func TestFailure(t *testing.T) {
 		SafePoint: oracle.GoTimeToTS(time.Now()),
 	}
 
-	verifyGCNotStopped(req, cfg)
+	spID := utils.MakeSafePointID()
+	verifyTargetGCSafePointNotExist(req, cfg, spID)
 	verifySchedulerNotStopped(req, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg)
+	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg, spID)
 	require.Error(t, err)
 
-	verifyGCNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg, spID)
 	verifySchedulerNotStopped(req, cfg)
 }
