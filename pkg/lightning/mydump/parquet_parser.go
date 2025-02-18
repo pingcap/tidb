@@ -38,8 +38,13 @@ import (
 )
 
 const (
+	// defaultBatchSize is the number of rows fetched each time in the parquet reader
 	defaultBatchSize = 128
 
+	// defaultBufSize specifies the default size of skip buffer.
+	// Skip buffer is used when reading data from the cloud. If there is a gap between the current
+	// read position and the last read position, if the gap size is less than the buffer size,
+	// these data is stored in this buffer to avoid reopening the underlying file.
 	defaultBufSize = 64 * 1024
 
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
@@ -61,7 +66,7 @@ type columnDumper struct {
 	valueBuffer any
 }
 
-func createcolumnDumper(tp parquet.Type) *columnDumper {
+func createDumper(tp parquet.Type) *columnDumper {
 	batchSize := 128
 
 	var valueBuffer any
@@ -500,7 +505,7 @@ func (pp *ParquetParser) Init() error {
 
 	pp.dumpers = make([]*columnDumper, numCols)
 	for i := 0; i < numCols; i++ {
-		pp.dumpers[i] = createcolumnDumper(meta.Schema.Column(i).PhysicalType())
+		pp.dumpers[i] = createDumper(meta.Schema.Column(i).PhysicalType())
 	}
 
 	return nil
@@ -794,7 +799,6 @@ func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
-	size int64,
 ) (storage.ReadSeekCloser, error) {
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
