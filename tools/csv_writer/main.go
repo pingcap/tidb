@@ -159,7 +159,8 @@ func extractNumberFromStr(sqlType string) int {
 func extractLenFromSQL(col *Column, s string) {
 	if !strings.HasPrefix(col.Type, "VARBINARY") &&
 		!strings.HasPrefix(col.Type, "VARCHAR") &&
-		!strings.HasPrefix(col.Type, "TEXT") {
+		!strings.HasPrefix(col.Type, "TEXT") &&
+		!strings.HasPrefix(col.Type, "CHAR") {
 		return
 	}
 
@@ -243,15 +244,19 @@ func generateValueByCol(col Column, num int, res []string) {
 		generateJSONObject(num, res)
 	case strings.HasPrefix(col.Type, "TEXT"):
 		generateVarbinary(num, col.Len, res, col.IsUnique)
+	case strings.HasPrefix(col.Type, "CHAR"):
+		generateChar(num, res, col.Len)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
 }
 
-func generateLetterWithNum(len int) string {
+func generateLetterWithNum(len int, randomLen bool) string {
 	var builder strings.Builder
 
-	len = faker.Number(1, len) // Random length for varbinary
+	if randomLen {
+		len = faker.Number(1, len) // Random length for varbinary
+	}
 	// If length is less than or equal to 1000, generate directly
 	if len <= 1000 {
 		builder.WriteString(faker.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", len)))
@@ -313,7 +318,7 @@ func generateInt32(num int, res []string) {
 		res = make([]string, num)
 	}
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
+		res[i] = strconv.Itoa(faker.Number(math.MinInt32+1, math.MaxInt32-1))
 	}
 }
 
@@ -350,15 +355,24 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 	for i := 0; i < num; i++ {
 		if unique {
 			uuid := faker.UUID()
-			res[i] = uuid + generateLetterWithNum(len-uuidLen)
+			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			res[i] = generateLetterWithNum(len)
+			res[i] = generateLetterWithNum(len, true)
 		}
 	}
 }
 
 func generateMediumblob(num int, res []string) {
 	generateVarbinary(num, 73312, res, false)
+}
+
+func generateChar(num int, res []string, charLen int) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	for i := 0; i < num; i++ {
+		res[i] = generateLetterWithNum(charLen, false)
+	}
 }
 
 func generateTimestamp(num int, res []string) {
