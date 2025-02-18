@@ -116,7 +116,7 @@ func TestUnityEnableVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1 (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t1 (id int primary key, a int, b int, c int, key(a))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key(a))`)
 
 	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
@@ -136,4 +136,16 @@ func TestUnityEnableVars(t *testing.T) {
 	tk.MustNotHavePlan(`select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexJoin`)
 	tk.MustExec(`set global enable_nestloop=1`)
 	tk.MustHavePlan(`select /*+ inl_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `IndexJoin`)
+
+	tk.MustHavePlan(`select /*+ use_index(t1, a) */ a from t1`, `IndexFullScan`)
+	tk.MustExec(`set global enable_indexscan=0`)
+	tk.MustNotHavePlan(`select /*+ use_index(t1, a) */ a from t1`, `IndexFullScan`)
+	tk.MustExec(`set global enable_indexscan=1`)
+	tk.MustHavePlan(`select /*+ use_index(t1, a) */ a from t1`, `IndexFullScan`)
+
+	//tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
+	//tk.MustExec(`set global enable_seqscan=0`)
+	//tk.MustNotHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
+	//tk.MustExec(`set global enable_seqscan=1`)
+	//tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
 }
