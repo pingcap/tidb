@@ -534,13 +534,26 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	return s.revertTask(err)
 }
 
+// FailTaskDirectlyInTest is used to fail task directly in tests.
+// there are many tests depends on the old behavior, so we add this flag to avoid
+// change them all.
+var FailTaskDirectlyInTest = true
+
 func (s *BaseScheduler) revertTask(taskErr error) error {
 	task := *s.GetTask()
-	if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
-		return err
+	if intest.InTest && FailTaskDirectlyInTest {
+		if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+			return err
+		}
+		task.State = proto.TaskStateReverting
+		task.Error = taskErr
+	} else {
+		if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+			return err
+		}
+		task.State = proto.TaskStateAwaitingResolution
+		task.Error = taskErr
 	}
-	task.State = proto.TaskStateAwaitingResolution
-	task.Error = taskErr
 	s.task.Store(&task)
 	return nil
 }

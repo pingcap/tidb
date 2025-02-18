@@ -1217,6 +1217,10 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
 }
 
 func (s *mockGCSSuite) TestResolutionFailTheTask() {
+	scheduler.FailTaskDirectlyInTest = false
+	defer func() {
+		scheduler.FailTaskDirectlyInTest = true
+	}()
 	ctx, task := s.runTaskToAwaitingState()
 	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='reverting' where id=%d", task.ID))
 	_, err := handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
@@ -1227,6 +1231,10 @@ func (s *mockGCSSuite) TestResolutionFailTheTask() {
 }
 
 func (s *mockGCSSuite) TestResolutionSuccessAfterManualChangeData() {
+	scheduler.FailTaskDirectlyInTest = false
+	defer func() {
+		scheduler.FailTaskDirectlyInTest = true
+	}()
 	ctx, task := s.runTaskToAwaitingState()
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "resolution", Name: "a.csv"},
