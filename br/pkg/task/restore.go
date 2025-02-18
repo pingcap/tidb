@@ -1086,7 +1086,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	//TODO: (ris) should mod this
 	var restoreSchedulersFunc pdutil.UndoFunc
 	var schedulersConfig *pdutil.ClusterConfig
 	if isFullRestore(cmdName) || client.IsIncremental() {

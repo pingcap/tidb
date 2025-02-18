@@ -289,7 +289,6 @@ func (p *PdController) doPauseSchedulers(
 	return removedSchedulers, nil
 }
 
-// TODO: (ris) core func
 func (p *PdController) pauseSchedulersAndConfigWith(
 	ctx context.Context, schedulers []string,
 	schedulerCfg map[string]any,
@@ -610,7 +609,6 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 
 	log.Debug("saved PD config", zap.Any("config", scheduleCfg))
 
-	//TODO: (ris) delete here
 	// Remove default PD scheduler that may affect restore process.
 	existSchedulers, err := p.ListSchedulers(ctx)
 	if err != nil {
@@ -623,7 +621,6 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 		}
 	}
 
-	//TODO: (ris)use region scheduler
 	removedSchedulers, err := p.doRemoveSchedulersWith(ctx, needRemoveSchedulers, disablePDCfg)
 	if err != nil {
 		return originCfg, removedCfg, errors.Trace(err)
