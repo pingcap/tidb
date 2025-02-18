@@ -329,6 +329,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			}
 		}
 
+		// adjust existing tables only for incremental restore
 		for _, table := range tables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
 			if err != nil {
@@ -366,6 +367,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		return errors.Trace(err)
 	}
 
+	// adjust existing tables only for incremental restore
 	err = db.CreateTablePostRestore(ctx, table, ddlTables)
 	if err != nil {
 		return errors.Trace(err)
