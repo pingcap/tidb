@@ -1530,7 +1530,7 @@ func isTemporalColumn(ctx EvalContext, expr Expression) bool {
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return 'con'(the input, a non-int constant).
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		return con, false
@@ -1569,7 +1569,7 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return 'con'(the input, a non-int constant).
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	evalCtx := ctx.GetEvalCtx()
 	dt, err := con.Eval(evalCtx, chunk.Row{})
@@ -1768,7 +1768,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 //  2. It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
 //  3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
 //  4. Handles special cases where a duration type column is compared with a non-duration type constant, particularly when the constant
-//     cannot be cast to a duration type, ensuring compatibility with MySQL's behavior by rewriting the expression as `0 <=> 1`.
+//     cannot be cast to a duration type, ensuring compatibility with MySQL’s behavior by rewriting the expression as `0 <=> 1`.
 //
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.

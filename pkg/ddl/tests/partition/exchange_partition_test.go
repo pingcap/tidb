@@ -2,6 +2,7 @@ package partition
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -90,7 +91,8 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 			name VARCHAR(50)
 		)`)
 	// Test each partition
-	for _, p := range []string{"p0", "p1", "p2", "p3", "p4"} {
+	partitionNames := []string{"p0", "p1", "p2", "p3", "p4"}
+	for i, p := range partitionNames {
 
 		// Exchange partition out
 		tk.MustExec(fmt.Sprintf("ALTER TABLE t1 EXCHANGE PARTITION %s WITH TABLE t2", p))
@@ -107,6 +109,18 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 		// Verify results are back to initial state
 		tk.MustQuery(fmt.Sprintf("SELECT * FROM t1 PARTITION(%s)", p)).Sort().Check(initialResults[p].Rows())
 
+		// Check that no non-matching rows will be allowed to be exchanged
+		otherPartitions := strings.Join(append(append([]string{}, partitionNames[:i]...), partitionNames[i+1:]...), ",")
+		for j := 1; j <= id; j++ {
+			res := tk.MustQuery(fmt.Sprintf("select * from t1 partition (%s) where id = %d", p, j))
+			if len(res.Rows()) > 0 {
+				// Skip rows from current partition, since already tested above.
+				continue
+			}
+			tk.MustExec(fmt.Sprintf("insert into t2 select * from t1 partition (%s) where id = %d", otherPartitions, j))
+			tk.MustContainErrMsg(fmt.Sprintf("ALTER TABLE t1 EXCHANGE PARTITION %s WITH TABLE t2 /* j = %d */", p, j), "[ddl:1737]Found a row that does not match the partition")
+			tk.MustExec(`truncate table t2`)
+		}
 	}
 	// Cleanup exchange table
 	tk.MustExec("DROP TABLE t2")

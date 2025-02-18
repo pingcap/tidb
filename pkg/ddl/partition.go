@@ -4180,7 +4180,6 @@ func checkExchangePartitionRecordValidation(
 		}
 		defer w.sessPool.Put(sctx)
 
-		logutil.DDLLogger().Info("checkExchangePartitionRecordValidation", zap.String("sql", sql), zap.Any("params", params))
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			ctx,
 			nil,
@@ -4192,7 +4191,6 @@ func checkExchangePartitionRecordValidation(
 		}
 		rowCount := len(rows)
 		if rowCount != 0 {
-			logutil.DDLLogger().Error("checkExchangePartitionRecordValidation", zap.Any("rows", rows), zap.Int("rowCount", rowCount), zap.String("sql", sql), zap.Any("params", params))
 			return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 		}
 		// Check warnings!
@@ -4222,9 +4220,7 @@ func checkExchangePartitionRecordValidation(
 	}
 
 	var buf strings.Builder
-	// TODO: remove this debug code
-	buf.WriteString("select * from %n.%n where ")
-	// buf.WriteString("select 1 from %n.%n where ")
+	buf.WriteString("select 1 from %n.%n where ")
 	paramList := []any{nschemaName, ntbl.Meta().Name.L}
 	checkNt := true
 
@@ -4354,6 +4350,7 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
 	// So we write it to the origin sql string here.
 	if index == 0 {
+		// TODO: Handle MAXVALUE in first partition
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %?")
 		paramList = append(paramList, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
@@ -4386,10 +4383,10 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	if hasLowerBound {
 		currVals := pi.Definitions[index-1].LessThan
 		for i := 0; i < len(pi.Columns); i++ {
-			if strings.EqualFold(currVals[i], partitionMaxValue) {
-				break
+			nextIsMax := false
+			if i < (len(pi.Columns)-1) && strings.EqualFold(currVals[i+1], partitionMaxValue) {
+				nextIsMax = true
 			}
-
 			if needOR {
 				buf.WriteString(" OR ")
 			}
@@ -4405,13 +4402,19 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 				}
 				buf.WriteString(" AND ")
 			}
-			paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]))
-			buf.WriteString("(%n < %? OR %n IS NULL)")
-			paramList = append(paramList, pi.Columns[i].L)
+			paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]), pi.Columns[i].L)
+			if nextIsMax {
+				buf.WriteString("(%n <= %? OR %n IS NULL)")
+			} else {
+				buf.WriteString("(%n < %? OR %n IS NULL)")
+			}
 			if i > 0 {
 				buf.WriteString(")")
 			}
 			needOR = true
+			if nextIsMax {
+				break
+			}
 		}
 	}
 
@@ -4421,13 +4424,12 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 		if strings.EqualFold(currVals[i], partitionMaxValue) {
 			break
 		}
-
 		if needOR {
 			buf.WriteString(" OR ")
 		}
 		if i > 0 {
 			buf.WriteString("(")
-			// All previous columns must be equal and non-NULL
+			// All previous columns must be equal
 			for j := 0; j < i; j++ {
 				if j > 0 {
 					buf.WriteString(" AND ")
@@ -4437,13 +4439,13 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 			}
 			buf.WriteString(" AND ")
 		}
-		isLastNonMaxValue := i == len(pi.Columns)-1
-		op := ">"
-		if isLastNonMaxValue {
-			op = ">="
+		isLast := i == len(pi.Columns)-1
+		if isLast {
+			buf.WriteString("(%n >= %?)")
+		} else {
+			buf.WriteString("(%n > %?)")
 		}
 		paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]))
-		buf.WriteString(fmt.Sprintf("(%%n %s %%?)", op))
 		if i > 0 {
 			buf.WriteString(")")
 		}
@@ -4455,6 +4457,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {
 	var buf strings.Builder
+	// TODO: Handle DEFAULT partition
 	buf.WriteString("not (")
 	for i, inValue := range pi.Definitions[index].InValues {
 		if i != 0 {
@@ -4477,6 +4480,8 @@ func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) 
 func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, index int) string {
 	var buf strings.Builder
 	// TODO: Verify if this is correct!!!
+	// TODO: Handle DEFAULT partition!
+	// TODO: use paramList with column names, instead of quoting.
 	// How to find a match?
 	// (row <=> vals1) OR (row <=> vals2)
 	// How to find a non-matching row:
@@ -4486,6 +4491,7 @@ func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, inde
 	for i := range pi.Columns {
 		// TODO: Add test for this!
 		// TODO: check if there are no proper quoting function for this?
+		// TODO: Maybe Sprintf("%#q", str) ?
 		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
 		colNames = append(colNames, n)
 	}
