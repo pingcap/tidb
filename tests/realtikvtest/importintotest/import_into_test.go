@@ -1213,6 +1213,7 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
 	_, err = handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
 		return t.State == proto.TaskStateAwaitingResolution
 	})
+	s.NoError(err)
 	return ctx, task
 }
 
