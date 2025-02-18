@@ -173,9 +173,6 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	if path.Index.Name.L == "tbl_cardcore_transaction_ix10" && strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "EXPLAIN format = 'brief' SELECT * FROM") {
-		fmt.Println(1)
-	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
