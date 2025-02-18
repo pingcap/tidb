@@ -111,3 +111,17 @@ func TestUnityVars(t *testing.T) {
 		tk.MustQuery(`select @@` + v).Check(testkit.Rows("0"))
 	}
 }
+
+func TestUnityEnableVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a))`)
+
+	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
+	tk.MustExec(`set global enable_hashjoin=0`)
+	tk.MustNotHavePlan(`select * from t1, t2 where t1.a=t2.a`, `HashJoin`)
+	tk.MustExec(`set global enable_hashjoin=1`)
+	tk.MustHavePlan(`select /*+ hash_join(t1, t2) */ * from t1, t2 where t1.a=t2.a`, `HashJoin`)
+}
