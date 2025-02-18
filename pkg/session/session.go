@@ -3611,13 +3611,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	cnt := concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
+	syncStatsCtxs, err := createSessions(store, concurrency)
 	if err != nil {
 		return nil, err
 	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < concurrency; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
 
