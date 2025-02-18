@@ -25,11 +25,8 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/debugtrace",
-<<<<<<< HEAD
         "//pkg/sessionctx",
-=======
         "//pkg/planner/util/fixcontrol",
->>>>>>> f2c278ddc6b (Planner: Do not allow cardinality to go below 1 (#55242))
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/tablecodec",

@@ -116,19 +116,11 @@
       {
         "Query": "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
         "Result": [
-<<<<<<< HEAD
-          "Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.tp.a, test.tp.b, test.tp.c",
-          "└─HashJoin 0.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",
-          "  ├─TableReader(Build) 0.00 root partition:p1 data:Selection",
-          "  │ └─Selection 0.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[ic:allEvicted, c:allEvicted]",
-=======
           "Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.tp.a, test.tp.b, test.tp.c",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
           "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
->>>>>>> f2c278ddc6b (Planner: Do not allow cardinality to go below 1 (#55242))
           "  └─TableReader(Probe) 3.00 root  data:Selection",
           "    └─Selection 3.00 cop[tikv]  not(isnull(test.t.b))",
           "      └─TableFullScan 3.00 cop[tikv] table:t keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]"
