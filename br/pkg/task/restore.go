@@ -953,9 +953,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.PDClient().GetClusterID(ctx)
-			cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID)
+			if err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID); err != nil {
+				return errors.Trace(err)
+			}
 		} else {
-			cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain())
+			if err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.

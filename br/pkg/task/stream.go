@@ -2003,9 +2003,13 @@ func generatePiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
-			cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, cfg.StartTS, cfg.RestoreTS)
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, cfg.StartTS, cfg.RestoreTS); err != nil {
+				return nil, errors.Trace(err)
+			}
 		} else {
-			cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain())
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		if err != nil {
