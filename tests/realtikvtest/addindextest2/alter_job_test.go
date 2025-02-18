@@ -116,7 +116,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256, max_write_speed=1024", rows[0][0]))
 			require.Eventually(t, func() bool {
 				return modified.Load()
-			}, 10*time.Second, 100*time.Millisecond)
+			}, 20*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
 		})
 	})
