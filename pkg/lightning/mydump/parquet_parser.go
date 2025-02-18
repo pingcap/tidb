@@ -31,9 +31,9 @@ import (
 	"github.com/joechenrh/arrow-go/v18/parquet/file"
 	"github.com/joechenrh/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )

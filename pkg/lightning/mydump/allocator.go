@@ -24,8 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
