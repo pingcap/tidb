@@ -600,6 +600,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -622,6 +623,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1248,11 +1250,14 @@ const (
 	// version 242
 	//   insert `cluster_id` into the `mysql.tidb` table.
 	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version243 = 243
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version242
+var currentBootstrapVersion int64 = version243
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1430,6 +1435,7 @@ var (
 		upgradeToVer240,
 		upgradeToVer241,
 		upgradeToVer242,
+		upgradeToVer243,
 	}
 )
 
@@ -3348,6 +3354,14 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 
 	writeClusterID(s)
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX plan_index (`plan_digest`)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

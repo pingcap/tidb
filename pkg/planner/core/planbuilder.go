@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -836,7 +835,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
-func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string) ([]chunk.Row, error) {
+func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string) (schema, query, planHint, charset, collation string, err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec := sctx.GetSQLExecutor()
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
@@ -844,19 +843,41 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
 		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
-	if rs == nil {
-		return nil, errors.New("can't find any records for '" + planDigest + "' in statement summary")
-	}
 	if err != nil {
-		return nil, err
+		return "", "", "", "", "", err
+	}
+	if rs == nil {
+		return "", "", "", "", "",
+			errors.New("can't find any records for '" + planDigest + "' in statement summary")
 	}
 
 	var rows []chunk.Row
 	defer terror.Call(rs.Close)
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return nil, err
+		return "", "", "", "", "", err
 	}
-	return rows, nil
+
+	for _, row := range rows {
+		user := row.GetString(3)
+		stmtType := row.GetString(0)
+		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
+			// Empty auth users means that it is an internal queries.
+			schema = row.GetString(1)
+			query = row.GetString(5)
+			planHint = row.GetString(8)
+			charset = row.GetString(6)
+			collation = row.GetString(7)
+			// If it is SQL command prepare / execute, we should remove the arguments
+			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
+			if row.GetInt64(4) == 1 {
+				if idx := strings.LastIndex(query, "[arguments:"); idx != -1 {
+					query = query[:idx]
+				}
+			}
+			return
+		}
+	}
+	return
 }
 
 func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) ([]string, error) {
@@ -903,30 +924,29 @@ func constructSQLBindOPFromPlanDigest(
 	// The warnings will be broken in fetchRecordFromClusterStmtSummary(), so we need to save and restore it to make the
 	// warnings for repeated SQL Digest work.
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	rows, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
+	schema, query, planHint, charset, collation, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
 	if err != nil {
 		return nil, err
 	}
-	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
-	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
-	if bindableStmt == nil {
+	if query == "" {
 		return nil, errors.New("can't find any plans for '" + planDigest + "'")
 	}
+	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 	parser4binding := parser.New()
-	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	originNode, err := parser4binding.ParseOneStmt(query, charset, collation)
 	if err != nil {
 		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint)
-	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, bindableStmt.Schema)
+	complete, reason := hint.CheckBindingFromHistoryComplete(originNode, planHint)
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, planHint, schema)
 	var hintNode ast.StmtNode
-	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	hintNode, err = parser4binding.ParseOneStmt(bindSQL, charset, collation)
 	if err != nil {
 		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
-	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
-	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
+	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, schema, query)
+	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, schema, hintNode.Text())
+	db := utilparser.GetDefaultDB(originNode, schema)
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	sqlDigestWithDBStr := sqlDigestWithDB.String()
 	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
@@ -946,8 +966,8 @@ func constructSQLBindOPFromPlanDigest(
 		BindSQL:      bindSQL,
 		BindStmt:     hintNode,
 		Db:           db,
-		Charset:      bindableStmt.Charset,
-		Collation:    bindableStmt.Collation,
+		Charset:      charset,
+		Collation:    collation,
 		Source:       bindinfo.SourceHistory,
 		SQLDigest:    sqlDigestWithDBStr,
 		PlanDigest:   planDigest,
