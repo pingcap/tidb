@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
@@ -47,6 +48,10 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/util",
         "//pkg/sessionctx",
+<<<<<<< HEAD
+=======
+        "//pkg/sessionctx/vardef",
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/table",

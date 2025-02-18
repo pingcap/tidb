@@ -91,8 +91,12 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
+<<<<<<< HEAD
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
+=======
+	MaxNodeCount      int                              `json:"max_node_count"`
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.

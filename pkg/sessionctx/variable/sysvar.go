@@ -3539,7 +3539,12 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
+=======
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxDistTaskNodes, Value: strconv.Itoa(vardef.DefTiDBMaxDistTaskNodes), Type: vardef.TypeInt, MinValue: -1, MaxValue: 128},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTSOClientRPCMode, Value: vardef.DefTiDBTSOClientRPCMode, Type: vardef.TypeEnum, PossibleValues: []string{vardef.TSOClientRPCModeDefault, vardef.TSOClientRPCModeParallel, vardef.TSOClientRPCModeParallelFast},
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},

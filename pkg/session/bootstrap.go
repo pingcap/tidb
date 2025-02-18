@@ -591,6 +591,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -613,6 +614,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1243,11 +1245,36 @@ const (
 	// ...
 
 	// next version should start with 239
+<<<<<<< HEAD
+=======
+
+	// version 239
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version239 = 239
+
+	// version 240
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version240 = 240
+
+	// Add index on user field for some mysql tables.
+	version241 = 241
+
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version243 = 243
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version223
+=======
+var currentBootstrapVersion int64 = version243
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1421,11 +1448,19 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
+<<<<<<< HEAD
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+=======
+		upgradeToVer239,
+		upgradeToVer240,
+		upgradeToVer241,
+		upgradeToVer242,
+		upgradeToVer243,
+>>>>>>> 90990904621 (dxf: add `tidb_max_dist_task_nodes` to specify max node count (#58937))
 	}
 )
 
@@ -3300,6 +3335,14 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
