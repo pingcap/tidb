@@ -152,10 +152,10 @@ func TestV2Basic(t *testing.T) {
 
 	for _, tt := range schemaNameByTableIDTests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+			gotItem, gotOK := is.TableItemByID(tt.tableID)
 
 			require.Equal(t, tt.wantOK, gotOK)
-			require.Equal(t, tt.wantSchema, gotSchema)
+			require.Equal(t, tt.wantSchema, gotItem.DBName)
 		})
 	}
 
