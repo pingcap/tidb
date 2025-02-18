@@ -21,7 +21,9 @@ go_library(
 
 go_test(
     name = "decorrelateapply_test",
+    timeout = "short",
     srcs = ["xf_decorrelate_apply_test.go"],
+    flaky = True,
     deps = [
         ":decorrelateapply",
         "//pkg/expression",
