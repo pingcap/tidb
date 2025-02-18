@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
@@ -137,6 +139,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -632,6 +635,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
+	} else if !client.IsIncremental() && cfg.CheckRequirements {
+		if err = checkTableExistence(ctx, mgr, tables, g); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -848,6 +855,28 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
 	return nil
 }
 
