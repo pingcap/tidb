@@ -15,7 +15,6 @@
 package task
 
 import (
-	"fmt"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
@@ -102,9 +101,6 @@ func (a *ApplyRuleTask) Execute() error {
 		return nil
 	}
 	pa := a.rule.Pattern()
-	if a.rule.ID() == uint(rule.XFDeCorrelateSimpleApply) {
-		fmt.Println(1)
-	}
 	binder := rule.NewBinder(pa, a.gE)
 	holder := binder.Next()
 	for ; holder != nil; holder = binder.Next() {
