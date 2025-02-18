@@ -728,21 +728,28 @@ func compareSchemaByID(a, b schemaIDName) bool {
 }
 
 func compareReferredForeignKeyItem(a, b *referredForeignKeyItem) bool {
-	if a.dbName < b.dbName {
-		return true
+	if a.dbName != b.dbName {
+		return a.dbName < b.dbName
 	}
-	if a.dbName > b.dbName {
-		return false
+	if a.tableName != b.tableName {
+		return a.tableName < b.tableName
 	}
-
-	if a.tableName < b.tableName {
-		return true
+	if a.schemaVersion != b.schemaVersion {
+		return a.schemaVersion < b.schemaVersion
 	}
-	if a.tableName > b.tableName {
-		return false
+	if a.referredFKInfo.ChildSchema.L != b.referredFKInfo.ChildSchema.L {
+		return a.referredFKInfo.ChildSchema.L < b.referredFKInfo.ChildSchema.L
 	}
-
-	return a.schemaVersion < b.schemaVersion
+	if a.referredFKInfo.ChildTable.L != b.referredFKInfo.ChildTable.L {
+		return a.referredFKInfo.ChildTable.L < b.referredFKInfo.ChildTable.L
+	}
+	if a.referredFKInfo.ChildFKName.L != b.referredFKInfo.ChildFKName.L {
+		return a.referredFKInfo.ChildFKName.L < b.referredFKInfo.ChildFKName.L
+	}
+	if a.tomb != b.tomb {
+		return a.tomb && !b.tomb
+	}
+	return false
 }
 
 var _ InfoSchema = &infoschemaV2{}
