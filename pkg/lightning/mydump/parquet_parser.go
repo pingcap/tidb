@@ -60,7 +60,7 @@ type columnDumper struct {
 	levelsBuffered int64
 	defLevels      []int16
 	repLevels      []int16
-	values         []interface{}
+	values         []any
 
 	valueBuffer any
 }
@@ -92,7 +92,7 @@ func createcolumnDumper(tp parquet.Type) *columnDumper {
 		batchSize:   int64(batchSize),
 		defLevels:   make([]int16, batchSize),
 		repLevels:   make([]int16, batchSize),
-		values:      make([]interface{}, batchSize),
+		values:      make([]any, batchSize),
 		valueBuffer: valueBuffer,
 	}
 }
@@ -149,7 +149,7 @@ func (dump *columnDumper) hasNext() bool {
 }
 
 // Next reads next value from the reader
-func (dump *columnDumper) Next() (interface{}, bool) {
+func (dump *columnDumper) Next() (any, bool) {
 	if dump.levelOffset == dump.levelsBuffered {
 		if !dump.hasNext() {
 			return nil, false
@@ -382,62 +382,62 @@ type ParquetParser struct {
 	memLimiter  *membuf.Limiter
 }
 
-func (pp *ParquetParser) setStringData(row, col int, val interface{}) {
+func (pp *ParquetParser) setStringData(row, col int, val any) {
 	vba, _ := val.(parquet.ByteArray)
 	pp.rows[row][col].SetString(string(vba), "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setInt32Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setInt32Data(row, col int, val any) {
 	v32, _ := val.(int32)
 	pp.rows[row][col].SetInt64(int64(v32))
 }
 
-func (pp *ParquetParser) setUint32Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setUint32Data(row, col int, val any) {
 	v64, _ := val.(int64)
 	pp.rows[row][col].SetUint64(uint64(v64))
 }
 
-func (pp *ParquetParser) setInt64Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setInt64Data(row, col int, val any) {
 	v64, _ := val.(int64)
 	pp.rows[row][col].SetInt64(v64)
 }
 
-func (pp *ParquetParser) setUint64Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setUint64Data(row, col int, val any) {
 	v64, _ := val.(int64)
 	pp.rows[row][col].SetUint64(uint64(v64))
 }
 
-func (pp *ParquetParser) setTimeMillisData(row, col int, val interface{}) {
+func (pp *ParquetParser) setTimeMillisData(row, col int, val any) {
 	v32, _ := val.(int32)
 	timeStr := formatTime(int64(v32), "MILLIS", "15:04:05.999999", "15:04:05.999999Z", true)
 	pp.rows[row][col].SetString(timeStr, "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setTimeMicrosData(row, col int, val interface{}) {
+func (pp *ParquetParser) setTimeMicrosData(row, col int, val any) {
 	v64, _ := val.(int64)
 	timeStr := formatTime(v64, "MICROS", "15:04:05.999999", "15:04:05.999999Z", true)
 	pp.rows[row][col].SetString(timeStr, "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setTimestampMillisData(row, col int, val interface{}) {
+func (pp *ParquetParser) setTimestampMillisData(row, col int, val any) {
 	v64, _ := val.(int64)
 	timeStr := formatTime(v64, "MILLIS", timeLayout, utcTimeLayout, true)
 	pp.rows[row][col].SetString(timeStr, "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setTimestampMicrosData(row, col int, val interface{}) {
+func (pp *ParquetParser) setTimestampMicrosData(row, col int, val any) {
 	v64, _ := val.(int64)
 	timeStr := formatTime(v64, "MICROS", timeLayout, utcTimeLayout, true)
 	pp.rows[row][col].SetString(timeStr, "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setDateData(row, col int, val interface{}) {
+func (pp *ParquetParser) setDateData(row, col int, val any) {
 	v32, _ := val.(int32)
 	dateStr := time.Unix(int64(v32)*86400, 0).Format(time.DateOnly)
 	pp.rows[row][col].SetString(dateStr, "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setDecimalData(row, col int, val interface{}) {
+func (pp *ParquetParser) setDecimalData(row, col int, val any) {
 	colTp := pp.dumpers[col].Type()
 	decimal := pp.colMetas[col].decimalMeta
 
@@ -471,7 +471,7 @@ func (pp *ParquetParser) setDecimalData(row, col int, val interface{}) {
 	}
 }
 
-func (pp *ParquetParser) setBoolData(row, col int, val interface{}) {
+func (pp *ParquetParser) setBoolData(row, col int, val any) {
 	boolVal, _ := val.(bool)
 	if boolVal {
 		pp.rows[row][col].SetUint64(1)
@@ -480,27 +480,27 @@ func (pp *ParquetParser) setBoolData(row, col int, val interface{}) {
 	pp.rows[row][col].SetUint64(0)
 }
 
-func (pp *ParquetParser) setFloat32Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setFloat32Data(row, col int, val any) {
 	vf32, _ := val.(float32)
 	pp.rows[row][col].SetFloat32(vf32)
 }
 
-func (pp *ParquetParser) setFloat64Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setFloat64Data(row, col int, val any) {
 	vf64, _ := val.(float64)
 	pp.rows[row][col].SetFloat64(vf64)
 }
 
-func (pp *ParquetParser) setFixedByteArrayData(row, col int, val interface{}) {
+func (pp *ParquetParser) setFixedByteArrayData(row, col int, val any) {
 	vfa, _ := val.(parquet.FixedLenByteArray)
 	pp.rows[row][col].SetString(string(vfa), "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setByteArrayData(row, col int, val interface{}) {
+func (pp *ParquetParser) setByteArrayData(row, col int, val any) {
 	vba, _ := val.(parquet.ByteArray)
 	pp.rows[row][col].SetString(string(vba), "utf8mb4_bin")
 }
 
-func (pp *ParquetParser) setInt96Data(row, col int, val interface{}) {
+func (pp *ParquetParser) setInt96Data(row, col int, val any) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -605,7 +605,7 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		meta := pp.colMetas[col]
 		physicalTp := dumper.Type()
 
-		var setFunc func(row, col int, val interface{})
+		var setFunc func(row, col int, val any)
 		if physicalTp == parquet.Types.Boolean || physicalTp == parquet.Types.Int96 || meta.converted == schema.ConvertedTypes.None {
 			switch physicalTp {
 			case parquet.Types.Boolean:
