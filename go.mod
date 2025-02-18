@@ -87,7 +87,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20250117122752-2b87602a94a1
+	github.com/pingcap/kvproto v0.0.0-20250205033218-ad14807ace91
 	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -138,7 +138,7 @@ require (
 	golang.org/x/sys v0.30.0
 	golang.org/x/term v0.28.0
 	golang.org/x/text v0.21.0
-	golang.org/x/time v0.9.0
+	golang.org/x/time v0.10.0
 	golang.org/x/tools v0.29.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2

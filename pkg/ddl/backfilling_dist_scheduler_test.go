@@ -158,7 +158,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
-	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", 0, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	execIDs := []string{":4000"}
