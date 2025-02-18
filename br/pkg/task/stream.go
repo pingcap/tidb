@@ -1396,6 +1396,7 @@ func RunStreamRestore(
 			RestoreConfig:          cfg,
 			piTRTaskInfo:           taskInfo,
 			logTableHistoryManager: metaInfoProcessor.GetTableHistoryManager(),
+			tableMappingManager:    metaInfoProcessor.GetTableMappingManager(),
 		}
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
 		if err = runSnapshotRestore(ctx, mgr, g, FullRestoreCmd, &snapshotRestoreConfig); err != nil {
@@ -1578,10 +1579,33 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.Online, ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
+
+	if cfg.Online {
+		// set tables back to normal mode after online restore
+		for _, dbReplace := range schemasReplace.DbReplaceMap {
+			if dbReplace.FilteredOut {
+				continue
+			}
+			for _, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
+				log.Info("setting table back to normal mode",
+					zap.String("db", dbReplace.Name),
+					zap.String("table", tableReplace.Name),
+					zap.Int64("db_id", dbReplace.DbID),
+					zap.Int64("table_id", tableReplace.TableID))
+				if err := client.SetTableModeToNormal(ctx, dbReplace.DbID, tableReplace.TableID); err != nil {
+					return errors.Annotatef(err, "failed to set table %s.%s back to normal mode", dbReplace.Name, tableReplace.Name)
+				}
+			}
+		}
+	}
+
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
@@ -2008,7 +2032,6 @@ type PiTRTaskInfo struct {
 	CheckpointInfo      *checkpoint.TaskInfoForLogRestore
 	RestoreTS           uint64
 	NeedFullRestore     bool
-	FullRestoreCheckErr error
 }
 
 func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
@@ -2075,22 +2098,6 @@ func generatePiTRTaskInfo(
 	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
 	checkInfo.RestoreTS = cfg.RestoreTS
-	// restore full snapshot precheck.
-	if doFullRestore {
-		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
-			// Only when use checkpoint and not the first execution,
-			// skip checking requirements.
-			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(mgr, cfg.ExplicitFilter); err != nil {
-				// delay cluster checks after we get the backupmeta.
-				// for the case that the restore inc + log backup,
-				// we can still restore them.
-				checkInfo.FullRestoreCheckErr = err
-				return checkInfo, nil
-			}
-		}
-	}
-
 	return checkInfo, nil
 }
 
@@ -2171,6 +2178,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 			tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 		} else {
 			log.Warn("pitr table tracker is nil, base map is not from full backup")
+		}
+		if cfg.Online {
+			err = tableMappingManager.UpdateTempIDsFromInfoSchema(ctx, client.GetDomain())
 		}
 		err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 		if err != nil {

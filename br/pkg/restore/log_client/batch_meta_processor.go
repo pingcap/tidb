@@ -62,7 +62,9 @@ func NewRestoreMetaKVProcessor(client *LogClient, schemasReplace *stream.Schemas
 // RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
+	isOnline bool,
 	files []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
 ) error {
 	// starts gc row collector
 	rp.client.RunGCRowsLoader(ctx)
@@ -84,10 +86,15 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
-	// the latest schema update.
-	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
-		return errors.Trace(err)
+	if isOnline {
+
+	} else {
+		// TODO, use same technique to update schema as online
+		// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+		// the latest schema update.
+		if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
