@@ -601,6 +601,7 @@ const (
 		error BLOB,
 		modify_params json,
 		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -624,6 +625,7 @@ const (
 		error BLOB,
 		modify_params json,
 		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -1252,6 +1254,7 @@ const (
 	version242 = 242
 
 	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 )
 
@@ -3361,6 +3364,8 @@ func upgradeToVer243(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

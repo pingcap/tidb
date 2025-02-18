@@ -86,7 +86,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -144,6 +144,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("met error")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -160,6 +161,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("cancelled by user")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -229,7 +231,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 

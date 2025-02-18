@@ -46,7 +46,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()
-	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, "", 0, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {

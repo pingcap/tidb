@@ -5,7 +5,6 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager
 //
-
 // Package mock is a generated GoMock package.
 package mock
 
@@ -40,11 +39,6 @@ func NewMockScheduler(ctrl *gomock.Controller) *MockScheduler {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockScheduler) EXPECT() *MockSchedulerMockRecorder {
 	return m.recorder
-}
-
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockScheduler) ISGOMOCK() struct{} {
-	return struct{}{}
 }
 
 // Close mocks base method.
@@ -221,11 +215,6 @@ func (m *MockCleanUpRoutine) EXPECT() *MockCleanUpRoutineMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockCleanUpRoutine) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // CleanUp mocks base method.
 func (m *MockCleanUpRoutine) CleanUp(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -263,9 +252,18 @@ func (m *MockTaskManager) EXPECT() *MockTaskManagerMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockTaskManager) ISGOMOCK() struct{} {
-	return struct{}{}
+// AwaitingResolveTask mocks base method.
+func (m *MockTaskManager) AwaitingResolveTask(arg0 context.Context, arg1 int64, arg2 proto.TaskState, arg3 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AwaitingResolveTask", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AwaitingResolveTask indicates an expected call of AwaitingResolveTask.
+func (mr *MockTaskManagerMockRecorder) AwaitingResolveTask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AwaitingResolveTask", reflect.TypeOf((*MockTaskManager)(nil).AwaitingResolveTask), arg0, arg1, arg2, arg3)
 }
 
 // CancelTask mocks base method.

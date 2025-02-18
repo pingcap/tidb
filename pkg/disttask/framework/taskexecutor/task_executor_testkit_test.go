@@ -36,7 +36,7 @@ import (
 )
 
 func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
-	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", 0, nil)
+	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
