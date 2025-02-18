@@ -325,7 +325,7 @@ func generateInt32(num int, res []string) {
 		res = make([]string, num)
 	}
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(math.MinInt32+1, math.MaxInt32-1))
+		res[i] = strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
 	}
 }
 
