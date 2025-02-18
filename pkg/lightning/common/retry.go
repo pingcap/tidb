@@ -150,6 +150,9 @@ func isSingleRetryableError(err error) bool {
 			if strings.Contains(errMsg, "DiskSpaceNotEnough") {
 				return false
 			}
+			if strings.Contains(errMsg, "Keys must be added in strict ascending order") {
+				return false
+			}
 			// cases we have met during import:
 			// 1. in scatter region: rpc error: code = Unknown desc = region 31946583 is not fully replicated
 			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:
