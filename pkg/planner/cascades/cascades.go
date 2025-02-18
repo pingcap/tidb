@@ -90,7 +90,7 @@ func NewContext(pctx corebase.PlanContext) *Context {
 		// task pool management.
 		scheduler: task.NewSimpleTaskScheduler(),
 		// new rule mask.
-		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)),
+		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)).SetAll(),
 	}
 }
 
