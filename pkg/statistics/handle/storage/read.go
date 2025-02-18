@@ -56,11 +56,6 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	return count, modifyCount, false, nil
 }
 
-<<<<<<< HEAD
-// HistogramFromStorage reads histogram from storage.
-func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
-=======
 // HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
 func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
 	isIndex := 0
@@ -112,7 +107,6 @@ func HistogramFromStorageWithPriority(
 		selectPrefix += "low_priority "
 	}
 	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
->>>>>>> a44d4090645 (planner, stats: assign high priority for sync load related internal SQLs (#51636))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -579,50 +573,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
-<<<<<<< HEAD
-	hg, err := HistogramFromStorage(sctx, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cms, topN, err := CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-=======
-	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
-	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
-	if hg == nil || err != nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
-		return err
-	}
-	var (
-		cms  *statistics.CMSketch
-		topN *statistics.TopN
-		fms  *statistics.FMSketch
-	)
-	if fullLoad {
-		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cms, topN, err = CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if loadFMSketch {
-			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
->>>>>>> a44d4090645 (planner, stats: assign high priority for sync load related internal SQLs (#51636))
-	}
+
 	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -632,6 +583,23 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, column_id:%v", col.TableID, col.ID))
 	}
 	statsVer := rows[0].GetInt64(0)
+
+	hg, err := HistogramFromStorageWithPriority(sctx, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation, kv.PriorityNormal)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var fms *statistics.FMSketch
+	if loadFMSketch {
+		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	colHist := &statistics.Column{
 		PhysicalID: col.TableID,
 		Histogram:  *hg,
@@ -677,17 +645,17 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
-<<<<<<< HEAD
-	hg, err := HistogramFromStorage(sctx, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
-=======
-	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
-	if hgMeta == nil || err != nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
-		return err
+	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 1 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	idxInfo := tbl.ColAndIdxExistenceMap.GetIndex(idx.ID)
-	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
->>>>>>> a44d4090645 (planner, stats: assign high priority for sync load related internal SQLs (#51636))
+	if len(rows) == 0 {
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", idx.TableID), zap.Int64("index_id", idx.ID))
+		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, index_id:%v", idx.TableID, idx.ID))
+	}
+	statsVer := rows[0].GetInt64(0)
+
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation, kv.PriorityNormal)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -702,18 +670,18 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 			return errors.Trace(err)
 		}
 	}
-	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 1 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
-	if err != nil {
-		return errors.Trace(err)
+
+	idxHist := &statistics.Index{
+		Histogram:         *hg,
+		CMSketch:          cms,
+		TopN:              topN,
+		FMSketch:          fms,
+		Info:              index.Info,
+		StatsVer:          statsVer,
+		Flag:              index.Flag,
+		PhysicalID:        idx.TableID,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", idx.TableID), zap.Int64("index_id", idx.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, index_id:%v", idx.TableID, idx.ID))
-	}
-	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, StatsVer: rows[0].GetInt64(0),
-		Flag: index.Flag, PhysicalID: idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	tbl, ok = statsCache.Get(idx.TableID)
