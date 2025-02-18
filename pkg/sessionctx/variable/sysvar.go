@@ -1381,6 +1381,54 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHashJoin, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableHashJoin.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableHashJoin.Store(TiDBOptOn(val))
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableMergeJoin, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableMergeJoin.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableMergeJoin.Store(TiDBOptOn(val))
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableNestLoop, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableNestLoop.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableNestLoop.Store(TiDBOptOn(val))
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableIndexScan, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableIndexScan.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableIndexScan.Store(TiDBOptOn(val))
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableSeqScan, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableSeqScan.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableSeqScan.Store(TiDBOptOn(val))
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableIndexOnlyScan, Value: vardef.On, Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.EnableIndexOnlyScan.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.EnableIndexOnlyScan.Store(TiDBOptOn(val))
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableInstancePlanCache, Value: vardef.Off, Type: vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(vardef.EnableInstancePlanCache.Load()), nil
