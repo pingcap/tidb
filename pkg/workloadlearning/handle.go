@@ -126,11 +126,11 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 	// TODO save the workload job info such as start end time into workload_jobs table
 	// step1: create a new session, context, txn for saving table cost metrics
 	se, err := handle.sysSessionPool.Get()
-	defer handle.sysSessionPool.Put(se)
 	if err != nil {
 		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
 		return
 	}
+	defer handle.sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
