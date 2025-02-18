@@ -98,3 +98,16 @@ func TestPredCols(t *testing.T) {
 		}
 	}
 }
+
+func TestUnityVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	for _, v := range []string {
+		"enable_hashjoin", "enable_mergejoin", "enable_nestloop", "enable_indexscan", "enable_seqscan", "enable_indexonlyscan",
+	}{
+		tk.MustQuery(`select @@` + v).Check(testkit.Rows("1"))
+		tk.MustExec(`set global ` + v + `=0`)
+		tk.MustQuery(`select @@` + v).Check(testkit.Rows("0"))
+	}
+}
