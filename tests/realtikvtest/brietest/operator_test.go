@@ -204,8 +204,8 @@ func TestOperator(t *testing.T) {
 		Config: task.Config{
 			PD: []string{"127.0.0.1:2379"},
 		},
-		TTL:       5 * time.Minute,
-		SafePoint: oracle.GoTimeToTS(time.Now()),
+		TTL:         5 * time.Minute,
+		SafePoint:   oracle.GoTimeToTS(time.Now()),
 		SafePointID: utils.MakeSafePointID(),
 		OnAllReady: func() {
 			close(rd)
@@ -265,8 +265,8 @@ func TestFailure(t *testing.T) {
 		Config: task.Config{
 			PD: []string{"127.0.0.1:2379"},
 		},
-		TTL:       5 * time.Minute,
-		SafePoint: oracle.GoTimeToTS(time.Now()),
+		TTL:         5 * time.Minute,
+		SafePoint:   oracle.GoTimeToTS(time.Now()),
 		SafePointID: utils.MakeSafePointID(),
 	}
 
