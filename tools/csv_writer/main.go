@@ -14,7 +14,6 @@ import (
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +52,7 @@ const (
 	maxIndexLen    = 3072
 	totalOrdered   = "TOTAL ORDERED"
 	partialOrdered = "PARTIAL ORDERED"
+	totalRandom    = "TOTAL RANDOM"
 )
 
 var faker *gofakeit.Faker
@@ -131,11 +131,15 @@ func parseSQLSchema(schema string) []Column {
 			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
 			col.Len > uuidLen && col.Len < maxIndexLen {
 			col.IsUnique = true
+		} else if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") && strings.HasPrefix(col.Type, "BIGINT") {
+			col.IsUnique = true
 		}
 		if strings.Contains(strings.ToUpper(line), totalOrdered) {
 			col.Order = totalOrdered
 		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
 			col.Order = partialOrdered
+		} else if strings.Contains(strings.ToUpper(line), totalRandom) {
+			col.Order = totalRandom
 		}
 		columns = append(columns, col)
 	}
@@ -227,8 +231,6 @@ func extractStdMeanFromSQL(col *Column, s string) {
 
 func generateValueByCol(col Column, num int, res []string) {
 	switch {
-	case strings.HasPrefix(col.Type, "BIGINT"):
-		generateBigint(num, res, col.Order)
 	case strings.HasPrefix(col.Type, "INT"):
 		generateInt(num, res, col.StdDev)
 	case strings.HasPrefix(col.Type, "TINYINT"):
@@ -276,16 +278,21 @@ func generateLetterWithNum(len int, randomLen bool) string {
 	return builder.String()
 }
 
-func generateBigint(num int, res []string, order string) {
+func generateBigint(num int, res []string, order string, begin, end int) {
 	intRes := make([]int, num)
-	for i := 0; i < num; i++ {
-		intRes[i] = faker.Number(-9223372036854775808, 9223372036854775807) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B
+	idx := 0
+	for uk := begin; uk < end; uk++ { // [begin, end) total ordered
+		intRes[idx] = uk
+		idx++
 	}
 
-	if order == totalOrdered {
-		sort.Ints(intRes)
+	if order == totalRandom {
+		rand.Shuffle(num, func(i, j int) { intRes[i], intRes[j] = intRes[j], intRes[i] })
 	} else if order == partialOrdered {
-		sort.Ints(intRes[:len(res)-1])
+		unOrderIdx := faker.Number(0, num-2)
+		unOrderValue := intRes[unOrderIdx]
+		copy(intRes[unOrderIdx:], intRes[unOrderIdx+1:])
+		intRes[num-1] = unOrderValue
 	}
 	if len(res) < num {
 		res = make([]string, num)
@@ -703,6 +710,8 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 		for i, col := range task.cols {
 			if col.IsPK {
 				generatePrimaryKey(task.begin, task.end, values[i])
+			} else if strings.HasPrefix(col.Type, "BIGINT") && col.IsUnique {
+				generateBigint(count, values[i], col.Order, task.begin, task.end)
 			} else {
 				generateValueByCol(col, count, values[i])
 			}
