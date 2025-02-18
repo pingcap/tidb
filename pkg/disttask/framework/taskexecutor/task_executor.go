@@ -66,13 +66,13 @@ var (
 type Param struct {
 	taskTable TaskTable
 	slotMgr   *slotManager
-	nodeRc    *NodeResource
+	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeResource, execID string) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
@@ -290,7 +290,7 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Info("task concurrency modification applied",
 				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency),
 				zap.Int("availableSlots", e.slotMgr.availableSlots()))
-			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+			newResource := e.nodeRc.GetStepResource(newTask.Concurrency)
 
 			if e.stepExec != nil {
 				e.stepExec.SetResource(newResource)
@@ -359,7 +359,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		e.failOneSubtask(e.ctx, task.ID, err)
 		return errors.Trace(err)
 	}
-	resource := e.nodeRc.getStepResource(e.GetTaskBase().Concurrency)
+	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
 	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
@@ -549,7 +549,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 		// we need try to release the resource first, then free slots, to avoid
 		// OOM when manager starts other task executor and start to allocate memory
 		// immediately.
-		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			logger.Warn("failed to reduce resource usage", zap.Error(err))
 			return
@@ -572,7 +572,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			logger.Info("failed to exchange slots", zap.Int("availableSlots", e.slotMgr.availableSlots()))
 			return
 		}
-		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			exchanged := e.slotMgr.exchange(&oldTask.TaskBase)
 			intest.Assert(exchanged, "failed to return slots")

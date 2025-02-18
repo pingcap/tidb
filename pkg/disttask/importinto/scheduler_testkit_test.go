@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -48,7 +49,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NewNodeResource(16, 32*units.GiB))
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
@@ -182,7 +183,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NewNodeResource(16, 32*units.GiB))
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job

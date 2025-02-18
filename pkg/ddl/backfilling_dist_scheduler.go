@@ -23,6 +23,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -51,6 +53,7 @@ type LitBackfillScheduler struct {
 	*scheduler.BaseScheduler
 	d          *ddl
 	GlobalSort bool
+	nodeRes    *proto.NodeResource
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
@@ -59,6 +62,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, para
 	sch := LitBackfillScheduler{
 		d:             d,
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+		nodeRes:       param.GetNodeReource(),
 	}
 	return &sch
 }
@@ -125,6 +129,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
+		availableDiskUsage := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
+		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDiskUsage))))
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
