@@ -3985,10 +3985,12 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	tableId := tableReq.Executors[0].TblScan.TableId
-	indexReq.ExtraTableId = &tableId
-	indexReq.ExtraExecutors = tableReq.Executors
-	indexReq.ExtraOutputOffsets = tableReq.OutputOffsets
+	if is.Table.GetPartitionInfo() == nil && is.Table.IsCommonHandle == false {
+		tableId := tableReq.Executors[0].TblScan.TableId
+		indexReq.ExtraTableId = &tableId
+		indexReq.ExtraExecutors = tableReq.Executors
+		indexReq.ExtraOutputOffsets = tableReq.OutputOffsets
+	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
