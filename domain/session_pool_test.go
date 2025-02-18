@@ -23,7 +23,22 @@ import (
 
 func TestSessionPool(t *testing.T) {
 	f := func() (pools.Resource, error) { return &testResource{}, nil }
+<<<<<<< HEAD:domain/session_pool_test.go
 	pool := newSessionPool(1, f)
+=======
+	pool := util.NewSessionPool(
+		1, f,
+		func(r pools.Resource) {
+			r.(*testResource).refCount++
+		},
+		func(r pools.Resource) {
+			r.(*testResource).refCount--
+		},
+		func(r pools.Resource) {
+			r.(*testResource).refCount--
+		},
+	)
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546)):pkg/util/session_pool_test.go
 	tr, err := pool.Get()
 	require.NoError(t, err)
 	tr1, err := pool.Get()
