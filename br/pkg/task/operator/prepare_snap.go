@@ -123,7 +123,7 @@ func hintAllReady() {
 
 // AdaptEnvForSnapshotBackup blocks the current goroutine and pause the GC safepoint and remove the scheduler by the config.
 // This function will block until the context being canceled.
-func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig, spID string) error {
+func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	utils.DumpGoroutineWhenExit.Store(true)
 	mgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {
@@ -153,7 +153,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig, spID str
 	defer cx.Close()
 
 	initChan := make(chan struct{})
-	cx.run(func() error { return pauseGCKeeper(cx, spID) })
+	cx.run(func() error { return pauseGCKeeper(cx, cfg.SafePointID) })
 	cx.run(func() error {
 		log.Info("Pause scheduler waiting all connections established.")
 		select {
