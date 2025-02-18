@@ -247,8 +247,8 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
+	verifySchedulerNotStopped(req, cfg)
 	verifyTargetGCSafePointNotExist(req, cfg, spID)
-	verifyTargetGCSafePointExist(req, cfg, spID)
 }
 
 func TestFailure(t *testing.T) {
@@ -278,6 +278,6 @@ func TestFailure(t *testing.T) {
 	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg, spID)
 	require.Error(t, err)
 
-	verifyTargetGCSafePointNotExist(req, cfg, spID)
 	verifySchedulerNotStopped(req, cfg)
+	verifyTargetGCSafePointNotExist(req, cfg, spID)
 }
