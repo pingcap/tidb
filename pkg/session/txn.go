@@ -664,7 +664,7 @@ type txnFuture struct {
 	pipelined                       bool
 	pipelinedFlushConcurrency       int
 	pipelinedResolveLockConcurrency int
-	pipelinedFlushSpeedRatio        float64
+	pipelinedWriteThrottleRatio     float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -686,7 +686,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 			tikv.WithPipelinedTxn(
 				tf.pipelinedFlushConcurrency,
 				tf.pipelinedResolveLockConcurrency,
-				tf.pipelinedFlushSpeedRatio,
+				tf.pipelinedWriteThrottleRatio,
 			),
 		)
 	}

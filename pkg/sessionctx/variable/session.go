@@ -3164,7 +3164,9 @@ type PipelinedDMLConfig struct {
 	// PipelinedResolveLockConcurrency indicates the number of concurrent worker for pipelined resolve lock.
 	PipelinedResolveLockConcurrency int
 
-	// PipelinedWriteThrottleRatio throttles the rate of pipelined flush. 1 = no throttle.
+	// PipelinedWriteThrottleRatio defines how the flush process is throttled
+	// by adding sleep intervals between flushes, to avoid overwhelming the storage layer.
+	// It is defined as: throttle_ratio =  T_sleep / (T_sleep + T_flush)
 	PipelinedWriteThrottleRatio float64
 }
 
