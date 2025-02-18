@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,6 +52,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -233,6 +235,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -779,6 +782,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ForceMergeStep = true
 	}
 
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
+	}
+
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
 	// logic, so we only need to skip on the first chunk for each data file.
@@ -978,16 +988,16 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	csvConfig := &config.CSVConfig{
-		Separator: e.FieldsTerminatedBy,
+		FieldsTerminatedBy: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		Delimiter:   e.FieldsEnclosedBy,
-		Terminator:  e.LinesTerminatedBy,
-		NotNull:     false,
-		Null:        e.FieldNullDef,
-		Header:      false,
-		TrimLastSep: false,
-		EscapedBy:   e.FieldsEscapedBy,
-		StartingBy:  e.LinesStartingBy,
+		FieldsEnclosedBy:   e.FieldsEnclosedBy,
+		LinesTerminatedBy:  e.LinesTerminatedBy,
+		NotNull:            false,
+		FieldNullDefinedBy: e.FieldNullDef,
+		Header:             false,
+		TrimLastEmptyField: false,
+		FieldsEscapedBy:    e.FieldsEscapedBy,
+		LinesStartingBy:    e.LinesStartingBy,
 	}
 	if !e.InImportInto {
 		// for load data

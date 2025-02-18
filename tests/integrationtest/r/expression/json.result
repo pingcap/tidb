@@ -423,6 +423,26 @@ json_keys('{"a": {"c": 3}, "b": 2}'),
 json_keys('{"a": {"c": 3}, "b": 2}', "$.a");
 json_keys('[]')	json_keys('{}')	json_keys('{"a": 1, "b": 2}')	json_keys('{"a": {"c": 3}, "b": 2}')	json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
 NULL	[]	["a", "b"]	["a", "b"]	["c"]
+SELECT JSON_KEYS('[{"X": 1}, {"Y": 2}]', '$[1]');
+JSON_KEYS('[{"X": 1}, {"Y": 2}]', '$[1]')
+["Y"]
+SELECT JSON_KEYS('[{"A1": 1, "B1": 2, "C1": 3}, {"A2": 10, "B2": 20, "C2": {"D": 4}}, {"A3": 1, "B3": 2, "C3": 6}]', '$[1]');
+JSON_KEYS('[{"A1": 1, "B1": 2, "C1": 3}, {"A2": 10, "B2": 20, "C2": {"D": 4}}, {"A3": 1, "B3": 2, "C3": 6}]', '$[1]')
+["A2", "B2", "C2"]
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C');
+JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C')
+NULL
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C[1]');
+JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C[1]')
+["E"]
+SELECT JSON_KEYS('[{"A": 1, "B": 2}, {"C": 3, "D": [{"F": 5}, {"E": 55}]}]', '$[1].D[1]');
+JSON_KEYS('[{"A": 1, "B": 2}, {"C": 3, "D": [{"F": 5}, {"E": 55}]}]', '$[1].D[1]')
+["E"]
+SELECT JSON_KEYS('[{"X": 1}, {"Y": {"a": 1, "b": 2, "c": 3}}]', '$[1].Y');
+JSON_KEYS('[{"X": 1}, {"Y": {"a": 1, "b": 2, "c": 3}}]', '$[1].Y')
+["a", "b", "c"]
+SELECT JSON_KEYS('[{"X": 1}, {"Y": [a,b,c]}]', '$.Y');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 select
 json_length('1'),
 json_length('{}'),
