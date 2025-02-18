@@ -353,3 +353,7 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 	}
 	return fn(glueSession)
 }
+
+func (m *MockGlue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
+}
