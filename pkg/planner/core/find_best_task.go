@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"math"
 	"slices"
 	"strings"
@@ -717,6 +718,16 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
+
+	if !sctx.GetSessionVars().InRestrictedSQL && !vardef.EnableIndexOnlyScan.Load() {
+		if lhs.path.IsSingleScan && !rhs.path.IsSingleScan {
+			return 1, false
+		}
+		if !lhs.path.IsSingleScan && rhs.path.IsSingleScan {
+			return -1, false
+		}
+	}
+
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
