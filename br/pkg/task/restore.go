@@ -630,7 +630,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
-	} else if cfg.CheckRequirements {
+	} else if !client.IsIncremental() && cfg.CheckRequirements {
 		if err = checkTableExistence(ctx, mgr, tables, g); err != nil {
 			return errors.Trace(err)
 		}
