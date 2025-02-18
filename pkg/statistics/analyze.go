@@ -61,7 +61,9 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 }
 
 // AnalyzeResult is used to represent analyze result.
-// AnalyzeResult represents the analyze result of one column/index.
+// In version2 analyze, we use the following structure to represent the analyze result.
+// It represents the list of analyze result for all columns when isIndex is 0.
+// Also represents the list of analyze result for all indexes when idIndex is 1.
 type AnalyzeResult struct {
 	Hist    []*Histogram
 	Cms     []*CMSketch
@@ -84,8 +86,11 @@ func (a *AnalyzeResult) DestroyAndPutToPool() {
 type AnalyzeResults struct {
 	Err      error
 	ExtStats *ExtendedStatsColl
-	// The analyze results of each column/index.
 	Job      *AnalyzeJob
+	// The analyze results for the results of columns combine the results of indexes in version2.
+	// For example:
+	// If the tableA (c1, c2, c3) has indexes (c1, c2), (c2, c3), the result will be:
+	// Ars: [AnalyzeResult1[c1, c2, c3], AnalyzeResult2[c1_c2, c2_c3]]
 	Ars      []*AnalyzeResult
 	TableID  AnalyzeTableID
 	Count    int64
