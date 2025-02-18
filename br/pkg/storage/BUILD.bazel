@@ -56,7 +56,7 @@ go_library(
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//bloberror",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//blockblob",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//container",
-        "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//sas",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_go_resty_resty_v2//:resty",
         "@com_github_google_uuid//:uuid",
         "@com_github_klauspost_compress//gzip",
@@ -108,7 +108,6 @@ go_test(
     deps = [
         "//br/pkg/mock",
         "//pkg/util/intest",
-        "@com_github_apache_arrow_go_v12//arrow/endian",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/request",
