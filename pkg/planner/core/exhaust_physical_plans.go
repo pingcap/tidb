@@ -427,11 +427,11 @@ func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 	}
 }
 
-func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
+func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, ignoreEnableHashJoin bool) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL && !vardef.EnableHashJoin.Load() {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && !ignoreEnableHashJoin && !vardef.EnableHashJoin.Load() {
 		return
 	}
 
@@ -2114,14 +2114,14 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		joins = append(joins, indexJoins...)
 	}
 
-	hashJoins, forced := getHashJoins(p, prop)
+	hashJoins, forced := getHashJoins(p, prop, false)
 	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)
 
 	if len(joins) == 0 {
-		hashJoins, _ := getHashJoins(p, prop)
+		hashJoins, _ := getHashJoins(p, prop, true)
 		joins = append(joins, hashJoins...)
 	}
 
