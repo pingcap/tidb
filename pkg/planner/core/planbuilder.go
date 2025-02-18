@@ -1197,7 +1197,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			if ctx.GetSessionVars().InRestrictedSQL { // not an internal SQL
+			if !ctx.GetSessionVars().InRestrictedSQL { // not an internal SQL
 				if !vardef.EnableSeqScan.Load() && index.Primary {
 					continue
 				}

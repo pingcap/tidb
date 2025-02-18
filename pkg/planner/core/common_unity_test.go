@@ -143,9 +143,9 @@ func TestUnityEnableVars(t *testing.T) {
 	tk.MustExec(`set global enable_indexscan=1`)
 	tk.MustHavePlan(`select /*+ use_index(t1, a) */ a from t1`, `IndexFullScan`)
 
-	//tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
-	//tk.MustExec(`set global enable_seqscan=0`)
-	//tk.MustNotHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
-	//tk.MustExec(`set global enable_seqscan=1`)
-	//tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
+	tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
+	tk.MustExec(`set global enable_seqscan=0`)
+	tk.MustNotHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
+	tk.MustExec(`set global enable_seqscan=1`)
+	tk.MustHavePlan(`select /*+ use_index(t1, primary) */ a from t1`, `TableFullScan`)
 }
