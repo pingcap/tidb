@@ -26,6 +26,9 @@ type TableInfoGetter interface {
 	// TableInfoByID returns the table info specified by the physicalID.
 	// If the physicalID is corresponding to a partition, return its parent table.
 	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
+	// TableItemByID returns the schema name and table name specified by the physicalID.
+	// This is pure memory operation.
+	TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool)
 }
 
 // tableInfoGetterImpl is used to get table meta info.
@@ -46,4 +49,13 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 	}
 	tbl, _, _ = is.FindTableByPartitionID(physicalID)
 	return tbl, tbl != nil
+}
+
+// TableItemByID returns the lightweight table meta specified by the physicalID.
+func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool) {
+	tableItem, ok := is.TableItemByID(id)
+	if ok {
+		return tableItem, true
+	}
+	return is.TableItemByPartitionID(id)
 }
