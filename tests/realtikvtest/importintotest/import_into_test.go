@@ -1200,6 +1200,8 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
 		Content:     []byte("aaa,bbb"),
 	})
 	s.prepareAndUseDB("resolution")
+	// use default sql_mode
+	s.tk.MustExec("set @@sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 	s.tk.MustExec("create table t (a int primary key, b int);")
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://resolution/a.csv?endpoint=%s' with detached`, gcsEndpoint)
 	rows := s.tk.MustQuery(importSQL).Rows()
