@@ -1814,6 +1814,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				}
 			case ast.ConstraintVector:
 				err = e.createVectorIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+			case ast.ConstraintColumnar:
+				err = createColumnarIndex()
 			default:
 				// Nothing to do now.
 			}
@@ -4787,6 +4789,10 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	return errors.Trace(err)
 }
 
+func createColumnarIndex() error {
+	return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
+}
+
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
@@ -4836,6 +4842,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
+	}
+	if keyType == ast.IndexKeyTypeColumnar {
+		return createColumnarIndex()
 	}
 	if keyType == ast.IndexKeyTypeVector {
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
