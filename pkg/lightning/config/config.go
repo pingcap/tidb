@@ -58,6 +58,9 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendRemote is a constant for choosing the "Remote" backend in the configuration.
+	// In this mode, we write kv pairs to the remote worker.
+	BackendRemote = "remote"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -101,6 +104,7 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+	defaultRemoteBackendChunkSize    = 8 * 1024 * 104
 
 	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
@@ -159,7 +163,7 @@ func (d *DBStore) adjust(
 	s *Security,
 	tlsObj *common.TLS,
 ) error {
-	if i.Backend == BackendLocal {
+	if i.Backend == BackendLocal || i.Backend == BackendRemote {
 		if d.BuildStatsConcurrency == 0 {
 			d.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
@@ -222,7 +226,7 @@ func (d *DBStore) adjust(
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
 
-	mustHaveInternalConnections := i.Backend == BackendLocal
+	mustHaveInternalConnections := (i.Backend == BackendLocal || i.Backend == BackendRemote)
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if mustHaveInternalConnections && (d.Port <= 0 || len(d.PdAddr) == 0) {
 		var settings tidbcfg.Config
@@ -350,7 +354,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
-	case BackendLocal:
+	case BackendLocal, BackendRemote:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency
 		}
@@ -361,9 +365,9 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
-		// RegionConcurrency > NumCPU is meaningless.
+		// RegionConcurrency > NumCPU is meaningless for local backend.
 		cpuCount := runtime.NumCPU()
-		if l.RegionConcurrency > cpuCount {
+		if l.RegionConcurrency > cpuCount && i.Backend == BackendLocal {
 			l.RegionConcurrency = cpuCount
 		}
 	}
@@ -1086,8 +1090,9 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr    string `toml:"addr" json:"addr"`
-	Backend string `toml:"backend" json:"backend"`
+	Addr             string `toml:"addr" json:"addr"`
+	RemoteWorkerAddr string `toml:"remote-worker-addr" json:"remote-worker-addr"`
+	Backend          string `toml:"backend" json:"backend"`
 	// deprecated, use Conflict.Strategy instead.
 	OnDuplicate DuplicateResolutionAlgorithm `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs  int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
@@ -1121,13 +1126,21 @@ type TikvImporter struct {
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
+
+	ChunkSize       int    `toml:"chunk-size" json:"chunk-size"`
+	ChunkCacheDir   string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
+	ChunkCacheInMem bool   `toml:"chunk-cache-in-mem" json:"chunk-cache-in-mem"`
 }
 
 func (t *TikvImporter) adjust() error {
 	if t.Backend == "" {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
+
 	t.Backend = strings.ToLower(t.Backend)
+	if t.Backend == BackendRemote {
+		return common.ErrInvalidConfig.GenWithStack(`tikv-importer.backend = "remote" is not supported`)
+	}
 	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 	if !t.ParallelImport && t.IncrementalImport {
 		t.ParallelImport = t.IncrementalImport
@@ -1177,6 +1190,31 @@ func (t *TikvImporter) adjust() error {
 			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 		}
 
+		storageSizeDir := filepath.Clean(t.SortedKVDir)
+		sortedKVDirInfo, err := os.Stat(storageSizeDir)
+
+		switch {
+		case os.IsNotExist(err):
+		case err == nil:
+			if !sortedKVDirInfo.IsDir() {
+				return common.ErrInvalidConfig.
+					GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			}
+		default:
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+		}
+	case BackendRemote:
+		if t.ParallelImport && t.AddIndexBySQL {
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
+		}
+		if len(t.RemoteWorkerAddr) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.remote-worker-addr must not be empty!")
+		}
+
+		if len(t.SortedKVDir) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
+		}
 		storageSizeDir := filepath.Clean(t.SortedKVDir)
 		sortedKVDirInfo, err := os.Stat(storageSizeDir)
 
@@ -1514,6 +1552,7 @@ func NewConfig() *Config {
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
+			ChunkSize:               defaultRemoteBackendChunkSize,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1547,6 +1586,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.Filter = global.Mydumper.Filter
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
+	cfg.TikvImporter.RemoteWorkerAddr = global.TikvImporter.RemoteWorkerAddr
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
@@ -1649,4 +1689,24 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
+}
+
+// IsTiDBBackend returns true if using TiDB backend.
+func (cfg *Config) IsTiDBBackend() bool {
+	return cfg.TikvImporter.Backend == BackendTiDB
+}
+
+// IsLocalBackend returns true if using local backend.
+func (cfg *Config) IsLocalBackend() bool {
+	return cfg.TikvImporter.Backend == BackendLocal
+}
+
+// IsRemoteBackend returns true if using remote backend.
+func (cfg *Config) IsRemoteBackend() bool {
+	return cfg.TikvImporter.Backend == BackendRemote
+}
+
+// IsPhysicalBackend returns true if using physical import.
+func (cfg *Config) IsPhysicalBackend() bool {
+	return cfg.IsLocalBackend() || cfg.IsRemoteBackend()
 }
