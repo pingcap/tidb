@@ -16,6 +16,7 @@ package common
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -81,26 +82,28 @@ func (d DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte
 	dst = append(dst, rowID...)
 	rowIDLen := uint16(len(rowID))
 	dst = append(dst, byte(rowIDLen>>8), byte(rowIDLen))
-	d.Logger.Warn("[date0218] Encode", zap.ByteString("key", key), zap.ByteString("rowID", rowID), zap.ByteString("dst", dst))
+	if rowIDLen == 2048 {
+		d.Logger.Warn("[date0218] Encode", zap.Int("len(key)", len(key)), logutil.Key("key", key), logutil.Key("rowID", rowID), logutil.Key("dst", dst))
+	}
 	return dst
 }
 
 // Decode implements KeyAdapter.
 func (d DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	if len(data) < 2 {
-		d.Logger.Warn("[date0218] Decode error 1", zap.ByteString("data", data))
+		d.Logger.Warn("[date0218] Decode error 1", logutil.Key("data", data))
 		return nil, errors.New("insufficient bytes to decode value")
 	}
 	rowIDLen := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
 	tailLen := int(rowIDLen + 2)
 	if len(data) < tailLen {
-		d.Logger.Warn("[date0218] Decode error 2", zap.ByteString("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen))
+		d.Logger.Warn("[date0218] Decode error 2", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen))
 		return nil, errors.New("insufficient bytes to decode value")
 	}
 	_, key, err := codec.DecodeBytes(data[:len(data)-tailLen], dst[len(dst):cap(dst)])
 	if err != nil {
-		d.Logger.Warn("[date0218] Decode error 3", zap.ByteString("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen),
-			zap.ByteString("key", key), zap.Error(err))
+		d.Logger.Warn("[date0218] Decode error 3", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen),
+			logutil.Key("key", key), zap.Error(err))
 		return nil, err
 	}
 	if len(dst) == 0 {
