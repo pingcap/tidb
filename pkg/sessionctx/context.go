@@ -248,5 +248,5 @@ const (
 // function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`
 // statements that don't make reading operation immediately).
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
-	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{})
 }

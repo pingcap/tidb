@@ -563,7 +563,7 @@ func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, s
 
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
-	currVer, err := ctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

@@ -45,7 +45,7 @@ func TestEnterNewTxn(t *testing.T) {
 	tk.MustExec("create table t1(id int primary key)")
 	is1 := domain.GetDomain(tk.Session()).InfoSchema()
 	tk.MustExec("begin")
-	stalenessTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	stalenessTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec("create table t2(id int primary key)")
 

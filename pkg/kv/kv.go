@@ -704,8 +704,8 @@ type Storage interface {
 	Close() error
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
-	// CurrentVersion returns current max committed version with the given txnScope (local or global).
-	CurrentVersion(txnScope string) (Version, error)
+	// CurrentVersion returns current max committed version.
+	CurrentVersion() (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
@@ -718,8 +718,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (any, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
-	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
-	GetMinSafeTS(txnScope string) uint64
+	// GetMinSafeTS return the minimal SafeTS of the storage.
+	GetMinSafeTS() uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.

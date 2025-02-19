@@ -405,7 +405,7 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, _ := jobCtx.store.CurrentVersion()
 	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()

@@ -36,7 +36,7 @@ import (
 )
 
 func getTableMaxHandle(t *testing.T, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 	maxHandle, emptyTable, err := ddl.GetTableMaxHandle(ddl.NewReorgContext(), store, ver.Ver, tbl.(table.PhysicalTable))
 	require.NoError(t, err)

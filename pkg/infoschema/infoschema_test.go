@@ -115,7 +115,7 @@ func TestBasic(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 
-	ver, err := re.Store().CurrentVersion(kv.GlobalTxnScope)
+	ver, err := re.Store().CurrentVersion()
 	require.NoError(t, err)
 	is := builder.Build(ver.Ver)
 

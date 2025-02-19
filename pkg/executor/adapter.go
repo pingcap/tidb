@@ -1518,7 +1518,6 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 		})
 		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
 			StartTS:       sessVars.TxnCtx.StartTS,
 			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
 			RUConsumption: lastRUConsumption,

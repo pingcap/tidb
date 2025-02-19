@@ -778,7 +778,7 @@ func (do *Domain) Reload() error {
 	defer do.m.Unlock()
 
 	startTime := time.Now()
-	ver, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := do.store.CurrentVersion()
 	if err != nil {
 		return err
 	}

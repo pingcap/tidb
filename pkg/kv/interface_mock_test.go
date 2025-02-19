@@ -275,7 +275,7 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }
 
-func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+func (s *mockStorage) GetMinSafeTS() uint64 {
 	return 0
 }
 

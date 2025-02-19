@@ -608,7 +608,7 @@ func TestDBClose(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 	require.Equal(t, 1, kv.MaxVersion.Cmp(ver))
 

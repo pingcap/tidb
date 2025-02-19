@@ -163,7 +163,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 
 	require.Error(t, tk1.ExecToErr("commit"))
 
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 	require.NotNil(t, ver)
 

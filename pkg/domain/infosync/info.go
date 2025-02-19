@@ -773,7 +773,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
-	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	currentVer, err := store.CurrentVersion()
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 		return

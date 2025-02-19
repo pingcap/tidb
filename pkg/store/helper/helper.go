@@ -55,7 +55,7 @@ type Storage interface {
 	GetMPPClient() kv.MPPClient
 	Close() error
 	UUID() string
-	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentVersion() (kv.Version, error)
 	CurrentTimestamp(txnScop string) (uint64, error)
 	GetOracle() oracle.Oracle
 	SupportDeleteRange() (supported bool)
@@ -72,7 +72,7 @@ type Storage interface {
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
-	GetMinSafeTS(txnScope string) uint64
+	GetMinSafeTS() uint64
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
 	GetPDHTTPClient() pd.Client
@@ -167,7 +167,7 @@ func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*
 
 		// Try to resolve the lock and retry mvcc get again if the input startTS is a valid value.
 		if startTS > 0 && mvccResp.Info.GetLock() != nil {
-			latestTS, err := h.Store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			latestTS, err := h.Store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{})
 			if err != nil {
 				logutil.BgLogger().Warn("Failed to get latest ts", zap.Error(err))
 				return nil, err

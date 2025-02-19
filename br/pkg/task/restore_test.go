@@ -255,7 +255,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
-	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
@@ -266,7 +266,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	tk.MustExec("RENAME TABLE test_table1 to test_table;")
 	tk.MustExec("TRUNCATE TABLE test_table;")
 
-	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{
@@ -319,7 +319,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
-	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
@@ -330,7 +330,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	tk.MustExec("RENAME TABLE test_table1 to test_table;")
 	tk.MustExec("TRUNCATE TABLE test_table;")
 
-	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{

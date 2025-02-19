@@ -462,7 +462,7 @@ func TestSnapshot(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	ver1, _ := store.CurrentVersion(kv.GlobalTxnScope)
+	ver1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
 	m = meta.NewMutator(txn)

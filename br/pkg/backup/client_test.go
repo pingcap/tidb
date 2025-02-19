@@ -193,11 +193,11 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	s := createBackupSuite(t)
 
 	tk := testkit.NewTestKit(t, s.cluster.Storage)
-	lastTS1, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS1, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
-	lastTS2, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS2, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
@@ -208,10 +208,10 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	tk.MustExec("RENAME TABLE test_table1 to test_table;")
 	tk.MustExec("RENAME TABLE test_table to test_table2;")
 	tk.MustExec("RENAME TABLE test_table2 to test_table;")
-	lastTS3, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS3, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("TRUNCATE TABLE test_table;")
-	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 
 	checkFn := func(lastTS uint64, ts uint64, jobsCount int) {
@@ -254,7 +254,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.cluster.Storage)
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
-	lastTS, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	lastTS, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get last ts: %s", err)
 	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
 	tk.MustExec("DROP TABLE test_db.test_table1;")
@@ -270,7 +270,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	tk.MustExec("ALTER TABLE tb attributes \"merge_option=allow\"")
 	tk.MustExec("ALTER TABLE tb PARTITION p0 attributes \"merge_option=deny\"")
 
-	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoErrorf(t, err, "Error get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}

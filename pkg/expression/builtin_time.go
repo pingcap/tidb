@@ -7112,7 +7112,7 @@ func GetStmtMinSafeTime(sc *stmtctx.StatementContext, store kv.Storage, timeZone
 	var minSafeTS uint64
 	txnScope := config.GetTxnScopeFromConfig()
 	if store != nil {
-		minSafeTS = store.GetMinSafeTS(txnScope)
+		minSafeTS = store.GetMinSafeTS()
 	}
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {

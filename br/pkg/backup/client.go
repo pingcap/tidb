@@ -994,7 +994,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	version, err := store.CurrentVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}

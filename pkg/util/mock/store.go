@@ -50,7 +50,7 @@ func (*Store) Close() error { return nil }
 func (*Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (*Store) CurrentVersion(_ string) (kv.Version, error) { return kv.Version{}, nil }
+func (*Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
 func (*Store) SupportDeleteRange() bool { return false }
@@ -72,7 +72,7 @@ func (*Store) GetMemCache() kv.MemManager {
 func (*Store) ShowStatus(_ context.Context, _ string) (any, error) { return nil, nil }
 
 // GetMinSafeTS implements kv.Storage interface.
-func (*Store) GetMinSafeTS(_ string) uint64 {
+func (*Store) GetMinSafeTS() uint64 {
 	return 0
 }
 

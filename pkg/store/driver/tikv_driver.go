@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -392,8 +393,8 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 }
 
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
-	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+func (s *tikvStore) CurrentVersion() (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp()
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
 }
 

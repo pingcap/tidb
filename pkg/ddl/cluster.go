@@ -102,7 +102,7 @@ func recoverPDSchedule(ctx context.Context, pdScheduleParam map[string]any) erro
 }
 
 func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
-	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
+	minSafeTS := s.GetMinSafeTS()
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
@@ -113,7 +113,7 @@ func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
-	currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := sctx.GetStore().CurrentVersion()
 	if err != nil {
 		return errors.Errorf("fail to validate flashback timestamp: %v", err)
 	}
@@ -747,7 +747,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -791,7 +791,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 		args.LockedRegionCnt = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

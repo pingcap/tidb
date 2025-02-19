@@ -2189,11 +2189,11 @@ func TestHistoryRead(t *testing.T) {
 	// SnapshotTS Is not updated if check failed.
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
 
-	curVer1, _ := store.CurrentVersion(kv.GlobalTxnScope)
+	curVer1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
 	time.Sleep(time.Millisecond)
-	curVer2, _ := store.CurrentVersion(kv.GlobalTxnScope)
+	curVer2, _ := store.CurrentVersion()
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")

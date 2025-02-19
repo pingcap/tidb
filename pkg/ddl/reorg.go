@@ -844,7 +844,7 @@ func getTableRange(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable,
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {
