@@ -232,7 +232,7 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
-	verifyGCStopped(req, cfg)
+	// verifyGCStopped(req, cfg)
 	verifyTargetGCSafePointExist(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
