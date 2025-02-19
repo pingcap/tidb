@@ -230,12 +230,17 @@ func extractStdMeanFromSQL(col *Column, s string) {
 	col.Mean = mean
 }
 
-func generateValueByCol(col Column, num int, res []string) {
+// Generate data for each column
+func (t *Task) generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "INT"):
 		generateInt(num, res, col.StdDev)
 	case strings.HasPrefix(col.Type, "BIGINT"):
-		generateBigintNoDist(num, res)
+		if col.IsUnique {
+			generateBigint(num, res, col.Order, t.begin, t.end)
+		} else {
+			generateBigintNoDist(num, res)
+		}
 	case strings.HasPrefix(col.Type, "TINYINT"):
 	case strings.HasPrefix(col.Type, "BOOLEAN"):
 		generateTinyint1(num, res)
@@ -422,8 +427,6 @@ func generatePrimaryKey(begin, end int, res []string) {
 	idx := 0
 	for key := begin; key < end; key++ {
 		res[idx] = strconv.Itoa(key)
-		// Uncomment the following line for debugging:
-		// log.Printf("Primary key at index %d has value %d", idx, key)
 		idx++
 	}
 }
@@ -736,10 +739,8 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 		for i, col := range task.cols {
 			if col.IsPK {
 				generatePrimaryKey(task.begin, task.end, values[i])
-			} else if strings.HasPrefix(col.Type, "BIGINT") && col.IsUnique {
-				generateBigint(count, values[i], col.Order, task.begin, task.end)
 			} else {
-				generateValueByCol(col, count, values[i])
+				task.generateValueByCol(col, count, values[i])
 			}
 		}
 		log.Printf("Generator %d: Processed %s, primary key range [%d, %d), generated %d rows, elapsed time: %v",
