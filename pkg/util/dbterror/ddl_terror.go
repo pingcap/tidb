@@ -50,7 +50,7 @@ var (
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = ClassDDL.NewStd(mysql.ErrRepairTable)
 
-	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
+	// ErrUnsupportedAddVectorIndex means add columnar index is unsupported
 	ErrUnsupportedAddVectorIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add vector index: %s"), nil))
 	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
 	ErrUnsupportedAddColumnarIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add columnar index: %s"), nil))
