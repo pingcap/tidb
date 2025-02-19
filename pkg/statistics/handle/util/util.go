@@ -86,7 +86,7 @@ var (
 func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := pool.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
@@ -98,7 +98,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	}()
 	sctx := se.(sessionctx.Context)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
+		return errors.Trace(err)
 	}
 
 	wrapTxn := false
@@ -112,7 +112,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	} else {
 		err = f(sctx)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
