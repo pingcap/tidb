@@ -59,7 +59,7 @@ var faker *gofakeit.Faker
 
 // Initialize Faker instance
 func init() {
-	faker = gofakeit.New(time.Now().Unix())
+	faker = gofakeit.New(time.Now().UnixNano())
 }
 
 type Column struct {
