@@ -750,7 +750,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 				}
 				break
 			}
-			fmt.Printf("Record value: %s\n", record[idx])
+			//fmt.Printf("Record value: %s\n", record[idx])
 			hash := crc32.ChecksumIEEE([]byte(record[idx]))
 			if _, ok := m[hash]; !ok {
 				m[hash] = struct{}{}
