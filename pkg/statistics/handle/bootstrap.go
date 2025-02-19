@@ -341,6 +341,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache uti
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 
@@ -458,6 +461,9 @@ func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Tas
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -706,6 +712,9 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)

@@ -1613,6 +1613,13 @@ func (p *sessionPool) Put(resource pools.Resource) {
 	}
 }
 
+// Destroy destroys the session.
+func (p *sessionPool) Destroy(resource pools.Resource) {
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
+	resource.Close()
+}
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
@@ -2383,7 +2390,7 @@ func (do *Domain) initStats() {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.String("error", fmt.Sprintf("%+v", err)))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2439,7 +2446,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.BgLogger().Warn("load histograms failed", zap.String("error", fmt.Sprintf("%+v", err)))
 			}
 		case <-do.exit:
 			return

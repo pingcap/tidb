@@ -65,6 +65,7 @@ var (
 type SessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
+	Destroy(pools.Resource)
 }
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
@@ -93,6 +94,9 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
