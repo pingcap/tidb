@@ -220,6 +220,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		}
 
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
+		start := time.Now()
 		tableCount := 0
 		dbs := is.AllSchemaNames()
 		for _, db := range dbs {
