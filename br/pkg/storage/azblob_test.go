@@ -247,8 +247,10 @@ func TestNewAzblobStorage(t *testing.T) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc3dk",
 		}
-		_, err := getAzureServiceClientBuilder(options, nil)
-		require.Error(t, err)
+		builder, err := getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		_, ok := builder.(*defaultClientBuilder)
+		require.True(t, ok, "it is %T", builder)
 	}
 
 	err = os.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
