@@ -2289,10 +2289,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	do.SetStatsUpdating(true)
 	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
+	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.updateStatsWorker() }, "updateStatsWorker")
+	do.wg.Run(func() { do.gcStatsWorker(owner) }, "gcStatsWorker")
 	do.wg.Run(func() {
 		do.handleDDLEvent()
 	}, "handleDDLEvent")
@@ -2476,7 +2478,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2484,7 +2486,6 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
 		statsHandle.FlushStats()
 		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
-		owner.Cancel()
 		ch <- struct{}{}
 	}()
 	select {
@@ -2497,24 +2498,14 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 	}
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
-	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
-	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
-	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
-	updateStatsHealthyTicker := time.NewTicker(20 * lease)
-	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
-		gcStatsTicker.Stop()
-		deltaUpdateTicker.Stop()
-		readMemTricker.Stop()
-		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -2523,31 +2514,13 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
+			do.updateStatsWorkerExitPreprocessing(statsHandle)
 			return
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
-			if err != nil {
-				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
-			}
-		case <-gcStatsTicker.C:
-			if !owner.IsOwner() {
-				continue
-			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
-			if err != nil {
-				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
-			}
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
 				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
-
-		case <-readMemTricker.C:
-			memory.ForceReadMemStats()
-		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
 		}
 	}
 }
@@ -2565,6 +2538,104 @@ func (do *Domain) handleDDLEvent() {
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) gcStatsWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+	logutil.BgLogger().Info("gcStatsWorker started.")
+	lease := do.statsLease
+	gcStatsTicker := time.NewTicker(100 * lease)
+	updateStatsHealthyTicker := time.NewTicker(20 * lease)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
+	statsHandle := do.StatsHandle()
+	defer func() {
+		gcStatsTicker.Stop()
+		readMemTricker.Stop()
+		updateStatsHealthyTicker.Stop()
+		do.SetStatsUpdating(false)
+		logutil.BgLogger().Info("gcStatsWorker exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+
+	for {
+		select {
+		case <-do.exit:
+			do.gcStatsWorkerExitPreprocessing(owner)
+			return
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			if err != nil {
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
+			}
+		case <-readMemTricker.C:
+			memory.ForceReadMemStats()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) gcStatsWorkerExitPreprocessing(owner owner.Manager) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("gcStatsWorker ready to release owner")
+		owner.Cancel()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("gcStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("deltaUpdateTicker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("deltaUpdateTicker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("deltaUpdateTicker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorker() {
+	defer util.Recover(metrics.LabelDomain, "deltaUpdateTickerWorker", nil, false)
+	logutil.BgLogger().Info("deltaUpdateTickerWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
 		}
 	}
