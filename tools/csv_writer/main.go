@@ -657,7 +657,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 			if _, ok := m[hash]; !ok {
 				m[hash] = struct{}{}
 			} else {
-				log.Fatal("duplicate value", record[idx])
+				log.Fatal("duplicate value: ", record[idx])
 				return
 			}
 		}
