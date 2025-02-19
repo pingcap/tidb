@@ -4827,9 +4827,6 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	return data, nil
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
-=======
 type userVariableChecker struct {
 	hasUserVariables bool
 }
@@ -4856,8 +4853,7 @@ func checkForUserVariables(in ast.Node) error {
 	return nil
 }
 
-func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
->>>>>>> 153d5aaa385 (planner: Do not allow variables in create view (#57474))
+func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
 	case *ast.AlterDatabaseStmt:
