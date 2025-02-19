@@ -219,9 +219,8 @@ func TestCreateView(t *testing.T) {
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
-	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[schema:1050]Table 'test.v1' already exists")
-	tk.MustExec("drop view v1")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1", "[ddl:1351]View's SELECT contains a variable or parameter")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[ddl:1351]View's SELECT contains a variable or parameter")
 	// view with different col counts
 	tk.MustGetErrCode("create view v1 (c,d,e) as select a,b from t1 ", errno.ErrViewWrongList)
 	tk.MustGetErrCode("create view v1 (c) as select a,b from t1 ", errno.ErrViewWrongList)
