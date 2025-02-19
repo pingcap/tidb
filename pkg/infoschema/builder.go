@@ -19,7 +19,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -57,6 +59,8 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+
+	updateReferenceForeignKeys bool
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -382,6 +386,40 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
+}
+
+func (b *Builder) markFKUpdated(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) {
+	if b.shouldUpdateFKInfo(m, oldTableID, newTableID, dbInfo) {
+		b.updateReferenceForeignKeys = true
+	}
+}
+
+func (b *Builder) shouldUpdateFKInfo(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) bool {
+	if !tableIDIsValid(oldTableID) || !tableIDIsValid(newTableID) || oldTableID != newTableID {
+		return true
+	}
+
+	oldTable, ok := b.infoschemaV2.TableByID(context.Background(), oldTableID)
+	if !ok {
+		return true
+	}
+	newTableInfo, err := m.GetTable(dbInfo.ID, newTableID)
+	if err != nil || newTableInfo == nil {
+		return true
+	}
+	oldTableInfo := oldTable.Meta()
+
+	// If the foreign key is changed, we need to update the foreign key info.
+	if len(newTableInfo.ForeignKeys) != len(oldTableInfo.ForeignKeys) {
+		return true
+	}
+	sort.Slice(newTableInfo.ForeignKeys, func(i, j int) bool {
+		return newTableInfo.ForeignKeys[i].ID < newTableInfo.ForeignKeys[j].ID
+	})
+	sort.Slice(oldTableInfo.ForeignKeys, func(i, j int) bool {
+		return oldTableInfo.ForeignKeys[i].ID < oldTableInfo.ForeignKeys[j].ID
+	})
+	return !reflect.DeepEqual(newTableInfo.ForeignKeys, oldTableInfo.ForeignKeys)
 }
 
 func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
@@ -986,6 +1024,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
+		if b.updateReferenceForeignKeys {
+			b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
+		}
 		b.infoData.add(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,

@@ -249,7 +249,6 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 			btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
 		}
 	}
-	isd.addReferredForeignKeys(item.dbName, ti, item.schemaVersion)
 	if infoschemacontext.HasSpecialAttributes(ti) {
 		btreeSet(&isd.tableInfoResident, tableInfoItem{
 			dbName:        item.dbName,
@@ -1546,6 +1545,7 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 		return nil, err
 	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+	b.markFKUpdated(m, oldTableID, newTableID, oldDBInfo)
 
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
@@ -1599,7 +1599,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 
-	b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
+	if b.updateReferenceForeignKeys {
+		b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
+	}
+
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
 			btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
