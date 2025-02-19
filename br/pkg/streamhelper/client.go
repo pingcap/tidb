@@ -56,6 +56,7 @@ func (t RFC3339Time) String() string {
 	return time.Time(t).Format(time.RFC3339)
 }
 
+// NewLocalPauseV2 creates a new `PauseV2` that ready to be attached to a paused task.
 func NewLocalPauseV2() *PauseV2 {
 	pid := os.Getpid()
 	hostName, err := os.Hostname()
@@ -71,15 +72,28 @@ func NewLocalPauseV2() *PauseV2 {
 	}
 }
 
+// PauseV2 is extra information attached to a paused task.
 type PauseV2 struct {
-	Severity         string      `json:"severity"`
-	OperatorHostName string      `json:"operation_hostname"`
-	OperatorPID      int         `json:"operation_pid"`
-	OperationTime    RFC3339Time `json:"operation_time"`
-	PayloadType      string      `json:"payload_type"`
-	Payload          []byte      `json:"payload"`
+	// Severity is the severity of this pause.
+	// `SeverityError`: The task encounters some fatal errors and have to be paused.
+	// `SeverityRegularOperation`: The task was paused by a normal operation.
+	Severity string `json:"severity"`
+	// OperatorHostName is the hostname that pauses the task.
+	OperatorHostName string `json:"operation_hostname"`
+	// OperatorPID is the pid of the operator process.
+	OperatorPID int `json:"operation_pid"`
+	// OperationTime is the time when the task was paused.
+	OperationTime RFC3339Time `json:"operation_time"`
+	// PayloadType is the mime type of the payload.
+	// For now, only the two types are supported:
+	// - application/x-protobuf?messagetype=brpb.StreamBackupError
+	// - text/plain
+	PayloadType string `json:"payload_type"`
+	// Payload is the payload attached to the pause.
+	Payload []byte `json:"payload"`
 }
 
+// GetPayload returns the payload attached to the pause.
 // The returned value should be one of `string` or `*backuppb.StreamBackupError`.
 func (p *PauseV2) GetPayload() (any, error) {
 	m, param, err := mime.ParseMediaType(p.PayloadType)
@@ -110,6 +124,7 @@ func (p *PauseV2) GetPayload() (any, error) {
 	}
 }
 
+// DisplayTable prints human-friendly records to the provided function.
 func (p *PauseV2) DisplayTable(display func(string, string)) {
 	display("pause-time", p.OperationTime.String())
 	display("pause-operator", p.OperatorHostName)
@@ -134,6 +149,12 @@ func (p *PauseV2) DisplayTable(display func(string, string)) {
 func (p *PauseV2) SetTextMessage(t string) {
 	p.PayloadType = "text/plain;charset=UTF-8"
 	p.Payload = []byte(t)
+}
+
+func (p *PauseV2) SetBakcupStreamError(berr *backuppb.StreamBackupError) (err error) {
+	p.PayloadType = "application/x-protobuf;messagetype=brpb.StreamBackupError"
+	p.Payload, err = proto.Marshal(berr)
+	return err
 }
 
 // Checkpoint is the polymorphic checkpoint type.
