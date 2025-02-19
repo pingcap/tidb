@@ -242,11 +242,13 @@ func (t *Task) generateValueByCol(col Column, num int, res []string) {
 			generateBigintNoDist(num, res)
 		}
 	case strings.HasPrefix(col.Type, "TINYINT"):
+		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "BOOLEAN"):
 		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
 		generateTimestamp(num, res)
 	case strings.HasPrefix(col.Type, "VARBINARY"):
+		generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "VARCHAR"):
 		generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
