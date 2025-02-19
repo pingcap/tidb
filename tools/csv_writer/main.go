@@ -679,6 +679,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 				case <-cancelChan: // Exit early if a duplicate was found
 					return
 				default:
+					mu.Lock()
 					if _, ok := m[hash]; !ok {
 						m[hash] = struct{}{}
 					} else {
