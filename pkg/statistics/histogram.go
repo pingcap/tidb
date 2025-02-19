@@ -1599,6 +1599,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				}
 			} else {
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
+				// slices.Reverse(mergeBuffer)
+				intest.AssertFunc(func() bool {
+					for i := 0; i < len(mergeBuffer); i++ {
+						res, err := mergeBuffer[i].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+						if err != nil {
+							return false
+						}
+						if res != 0 {
+							return false
+						}
+					}
+					return true
+				}, "the buckets are not sorted actually")
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				if err != nil {
