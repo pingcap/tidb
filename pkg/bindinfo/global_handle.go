@@ -110,14 +110,9 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-<<<<<<< HEAD
-	sPool util.SessionPool
+	sPool util.DestroyableSessionPool
 
 	fuzzyBindingCache atomic.Value
-=======
-	sPool        util.DestroyableSessionPool
-	bindingCache BindingCache
->>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -155,8 +150,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-<<<<<<< HEAD
-func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
 	handle := &globalBindingHandle{sPool: sPool}
 	handle.Reset()
 	return handle
@@ -173,10 +167,6 @@ func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
-=======
-func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
-	h := &globalBindingHandle{sPool: sPool}
->>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindings = newInvalidBindingCache()
 	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))

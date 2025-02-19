@@ -249,13 +249,8 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-<<<<<<< HEAD
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
-=======
-		if vardef.StatsLoadPseudoTimeout.Load() {
 			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
->>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
