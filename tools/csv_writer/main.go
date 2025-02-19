@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"hash/crc32"
 	"io/ioutil"
 	"log"
 	"math"
@@ -616,6 +617,47 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, *localPath)
 }
 
+func checkCSVUniqueness(credentialPath, fileName string) {
+	m := map[uint32]struct{}{}
+	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	s, err := storage.ParseBackend(*gcsDir, &op)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	if err != nil {
+		panic(err)
+	}
+
+	res, err := store.ReadFile(context.Background(), "testCSVWriter.000000000.csv")
+	if err != nil {
+		panic(err)
+	}
+	// Assuming res contains CSV data as []byte, convert it to string and split by newlines
+	// (In case the file is already in CSV format, or you need to write CSV data)
+	reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
+	// Read the CSV records from the []byte data
+	idx := 0
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err.Error() != "EOF" {
+				panic(fmt.Errorf("failed to read CSV from file: %v", err))
+			}
+			break
+		}
+		fmt.Printf("record value %s", record[idx])
+		hash := crc32.ChecksumIEEE([]byte(record[idx]))
+		if _, ok := m[hash]; !ok {
+			m[hash] = struct{}{}
+		} else {
+			log.Fatal("duplicate value", record[idx])
+			return
+		}
+	}
+	log.Printf("Check success, no duplicate value")
+}
+
 // Write CSV to local disk (column-oriented)
 func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) error {
 	file, err := os.Create(filename)
@@ -829,6 +871,8 @@ func generateTotalRandomBigintForPk(num int, path string) {
 func main() {
 	// Parse command-line arguments.
 	flag.Parse()
+	checkCSVUniqueness(*credentialPath, "")
+	return
 
 	// List files in GCS directory if showFile is true
 	if *showFile {
