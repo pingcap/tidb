@@ -944,10 +944,11 @@ func constructSQLBindOPFromPlanDigest(
 	if err != nil {
 		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(originNode, schema, false)
+	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, schema, query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, schema)
-	sqlDigestWithDBStr := sqlDigestWithDB
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+	sqlDigestWithDBStr := sqlDigestWithDB.String()
 	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
 			planDigest + " is ignored because it corresponds to the same SQL digest as another Plan Digest",
