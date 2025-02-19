@@ -298,7 +298,7 @@ func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, prob
 			isAllKeyInteger = false
 			if prop.keyLength == chunk.VarElemLen {
 				// keep var column by default for var length column, otherwise,
-				// if there are 2 var columns, [a, aa] and [aa, a] can not be distinguished
+				// if there are 2 var columns, row [a, aa] and row [aa, a] can not be distinguished
 				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
 			} else {
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
