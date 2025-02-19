@@ -8,7 +8,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"go.uber.org/zap"
 )
 
 func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error) {
@@ -24,6 +26,8 @@ func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error
 	if err != nil {
 		return err
 	}
+
+	logutil.BgLogger().Error("RecordInactiveBindings", zap.Int("rows", len(rows)))
 
 	for _, row := range rows {
 		query := row.GetString(1)
