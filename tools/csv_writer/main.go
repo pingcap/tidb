@@ -717,7 +717,7 @@ func checkCSVUniqueness1(credentialPath, f string) {
 }
 
 func checkCSVUniqueness(credentialPath, f string) {
-	m := map[uint32]struct{}{}
+	m := map[uint32]string{}
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
@@ -753,9 +753,9 @@ func checkCSVUniqueness(credentialPath, f string) {
 			//fmt.Printf("Record value: %s\n", record[idx])
 			hash := crc32.ChecksumIEEE([]byte(record[idx]))
 			if _, ok := m[hash]; !ok {
-				m[hash] = struct{}{}
+				m[hash] = fileName
 			} else {
-				log.Fatal("duplicate value: ", record[idx])
+				log.Fatal("duplicate value: ", record[idx], " in file: ", fileName, " and file: ", m[hash])
 				return
 			}
 		}
