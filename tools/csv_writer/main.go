@@ -285,7 +285,7 @@ func generateBigintNoDist(num int, res []string) {
 		res = make([]string, num)
 	}
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(-9223372036854775808, 9223372036854775807)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
+		res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
 	}
 }
 
