@@ -871,8 +871,8 @@ func generateTotalRandomBigintForPk(num int, path string) {
 func main() {
 	// Parse command-line arguments.
 	flag.Parse()
-	checkCSVUniqueness(*credentialPath, "")
-	return
+	//checkCSVUniqueness(*credentialPath, "")
+	//return
 
 	// List files in GCS directory if showFile is true
 	if *showFile {
