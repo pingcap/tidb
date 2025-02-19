@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -100,7 +100,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	if !enabeld {
-		handler.WriteError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
+		handler.WriteError(w, fmt.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats))
 		return
 	}
 

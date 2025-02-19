@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
@@ -47,13 +48,13 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 	// With the server.
 	sv := &variable.SysVar{
 		Name:  "conn_ip_example_key",
-		Scope: variable.ScopeGlobal | variable.ScopeSession,
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Value: "v1",
-		Type:  variable.TypeStr, // default.
+		Type:  vardef.TypeStr, // default.
 		// (Optional) specifying a validation function helps to normalize the value before setting it.
 		// The "normalizedValue" applies if the value has a Type associated, where some formatting may have already
 		// been applied. i.e. TypeBool: ON/oN/1/on -> ON
-		Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+		Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			fmt.Println("The validation function was called")
 			return strings.ToLower(normalizedValue), nil
 		},

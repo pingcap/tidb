@@ -114,9 +114,13 @@ func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSche
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	profile := &property.StatsInfo{
 		RowCount: float64(p.RowCount),
@@ -126,7 +130,7 @@ func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 		profile.ColNDVs[col.UniqueID] = float64(p.RowCount)
 	}
 	p.SetStats(profile)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

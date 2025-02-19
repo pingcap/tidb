@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -600,6 +600,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -622,6 +623,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -859,6 +861,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1242,11 +1246,18 @@ const (
 
 	// Add index on user field for some mysql tables.
 	version241 = 241
+
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version243 = 243
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version243
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1423,6 +1434,8 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
+		upgradeToVer243,
 	}
 )
 
@@ -1513,52 +1526,6 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-func checkDistTask(s sessiontypes.Session, ver int64) {
-	if ver > version195 {
-		// since version195 we enable dist task by default, no need to check
-		return
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	if req.NumRows() == 0 {
-		// Not set yet.
-		return
-	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
-			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
-	}
-
-	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
-	rs2, err := s.ExecuteInternal(ctx, `SELECT id FROM %n.%n WHERE state not in (%?, %?, %?)`,
-		mysql.SystemDB,
-		"tidb_global_task",
-		proto.TaskStateSucceed,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-	)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs2.Close)
-	req = rs2.NewChunk(nil)
-	err = rs2.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	if req.NumRows() > 0 {
-		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
-	}
-}
-
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
@@ -1576,7 +1543,6 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
@@ -1657,7 +1623,7 @@ func upgradeToVer2(s sessiontypes.Session, ver int64) {
 	}
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
-	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
+	distSQLVars := []string{vardef.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
 		value := fmt.Sprintf(`("%s", "%s")`, v, variable.GetSysVar(v).Value)
@@ -1946,7 +1912,7 @@ func upgradeToVer25(s sessiontypes.Session, ver int64) {
 		return
 	}
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefInitChunkSize)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBMaxChunkSize, vardef.DefInitChunkSize)
 	mustExecute(s, sql)
 }
 
@@ -2029,7 +1995,7 @@ func upgradeToVer35(s sessiontypes.Session, ver int64) {
 		return
 	}
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_NAME = '%s' WHERE VARIABLE_NAME = 'tidb_back_off_weight'",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBBackOffWeight)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBBackOffWeight)
 	mustExecute(s, sql)
 }
 
@@ -2049,7 +2015,7 @@ func upgradeToVer37(s sessiontypes.Session, ver int64) {
 	}
 	// when upgrade from old tidb and no 'tidb_enable_window_function' in GLOBAL_VARIABLES, init it with 0.
 	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableWindowFunction, 0)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableWindowFunction, 0)
 	mustExecute(s, sql)
 }
 
@@ -2105,12 +2071,12 @@ func upgradeToVer42(s sessiontypes.Session, ver int64) {
 // Convert statement summary global variables to non-empty values.
 func writeStmtSummaryVars(s sessiontypes.Session) {
 	sql := "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''"
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBEnableStmtSummary), variable.TiDBEnableStmtSummary)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBStmtSummaryInternalQuery), variable.TiDBStmtSummaryInternalQuery)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryRefreshInterval), variable.TiDBStmtSummaryRefreshInterval)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryHistorySize), variable.TiDBStmtSummaryHistorySize)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(vardef.DefTiDBEnableStmtSummary), vardef.TiDBEnableStmtSummary)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(vardef.DefTiDBStmtSummaryInternalQuery), vardef.TiDBStmtSummaryInternalQuery)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(vardef.DefTiDBStmtSummaryRefreshInterval), vardef.TiDBStmtSummaryRefreshInterval)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(vardef.DefTiDBStmtSummaryHistorySize), vardef.TiDBStmtSummaryHistorySize)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(vardef.DefTiDBStmtSummaryMaxStmtCount), 10), vardef.TiDBStmtSummaryMaxStmtCount)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(vardef.DefTiDBStmtSummaryMaxSQLLength), 10), vardef.TiDBStmtSummaryMaxSQLLength)
 }
 
 func upgradeToVer43(s sessiontypes.Session, ver int64) {
@@ -2174,7 +2140,7 @@ func upgradeToVer53(s sessiontypes.Session, ver int64) {
 	}
 	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
 	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableStrictDoubleTypeCheck, 0)
 	mustExecute(s, sql)
 }
 
@@ -2208,13 +2174,13 @@ func upgradeToVer55(s sessiontypes.Session, ver int64) {
 		return
 	}
 	defValues := map[string]string{
-		variable.TiDBIndexLookupConcurrency:     "4",
-		variable.TiDBIndexLookupJoinConcurrency: "4",
-		variable.TiDBHashAggFinalConcurrency:    "4",
-		variable.TiDBHashAggPartialConcurrency:  "4",
-		variable.TiDBWindowConcurrency:          "4",
-		variable.TiDBProjectionConcurrency:      "4",
-		variable.TiDBHashJoinConcurrency:        "5",
+		vardef.TiDBIndexLookupConcurrency:     "4",
+		vardef.TiDBIndexLookupJoinConcurrency: "4",
+		vardef.TiDBHashAggFinalConcurrency:    "4",
+		vardef.TiDBHashAggPartialConcurrency:  "4",
+		vardef.TiDBWindowConcurrency:          "4",
+		vardef.TiDBProjectionConcurrency:      "4",
+		vardef.TiDBHashJoinConcurrency:        "5",
 	}
 	names := make([]string, 0, len(defValues))
 	for n := range defValues {
@@ -2242,7 +2208,7 @@ func upgradeToVer55(s sessiontypes.Session, ver int64) {
 	terror.MustNil(err)
 
 	mustExecute(s, "BEGIN")
-	v := strconv.Itoa(variable.ConcurrencyUnset)
+	v := strconv.Itoa(vardef.ConcurrencyUnset)
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
 	for _, name := range names {
 		mustExecute(s, fmt.Sprintf(sql, v, name))
@@ -2275,7 +2241,7 @@ func initBindInfoTable(s sessiontypes.Session) {
 func insertBuiltinBindInfoRow(s sessiontypes.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
-		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.StatusBuiltin, bindinfo.StatusBuiltin,
 	)
 }
 
@@ -2375,7 +2341,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		db := row.GetString(1)
 		status := row.GetString(2)
 
-		if status != bindinfo.Enabled && status != bindinfo.Using && status != bindinfo.Builtin {
+		if status != bindinfo.StatusEnabled && status != bindinfo.StatusUsing && status != bindinfo.StatusBuiltin {
 			continue
 		}
 
@@ -2499,7 +2465,7 @@ func upgradeToVer74(s sessiontypes.Session, ver int64) {
 		return
 	}
 	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
-	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", variable.DefTiDBStmtSummaryMaxStmtCount))
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", vardef.DefTiDBStmtSummaryMaxStmtCount))
 }
 
 func upgradeToVer75(s sessiontypes.Session, ver int64) {
@@ -2549,7 +2515,7 @@ func upgradeToVer80(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeVersion, 1)
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 1)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
@@ -2560,7 +2526,7 @@ func upgradeToVer81(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
-	initGlobalVariableIfNotExists(s, variable.TiDBEnableIndexMerge, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableIndexMerge, vardef.Off)
 }
 
 func upgradeToVer82(s sessiontypes.Session, ver int64) {
@@ -2588,7 +2554,7 @@ func upgradeToVer85(s sessiontypes.Session, ver int64) {
 	if ver >= version85 {
 		return
 	}
-	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
+	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.StatusEnabled, bindinfo.StatusUsing))
 }
 
 func upgradeToVer86(s sessiontypes.Session, ver int64) {
@@ -2640,17 +2606,17 @@ func upgradeToVer90(s sessiontypes.Session, ver int64) {
 		return
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
-	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+	importConfigOption(s, "enable-batch-dml", vardef.TiDBEnableBatchDML, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
-	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
+	importConfigOption(s, "mem-quota-query", vardef.TiDBMemQuotaQuery, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
-	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
+	importConfigOption(s, "query-log-max-len", vardef.TiDBQueryLogMaxLen, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
-	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
+	importConfigOption(s, "committer-concurrency", vardef.TiDBCommitterConcurrency, valStr)
 	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
-	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
+	importConfigOption(s, "run-auto-analyze", vardef.TiDBEnableAutoAnalyze, valStr)
 	valStr = config.GetGlobalConfig().OOMAction
-	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+	importConfigOption(s, "oom-action", vardef.TiDBMemOOMAction, valStr)
 }
 
 func upgradeToVer91(s sessiontypes.Session, ver int64) {
@@ -2658,13 +2624,13 @@ func upgradeToVer91(s sessiontypes.Session, ver int64) {
 		return
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
-	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
+	importConfigOption(s, "prepared-plan-cache.enable", vardef.TiDBEnablePrepPlanCache, valStr)
 
 	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
-	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
+	importConfigOption(s, "prepared-plan-cache.capacity", vardef.TiDBPrepPlanCacheSize, valStr)
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
-	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", vardef.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
 }
 
 func upgradeToVer93(s sessiontypes.Session, ver int64) {
@@ -2672,7 +2638,7 @@ func upgradeToVer93(s sessiontypes.Session, ver int64) {
 		return
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().OOMUseTmpStorage)
-	importConfigOption(s, "oom-use-tmp-storage", variable.TiDBEnableTmpStorageOnOOM, valStr)
+	importConfigOption(s, "oom-use-tmp-storage", vardef.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
 func upgradeToVer94(s sessiontypes.Session, ver int64) {
@@ -2695,7 +2661,7 @@ func upgradeToVer97(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBOptRangeMaxSize, 0)
+	initGlobalVariableIfNotExists(s, vardef.TiDBOptRangeMaxSize, 0)
 }
 
 func upgradeToVer98(s sessiontypes.Session, ver int64) {
@@ -2707,12 +2673,12 @@ func upgradeToVer98(s sessiontypes.Session, ver int64) {
 
 func upgradeToVer99Before(s sessiontypes.Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableMDL, 0)
 }
 
 func upgradeToVer99After(s sessiontypes.Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -2726,7 +2692,7 @@ func upgradeToVer100(s sessiontypes.Session, ver int64) {
 		return
 	}
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
-	importConfigOption(s, "performance.server-memory-quota", variable.TiDBServerMemoryLimit, valStr)
+	importConfigOption(s, "performance.server-memory-quota", vardef.TiDBServerMemoryLimit, valStr)
 }
 
 func upgradeToVer101(s sessiontypes.Session, ver int64) {
@@ -2764,7 +2730,7 @@ func upgradeToVer105(s sessiontypes.Session, ver int64) {
 	if ver >= version105 {
 		return
 	}
-	initGlobalVariableIfNotExists(s, variable.TiDBCostModelVersion, "1")
+	initGlobalVariableIfNotExists(s, vardef.TiDBCostModelVersion, "1")
 }
 
 func upgradeToVer106(s sessiontypes.Session, ver int64) {
@@ -2798,7 +2764,7 @@ func upgradeToVer109(s sessiontypes.Session, ver int64) {
 		return
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
 // For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
@@ -2807,7 +2773,7 @@ func upgradeToVer110(s sessiontypes.Session, ver int64) {
 		return
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBStatsLoadPseudoTimeout, 1)
 }
 
 func upgradeToVer130(s sessiontypes.Session, ver int64) {
@@ -2837,18 +2803,18 @@ func upgradeToVer133(s sessiontypes.Session, ver int64) {
 		return
 	}
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.DefTiDBServerMemoryLimit, vardef.TiDBServerMemoryLimit, "0")
 }
 
 func upgradeToVer134(s sessiontypes.Session, ver int64) {
 	if ver >= version134 {
 		return
 	}
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
-	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.ForeignKeyChecks, vardef.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableForeignKey, vardef.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableHistoricalStats, vardef.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnablePlanReplayerCapture, vardef.On)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", vardef.TiDBStoreBatchSize, "0")
 }
 
 // For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
@@ -2856,7 +2822,7 @@ func upgradeToVer135(s sessiontypes.Session, ver int64) {
 	if ver >= version135 {
 		return
 	}
-	initGlobalVariableIfNotExists(s, variable.TiDBOptAdvancedJoinHint, false)
+	initGlobalVariableIfNotExists(s, vardef.TiDBOptAdvancedJoinHint, false)
 }
 
 func upgradeToVer136(s sessiontypes.Session, ver int64) {
@@ -2877,7 +2843,7 @@ func upgradeToVer138(s sessiontypes.Session, ver int64) {
 	if ver >= version138 {
 		return
 	}
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBOptimizerEnableNAAJ, vardef.On)
 }
 
 func upgradeToVer139(sessiontypes.Session, int64) {}
@@ -2898,7 +2864,7 @@ func upgradeToVer141(s sessiontypes.Session, ver int64) {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPrepPlanCacheSize)
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBPrepPlanCacheSize)
 	terror.MustNil(err)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
@@ -2912,15 +2878,15 @@ func upgradeToVer141(s sessiontypes.Session, ver int64) {
 	val := row.GetString(0)
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBSessionPlanCacheSize, val)
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBLoadBasedReplicaReadThreshold, variable.DefTiDBLoadBasedReplicaReadThreshold.String())
+		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBSessionPlanCacheSize, val)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBLoadBasedReplicaReadThreshold, vardef.DefTiDBLoadBasedReplicaReadThreshold.String())
 }
 
 func upgradeToVer142(s sessiontypes.Session, ver int64) {
 	if ver >= version142 {
 		return
 	}
-	initGlobalVariableIfNotExists(s, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNonPreparedPlanCache, vardef.Off)
 }
 
 func upgradeToVer143(s sessiontypes.Session, ver int64) {
@@ -2936,7 +2902,7 @@ func upgradeToVer144(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	initGlobalVariableIfNotExists(s, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheInvalidationOnFreshStats, vardef.Off)
 }
 
 func upgradeToVer146(s sessiontypes.Session, ver int64) {
@@ -3078,7 +3044,7 @@ func upgradeToVer177(s sessiontypes.Session, ver int64) {
 	}
 	// ignore error when upgrading from v7.4 to higher version.
 	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
-	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncMergeGlobalStats, variable.Off)
+	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats, vardef.Off)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer177 error", zap.Error(err))
 	}
@@ -3155,7 +3121,7 @@ func upgradeToVer191(s sessiontypes.Session, ver int64) {
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
 		mysql.SystemDB, mysql.GlobalVariablesTable,
-		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+		vardef.TiDBTxnMode, vardef.OptimisticTxnMode)
 	mustExecute(s, sql)
 }
 
@@ -3218,7 +3184,7 @@ func upgradeToVer209(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	initGlobalVariableIfNotExists(s, variable.TiDBResourceControlStrictMode, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBResourceControlStrictMode, vardef.Off)
 }
 
 func upgradeToVer210(s sessiontypes.Session, ver int64) {
@@ -3228,11 +3194,11 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, ast.AllColumns.String())
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeColumnOptions, ast.AllColumns.String())
 
 	// Check if tidb_opt_projection_push_down exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_opt_projection_push_down to Off since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBOptProjectionPushDown, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBOptProjectionPushDown, vardef.Off)
 }
 
 func upgradeToVer211(s sessiontypes.Session, ver int64) {
@@ -3298,7 +3264,7 @@ func upgradeToVer215(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
 }
 
 func upgradeToVer216(s sessiontypes.Session, ver int64) {
@@ -3365,6 +3331,38 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+
+	writeClusterID(s)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3385,7 +3383,7 @@ func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any)
 func writeOOMAction(s sessiontypes.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, vardef.OOMActionLog, comment, vardef.OOMActionLog,
 	)
 }
 
@@ -3617,6 +3615,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

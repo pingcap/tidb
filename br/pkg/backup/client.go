@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -347,10 +348,18 @@ mainLoop:
 					// resolve all txn lock before next round starts
 					if len(allTxnLocks) > 0 {
 						bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
-						_, err = bc.mgr.GetLockResolver().ResolveLocks(bo.Inner(), 0, allTxnLocks)
+						_, ignoreLocks, accessLocks, err := bc.mgr.GetLockResolver().ResolveLocksForRead(bo.Inner(), loop.BackupReq.EndVersion, allTxnLocks, true)
 						if err != nil {
 							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
 								zap.Uint64("round", round), zap.Error(err))
+						} else {
+							// context is nil when doing raw/txn backup
+							if loop.BackupReq.Context != nil {
+								// send resolved locks to next round backup request
+								// so that backup scanner can skip these ignore locks next time.
+								loop.BackupReq.Context.ResolvedLocks = append(loop.BackupReq.Context.ResolvedLocks, ignoreLocks...)
+								loop.BackupReq.Context.CommittedLocks = append(loop.BackupReq.Context.CommittedLocks, accessLocks...)
+							}
 						}
 						reset = false
 					}
@@ -691,7 +700,7 @@ func (bc *Client) SetApiVersion(v kvrpcpb.APIVersion) {
 	bc.apiVersion = v
 }
 
-// Client.BuildBackupRangeAndSchema calls BuildBackupRangeAndSchema,
+// BuildBackupRangeAndSchema calls BuildBackupRangeAndInitSchema,
 // if the checkpoint mode is used, return the ranges from checkpoint meta
 func (bc *Client) BuildBackupRangeAndSchema(
 	storage kv.Storage,
@@ -730,7 +739,7 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 	return nil
 }
 
-// BuildBackupRangeAndSchema gets KV range and schema of tables.
+// BuildBackupRangeAndInitSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
 func BuildBackupRangeAndInitSchema(
@@ -1240,9 +1249,14 @@ func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *m
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)
+			cfCount := make(map[string]int)
 			for _, f := range r.Files {
+				cfCount[f.Cf] += 1
 				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			}
+			for cf, count := range cfCount {
+				summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
 			}
 			// we need keep the files in order after we support multi_ingest sst.
 			// default_sst and write_sst need to be together.

@@ -89,6 +89,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			TaskKey:    TaskKey(jobID),
 			TaskType:   proto.ImportInto,
 			ThreadCnt:  plan.ThreadCnt,
+			MaxNodeCnt: plan.MaxNodeCnt,
 		}
 		p := planner.NewPlanner()
 		taskID, err2 = p.Run(planCtx, logicalPlan)

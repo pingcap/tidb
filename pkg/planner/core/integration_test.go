@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -173,6 +173,219 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, 0, res[0])
+}
+
+func TestCast4PartitionPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`drop table if exists t_ts`)
+	tk.MustExec(`drop table if exists t_hash`)
+	tk.MustExec(`drop table if exists t_range_col`)
+	tk.MustExec("drop table if exists t_range_col_v2")
+
+	tk.MustExec(`create table t(a int, b int, c int) partition by range(a) (
+    partition p1 values less than (100),
+    partition p2 values less than (200),
+    partition pm values less than (MAXVALUE));`)
+	// case 1: range partition
+	// 1.1.1 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123" and "199";`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123), le(cast(test.t.a, double BINARY), 199)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.2 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123.12" and "199.99";`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 199.99)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.3 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "ddd" and "99";`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p1 data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 99)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p1         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.4 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123.12" and cast("199.99" as decimal);`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p2,pm data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2,pm      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.2.1 test between castIntAsDecimal(int) and decimal
+	tk.MustQuery(`explain select * from t where a between 123.12 and 199.99;`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, decimal(10,0) BINARY), 123.12), le(cast(test.t.a, decimal(10,0) BINARY), 199.99)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 2: range partition, but not support expression
+	tk.MustExec(`create table t_ts (report_updated timestamp) partition by range(unix_timestamp(report_updated)) (
+		partition p1 values less than (1732982400), -- 2024-12-01 00:00:00
+		partition p2 values less than (1733068800), -- 2024-12-02 00:00:00
+		partition pm values less than (MAXVALUE));`)
+	tk.MustExec("insert into t_ts values('2024-11-30 00:00:00'), ('2024-12-01 00:00:00'), ('2024-12-02 00:00:00')")
+	tk.MustQuery("select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows("2024-12-01 00:00:00"))
+	tk.MustQuery("explain select * from t_ts where report_updated = 20241201").Check(testkit.Rows(
+		"TableReader_7 10.00 root partition:p2 data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows(
+		"TableReader_7 10.00 root partition:p2 data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00.000000)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+	rs := tk.MustQuery("explain select * from t_ts where report_updated > unix_timestamp('2008-05-01 00:00:00')").Rows()
+	require.Equal(t, rs[0][3], "partition:all")
+	//MysQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_ts  | p1,p2,pm   | ALL  | NULL          | NULL | NULL    | NULL |    3 |    33.33 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 3: hash partition
+	tk.MustExec(`CREATE TABLE t_hash(a int, b int) PARTITION BY HASH(a) PARTITIONS 6`)
+	tk.MustExec(`insert into t_hash values(1, 1), (10, 10), (26, 26)`)
+	tk.MustQuery(`select * from t_hash where a = '1'`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`explain select * from t_hash where a = '1'`).Check(testkit.Rows(
+		"TableReader_7 10.00 root partition:p1 data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t_hash.a, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_hash keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table  | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_hash | p1         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 4: range columns partition
+	tk.MustExec(`CREATE TABLE t_range_col(a int, b int)
+		PARTITION BY RANGE COLUMNS(a) (
+      		PARTITION p_100 VALUES LESS THAN (100),
+     		PARTITION p_200 VALUES LESS THAN (200),
+			PARTITION p_300 VALUES LESS THAN (300),
+			PARTITION p_max VALUES LESS THAN MAXVALUE
+		);`)
+	tk.MustExec(`insert into t_range_col values(1, 1), (100, 100), (200, 200);`)
+	// 4.1.1 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between '100' and '199';`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between '100' and '199'`).Check(testkit.Rows(
+		"TableReader_7 8000.00 root partition:p_200 data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 100), le(cast(test.t_range_col.a, double BINARY), 199)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_200      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.2 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "ddd" and "199";`).Sort().Check(testkit.Rows("1 1", "100 100"))
+	tk.MustQuery(`explain select * from t where a between "ddd" and "199";`).Check(testkit.Rows(
+		"TableReader_7 8000.00 root partition:p1,p2 data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 199)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200 | ALL  | NULL          | NULL | NULL    | NULL |    2 |    50.00 | Using where |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.3 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "23.12" and "199.99";`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between "23.12" and "199.99";`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:p_100,p_200 data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 23.12), le(cast(test.t_range_col.a, double BINARY), 199.99)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200 | ALL  | NULL          | NULL | NULL    | NULL |    2 |    50.00 | Using where |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.4 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "23.12" and cast("199.99" as decimal);`).Sort().Check(testkit.Rows("100 100", "200 200"))
+	tk.MustQuery(`explain select * from t where a between "23.12" and cast("199.99" as decimal);`).Check(
+		testkit.Rows("TableReader_7 8000.00 root partition:all data:Selection_6",
+			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 23.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions        | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200,p_300 | ALL  | NULL          | NULL | NULL    | NULL |    3 |    33.33 | Using where |
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.2.1 test between castIntAsDecimal(int) and decimal
+	tk.MustQuery(`select * from t_range_col where a between 100.00 and 199.99;`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between 100.00 and 199.99`).Check(testkit.Rows(
+		"TableReader_7 8000.00 root partition:p_200 data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, decimal(10,0) BINARY), 100.00), le(cast(test.t_range_col.a, decimal(10,0) BINARY), 199.99)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_200      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 5: test range column partition, and partition key is non-numeric type
+	tk.MustExec(`CREATE TABLE t_range_col_v2(a varchar(12), b int)
+		PARTITION BY RANGE COLUMNS(a) (
+      		PARTITION p_111 VALUES LESS THAN ('111'),
+     		PARTITION p_555 VALUES LESS THAN ('555'),
+			PARTITION p_999 VALUES LESS THAN ('999'),
+			PARTITION p_max VALUES LESS THAN MAXVALUE
+		);`)
+	tk.MustExec(`insert into t_range_col_v2 values('111', 1), ('222', 1), ('333', 1), ('444', 1), ('555', 1), ('666', 1), ('777', 1);`)
+	tk.MustQuery(`select * from t_range_col_v2 where a between 111 and 444;`).Sort().Check(testkit.Rows(
+		"111 1", "222 1", "333 1", "444 1"))
+	// all partitions are visited, because `a` col's collation is utf8mb4_bin, while constant's collation is binary.
+	tk.MustQuery(`explain select * from t_range_col_v2 where a between 111 and 444;`).Check(testkit.Rows(
+		"TableReader_7 8000.00 root partition:all data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col_v2.a, double BINARY), 111), le(cast(test.t_range_col_v2.a, double BINARY), 444)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col_v2 keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table          | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col_v2 | NULL       | ALL  | NULL          | NULL | NULL    | NULL |    7 |    14.29 | Using where |
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
 }
 
 func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
@@ -1035,7 +1248,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
@@ -1043,7 +1256,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// Disabled when tiflash_fine_grained_shuffle_stream_count is -1.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
@@ -2332,4 +2545,37 @@ func TestIssue58829(t *testing.T) {
 
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (p int, o int, v int not null);")
+	tk.MustExec("insert into test.t values (0, 0, -1), (1, 0, -1), (1, 1, 0), (1, 3, 4), (1, 6, 6), (1, 7, -5), (1, 8, 3), (1, 18, 1), (1, 30, 30), (2, 0, 2), (2, 1, 0), (2, 4, -4), (2, 7, -2), (2, 8, 1), (2, 15, 2), (2, 30, -11), (3, 0, 7), (3, 4, -3), (3, 6, 9), (3, 10, -9), (3, 20, -3), (3, 40, 2), (3, 41, 1), (4, 0, 4), (5, 0, -5), (6, 0, 2), (6, 10, 5), (6, 30, 0), (7, 0, 3), (7, 1, 3), (7, 2, 2), (7, 3, -4), (7, 4, 9);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	rows := [][]any{
+		{"TableReader_24", "root", "MppVersion: 3, data:ExchangeSender_23"},
+		{"└─ExchangeSender_23", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
+		{"    └─Window_22", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_14", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_13", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_12", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_11", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,9 +75,9 @@ func TestBindCache(t *testing.T) {
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	kvSize := int(binding.size())
 	defer func(v int64) {
-		variable.MemQuotaBindingCache.Store(v)
-	}(variable.MemQuotaBindingCache.Load())
-	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
+		vardef.MemQuotaBindingCache.Store(v)
+	}(vardef.MemQuotaBindingCache.Load())
+	vardef.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
 	bindCache := newBindCache()
 	defer bindCache.Close()
 

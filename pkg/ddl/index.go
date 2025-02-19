@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"os"
 	"slices"
@@ -27,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -46,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -56,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -77,7 +82,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdHttp "github.com/tikv/pd/client/http"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -1115,9 +1119,6 @@ SwitchIndexState:
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
 		logutil.DDLLogger().Info("run add index job done",
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
@@ -1290,14 +1291,12 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-		if err != nil {
+		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
+			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 			return model.ReorgTypeNone, err
 		}
-		if available {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
-		}
+		job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+		return model.ReorgTypeLitMerge, nil
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
@@ -1308,7 +1307,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -1397,9 +1396,6 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateMerging
 		}
-		if reorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
@@ -1460,7 +1456,7 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 }
 
 func isRetryableJobError(err error, jobErrCnt int64) bool {
-	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
 	return isRetryableError(err)
@@ -1530,7 +1526,7 @@ func runReorgJobAndHandleErr(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
 			}, false)
-		return w.addTableIndex(jobCtx.stepCtx, tbl, reorgInfo)
+		return w.addTableIndex(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -2393,20 +2389,19 @@ func (w *worker) addPhysicalTableIndex(
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+	ctx := jobCtx.stepCtx
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(ctx, t, reorgInfo)
+			err := w.executeDistTask(jobCtx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
-			//nolint:forcetypeassert
-			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
+			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
 	}
 
@@ -2449,15 +2444,20 @@ func (w *worker) addTableIndex(
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, discovery sd.ServiceDiscovery) error {
-	var bc ingest.BackendCtx
-	var err error
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
+	var (
+		backendCtx ingest.BackendCtx
+		cfg        *local.BackendConfig
+		backend    *local.Backend
+	)
 	defer func() {
-		if bc != nil {
-			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+		if backendCtx != nil {
+			backendCtx.Close()
+		}
+		if backend != nil {
+			backend.Close()
 		}
 	}()
-
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
@@ -2465,14 +2465,21 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		}
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
-			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS)
+			if backendCtx == nil {
+				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+					ForDuplicateCheck().
+					Build(cfg, backend)
 				if err != nil {
 					return err
 				}
 			}
-			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			err = backendCtx.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			if err != nil {
 				return err
 			}
@@ -2481,11 +2488,12 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
 
+	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(w.workCtx)
@@ -2508,12 +2516,17 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		return err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(w.workCtx, taskKey)
-	if err != nil && err != storage.ErrTaskNotFound {
+	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return err
 	}
+
+	var (
+		taskID                                            int64
+		lastConcurrency, lastBatchSize, lastMaxWriteSpeed int
+	)
 	if task != nil {
 		// It's possible that the task state is succeed but the ddl job is paused.
-		// When task in succeed state, we can skip the dist task execution/scheduing process.
+		// When task in succeed state, we can skip the dist task execution/scheduling process.
 		if task.State == proto.TaskStateSucceed {
 			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
@@ -2521,6 +2534,14 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 				zap.String("task-key", taskKey))
 			return nil
 		}
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return errors.Trace(err)
+		}
+		taskID = task.ID
+		lastConcurrency = task.Concurrency
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
+		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 		g.Go(func() error {
 			defer close(done)
 			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -2543,12 +2564,11 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-		cpuCount, err := handle.GetCPUCountOfNode(ctx)
+		workerCntLimit := job.ReorgMeta.GetConcurrency()
+		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
 			return err
 		}
-		concurrency := min(workerCntLimit, cpuCount)
 		logutil.DDLLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
@@ -2566,9 +2586,21 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 			return err
 		}
 
+		targetScope := reorgInfo.ReorgMeta.TargetScope
+		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
+		task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, metaData)
+		if err != nil {
+			return err
+		}
+
+		taskID = task.ID
+		lastConcurrency = concurrency
+		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
+		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+
 		g.Go(func() error {
 			defer close(done)
-			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+			err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -2613,8 +2645,123 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 			}
 		}
 	})
+
+	g.Go(func() error {
+		modifyTaskParamLoop(ctx, jobCtx.sysTblMgr, taskManager, done,
+			reorgInfo.Job.ID, taskID, lastConcurrency, lastBatchSize, lastMaxWriteSpeed)
+		return nil
+	})
+
 	err = g.Wait()
 	return err
+}
+
+// Note: we can achieve the same effect by calling ModifyTaskByID directly inside
+// the process of 'ADMIN ALTER DDL JOB xxx', so we can eliminate the goroutine,
+// but if the task hasn't been created we need to make sure the task is created
+// with config after ALTER DDL JOB is executed. A possible solution is to make
+// the DXF task submission and 'ADMIN ALTER DDL JOB xxx' txn conflict with each
+// other when they overlap in time, by modify the job at the same time when submit
+// task, as we are using optimistic txn. But this will cause WRITE CONFLICT with
+// outer txn in transitOneJobStep.
+func modifyTaskParamLoop(
+	ctx context.Context,
+	sysTblMgr systable.Manager,
+	taskManager storage.Manager,
+	done chan struct{},
+	jobID, taskID int64,
+	lastConcurrency, lastBatchSize, lastMaxWriteSpeed int,
+) {
+	logger := logutil.DDLLogger().With(zap.Int64("jobId", jobID), zap.Int64("taskId", taskID))
+	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+
+		latestJob, err := sysTblMgr.GetJobByID(ctx, jobID)
+		if err != nil {
+			if goerrors.Is(err, systable.ErrNotFound) {
+				logger.Info("job not found, might already finished")
+				return
+			}
+			logger.Error("get job failed, will retry later", zap.Error(err))
+			continue
+		}
+
+		modifies := make([]proto.Modification, 0, 3)
+		workerCntLimit := latestJob.ReorgMeta.GetConcurrency()
+		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
+		if err != nil {
+			logger.Error("adjust concurrency failed", zap.Error(err))
+			continue
+		}
+		if concurrency != lastConcurrency {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyConcurrency,
+				To:   int64(concurrency),
+			})
+		}
+		batchSize := latestJob.ReorgMeta.GetBatchSize()
+		if batchSize != lastBatchSize {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyBatchSize,
+				To:   int64(batchSize),
+			})
+		}
+		maxWriteSpeed := latestJob.ReorgMeta.GetMaxWriteSpeed()
+		if maxWriteSpeed != lastMaxWriteSpeed {
+			modifies = append(modifies, proto.Modification{
+				Type: proto.ModifyMaxWriteSpeed,
+				To:   int64(maxWriteSpeed),
+			})
+		}
+		if len(modifies) == 0 {
+			continue
+		}
+		currTask, err := taskManager.GetTaskByID(ctx, taskID)
+		if err != nil {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
+				logger.Info("task not found, might already finished")
+				return
+			}
+			logger.Error("get task failed, will retry later", zap.Error(err))
+			continue
+		}
+		if !currTask.State.CanMoveToModifying() {
+			// user might modify param again while another modify is ongoing.
+			logger.Info("task state is not suitable for modifying, will retry later",
+				zap.String("state", currTask.State.String()))
+			continue
+		}
+		if err = taskManager.ModifyTaskByID(ctx, taskID, &proto.ModifyParam{
+			PrevState:     currTask.State,
+			Modifications: modifies,
+		}); err != nil {
+			logger.Error("modify task failed", zap.Error(err))
+			continue
+		}
+		logger.Info("modify task success",
+			zap.Int("oldConcurrency", lastConcurrency), zap.Int("newConcurrency", concurrency),
+			zap.Int("oldBatchSize", lastBatchSize), zap.Int("newBatchSize", batchSize),
+			zap.String("oldMaxWriteSpeed", units.HumanSize(float64(lastMaxWriteSpeed))),
+			zap.String("newMaxWriteSpeed", units.HumanSize(float64(maxWriteSpeed))),
+		)
+		lastConcurrency = concurrency
+		lastBatchSize = batchSize
+		lastMaxWriteSpeed = maxWriteSpeed
+	}
+}
+
+func adjustConcurrency(ctx context.Context, taskMgr storage.Manager, workerCnt int) (int, error) {
+	cpuCount, err := taskMgr.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return min(workerCnt, cpuCount), nil
 }
 
 // EstimateTableRowSizeForTest is used for test.
@@ -2725,8 +2872,8 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 }
 
 // submitAndWaitTask submits a task and wait for it to finish.
-func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) error {
-	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, taskMeta)
 	if err != nil {
 		return err
 	}

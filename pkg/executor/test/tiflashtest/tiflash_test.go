@@ -884,7 +884,6 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
-	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
 }
 
@@ -1409,7 +1408,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 		conf.DisaggregatedTiFlash = false
 		conf.UseAutoScaler = false
 	})
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1429,7 +1428,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
@@ -1448,7 +1447,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	})
 
 	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.InvalidASStr, "tmpAddr", "tmpClusterID", false)
 	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1589,7 +1588,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	useASs := []bool{true, false}

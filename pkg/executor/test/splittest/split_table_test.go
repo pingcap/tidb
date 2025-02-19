@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -45,7 +45,7 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
@@ -575,6 +575,29 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
+
+	tk.MustExec("drop table if exists sbtest0000")
+	tk.MustExec("CREATE TABLE sbtest0000(" +
+		"  id bigint," +
+		"  k bigint DEFAULT '0' NOT NULL," +
+		"  c CHAR(120) DEFAULT '' NOT NULL," +
+		"  pad CHAR(60) DEFAULT '' NOT NULL," +
+		"  UNIQUE KEY uk(id) GLOBAL," +
+		"  key idx0(k,c)," +
+		"  key idx1(c))SHARD_ROW_ID_BITS=3 PRE_SPLIT_REGIONS=2 " +
+		"PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN (MAXVALUE))")
+	re = tk.MustQuery("show table sbtest0000 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 7) // 3 index regions + 4 record regions
+
+	tbl = external.GetTableByName(t, tk, "test", "sbtest0000")
+	require.Equal(t, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID), rows[0][1]) // index `uk``
+	require.Equal(t, fmt.Sprintf("t_%d_i_4_", tbl.Meta().ID+1), rows[1][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[2][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[3][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_r_.*", tbl.Meta().ID+1), rows[4][1])
+	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID+1), rows[5][1])     // index `idx0`
+	require.Equal(t, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID+1), rows[6][1]) // index `idx1`
 }
 
 func BenchmarkLocateRegion(t *testing.B) {

@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -78,7 +78,7 @@ func TestVerifyChecksum(t *testing.T) {
 	// admin checksum table always return 1, 1, 1 for memory store
 	// Checksum = required
 	backupDistScanCon := tk.Session().GetSessionVars().DistSQLScanConcurrency()
-	require.Equal(t, variable.DefDistSQLScanConcurrency, backupDistScanCon)
+	require.Equal(t, vardef.DefDistSQLScanConcurrency, backupDistScanCon)
 	localChecksum := verify.MakeKVChecksum(1, 1, 1)
 	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.NoError(t, err)
@@ -110,9 +110,9 @@ func TestVerifyChecksum(t *testing.T) {
 			index idx10(id)
 		)`)
 	tk.MustExec("insert into db.tb2 values(1)")
-	backup, err := tk.Session().GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBChecksumTableConcurrency)
+	backup, err := tk.Session().GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBChecksumTableConcurrency)
 	require.NoError(t, err)
-	err = tk.Session().GetSessionVars().SetSystemVar(variable.TiDBChecksumTableConcurrency, "1")
+	err = tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBChecksumTableConcurrency, "1")
 	require.NoError(t, err)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest", `sleep(1000)`))
 
@@ -121,7 +121,7 @@ func TestVerifyChecksum(t *testing.T) {
 	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, tk.Session(), logutil.BgLogger())
 	require.ErrorContains(t, err, "Query execution was interrupted")
 
-	err = tk.Session().GetSessionVars().SetSystemVar(variable.TiDBChecksumTableConcurrency, backup)
+	err = tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBChecksumTableConcurrency, backup)
 	require.NoError(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest"))
 

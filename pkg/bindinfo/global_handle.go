@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -87,8 +88,7 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-	sPool util.SessionPool
-
+	sPool        util.DestroyableSessionPool
 	bindingCache BindingCache
 
 	// lastTaskTime records the last update time for the global sql bind cache.
@@ -120,7 +120,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
 	h := &globalBindingHandle{sPool: sPool}
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.bindingCache = newBindCache()
@@ -220,7 +220,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 			_, err = exec(
 				sctx,
 				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-				deleted,
+				StatusDeleted,
 				updateTs,
 				binding.OriginalSQL,
 				updateTs,
@@ -284,11 +284,11 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRow
 			_, err = exec(
 				sctx,
 				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
-				deleted,
+				StatusDeleted,
 				updateTs,
 				sqlDigest,
 				updateTs,
-				deleted,
+				StatusDeleted,
 			)
 			if err != nil {
 				return err
@@ -309,15 +309,15 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string
 		updateTs               types.Time
 		oldStatus0, oldStatus1 string
 	)
-	if newStatus == Disabled {
+	if newStatus == StatusDisabled {
 		// For compatibility reasons, when we need to 'set binding disabled for <stmt>',
 		// we need to consider both the 'enabled' and 'using' status.
-		oldStatus0 = Using
-		oldStatus1 = Enabled
-	} else if newStatus == Enabled {
+		oldStatus0 = StatusUsing
+		oldStatus1 = StatusEnabled
+	} else if newStatus == StatusEnabled {
 		// In order to unify the code, two identical old statuses are set.
-		oldStatus0 = Disabled
-		oldStatus1 = Disabled
+		oldStatus0 = StatusDisabled
+		oldStatus1 = StatusDisabled
 	}
 
 	defer func() {
@@ -395,8 +395,8 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 func newBindingFromStorage(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
-	if status == Using {
-		status = Enabled
+	if status == StatusUsing {
+		status = StatusEnabled
 	}
 	binding := &Binding{
 		OriginalSQL: row.GetString(0),
@@ -483,6 +483,9 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.sPool.Put(resource)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.sPool.Destroy(resource)
 		}
 	}()
 	sctx := resource.(sessionctx.Context)
@@ -509,8 +512,8 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (*globalBindingHandle) GetScope(_ string) variable.ScopeFlag {
-	return variable.ScopeSession
+func (*globalBindingHandle) GetScope(_ string) vardef.ScopeFlag {
+	return vardef.ScopeSession
 }
 
 // Stats returns the server statistics.

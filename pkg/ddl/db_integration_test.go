@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2272,8 +2272,12 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
-		tk.MustExec("insert into t values ();")
-		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		if b != math.MaxUint64 {
+			tk.MustExec("insert into t values ();")
+			tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		} else {
+			tk.MustExecToErr("insert into t values ();")
+		}
 		tk.MustExec("delete from t;")
 	}
 	tk.MustExec("drop table if exists t;")
@@ -2379,7 +2383,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
-		for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+		for _, clusteredIndex := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 			tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 			for _, t := range tests {
 				tk.MustExec("drop table if exists t;")
