@@ -64,8 +64,9 @@ func (c *Optimizer) GetMemo() *memo.Memo {
 
 // SetRules set a series of allowed rule ids.
 func (c *Optimizer) SetRules(ids []uint) {
+	ctx := c.ctx.(*Context)
 	for _, id := range ids {
-		c.ctx.(*Context).ruleMask.Set(id)
+		ctx.ruleMask.Set(id)
 	}
 }
 
