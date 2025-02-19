@@ -59,7 +59,9 @@ var faker *gofakeit.Faker
 
 // Initialize Faker instance
 func init() {
-	faker = gofakeit.New(time.Now().UnixNano())
+	seed := time.Now().UnixNano()
+	faker = gofakeit.New(seed)
+	log.Printf("Faker seed: %d", seed)
 }
 
 type Column struct {
