@@ -32,10 +32,15 @@ import (
 
 // GetCommonTaskExecutorExt returns a common task executor extension.
 func GetCommonTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error)) *mock.MockExtension {
+	return GetTaskExecutorExt(ctrl, getStepExecFn, func(error) bool { return true })
+}
+
+// GetTaskExecutorExt returns a task executor extension.
+func GetTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error), isRetryableErrorFn func(error) bool) *mock.MockExtension {
 	executorExt := mock.NewMockExtension(ctrl)
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	executorExt.EXPECT().GetStepExecutor(gomock.Any()).DoAndReturn(getStepExecFn).AnyTimes()
-	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
+	executorExt.EXPECT().IsRetryableError(gomock.Any()).DoAndReturn(isRetryableErrorFn).AnyTimes()
 	return executorExt
 }
 
