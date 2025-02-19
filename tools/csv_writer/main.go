@@ -618,7 +618,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, *localPath)
 }
 
-func checkCSVUniqueness(credentialPath, fileName string) {
+func checkCSVUniqueness(credentialPath, f string) {
 	m := map[uint32]struct{}{}
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
@@ -630,30 +630,36 @@ func checkCSVUniqueness(credentialPath, fileName string) {
 		panic(err)
 	}
 
-	res, err := store.ReadFile(context.Background(), "testCSVWriter.000000000.csv")
-	if err != nil {
-		panic(err)
-	}
-	// Assuming res contains CSV data as []byte, convert it to string and split by newlines
-	// (In case the file is already in CSV format, or you need to write CSV data)
-	reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
-	// Read the CSV records from the []byte data
-	idx := *checkColUniqueness
-	for {
-		record, err := reader.Read()
+	var fileNames []string
+	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
+		fileNames = append(fileNames, path)
+		return nil
+	})
+
+	for _, fileName := range fileNames {
+		fmt.Println("Checking file: ", fileName)
+		res, err := store.ReadFile(context.Background(), fileName)
 		if err != nil {
-			if err.Error() != "EOF" {
-				panic(fmt.Errorf("failed to read CSV from file: %v", err))
-			}
-			break
+			panic(err)
 		}
-		fmt.Printf("Record value: %s\n", record[idx])
-		hash := crc32.ChecksumIEEE([]byte(record[idx]))
-		if _, ok := m[hash]; !ok {
-			m[hash] = struct{}{}
-		} else {
-			log.Fatal("duplicate value", record[idx])
-			return
+		reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
+		idx := *checkColUniqueness
+		for {
+			record, err := reader.Read()
+			if err != nil {
+				if err.Error() != "EOF" {
+					panic(fmt.Errorf("failed to read CSV from file: %v", err))
+				}
+				break
+			}
+			fmt.Printf("Record value: %s\n", record[idx])
+			hash := crc32.ChecksumIEEE([]byte(record[idx]))
+			if _, ok := m[hash]; !ok {
+				m[hash] = struct{}{}
+			} else {
+				log.Fatal("duplicate value", record[idx])
+				return
+			}
 		}
 	}
 	log.Printf("Check success, no duplicate value")
