@@ -41,7 +41,7 @@ import (
 // clonedJoin._EqualConditionsShallowRef()
 // clonedJoin.EqualConditions[0] = newFunction(xx, clonedJoin.EqualConditions[0].FuncName, clodJoin.EqualConditions[0].tp|nullable)
 func GenShallowRef4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalProjection{}}
 	c := new(cc)
 	c.write(codeGenLogicalOpCowPrefix)
 	for _, s := range structures {
@@ -65,7 +65,7 @@ func genShallowRef4LogicalOps(x any) ([]byte, error) {
 	c := new(cc)
 	vType := reflect.TypeOf(x)
 	// Gen the shallowRef for operator itself.
-	funcName := "_" + vType.Name() + "ShallowRef"
+	funcName := vType.Name() + "ShallowRef"
 	returnType := "*" + refineFieldTypeName(vType.String())
 	c.write("// %v implements the copy-on-write usage.", funcName)
 	c.write("func (op *%v) %v() %v {", vType.Name(), funcName, returnType)
@@ -79,7 +79,7 @@ func genShallowRef4LogicalOps(x any) ([]byte, error) {
 		if !isShallowRefField(f) {
 			continue
 		}
-		funcName := "_" + vType.Field(i).Name + "ShallowRef"
+		funcName := vType.Field(i).Name + "ShallowRef"
 		returnType := vType.Field(i).Type.String()
 		c.write("// %v implements the copy-on-write usage.", funcName)
 		c.write("func (op *%v) %v() %v {", vType.Name(), funcName, returnType)

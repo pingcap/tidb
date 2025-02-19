@@ -158,8 +158,10 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
-	sysSessionPool  util.SessionPool
-	exit            chan struct{}
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool util.DestroyableSessionPool
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1345,6 +1347,10 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 				})
 				infosync.DeleteInternalSession(r)
 			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
 		),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
@@ -1814,7 +1820,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() util.SessionPool {
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
@@ -1910,19 +1916,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			var err error
+			var event PrivilegeEvent
 			select {
 			case <-do.exit:
 				return
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event := decodePrivilegeEvent(resp)
-					if event.All {
-						err = do.privHandle.UpdateAll()
-					} else {
-						err = do.privHandle.Update(event.UserList)
-					}
+					event = decodePrivilegeEvent(resp)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1931,11 +1932,14 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 						if count > 10 {
 							time.Sleep(time.Duration(count) * time.Second)
 						}
+						continue
 					}
 				}
 			case <-time.After(duration):
-				err = do.privHandle.UpdateAll()
+				event.All = true
 			}
+
+			err := privReloadEvent(do.privHandle, &event)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1943,6 +1947,18 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
+}
+
+func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	switch {
+	case !vardef.AccelerateUserCreationUpdate.Load():
+		err = h.UpdateAll()
+	case event.All:
+		err = h.UpdateAllActive()
+	default:
+		err = h.Update(event.UserList)
+	}
+	return
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
@@ -2540,7 +2556,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2602,7 +2618,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2932,10 +2948,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		return nil
 	}
 
-	if event.All {
-		return do.PrivilegeHandle().UpdateAll()
-	}
-	return do.PrivilegeHandle().Update(event.UserList)
+	return privReloadEvent(do.PrivilegeHandle(), &event)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB

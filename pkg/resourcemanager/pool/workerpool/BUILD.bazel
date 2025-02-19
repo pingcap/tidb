@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//pkg/resourcemanager/util",
         "//pkg/util",
+        "//pkg/util/logutil",
         "//pkg/util/syncutil",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

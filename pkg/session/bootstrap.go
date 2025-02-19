@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -602,6 +601,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -624,6 +624,7 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -861,6 +862,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1245,13 +1248,20 @@ const (
 	// Add index on user field for some mysql tables.
 	version241 = 241
 
-	// version242 add Max_user_connections into mysql.user.
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
 	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	version243 = 243
+
+	// version242 add Max_user_connections into mysql.user.
+	version244 = 244
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version242
+var currentBootstrapVersion int64 = version244
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1429,6 +1439,8 @@ var (
 		upgradeToVer240,
 		upgradeToVer241,
 		upgradeToVer242,
+		upgradeToVer243,
+		upgradeToVer244,
 	}
 )
 
@@ -1519,52 +1531,6 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-func checkDistTask(s sessiontypes.Session, ver int64) {
-	if ver > version195 {
-		// since version195 we enable dist task by default, no need to check
-		return
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", vardef.TiDBEnableDistTask)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	if req.NumRows() == 0 {
-		// Not set yet.
-		return
-	} else if req.GetRow(0).GetString(0) == vardef.On {
-		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
-			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
-	}
-
-	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
-	rs2, err := s.ExecuteInternal(ctx, `SELECT id FROM %n.%n WHERE state not in (%?, %?, %?)`,
-		mysql.SystemDB,
-		"tidb_global_task",
-		proto.TaskStateSucceed,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-	)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs2.Close)
-	req = rs2.NewChunk(nil)
-	err = rs2.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	if req.NumRows() > 0 {
-		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
-	}
-}
-
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
@@ -1582,7 +1548,6 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
@@ -2281,7 +2246,7 @@ func initBindInfoTable(s sessiontypes.Session) {
 func insertBuiltinBindInfoRow(s sessiontypes.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
-		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.StatusBuiltin, bindinfo.StatusBuiltin,
 	)
 }
 
@@ -2381,7 +2346,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		db := row.GetString(1)
 		status := row.GetString(2)
 
-		if status != bindinfo.Enabled && status != bindinfo.Using && status != bindinfo.Builtin {
+		if status != bindinfo.StatusEnabled && status != bindinfo.StatusUsing && status != bindinfo.StatusBuiltin {
 			continue
 		}
 
@@ -2594,7 +2559,7 @@ func upgradeToVer85(s sessiontypes.Session, ver int64) {
 	if ver >= version85 {
 		return
 	}
-	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
+	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.StatusEnabled, bindinfo.StatusUsing))
 }
 
 func upgradeToVer86(s sessiontypes.Session, ver int64) {
@@ -3371,8 +3336,40 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
 func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	if ver >= version242 {
+		return
+	}
+
+	writeClusterID(s)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer244(s sessiontypes.Session, ver int64) {
+	if ver >= version244 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` SMALLINT UNSIGNED DEFAULT 0 AFTER `Password_lifetime`")
@@ -3630,6 +3627,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

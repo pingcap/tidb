@@ -76,11 +76,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -372,7 +374,9 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';",
+			bindinfo.StatusEnabled, bindinfo.StatusUsing))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2290,18 +2294,25 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
-			return err
+			// Some users deploy TiProxy after the cluster is running and configuring signing certs will restart TiDB.
+			// The users may don't need connection migration, e.g. they only want traffic replay, which requires session states
+			// but not session tokens. So we don't return errors, just log it.
+			logutil.Logger(ctx).Warn("create session token failed", zap.Error(err))
 		}
 	}
-	tokenBytes, err := gjson.Marshal(token)
-	if err != nil {
-		return errors.Trace(err)
+	if token != nil {
+		tokenBytes, err := gjson.Marshal(token)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tokenJSON := types.BinaryJSON{}
+		if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+			return err
+		}
+		e.appendRow([]any{stateJSON, tokenJSON})
+	} else {
+		e.appendRow([]any{stateJSON, nil})
 	}
-	tokenJSON := types.BinaryJSON{}
-	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
-		return err
-	}
-	e.appendRow([]any{stateJSON, tokenJSON})
 	return nil
 }
 

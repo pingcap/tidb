@@ -1112,7 +1112,7 @@ Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_12	3.33	19551.99	root		
+IndexLookUp_12	3.33	19531.97	root		
 ├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
 └─Selection_11(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
   └─TableRowIDScan_10	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -1418,7 +1418,33 @@ create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
 set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
-explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+id	estRows	task	access object	operator info
+HashJoin_19	2658.67	root		anti semi join, left side:TableReader_22, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
+├─PartitionUnion_23(Build)	13293.33	root		
+│ ├─TableReader_31	3323.33	root		data:Projection_25
+│ │ └─Projection_25	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_30	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
+│ ├─TableReader_39	3323.33	root		data:Projection_33
+│ │ └─Projection_33	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_38	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_37	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
+│ ├─TableReader_47	3323.33	root		data:Projection_41
+│ │ └─Projection_41	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_46	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_45	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
+│ └─TableReader_55	3323.33	root		data:Projection_49
+│   └─Projection_49	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│     └─Selection_54	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│       └─TableFullScan_53	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
+└─TableReader_22(Probe)	3323.33	root		data:Selection_21
+  └─Selection_21	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+    └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	disable dynamic pruning due to t2_part has no global stats
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) */ is inapplicable
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
 HashJoin_19	2658.67	root		anti semi join, left side:TableReader_23, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
 ├─PartitionUnion_24(Build)	13293.33	root		
