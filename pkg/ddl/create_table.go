@@ -1003,6 +1003,8 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 				switch constr.Tp {
 				case ast.ConstraintVector:
 					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector)
+				case ast.ConstraintColumnar:
+					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeInverted)
 				default:
 					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA)
 				}
@@ -1237,12 +1239,8 @@ func BuildTableInfo(
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintColumnar {
-			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		}
-
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintVector && constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1334,6 +1332,11 @@ func BuildTableInfo(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
 			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.ConstraintColumnar:
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
+			}
+			columnarIndexType = model.ColumnarIndexTypeInverted // TODO: support other columnar index types
 		}
 
 		// check constraint

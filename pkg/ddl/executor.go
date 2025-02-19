@@ -1815,8 +1815,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintVector:
 				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeVector)
 			case ast.ConstraintColumnar:
-				err = dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-				// 	err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeInverted)
+				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeInverted)
 			default:
 				// Nothing to do now.
 			}
@@ -4506,6 +4505,8 @@ func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
 	switch columnarIndexType {
 	case model.ColumnarIndexTypeVector:
 		return "vector_index"
+	case model.ColumnarIndexTypeInverted:
+		return "inverted_index"
 	default:
 		return "expression_index"
 	}
@@ -4847,8 +4848,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	case ast.IndexKeyTypeFullText, ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		// return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
 	case ast.IndexKeyTypeVector:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeVector)
 	}
@@ -4860,6 +4860,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
+	}
+
+	if indexOption != nil {
+		switch indexOption.Tp {
+		case ast.IndexTypeHNSW:
+			return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs("HNSW")
+		case ast.IndexTypeInverted:
+			return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs("INVERTED")
+		}
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
