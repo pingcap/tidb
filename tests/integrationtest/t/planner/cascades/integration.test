@@ -85,7 +85,7 @@ explain select b, sum(a) from t group by b having b > 1 order by b;
 select b, sum(a) from t group by b having b > 1 order by b;
 explain select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c;
 select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c;
-explain select max(a.a) from t a left join t b on a.a = b.a;
+ explain select max(a.a) from t a left join t b on a.a = b.a;
 select max(a.a) from t a left join t b on a.a = b.a;
 explain select avg(a.b) from t a left join t b on a.a = b.a;
 select avg(a.b) from t a left join t b on a.a = b.a;
