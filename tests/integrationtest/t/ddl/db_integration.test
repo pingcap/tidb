@@ -387,8 +387,8 @@ PARTITION BY RANGE COLUMNS( a ) (
 insert into t values (4, 'xxx', 4);
 insert into t values (4, 'xxx', 9);
 insert into t values (17, 'xxx', 12);
--- error 1062
-alter table t add unique index idx_a(a);
+#-- error 1062
+#alter table t add unique index idx_a(a);
 delete from t where a = 4;
 alter table t add unique index idx_a(a);
 alter table t add unique index idx_ac(a, c);

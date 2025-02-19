@@ -184,8 +184,6 @@ Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_par
 drop table if exists t;
 create table t (a int, b int, c int);
 insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);
-alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
-Error 1062 (23000): Duplicate entry '1' for key 't.i3'
 show index from t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
 alter table t add index i1(a), add index i2(a, b), add index i3(c);

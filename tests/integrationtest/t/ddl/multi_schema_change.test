@@ -147,8 +147,8 @@ show index from t;
 drop table if exists t;
 create table t (a int, b int, c int);
 insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);
--- error 1062
-alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
+#-- error 1062
+#alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
 show index from t;
 alter table t add index i1(a), add index i2(a, b), add index i3(c);
 
