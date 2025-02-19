@@ -55,6 +55,13 @@ type TaskPrinter interface {
 	PrintTasks()
 }
 
+func TeeTaskPrinter(p TaskPrinter, output *[]TaskStatus) TaskPrinter {
+	return &teeTaskPrinter{
+		output: output,
+		inner:  p,
+	}
+}
+
 // PrintTaskByTable make a TaskPrinter,
 // which prints the task by the `Table` implement of the console.
 func PrintTaskByTable(c glue.ConsoleOperations) TaskPrinter {
@@ -67,6 +74,20 @@ func PrintTaskWithJSON(c glue.ConsoleOperations) TaskPrinter {
 	return &printByJSON{
 		console: c,
 	}
+}
+
+type teeTaskPrinter struct {
+	output *[]TaskStatus
+	inner  TaskPrinter
+}
+
+func (t *teeTaskPrinter) AddTask(task TaskStatus) {
+	*t.output = append(*t.output, task)
+	t.inner.AddTask(task)
+}
+
+func (t *teeTaskPrinter) PrintTasks() {
+	t.inner.PrintTasks()
 }
 
 type printByTable struct {
@@ -103,7 +124,7 @@ func (t *TaskStatus) colorfulStatusString() string {
 	return statusOK("NORMAL")
 }
 
-func (t *TaskStatus) statusString() string {
+func (t *TaskStatus) StatusString() string {
 	if t.onError() {
 		return "ERROR"
 	}
@@ -245,7 +266,7 @@ func (p *printByJSON) PrintTasks() {
 			Name:         t.Info.GetName(),
 			StartTS:      t.Info.GetStartTs(),
 			EndTS:        t.Info.GetEndTs(),
-			Status:       t.statusString(),
+			Status:       t.StatusString(),
 			TableFilter:  t.Info.GetTableFilter(),
 			Progress:     sp,
 			Storage:      s.String(),
@@ -357,7 +378,7 @@ type StatusController struct {
 	view TaskPrinter
 }
 
-// NewStatusContorller make a status controller via some resource accessors.
+// NewStatusController makes a status controller via some resource accessors.
 func NewStatusController(meta *MetaDataClient, mgr PDInfoProvider, view TaskPrinter) *StatusController {
 	return &StatusController{
 		meta: meta,

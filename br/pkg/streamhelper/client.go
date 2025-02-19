@@ -290,26 +290,26 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 }
 
 type pauseTaskCfg struct {
-	message string
+	message  string
+	severity string
 }
 
-type PauseTaskOption func(*pauseTaskCfg)
+type PauseTaskOption func(*PauseV2)
 
 func PauseWithMessage(m string) PauseTaskOption {
-	return func(cfg *pauseTaskCfg) {
-		cfg.message = m
+	return func(p *PauseV2) {
+		p.SetTextMessage(m)
 	}
+}
+
+func PauseWithErrorSeverity(p *PauseV2) {
+	p.Severity = SeverityError
 }
 
 func (c *MetaDataClient) PauseTask(ctx context.Context, taskName string, opts ...PauseTaskOption) error {
-	cfg := pauseTaskCfg{}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
 	p := NewLocalPauseV2()
-	if len(cfg.message) > 0 {
-		p.SetTextMessage(cfg.message)
+	for _, opt := range opts {
+		opt(p)
 	}
 	data, err := json.Marshal(p)
 	if err != nil {

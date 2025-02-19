@@ -603,7 +603,7 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		now := time.Now()
 		msg := fmt.Sprintf("The checkpoint is at %s, now it is %s, the lag is too huge (%s) hence pause the task to avoid impaction to the cluster",
 			cp.Format(time.RFC3339), now.Format(time.RFC3339), now.Sub(cp))
-		err := c.env.PauseTask(ctx, c.task.Name, PauseWithMessage(msg))
+		err := c.env.PauseTask(ctx, c.task.Name, PauseWithMessage(msg), PauseWithErrorSeverity)
 		if err != nil {
 			return errors.Annotate(err, "failed to pause task")
 		}

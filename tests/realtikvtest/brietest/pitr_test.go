@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -234,6 +235,26 @@ func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.Strea
 		return err
 	})
 	kit.t.Cleanup(func() { kit.StopTaskIfExists(taskName) })
+}
+
+func (kit *LogBackupKit) RunLogPause(taskName string, extConfig func(*task.StreamConfig)) {
+	kit.runAndCheck(func(ctx context.Context) error {
+		cfg := task.DefaultStreamConfig(task.DefineStreamPauseFlags)
+		cfg.TaskName = taskName
+		extConfig(&cfg)
+		return task.RunStreamPause(ctx, kit.Glue(), "stream pause[intest]", &cfg)
+	})
+}
+
+func (kit *LogBackupKit) RunLogStatus(extConfig func(*task.StreamConfig)) (tasks []stream.TaskStatus) {
+	kit.runAndCheck(func(ctx context.Context) error {
+		cfg := task.DefaultStreamConfig(task.DefineStreamStatusCommonFlags)
+		cfg.DumpStatusTo = &tasks
+		cfg.TaskName = "*"
+		extConfig(&cfg)
+		return task.RunStreamStatus(ctx, kit.Glue(), "stream status[intest]", &cfg)
+	})
+	return tasks
 }
 
 func (kit *LogBackupKit) ctx() context.Context {
@@ -633,4 +654,35 @@ func TestPiTRAndIncrementalRestore(t *testing.T) {
 			rc.Storage = kit.LocalURI("incr-legacy")
 		})
 	})
+}
+
+func TestPiTRPauseMessage(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	kit.RunLogStart("nothing", func(sc *task.StreamConfig) {})
+	kit.RunLogPause("nothing", func(sc *task.StreamConfig) {
+		sc.Message = "nothing paused"
+	})
+	s := kit.RunLogStatus(func(sc *task.StreamConfig) {})
+	require.Len(t, s, 1)
+	pl, err := s[0].PauseV2.GetPayload()
+	require.NoError(t, err)
+	hn, err := os.Hostname()
+	require.NoError(t, err)
+	require.Equal(t, s[0].StatusString(), "PAUSE")
+	require.Equal(t, s[0].PauseV2.OperatorHostName, hn)
+	require.Equal(t, pl.(string), "nothing paused")
+
+	kit.StopTaskIfExists("nothing")
+	kit.RunLogStart("nothing2", func(sc *task.StreamConfig) {})
+	kit.RunLogPause("nothing2", func(sc *task.StreamConfig) {
+		sc.AsError = true
+		sc.Message = "nothing is on fire"
+	})
+	s = kit.RunLogStatus(func(sc *task.StreamConfig) {})
+	require.Len(t, s, 1)
+	pl, err = s[0].PauseV2.GetPayload()
+	require.NoError(t, err)
+	require.Equal(t, s[0].StatusString(), "ERROR")
+	require.Equal(t, s[0].PauseV2.OperatorHostName, hn)
+	require.Equal(t, pl.(string), "nothing is on fire")
 }
