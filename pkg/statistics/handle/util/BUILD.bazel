@@ -45,7 +45,10 @@ go_test(
     flaky = True,
     deps = [
         ":util",
+        "//pkg/domain/infosync",
+        "//pkg/sessionctx",
         "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

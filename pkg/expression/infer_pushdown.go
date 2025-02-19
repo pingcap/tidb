@@ -523,6 +523,11 @@ func (ctx PushDownContext) AppendWarning(err error) {
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprsWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	pushed = make([]Expression, 0, len(exprs))
+	remained = make([]Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if canExprPushDown(ctx, expr, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
