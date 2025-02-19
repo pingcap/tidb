@@ -646,6 +646,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 	maxGoroutines := 200
 	sem := make(chan struct{}, maxGoroutines)
 	var duplicateFound int32
+	var mu sync.Mutex
 
 	// Process each file with a goroutine
 	for _, fileName := range fileNames {
@@ -685,8 +686,10 @@ func checkCSVUniqueness(credentialPath, f string) {
 						log.Fatal("duplicate value: ", record[idx], " in file: ", fileName)
 						atomic.StoreInt32(&duplicateFound, 1)
 						cancelChan <- struct{}{} // Send the cancellation signal
+						mu.Unlock()
 						return
 					}
+					mu.Unlock()
 				}
 			}
 		}(fileName)
