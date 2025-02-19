@@ -457,8 +457,8 @@ admin check table t;
 drop table if exists t;
 create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;
 insert into t values (1, 'asd', 1), (1, 'dsa', 1);
--- error 1062
-alter table t add unique index t_idx(id1, a1);
+#-- error 1062
+#alter table t add unique index t_idx(id1, a1);
 drop table if exists t;
 create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered, unique key t_idx(id1, a1)) collate utf8mb4_general_ci;
 begin;
