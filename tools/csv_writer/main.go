@@ -653,6 +653,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 		sem <- struct{}{} // Acquire a slot in the semaphore
 		go func(fileName string) {
 			defer wg.Done()
+			fmt.Println("Checking file: ", fileName)
 			// Read the CSV file from storage
 			res, err := store.ReadFile(context.Background(), fileName)
 			if err != nil {
@@ -681,7 +682,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 						m[hash] = struct{}{}
 					} else {
 						// Log and send cancellation signal to other goroutines
-						log.Fatal("duplicate value: ", record[idx])
+						log.Fatal("duplicate value: ", record[idx], " in file: ", fileName)
 						atomic.StoreInt32(&duplicateFound, 1)
 						cancelChan <- struct{}{} // Send the cancellation signal
 						return
