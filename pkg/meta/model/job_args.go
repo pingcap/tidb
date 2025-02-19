@@ -1391,6 +1391,12 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
 
+	// Add columnar index
+	if job.Type == ActionAddColumnarIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
+	}
+
 	// Add primary key
 	if job.Type == ActionAddPrimaryKey {
 		arg := a.IndexArgs[0]
@@ -1438,6 +1444,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddIndexV1(job)
 	case ActionAddVectorIndex:
 		err = a.decodeAddVectorIndexV1(job)
+	case ActionAddColumnarIndex:
+		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1543,10 +1551,31 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 	return nil
 }
 
+func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
+	var (
+		indexName              ast.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+	)
+
+	if err := job.decodeArgs(
+		&indexName, &indexPartSpecification, &indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
+		IsColumnar:              true,
+	}}
+	return nil
+}
+
 func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	// Add index
 	if a.OpType == OpAddIndex {
-		if job.Type == ActionAddVectorIndex {
+		if job.Type == ActionAddVectorIndex || job.Type == ActionAddColumnarIndex {
 			return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
 		}
 

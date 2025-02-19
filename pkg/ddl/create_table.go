@@ -1000,7 +1000,14 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				switch constr.Tp {
+				case ast.ConstraintVector:
+					colName = getAnonymousIndexPrefix(ColumnarIndexTypeVector)
+				case ast.ConstraintColumnar:
+					colName = getAnonymousIndexPrefix(ColumnarIndexTypeInverted)
+				default:
+					colName = getAnonymousIndexPrefix(ColumnarIndexTypeInvalid)
+				}
 			}
 		}
 		if colName == "" {
@@ -1232,12 +1239,8 @@ func BuildTableInfo(
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintColumnar {
-			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		}
-
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintVector && constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1311,8 +1314,9 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType ColumnarIndexType
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1327,7 +1331,12 @@ func BuildTableInfo(
 			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
-			vector = true
+			columnarIndexType = ColumnarIndexTypeVector
+		case ast.ConstraintColumnar:
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
+			}
+			columnarIndexType = ColumnarIndexTypeInverted
 		}
 
 		// check constraint
@@ -1400,7 +1409,7 @@ func BuildTableInfo(
 			ast.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1565,7 +1574,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, ColumnarIndexTypeInvalid, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}
