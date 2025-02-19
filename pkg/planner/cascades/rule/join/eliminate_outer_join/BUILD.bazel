@@ -1,19 +1,22 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "projection",
+    name = "eliminate_outer_join",
     srcs = [
-        "xf_eliminate_projection.go",
-        "xf_merge_adjacent_projection.go",
+        "xf_eliminate_outer_join_below_agg.go",
+        "xf_eliminate_outer_join_below_agg_sort.go",
+        "xf_eliminate_outer_join_below_projection.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/projection",
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/join/eliminate_outer_join",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/rule",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/rule/util",
+        "//pkg/util/intset",
     ],
 )
