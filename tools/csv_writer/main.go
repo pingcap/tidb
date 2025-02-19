@@ -233,6 +233,8 @@ func generateValueByCol(col Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "INT"):
 		generateInt(num, res, col.StdDev)
+	case strings.HasPrefix(col.Type, "BIGINT"):
+		generateBigintNoDist(num, res)
 	case strings.HasPrefix(col.Type, "TINYINT"):
 		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
@@ -276,6 +278,15 @@ func generateLetterWithNum(len int, randomLen bool) string {
 		}
 	}
 	return builder.String()
+}
+
+func generateBigintNoDist(num int, res []string) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	for i := 0; i < num; i++ {
+		res[i] = strconv.Itoa(faker.Number(-9223372036854775808, 9223372036854775807)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
+	}
 }
 
 func generateBigint(num int, res []string, order string, begin, end int) {
