@@ -45,6 +45,7 @@ var (
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
 	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
 	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
+	checkColUniqueness  = flag.Int("checkCol", -1, "Check the uniqueness of a specific column in a CSV file")
 )
 
 const (
@@ -637,7 +638,7 @@ func checkCSVUniqueness(credentialPath, fileName string) {
 	// (In case the file is already in CSV format, or you need to write CSV data)
 	reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
 	// Read the CSV records from the []byte data
-	idx := 0
+	idx := *checkColUniqueness
 	for {
 		record, err := reader.Read()
 		if err != nil {
@@ -904,6 +905,11 @@ func main() {
 			log.Fatal("localPath must be provided when fetching a file")
 		}
 		fetchFileFromGCS(*credentialPath, *fetchFile)
+		return
+	}
+
+	if *checkColUniqueness != -1 {
+		checkCSVUniqueness(*credentialPath, "")
 		return
 	}
 
