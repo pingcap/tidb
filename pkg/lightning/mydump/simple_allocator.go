@@ -21,25 +21,17 @@ import (
 )
 
 const (
+	// Size of metadata of each block
 	metaSize = 64
 	invalid  = math.MaxInt32
-)
 
-// This value will be modifed in test
-var alignSize = 16 << 10
+	// The allocated memory size will be aligned to the nearest multiple of alignSize.
+	// This value will be modifed in test
+	alignSize = 16 << 10
+)
 
 func roundUp(n, sz int) int {
 	return (n + sz - 1) / sz * sz
-}
-
-func simpleGetAllocationSize(size int) int {
-	return roundUp(size+metaSize, alignSize) * 2
-}
-
-func getSimpleAllocator(size int) arena {
-	a := &simpleAllocator{}
-	a.init(size)
-	return a
 }
 
 func storeInt(value int, buf []byte) {
@@ -53,12 +45,40 @@ func readInt(buf []byte) int {
 	return int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
 }
 
+func simpleGetAllocationSize(size int) int {
+	return roundUp(size+metaSize, alignSize) * 2
+}
+
+/*
+simpleAllocator is a very simple allocator with low allocation efficiency
+which manages allocated memory using a linked list structure.
+
+It is used in parquet reader and it's sufficient for our scenario
+as memory allocation will not be a bottleneck.
+
+The memory layout is as follows:
+
+								  --------------------|
+	                              |                   v
+	  -------------------------------------------------------------------------
+	  |                 | s | p | n | xxxx |          | s | p | n | xxxx |    |
+	  -------------------------------------------------------------------------
+	                    ^                                   |
+						|___________________________________|
+*/
 type simpleAllocator struct {
-	buf       []byte
-	base      int
-	numAlloc  int
-	firstFree int
-	alloc     int
+	buf  []byte
+	base int
+
+	// Number of blocks and bytes allocated
+	blocksAlloc int
+	bytesAloc   int
+}
+
+func getSimpleAllocator(size int) arena {
+	a := &simpleAllocator{}
+	a.init(size)
+	return a
 }
 
 func (sa *simpleAllocator) init(bufSize int) {
@@ -91,23 +111,23 @@ func (sa *simpleAllocator) getBlk(offset int) (prev, next, blkSize int) {
 }
 
 func (sa *simpleAllocator) insertFree(free int) {
-	for offset := sa.firstFree; offset != invalid; {
+	for offset := 0; offset != invalid; {
 		if free > offset {
 			_, _, blkSize := sa.getBlk(free)
 			_, next, _ := sa.getBlk(offset)
 			sa.setBlk(offset, -1, free, -1)
 			sa.setBlk(free, offset, next, -1)
 			sa.setBlk(next, free, -1, -1)
-			sa.alloc -= blkSize
+			sa.bytesAloc -= blkSize
 			return
 		}
 	}
 	panic("Error insertFree")
 }
 
-// Merge adjacent free blocks into one big free block
+// Merge adjacent free blocks into one big free block to reduce fragmentation.
 func (sa *simpleAllocator) merge() {
-	for offset := sa.firstFree; offset != invalid; {
+	for offset := 0; offset != invalid; {
 		_, next, blkSize := sa.getBlk(offset)
 		if offset+blkSize == next {
 			_, nextnext, nextBlkSize := sa.getBlk(next)
@@ -127,7 +147,7 @@ func (sa *simpleAllocator) allocate(size int) []byte {
 	bestOffset := -1
 	minRemain := math.MaxInt32
 
-	for offset := sa.firstFree; offset != invalid; {
+	for offset := 0; offset != invalid; {
 		_, next, blkSize := sa.getBlk(offset)
 		if offset+blkSize >= len(sa.buf) {
 			panic("Error blk size")
@@ -154,8 +174,8 @@ func (sa *simpleAllocator) allocate(size int) []byte {
 		sa.setBlk(bestOffset, -1, -1, minRemain)
 	}
 
-	sa.numAlloc++
-	sa.alloc += allocSize
+	sa.blocksAlloc++
+	sa.bytesAloc += allocSize
 	bufStart := bestOffset + minRemain
 	sa.setBlk(bufStart, -1, -1, allocSize)
 	sa.sanityCheck()
@@ -168,8 +188,8 @@ func (sa *simpleAllocator) free(buf []byte) {
 		return
 	}
 
-	sa.numAlloc--
-	if sa.numAlloc == 0 {
+	sa.blocksAlloc--
+	if sa.blocksAlloc == 0 {
 		sa.reset()
 		return
 	}
@@ -184,7 +204,7 @@ func (sa *simpleAllocator) reallocate(buf []byte, size int) []byte {
 }
 
 func (sa *simpleAllocator) allocated() int64 {
-	return int64(sa.numAlloc)
+	return int64(sa.blocksAlloc)
 }
 
 func (sa *simpleAllocator) sanityCheck() {
@@ -192,8 +212,8 @@ func (sa *simpleAllocator) sanityCheck() {
 		return
 	}
 
-	mem := sa.alloc
-	for offset := sa.firstFree; offset != invalid; {
+	mem := sa.bytesAloc
+	for offset := 0; offset != invalid; {
 		_, next, blkSize := sa.getBlk(offset)
 		mem += blkSize
 		offset = next
@@ -204,12 +224,11 @@ func (sa *simpleAllocator) sanityCheck() {
 }
 
 func (sa *simpleAllocator) reset() {
-	sa.alloc = 0
+	sa.bytesAloc = 0
 
-	// Add dummy head and tail
+	// Add dummy head and tail block to simplify the allocation logic
 	total := len(sa.buf)
 	sa.setBlk(0, invalid, alignSize, 0)
 	sa.setBlk(alignSize, 0, total-alignSize, total-alignSize*3)
 	sa.setBlk(total-alignSize, alignSize, invalid, 0)
-	sa.firstFree = 0
 }

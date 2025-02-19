@@ -24,9 +24,7 @@ import (
 )
 
 func TestSimpleAllocator(t *testing.T) {
-	alignSize = 1 << 10
-
-	totalSize := 1 << 20
+	totalSize := 16 << 20
 	a := simpleAllocator{}
 	a.init(totalSize)
 
@@ -35,7 +33,7 @@ func TestSimpleAllocator(t *testing.T) {
 		wg sync.WaitGroup
 	)
 
-	allocSize := []int{1 << 10, 2 << 10, 4 << 10, 8 << 10, 16 << 10, 32 << 10, 64 << 10, 128 << 10}
+	allocSize := []int{16 << 10, 32 << 10, 64 << 10, 128 << 10, 256 << 10, 512 << 10}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
@@ -52,6 +50,7 @@ func TestSimpleAllocator(t *testing.T) {
 				buf := a.allocate(bufSize)
 				lk.Unlock()
 
+				// hold for sometimes
 				time.Sleep(time.Millisecond)
 
 				lk.Lock()

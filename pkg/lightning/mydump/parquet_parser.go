@@ -43,14 +43,15 @@ const (
 
 	// defaultBufSize specifies the default size of skip buffer.
 	// Skip buffer is used when reading data from the cloud. If there is a gap between the current
-	// read position and the last read position, if the gap size is less than the buffer size,
-	// these data is stored in this buffer to avoid reopening the underlying file.
+	// read position and the last read position, these data is stored in this buffer to avoid
+	// potentially reopening the underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
 
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
 )
 
+// columnDumper is a helper struct to read data from one column.
 type columnDumper struct {
 	reader         file.ColumnChunkReader
 	batchSize      int64
@@ -242,17 +243,15 @@ type parquetFileWrapper struct {
 
 	storage.ReadSeekCloser
 	lastOff int64
-	bufSize int
-	buf     []byte
+	skipBuf []byte
 
 	// current file path and store, used to open file
 	store storage.ExternalStorage
 	path  string
 }
 
-func (pf *parquetFileWrapper) InitBuffer(bufSize int) {
-	pf.bufSize = bufSize
-	pf.buf = make([]byte, bufSize)
+func (pf *parquetFileWrapper) Init(bufSize int) {
+	pf.skipBuf = make([]byte, bufSize)
 }
 
 func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
@@ -271,13 +270,13 @@ func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 	// We want to minimize the number of Seek call as much as possible,
 	// since the underlying reader may require reopening the file.
 	gap := int(off - pf.lastOff)
-	if gap < 0 || gap > pf.bufSize {
+	if gap < 0 || gap > cap(pf.skipBuf) {
 		if _, err := pf.Seek(off, io.SeekStart); err != nil {
 			return 0, err
 		}
 	} else {
-		pf.buf = pf.buf[:gap]
-		if read, err := pf.readNBytes(pf.buf); err != nil {
+		pf.skipBuf = pf.skipBuf[:gap]
+		if read, err := pf.readNBytes(pf.skipBuf); err != nil {
 			return read, err
 		}
 	}
@@ -317,7 +316,7 @@ func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) 
 		ctx:            pf.ctx,
 		path:           name,
 	}
-	newPf.InitBuffer(defaultBufSize)
+	newPf.Init(defaultBufSize)
 	return newPf, nil
 }
 
@@ -330,10 +329,10 @@ type ParquetParser struct {
 
 	alloc memory.Allocator
 
-	// colBuffers is used to store raw data read from parquet columns.
-	// rows stores the actual data after parsing.
 	dumpers []*columnDumper
-	rows    [][]types.Datum
+
+	// rows stores the actual data after parsing.
+	rows [][]types.Datum
 
 	// curIdx and avail is the current index and total number of rows in rows buffer
 	curIdx int
@@ -346,6 +345,7 @@ type ParquetParser struct {
 	totalRowsInGroup int // total rows in current group
 	curRows          int // number of rows read in total
 	totalRows        int // total rows in this file
+	totalBytesRead   int // total bytes read, estimated by all the read datum.
 
 	lastRow Row
 	logger  log.Logger
@@ -560,6 +560,10 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 		pp.curRowInGroup += curRead
 	}
 
+	for i := 0; i < readNum; i++ {
+		pp.totalBytesRead += estimateRowSize(pp.rows[i])
+	}
+
 	pp.curRows += readNum
 	pp.curIdx, pp.avail = 0, readNum
 	return readNum, nil
@@ -683,10 +687,9 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet it's nonsense to get the position of internal reader,
-// thus it will return the number of rows read.
+// For parquet we use the size of all read datum to estimate the scanned positon.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
-	return int64(pp.curRows), nil
+	return int64(pp.totalBytesRead), nil
 }
 
 // Close closes the parquet file of the parser.
@@ -713,7 +716,7 @@ func (pp *ParquetParser) Close() error {
 }
 
 // GetRow get the the current row.
-// Return error if can't read next row.
+// Return error if we can't read next row.
 // User should call ReadRow before calling this.
 func (pp *ParquetParser) GetRow() ([]types.Datum, error) {
 	if pp.curIdx >= pp.avail {
@@ -749,21 +752,26 @@ func (pp *ParquetParser) ReadRow() error {
 	return nil
 }
 
-// LastRow gets the last row parsed by the parser.
-// It implements the Parser interface.
-func (pp *ParquetParser) LastRow() Row {
-	pp.lastRow.Length = 0
-	for _, v := range pp.lastRow.Row {
+func estimateRowSize(row []types.Datum) int {
+	length := 0
+	for _, v := range row {
 		if v.IsNull() {
 			continue
 		}
 		if v.Kind() == types.KindString {
 			// use GetBytes to avoid memory allocation
-			pp.lastRow.Length += len(v.GetBytes())
+			length += len(v.GetBytes())
 		} else {
-			pp.lastRow.Length += 8
+			length += 8
 		}
 	}
+	return length
+}
+
+// LastRow gets the last row parsed by the parser.
+// It implements the Parser interface.
+func (pp *ParquetParser) LastRow() Row {
+	pp.lastRow.Length = estimateRowSize(pp.lastRow.Row)
 	return pp.lastRow
 }
 
@@ -811,7 +819,7 @@ func OpenParquetReader(
 		ctx:            ctx,
 		path:           path,
 	}
-	pf.InitBuffer(defaultBufSize)
+	pf.Init(defaultBufSize)
 	return pf, nil
 }
 
@@ -922,7 +930,7 @@ func NewParquetParser(
 			ctx:            ctx,
 			path:           path,
 		}
-		wrapper.InitBuffer(defaultBufSize)
+		wrapper.Init(defaultBufSize)
 	}
 
 	var allocator memory.Allocator
@@ -1018,7 +1026,7 @@ func SampleStatisticsFromParquet(
 		ctx:            ctx,
 		path:           fileMeta.Path,
 	}
-	wrapper.InitBuffer(defaultBufSize)
+	wrapper.Init(defaultBufSize)
 
 	prop := parquet.NewReaderProperties(nil)
 	prop.BufferedStreamEnabled = true
