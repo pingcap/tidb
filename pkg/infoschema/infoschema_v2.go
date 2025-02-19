@@ -444,6 +444,12 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	return len(deletes), total
 }
 
+// GCOldFKVersion compacts btree nodes by removing items older than schema version.
+func (isd *Data) GCOldFKVersion(schemaVersion int64) (int, int64) {
+	// TODO
+	return 0, 0
+}
+
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
 // TODO: write a generics version to avoid repeated code.
 func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
@@ -456,6 +462,7 @@ func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetSchemaID2NameBeforeFullLoad(&isd.schemaID2Name, schemaVersion)
 
 	resetPID2TIDBeforeFullLoad(&isd.pid2tid, schemaVersion)
+	resetFKBeforeFullLoad(&isd.referredForeignKeys, schemaVersion)
 }
 
 func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], schemaVersion int64) {
@@ -534,6 +541,10 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 		}
 		items = items[:0]
 	}
+}
+
+func resetFKBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]], schemaVersion int64) {
+	// TODO
 }
 
 func resetTableInfoResidentBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[tableInfoItem]], schemaVersion int64) {
@@ -735,6 +746,12 @@ func compareReferredForeignKeyItem(a, b *referredForeignKeyItem) bool {
 	}
 	if a.schemaVersion != b.schemaVersion {
 		return a.schemaVersion < b.schemaVersion
+	}
+	if a.referredFKInfo == nil {
+		return true
+	}
+	if b.referredFKInfo == nil {
+		return false
 	}
 	if a.referredFKInfo.ChildSchema.L != b.referredFKInfo.ChildSchema.L {
 		return a.referredFKInfo.ChildSchema.L < b.referredFKInfo.ChildSchema.L

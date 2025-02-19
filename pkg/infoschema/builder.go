@@ -389,9 +389,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 }
 
 func (b *Builder) markFKUpdated(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) {
-	if b.shouldUpdateFKInfo(m, oldTableID, newTableID, dbInfo) {
-		b.updateReferenceForeignKeys = true
-	}
+	b.updateReferenceForeignKeys = b.shouldUpdateFKInfo(m, oldTableID, newTableID, dbInfo)
 }
 
 func (b *Builder) shouldUpdateFKInfo(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) bool {
@@ -1057,12 +1055,13 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
-		Requirement:  r,
-		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
-		dirtyDB:      make(map[string]bool),
-		factory:      factory,
-		infoData:     infoData,
-		enableV2:     useV2,
+		Requirement:                r,
+		infoschemaV2:               NewInfoSchemaV2(r, factory, infoData),
+		dirtyDB:                    make(map[string]bool),
+		factory:                    factory,
+		infoData:                   infoData,
+		enableV2:                   useV2,
+		updateReferenceForeignKeys: true,
 	}
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
