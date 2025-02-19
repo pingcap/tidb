@@ -771,8 +771,8 @@ const (
         description text,
         primary key(module, name));`
 
-	// CreateWorkloadValuesTable is a table to store workload-based learning values for tidb.
-	CreateWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.workload_values (
+	// CreateTiDBWorkloadValuesTable is a table to store workload-based learning values for tidb.
+	CreateTiDBWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
 		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		version bigint(20) NOT NULL,
 		category varchar(64) NOT NULL,
@@ -3358,7 +3358,7 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 		return
 	}
 	writeClusterID(s)
-	mustExecute(s, CreateWorkloadValuesTable)
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3515,8 +3515,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
-	// create mysql.workload_values
-	mustExecute(s, CreateWorkloadValuesTable)
+	// create mysql.tidb_workload_values
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

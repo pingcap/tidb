@@ -61,7 +61,7 @@ func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
 
 // HandleReadTableCost Start a new round of analysis of all historical read queries.
 // According to abstracted table cost metrics, calculate the percentage of read scan time and memory usage for each table.
-// The result will be saved to the table "mysql.workload_values".
+// The result will be saved to the table "mysql.tidb_workload_values".
 // Dataflow
 //  1. Abstract middle table cost metrics(scan time, memory usage, read frequency)
 //     from every record in statement_summary/statement_stats
@@ -71,7 +71,7 @@ func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
 //	read frequency
 //
 // 4. Calculate table cost for each table, table cost = table scan time / total scan time + table mem usage / total mem usage
-// 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.workload_values"
+// 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.tidb_workload_values"
 func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
@@ -102,7 +102,7 @@ func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	for _, metric := range tableNameToMetrics {
 		metric.TableCost = metric.TableScanTime/totalScanTime + metric.TableMemUsage/totalMemUsage
 	}
-	// step5: save the table cost metrics to table "mysql.workload_values"
+	// step5: save the table cost metrics to table "mysql.tidb_workload_values"
 	handle.SaveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
 }
 
@@ -154,7 +154,7 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 	// build insert sql by batch(1000 tables)
 	i := 0
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "insert into mysql.workload_values (version, category, type, table_id, value) values ")
+	sqlescape.MustFormatSQL(sql, "insert into mysql.tidb_workload_values (version, category, type, table_id, value) values ")
 	for _, metric := range metrics {
 		tbl, err := infoSchema.TableByName(ctx, metric.DbName, metric.TableName)
 		if err != nil {
@@ -190,7 +190,7 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 				return
 			}
 			sql.Reset()
-			sql.WriteString("insert into mysql.workload_values (version, category, type, table_id, value) values ")
+			sql.WriteString("insert into mysql.tidb_workload_values (version, category, type, table_id, value) values ")
 		} else {
 			sql.WriteString(", ")
 		}

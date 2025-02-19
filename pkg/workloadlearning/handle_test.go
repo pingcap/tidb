@@ -45,6 +45,6 @@ func TestSaveReadTableCostMetrics(t *testing.T) {
 	handle.SaveReadTableCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
 
 	// check the result
-	result := tk.MustQuery("select * from mysql.workload_values").Rows()
+	result := tk.MustQuery("select * from mysql.tidb_workload_values").Rows()
 	require.Equal(t, 1, len(result))
 }
