@@ -32,7 +32,7 @@ import (
 
 // GetCommonTaskExecutorExt returns a common task executor extension.
 func GetCommonTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error)) *mock.MockExtension {
-	return GetTaskExecutorExt(ctrl, getStepExecFn, func(error) bool { return true })
+	return GetTaskExecutorExt(ctrl, getStepExecFn, func(error) bool { return false })
 }
 
 // GetTaskExecutorExt returns a task executor extension.
