@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/brianvoe/gofakeit/v6"
@@ -618,6 +619,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, *localPath)
 }
 
+// Check uniqueness in the specified column of the CSV files
 func checkCSVUniqueness(credentialPath, f string) {
 	m := map[uint32]struct{}{}
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
@@ -636,33 +638,66 @@ func checkCSVUniqueness(credentialPath, f string) {
 		return nil
 	})
 
+	// Channel to cancel goroutines if a duplicate is found
+	cancelChan := make(chan struct{})
+	// WaitGroup to ensure all goroutines complete
+	var wg sync.WaitGroup
+	// Limit the maximum number of concurrent goroutines
+	maxGoroutines := 100
+	sem := make(chan struct{}, maxGoroutines)
+	var duplicateFound int32
+
+	// Process each file with a goroutine
 	for _, fileName := range fileNames {
-		fmt.Println("Checking file: ", fileName)
-		res, err := store.ReadFile(context.Background(), fileName)
-		if err != nil {
-			panic(err)
-		}
-		reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
-		idx := *checkColUniqueness
-		for {
-			record, err := reader.Read()
+		wg.Add(1)
+		sem <- struct{}{} // Acquire a slot in the semaphore
+		go func(fileName string) {
+			defer wg.Done()
+			// Read the CSV file from storage
+			res, err := store.ReadFile(context.Background(), fileName)
 			if err != nil {
-				if err.Error() != "EOF" {
-					panic(fmt.Errorf("failed to read CSV from file: %v", err))
+				panic(err)
+			}
+			// Create a CSV reader
+			reader := csv.NewReader(bytes.NewReader(res))
+			idx := *checkColUniqueness
+			// Read each record and check for duplicates
+			for {
+				record, err := reader.Read()
+				if err != nil {
+					if err.Error() != "EOF" {
+						panic(fmt.Errorf("failed to read CSV from file: %v", err))
+					}
+					break
 				}
-				break
+				// Calculate the hash of the column value
+				hash := crc32.ChecksumIEEE([]byte(record[idx]))
+				// Check if the hash has been seen before
+				select {
+				case <-cancelChan: // Exit early if a duplicate was found
+					return
+				default:
+					if _, ok := m[hash]; !ok {
+						m[hash] = struct{}{}
+					} else {
+						// Log and send cancellation signal to other goroutines
+						log.Fatal("duplicate value: ", record[idx])
+						atomic.StoreInt32(&duplicateFound, 1)
+						cancelChan <- struct{}{} // Send the cancellation signal
+						return
+					}
+				}
 			}
-			fmt.Printf("Record value: %s\n", record[idx])
-			hash := crc32.ChecksumIEEE([]byte(record[idx]))
-			if _, ok := m[hash]; !ok {
-				m[hash] = struct{}{}
-			} else {
-				log.Fatal("duplicate value: ", record[idx])
-				return
-			}
-		}
+		}(fileName)
 	}
-	log.Printf("Check success, no duplicate value")
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+	if atomic.LoadInt32(&duplicateFound) == 1 {
+		log.Fatal("Duplicate value found during CSV uniqueness check!!!")
+	} else {
+		log.Printf("Check success, no duplicate value")
+	}
 }
 
 // Write CSV to local disk (column-oriented)
