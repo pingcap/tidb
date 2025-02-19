@@ -41,7 +41,8 @@ import (
 // clonedJoin._EqualConditionsShallowRef()
 // clonedJoin.EqualConditions[0] = newFunction(xx, clonedJoin.EqualConditions[0].FuncName, clodJoin.EqualConditions[0].tp|nullable)
 func GenShallowRef4LogicalOps() ([]byte, error) {
-	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalProjection{}}
+	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalProjection{}, logicalop.LogicalAggregation{},
+		logicalop.LogicalSort{}}
 	c := new(cc)
 	c.write(codeGenLogicalOpCowPrefix)
 	for _, s := range structures {
@@ -112,7 +113,10 @@ func (c *cc) shallowRefElement(fType reflect.Type, caller, fieldName string) str
 		}
 		c.write("%v = append(%v, %v)", tmpFieldName, tmpFieldName, res)
 		c.write("}")
-		c.write("%v = %v", caller+fieldName, tmpFieldName)
+		// only the outermost caller need to assign the new slice back to the original one.
+		if !strings.HasPrefix(fieldName, "one") {
+			c.write("%v = %v", caller+fieldName, tmpFieldName)
+		}
 	case reflect.Pointer: // just ref it.
 	case reflect.String:
 	case reflect.Interface:
@@ -163,6 +167,7 @@ package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 )
 `
 

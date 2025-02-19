@@ -42,12 +42,17 @@ const (
 	// XFPullCorrPredFromAgg2 try to pull correlated expression from agg<selection> from inner child of an apply.
 	XFPullCorrPredFromAgg2
 
+	// XFEliminateOuterJoinBelowProjection try to eliminate outer join below projection.
+	XFEliminateOuterJoinBelowProjection
+	// XFEliminateOuterJoinBelowAgg try to eliminate outer join below aggregation.
+	XFEliminateOuterJoinBelowAgg
+	// XFEliminateOuterJoinBelowAggSort try to eliminate outer join below aggregation + sort.
+	XFEliminateOuterJoinBelowAggSort
+
 	// XFMergeAdjacentProjection try to merge adjacent projection together to avoid executor open cost.
 	XFMergeAdjacentProjection
 	// XFEliminateProjection try to eliminate projection operator once all projected expr are columns.
 	XFEliminateProjection
-	// XFEliminateOuterJoinBelowProjection try to eliminate outer join below projection.
-	XFEliminateOuterJoinBelowProjection
 
 	// XFMaximumRuleLength is the maximum rule length.
 	XFMaximumRuleLength

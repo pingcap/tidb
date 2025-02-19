@@ -114,22 +114,35 @@ func (mm *Memo) GetHasher() base2.Hasher {
 func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
-	for _, child := range lp.Children() {
-		var currentChildG *Group
-		if ge, ok := child.(*GroupExpression); ok {
-			// which means it's the earliest unchanged GroupExpression from rule XForm.
-			currentChildG = ge.GetGroup()
-		} else {
-			// which means it's a new/changed logical op, downward to get its input group ids to complete it.
-			ge, err := mm.CopyIn(nil, child)
-			if err != nil {
-				return nil, err
-			}
-			currentChildG = ge.GetGroup()
+	if ge, ok := lp.(*GroupExpression); ok {
+		// since the first-in lp itself may be a GE already, judge the target group and the group it owns.
+		if ge.GetGroup() == target {
+			return ge, nil
 		}
-		intest.Assert(currentChildG != nil)
-		intest.Assert(currentChildG != target)
-		childGroups = append(childGroups, currentChildG)
+		// target group and the group it owns are different, we may need to merge them, get op.
+		lp = ge.LogicalPlan
+		// the binder may not bind the GE belows, get the child groups from the GE.inputs directly.
+		for _, child := range ge.Inputs {
+			childGroups = append(childGroups, child)
+		}
+	} else {
+		for _, child := range lp.Children() {
+			var currentChildG *Group
+			if ge, ok := child.(*GroupExpression); ok {
+				// which means it's the earliest unchanged GroupExpression from rule XForm.
+				currentChildG = ge.GetGroup()
+			} else {
+				// which means it's a new/changed logical op, downward to get its input group ids to complete it.
+				ge, err := mm.CopyIn(nil, child)
+				if err != nil {
+					return nil, err
+				}
+				currentChildG = ge.GetGroup()
+			}
+			intest.Assert(currentChildG != nil)
+			intest.Assert(currentChildG != target)
+			childGroups = append(childGroups, currentChildG)
+		}
 	}
 	var (
 		ok        bool

@@ -15,14 +15,11 @@
 package eoj
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
-	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 var _ rule.Rule = &XFEliminateOuterJoinBelowAgg{}
@@ -68,50 +65,22 @@ func (xf *XFEliminateOuterJoinBelowAgg) XForm(aggGE corebase.LogicalPlan) ([]cor
 	if !ruleutil.IsColsAllFromOuterTable(aggOp.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, nil
 	}
+	// outer join elimination with duplicate agnostic aggregate functions.
+	_, aggCols := logicalop.GetDupAgnosticAggCols(aggOp, nil)
+	if len(aggCols) > 0 {
+		clonedAggOp := aggOp.LogicalAggregationShallowRef()
+		clonedAggOp.ReAlloc4Cascades(aggOp.TP(), clonedAggOp)
+		clonedAggOp.SetChildren(outerGE)
+		return []corebase.LogicalPlan{clonedAggOp}, true, nil
+	}
 	// check whether join inner side covers the unique key.
 	innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx)
 	if xf.isInnerJoinKeysContainUniqueKey(innerGE, innerJoinKeys) {
-		clonedProjOp := projOp.LogicalProjectionShallowRef()
-		clonedProjOp.SetChildren(outerGE)
+		clonedAggOp := aggOp.LogicalAggregationShallowRef()
+		clonedAggOp.ReAlloc4Cascades(aggOp.TP(), clonedAggOp)
+		clonedAggOp.SetChildren(outerGE)
 		// since eliminate outer join is always good, eliminate the old one.
-		return []corebase.LogicalPlan{clonedProjOp}, true, nil
+		return []corebase.LogicalPlan{clonedAggOp}, true, nil
 	}
 	return nil, false, nil
-}
-
-func (*XFEliminateOuterJoinBelowProjection) prepareForEliminateOuterJoin(joinGE corebase.LogicalPlan) (ok bool, innerChildIdx int, outerGE, innerGE corebase.LogicalPlan, outerUniqueIDs intset.FastIntSet) {
-	joinOp := joinGE.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-	switch joinOp.JoinType {
-	case logicalop.LeftOuterJoin:
-		innerChildIdx = 1
-	case logicalop.RightOuterJoin:
-		innerChildIdx = 0
-	default:
-		ok = false
-		return
-	}
-	outerGE = joinOp.Children()[1^innerChildIdx]
-	innerGE = joinOp.Children()[innerChildIdx]
-
-	outerUniqueIDs = intset.NewFastIntSet()
-	for _, outerCol := range outerGE.Schema().Columns {
-		outerUniqueIDs.Insert(int(outerCol.UniqueID))
-	}
-	ok = true
-	return
-}
-
-// check whether one of unique keys sets is contained by inner join keys.
-func (*XFEliminateOuterJoinBelowProjection) isInnerJoinKeysContainUniqueKey(innerGE corebase.LogicalPlan, joinKeys *expression.Schema) bool {
-	// builds UniqueKey info of innerGroup.
-	fds := innerGE.(*memo.GroupExpression).GetGroup().GetLogicalProperty().FD
-	// PK or UK(without nullability) can be used as strict key.
-	ids := intset.NewFastIntSet()
-	for _, key := range joinKeys.Columns {
-		ids.Insert(int(key.UniqueID))
-	}
-	if fds.StrictKeyCovered(ids) {
-		return true
-	}
-	return false
 }

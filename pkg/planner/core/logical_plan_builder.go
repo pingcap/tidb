@@ -3687,6 +3687,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
+	if strings.Contains(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select max(a.a) from t a left join t b on a.a = b.a") {
+		fmt.Println(1)
+	}
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
 			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")

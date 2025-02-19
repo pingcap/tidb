@@ -75,6 +75,7 @@ func (xf *XFEliminateOuterJoinBelowProjection) XForm(projGE corebase.LogicalPlan
 	innerJoinKeys := joinOp.ExtractJoinKeys(innerChildIdx)
 	if xf.isInnerJoinKeysContainUniqueKey(innerGE, innerJoinKeys) {
 		clonedProjOp := projOp.LogicalProjectionShallowRef()
+		clonedProjOp.ReAlloc4Cascades(projOp.TP(), clonedProjOp)
 		clonedProjOp.SetChildren(outerGE)
 		// since eliminate outer join is always good, eliminate the old one.
 		return []corebase.LogicalPlan{clonedProjOp}, true, nil

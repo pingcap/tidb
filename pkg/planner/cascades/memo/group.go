@@ -236,6 +236,15 @@ func (g *Group) addParentGEs(parent *GroupExpression) {
 func (g *Group) mergeTo(target *Group) {
 	// maintain target group's parent GE refs, except the triggering src GE.
 	g.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
+		// case:
+		//   G2(proj1)
+		//   G3(proj2)  <--+
+		//   G4(join3)  ---+
+		// when merging G4 to G3, the parentGEs of G4 which should be proj2 should be skipped.
+		if val.GetGroup() == target {
+			// child group merge to parent group, skip maintain the parent GE ref.
+			return
+		}
 		target.hash2ParentGroupExpr.Put(key, val)
 	})
 	// maintain the ge migration, two groups may have the equivalent two,

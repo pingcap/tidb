@@ -102,7 +102,7 @@ func (a *ApplyRuleTask) Execute() error {
 		return nil
 	}
 	pa := a.rule.Pattern()
-	if a.rule.ID() == uint(rule.XFMergeAdjacentProjection) {
+	if a.rule.ID() == uint(rule.XFEliminateOuterJoinBelowAggSort) {
 		fmt.Println(1)
 	}
 	binder := rule.NewBinder(pa, a.gE)

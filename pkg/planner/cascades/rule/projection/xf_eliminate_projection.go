@@ -43,24 +43,24 @@ func (*XFEliminateProjection) ID() uint {
 
 // XForm implements the Rule interface.
 func (*XFEliminateProjection) XForm(projGE corebase.LogicalPlan) ([]corebase.LogicalPlan, bool, error) {
-	childProjGE := projGE.Children()[0]
+	childGE := projGE.Children()[0]
 	// The schema len of the two GEs must be the same.
-	if childProjGE.Schema().Len() != projGE.Schema().Len() {
+	if childGE.Schema().Len() != projGE.Schema().Len() {
 		return nil, false, nil
 	}
 
 	// the two schema should be the same.
 	projCols := projGE.Schema().Columns
-	childCols := childProjGE.Schema().Columns
+	childCols := childGE.Schema().Columns
 	for i, col := range childCols {
 		if !col.EqualColumn(projCols[i]) {
 			return nil, false, nil
 		}
 	}
 
-	// we can return the childProjGE directly.
-	// since the childProjGE has its own group, when we return it back
+	// we can return the childGE directly.
+	// since the childGE has its own group, when we return it back
 	// it will be reinserted into projection's group again, which will
 	// trigger the group merge.
-	return []corebase.LogicalPlan{childProjGE}, true, nil
+	return []corebase.LogicalPlan{childGE}, true, nil
 }

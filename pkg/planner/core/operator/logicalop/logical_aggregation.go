@@ -40,14 +40,14 @@ import (
 type LogicalAggregation struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
-	GroupByItems []expression.Expression    `hash64-equals:"true"`
+	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true" shallow-ref:"true"`
+	GroupByItems []expression.Expression    `hash64-equals:"true" shallow-ref:"true"`
 
 	// PreferAggType And PreferAggToCop stores aggregation hint information.
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true"`
+	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
 	InputCount         float64                // InputCount is the input count of this plan.
 
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/join/eliminate_outer_join"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/projection"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -31,14 +32,17 @@ const (
 	DefaultNone SetType = iota
 	// XFSetDeCorrelateApply indicates a set of sub-rules related to de-correlate an apply.
 	XFSetDeCorrelateApply
-	// XFSetProjectionUtil indicates a set of sub-rules related to projection optimization.
+	// XFSetProjectionUtil indicates a set of sub-rules begin with projection operand optimization.
 	XFSetProjectionUtil
+	// XFSetAggregationUtil indicates a set of sub-rules begin with aggregation operand optimization.
+	XFSetAggregationUtil
 )
 
 // DefaultRuleSets indicates the all rule set.
 var DefaultRuleSets = map[pattern.Operand]*OperandRules{
-	pattern.OperandApply:      OperandApplyRules,
-	pattern.OperandProjection: OperandProjectionRules,
+	pattern.OperandApply:       OperandApplyRules,
+	pattern.OperandProjection:  OperandProjectionRules,
+	pattern.OperandAggregation: OperandAggregationRules,
 }
 
 // OperandRules wrapper all the rules rooted from one specified operator.
@@ -93,6 +97,7 @@ var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 	XFSetProjectionUtil: {
 		projection.NewXFMergeAdjacentProjection(),
 		projection.NewXFEliminateProjection(),
+		eoj.NewXFEliminateOuterJoinBelowProjection(),
 	},
 }
 
@@ -100,4 +105,22 @@ var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 var OperandProjectionRulesList = []rule.Rule{
 	projection.NewXFMergeAdjacentProjection(),
 	projection.NewXFEliminateProjection(),
+	eoj.NewXFEliminateOuterJoinBelowProjection(),
+}
+
+// OperandAggregationRules is the rules rooted from a aggregation operand.
+var OperandAggregationRules = &OperandRules{OperandAggregationRulesMap, OperandAggregationRulesList}
+
+// OperandAggregationRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
+var OperandAggregationRulesMap = map[SetType][]rule.Rule{
+	XFSetAggregationUtil: {
+		eoj.NewXFEliminateOuterJoinBelowAgg(),
+		eoj.NewXFEliminateOuterJoinBelowAggSort(),
+	},
+}
+
+// OperandAggregationRulesList is the rules rooted from an apply operand, organized as list.
+var OperandAggregationRulesList = []rule.Rule{
+	eoj.NewXFEliminateOuterJoinBelowAgg(),
+	eoj.NewXFEliminateOuterJoinBelowAggSort(),
 }
