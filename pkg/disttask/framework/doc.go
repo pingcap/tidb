@@ -127,10 +127,11 @@
 //
 // Note: if ManualRecovery is enabled, when some subtask failed, the task will
 // move to `awaiting-resolution` state, and manual operation is needed for the
-// task to continue. This mechanism is used for debugging, or to manually recover
-// from some error when importing large mount of data using global-sort where one
-// round of import takes a lot of time, it might be more flexible and efficient
-// than retrying the whole task.
+// task to continue. This mechanism is used for debugging, some bug such as those
+// on global-sort are harder to investigate without the intermediate files, or to
+// manually recover from some error when importing large mount of data using
+// global-sort where one round of import takes a lot of time, it might be more
+// flexible and efficient than retrying the whole task.
 //
 // pause/resume state transition:
 // as we don't know the state of the task before `paused`, so the state after
