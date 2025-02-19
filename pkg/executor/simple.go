@@ -96,6 +96,10 @@ type SimpleExec struct {
 	staleTxnStartTS uint64
 }
 
+// resourceOptionsInfo represents the resource infomations to limit user.
+// It contains 'MAX_QUERIES_PER_HOUR', 'MAX_UPDATES_PER_HOUR', 'MAX_CONNECTIONS_PER_HOUR' and 'MAX_USER_CONNECTIONS'.
+// It only implements the option of 'MAX_USER_CONNECTIONS' now.
+// To do: implement the other three options.
 type resourceOptionsInfo struct {
 	maxQueriesPerHour     int64
 	maxUpdatesPerHour     int64
