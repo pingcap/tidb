@@ -90,8 +90,7 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-	sPool util.SessionPool
-
+	sPool        util.DestroyableSessionPool
 	bindingCache BindingCache
 
 	// lastTaskTime records the last update time for the global sql bind cache.
@@ -123,7 +122,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
 	h := &globalBindingHandle{sPool: sPool}
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.bindingCache = newBindCache()
@@ -486,6 +485,9 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.sPool.Put(resource)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.sPool.Destroy(resource)
 		}
 	}()
 	sctx := resource.(sessionctx.Context)
