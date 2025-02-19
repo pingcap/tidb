@@ -620,7 +620,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 }
 
 // Check uniqueness in the specified column of the CSV files
-func checkCSVUniqueness(credentialPath, f string) {
+func checkCSVUniqueness1(credentialPath, f string) {
 	m := map[uint32]struct{}{}
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
@@ -643,7 +643,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 	// WaitGroup to ensure all goroutines complete
 	var wg sync.WaitGroup
 	// Limit the maximum number of concurrent goroutines
-	maxGoroutines := 30
+	maxGoroutines := 1
 	sem := make(chan struct{}, maxGoroutines)
 	var duplicateFound int32
 	var mu sync.Mutex
@@ -714,6 +714,53 @@ func checkCSVUniqueness(credentialPath, f string) {
 	} else {
 		log.Printf("Check success, no duplicate value")
 	}
+}
+
+func checkCSVUniqueness(credentialPath, f string) {
+	m := map[uint32]struct{}{}
+	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	s, err := storage.ParseBackend(*gcsDir, &op)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	if err != nil {
+		panic(err)
+	}
+
+	var fileNames []string
+	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
+		fileNames = append(fileNames, path)
+		return nil
+	})
+
+	for _, fileName := range fileNames {
+		fmt.Println("Checking file: ", fileName)
+		res, err := store.ReadFile(context.Background(), fileName)
+		if err != nil {
+			panic(err)
+		}
+		reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
+		idx := *checkColUniqueness
+		for {
+			record, err := reader.Read()
+			if err != nil {
+				if err.Error() != "EOF" {
+					panic(fmt.Errorf("failed to read CSV from file: %v", err))
+				}
+				break
+			}
+			fmt.Printf("Record value: %s\n", record[idx])
+			hash := crc32.ChecksumIEEE([]byte(record[idx]))
+			if _, ok := m[hash]; !ok {
+				m[hash] = struct{}{}
+			} else {
+				log.Fatal("duplicate value: ", record[idx])
+				return
+			}
+		}
+	}
+	log.Printf("Check success, no duplicate value")
 }
 
 // Write CSV to local disk (column-oriented)
