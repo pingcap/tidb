@@ -294,6 +294,7 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
+		binding_digest varchar(64),
 		original_sql TEXT NOT NULL,
 		bind_sql TEXT NOT NULL,
 		default_db TEXT NOT NULL,
@@ -307,7 +308,7 @@ const (
 		plan_digest varchar(64),
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
-		UNIQUE INDEX plan_index(plan_digest)
+		UNIQUE INDEX binding_index(binding_digest)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
