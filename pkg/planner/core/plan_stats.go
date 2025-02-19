@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -176,11 +177,11 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			logutil.BgLogger().Warn("RequestLoadStats failed", zap.String("error", fmt.Sprintf("%+v", err)))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		logutil.BgLogger().Error("RequestLoadStats failed", zap.String("error", fmt.Sprintf("%+v", err)))
 		return err
 	}
 	return nil
