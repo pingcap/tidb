@@ -74,7 +74,8 @@ func NewBackfillingSchedulerForTest(d DDL) (scheduler.Extension, error) {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
 	return &LitBackfillScheduler{
-		d: ddl,
+		d:       ddl,
+		nodeRes: &proto.NodeResource{TotalCPU: 4, TotalMem: 16 * units.GiB, TotalDisk: 100 * units.GiB},
 	}, nil
 }
 
