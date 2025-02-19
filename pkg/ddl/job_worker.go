@@ -330,9 +330,9 @@ func JobNeedGC(job *model.Job) bool {
 			if err != nil {
 				return false
 			}
-			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
-			// We don't support drop vector index in multi-schema, so we only check the first one.
-			if args.IndexArgs[0].IsVector {
+			// If it's a TiFlash index, it needn't to store key ranges to gc_delete_range.
+			// We don't support drop TiFlash index in multi-schema, so we only check the first one.
+			if args.IndexArgs[0].IsTiFlashIndex {
 				return false
 			}
 			return true
@@ -678,21 +678,6 @@ func (w *ReorgContext) ddlJobSourceType() string {
 	return w.tp
 }
 
-func skipWriteBinlog(job *model.Job) bool {
-	switch job.Type {
-	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
-	// it's used to update table's TiFlash replica available status.
-	case model.ActionUpdateTiFlashReplicaStatus:
-		return true
-	// Don't sync 'alter table cache|nocache' to other tools.
-	// It's internal to the current cluster.
-	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
-		return true
-	}
-
-	return false
-}
-
 func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 	if t == 0 || t > maxv {
 		return maxv
@@ -948,7 +933,9 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddPrimaryKey:
 		ver, err = w.onCreateIndex(jobCtx, job, true)
 	case model.ActionAddVectorIndex:
-		ver, err = w.onCreateVectorIndex(jobCtx, job)
+		ver, err = w.onCreateTiFlashIndex(jobCtx, job, true)
+	case model.ActionAddColumnarIndex:
+		ver, err = w.onCreateTiFlashIndex(jobCtx, job, false)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(jobCtx, job)
 	case model.ActionRenameIndex:

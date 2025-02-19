@@ -58,24 +58,43 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// ColumnarIndexType is the type of the columnar index.
+type ColumnarIndexType string
+
+// ColumnarIndexType values.
+const (
+	ColumnarIndexTypeInvalid  ColumnarIndexType = ""
+	ColumnarIndexTypeInverted ColumnarIndexType = "inverted"
+)
+
+type ColumnarIndexInfo struct {
+	// Tp is the type of the columnar index.
+	Tp ColumnarIndexType `json:"type"`
+
+	// Necessary information for columnar index.
+	// Since inverted index is the only columnar index type now, and it does not need any extra information,
+	// no field is defined here now.
+}
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64            `json:"id"`
-	Name          ast.CIStr        `json:"idx_name"` // Index name.
-	Table         ast.CIStr        `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State         SchemaState      `json:"state"`
-	BackfillState BackfillState    `json:"backfill_state"`
-	Comment       string           `json:"comment"`      // Comment
-	Tp            ast.IndexType    `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
-	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool             `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+	ID            int64              `json:"id"`
+	Name          ast.CIStr          `json:"idx_name"` // Index name.
+	Table         ast.CIStr          `json:"tbl_name"` // Table name.
+	Columns       []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State         SchemaState        `json:"state"`
+	BackfillState BackfillState      `json:"backfill_state"`
+	Comment       string             `json:"comment"`        // Comment
+	Tp            ast.IndexType      `json:"index_type"`     // Index type: Btree, Hash, Rtree or HNSW
+	Unique        bool               `json:"is_unique"`      // Whether the index is unique.
+	Primary       bool               `json:"is_primary"`     // Whether the index is primary key.
+	Invisible     bool               `json:"is_invisible"`   // Whether the index is invisible.
+	Global        bool               `json:"is_global"`      // Whether the index is global.
+	MVIndex       bool               `json:"mv_index"`       // Whether the index is multivalued index.
+	VectorInfo    *VectorIndexInfo   `json:"vector_index"`   // VectorInfo is the vector index information.
+	ColumnarInfo  *ColumnarIndexInfo `json:"columnar_index"` // ColumnarInfo is the columnar index information.
 }
 
 // Hash64 implement HashEquals interface.
@@ -146,7 +165,7 @@ func (index *IndexInfo) IsPublic() bool {
 // IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
-	return index.VectorInfo != nil
+	return index.VectorInfo != nil || index.ColumnarInfo != nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
