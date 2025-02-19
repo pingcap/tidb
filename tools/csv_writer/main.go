@@ -643,7 +643,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 	// WaitGroup to ensure all goroutines complete
 	var wg sync.WaitGroup
 	// Limit the maximum number of concurrent goroutines
-	maxGoroutines := 200
+	maxGoroutines := 30
 	sem := make(chan struct{}, maxGoroutines)
 	var duplicateFound int32
 	var mu sync.Mutex
