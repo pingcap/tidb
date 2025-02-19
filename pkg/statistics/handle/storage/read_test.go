@@ -55,16 +55,16 @@ func TestLoadStats(t *testing.T) {
 	stat := h.GetTableStats(tableInfo)
 	require.True(t, stat.GetCol(colAID).IsAllEvicted())
 	c := stat.GetCol(colAID)
-	require.True(t, c == nil || c.Histogram.Len() == 0)
-	require.True(t, c == nil || c.CMSketch == nil)
+	require.True(t, c == nil || c.HistBucketNum() == 0)
+	require.True(t, c == nil || c.GetCMSketchImmutable() == nil)
 	require.True(t, stat.GetIdx(idxBID).IsAllEvicted())
 	idx := stat.GetIdx(idxBID)
 	require.True(t, idx == nil || idx.Histogram.Len() == 0)
 	require.True(t, idx == nil || (idx.CMSketch.TotalCount()+idx.TopN.TotalCount() == 0))
 	require.True(t, stat.GetCol(colCID).IsAllEvicted())
 	c = stat.GetCol(colCID)
-	require.True(t, c == nil || c.Histogram.Len() == 0)
-	require.True(t, c == nil || c.CMSketch == nil)
+	require.True(t, c == nil || c.HistBucketNum() == 0)
+	require.True(t, c == nil || c.GetCMSketchImmutable() == nil)
 
 	// Column stats are loaded after they are needed.
 	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colAID)
@@ -74,15 +74,13 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetTableStats(tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())
-	hg := stat.GetCol(colAID).Histogram
-	require.Greater(t, hg.Len(), 0)
+	require.Greater(t, stat.GetCol(colAID).HistBucketNum(), 0)
 	// We don't maintain cmsketch for pk.
-	cms := stat.GetCol(colAID).CMSketch
+	cms := stat.GetCol(colAID).GetCMSketchImmutable()
 	require.Nil(t, cms)
 	require.True(t, stat.GetCol(colCID).IsFullLoad())
-	hg = stat.GetCol(colCID).Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms = stat.GetCol(colCID).CMSketch
+	require.Greater(t, stat.GetCol(colCID).HistBucketNum(), 0)
+	cms = stat.GetCol(colCID).GetCMSketchImmutable()
 	require.NotNil(t, cms)
 
 	// Index stats are loaded after they are needed.
@@ -94,7 +92,7 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetTableStats(tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
-	hg = idx.Histogram
+	hg := idx.Histogram
 	cms = idx.CMSketch
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))

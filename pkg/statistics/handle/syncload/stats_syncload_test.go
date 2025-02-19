@@ -96,9 +96,9 @@ func TestConcurrentLoadHist(t *testing.T) {
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
 	col := stat.GetCol(tableInfo.Columns[0].ID)
-	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
-	col = stat.GetCol(tableInfo.Columns[2].ID)
-	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
+	require.True(t, col == nil || col.HistBucketNum()+col.TopNNum() == 0)
+	col2 := stat.GetCol(tableInfo.Columns[2].ID)
+	require.True(t, col2 == nil || col2.HistBucketNum()+col2.TopNNum() == 0)
 	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -109,9 +109,8 @@ func TestConcurrentLoadHist(t *testing.T) {
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
-	topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
-	require.Greater(t, hg.Len()+topn.Num(), 0)
+	col2 = stat.GetCol(tableInfo.Columns[2].ID)
+	require.True(t, col2.HistBucketNum()+col2.TopNNum() > 0)
 }
 
 func TestConcurrentLoadHistTimeout(t *testing.T) {
@@ -141,12 +140,10 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	// TODO: They may need to be empty. Depending on how we operate newly analyzed tables.
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[0].ID))
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
-	hg := stat.GetCol(tableInfo.Columns[0].ID).Histogram
-	topn := stat.GetCol(tableInfo.Columns[0].ID).TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
-	hg = stat.GetCol(tableInfo.Columns[2].ID).Histogram
-	topn = stat.GetCol(tableInfo.Columns[2].ID).TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
+	col0 := stat.GetCol(tableInfo.Columns[0].ID)
+	require.True(t, col0 != nil && col0.HistBucketNum()+col0.TopNNum() == 0)
+	col2 := stat.GetCol(tableInfo.Columns[2].ID)
+	require.True(t, col2 != nil && col2.HistBucketNum()+col2.TopNNum() == 0)
 	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -158,7 +155,6 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.NotNil(t, stat.GetCol(tableInfo.Columns[2].ID))
-	require.Equal(t, 0, hg.Len()+topn.Num())
 }
 
 func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
@@ -216,7 +212,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
 		c := stat.GetCol(tableInfo.Columns[2].ID)
-		require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
+		require.True(t, c == nil || (c.HistBucketNum()+c.TopNNum() == 0))
 
 		stmtCtx1 := stmtctx.NewStmtCtx()
 		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
@@ -270,9 +266,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		stat = h.GetTableStats(tableInfo)
-		hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
-		topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
-		require.Greater(t, hg.Len()+topn.Num(), 0)
+		col2 := stat.GetCol(tableInfo.Columns[2].ID)
+		require.Greater(t, col2.HistBucketNum()+col2.TopNNum(), 0)
 	}
 }
 
@@ -317,7 +312,7 @@ func TestRetry(t *testing.T) {
 	// no stats at beginning
 	stat := h.GetTableStats(tableInfo)
 	c := stat.GetCol(tableInfo.Columns[2].ID)
-	require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
+	require.True(t, c == nil || (c.HistBucketNum()+c.TopNNum() == 0))
 
 	stmtCtx1 := stmtctx.NewStmtCtx()
 	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)

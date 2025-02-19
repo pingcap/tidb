@@ -466,16 +466,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		}
 		w.idx = idxHist
 	} else {
-		colHist := &statistics.Column{
-			PhysicalID: item.TableID,
-			Histogram:  *hg,
-			Info:       w.colInfo,
-			CMSketch:   cms,
-			TopN:       topN,
-			FMSketch:   fms,
-			IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
-			StatsVer:   statsVer,
-		}
+		colHist := statistics.NewColumn(w.colInfo, item.TableID, isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()), cms, topN, fms, *hg, statsVer)
 		if colHist.StatsAvailable() {
 			if fullLoad {
 				colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()

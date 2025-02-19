@@ -64,7 +64,7 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 		if len(colStats.Buckets) == 0 {
 			return false // it's not loaded
 		}
-		numTopN := colStats.TopN.Num()
+		numTopN := colStats.TopNNum()
 		numBuckets := len(colStats.Buckets)
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)

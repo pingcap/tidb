@@ -249,13 +249,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
-			col := &statistics.Column{
-				Histogram:  *hist,
-				PhysicalID: table.PhysicalID,
-				Info:       colInfo,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:   statsVer,
-			}
+			col := statistics.NewColumn(
+				colInfo,
+				table.PhysicalID,
+				tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				nil,
+				nil,
+				nil,
+				*hist,
+				statsVer,
+			)
 			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
@@ -263,7 +266,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 				// We will also set int primary key's loaded status to evicted.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			} else if col.NDV > 0 || col.NullCount > 0 {
+			} else if ndv > 0 || nullCount > 0 {
 				// If NDV > 0 or NullCount > 0, we also treat it as the one having its statistics. See the comments of StatsAvailable in column.go.
 				// So we align its status as evicted too.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()

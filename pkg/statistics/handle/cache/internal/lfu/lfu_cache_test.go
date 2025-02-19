@@ -218,11 +218,11 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 func checkTable(t *testing.T, tbl *statistics.Table) {
 	tbl.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if column.GetEvictedStatus() == statistics.AllEvicted {
-			require.Nil(t, column.TopN)
-			require.Equal(t, 0, cap(column.Histogram.Buckets))
+			require.False(t, column.HasTopN())
+			require.Equal(t, 0, cap(column.GetHistogramImmutable().Buckets))
 		} else {
-			require.NotNil(t, column.TopN)
-			require.Greater(t, cap(column.Histogram.Buckets), 0)
+			require.True(t, column.HasTopN())
+			require.Greater(t, cap(column.GetHistogramImmutable().Buckets), 0)
 		}
 		return false
 	})

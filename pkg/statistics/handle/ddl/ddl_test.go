@@ -313,7 +313,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[2].ID).IsStatsInitialized())
 	require.Equal(t, int64(2), statsTbl.GetCol(tableInfo.Columns[2].ID).NullCount)
-	require.Equal(t, int64(0), statsTbl.GetCol(tableInfo.Columns[2].ID).Histogram.NDV)
+	require.Equal(t, int64(0), statsTbl.GetCol(tableInfo.Columns[2].ID).SelfNDV())
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)

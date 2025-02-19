@@ -344,8 +344,8 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				c := coll.GetCol(idx.Histogram.ID)
 				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
-					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
+				if isSingleColRange && !isSingleColIdx && c != nil && c.SelfNDV() > 0 {
+					histNDV = c.SelfNDV() - int64(c.TopNNum())
 				} else {
 					histNDV -= int64(idx.TopN.Num())
 				}

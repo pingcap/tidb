@@ -104,8 +104,8 @@ func Selectivity(
 		var sel float64
 		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
 			sel = 1.0 / pseudoEqualRate
-		} else if colHist.Histogram.NDV > 0 {
-			sel = 1 / float64(colHist.Histogram.NDV)
+		} else if colHist.SelfNDV() > 0 {
+			sel = 1 / float64(colHist.SelfNDV())
 		} else {
 			sel = 1.0 / pseudoEqualRate
 		}
@@ -883,9 +883,9 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	} else {
 		stats := coll.GetCol(i)
 		statsVer = stats.StatsVer
-		hist = &stats.Histogram
+		hist = stats.GetHistogramImmutable()
 		nullCnt = hist.NullCount
-		topn = stats.TopN
+		topn = stats.GetTopNImmutable()
 	}
 	// Only in stats ver2, we can assume that: TopN + Histogram + NULL == All data
 	if statsVer != statistics.Version2 {
@@ -1052,7 +1052,7 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 				break
 			}
 			if col := coll.GetCol(colID); col != nil {
-				ndv = max(ndv, col.Histogram.NDV)
+				ndv = max(ndv, col.SelfNDV())
 			}
 		}
 		return outOfRangeEQSelectivity(sctx, ndv, realtimeCnt, int64(idx.TotalRowCount())), nil
