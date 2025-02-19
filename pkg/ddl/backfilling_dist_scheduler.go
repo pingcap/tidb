@@ -195,8 +195,23 @@ func (*LitBackfillScheduler) IsRetryableErr(error) bool {
 }
 
 // ModifyMeta implements scheduler.Extension interface.
-func (*LitBackfillScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
-	return oldMeta, nil
+func (sch *LitBackfillScheduler) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(oldMeta, taskMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, m := range modifies {
+		switch m.Type {
+		case proto.ModifyBatchSize:
+			taskMeta.Job.ReorgMeta.SetBatchSize(int(m.To))
+		case proto.ModifyMaxWriteSpeed:
+			taskMeta.Job.ReorgMeta.SetMaxWriteSpeed(int(m.To))
+		default:
+			logutil.DDLLogger().Warn("invalid modify type",
+				zap.Int64("taskId", sch.GetTask().ID), zap.Stringer("modify", m))
+		}
+	}
+	return json.Marshal(taskMeta)
 }
 
 func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {

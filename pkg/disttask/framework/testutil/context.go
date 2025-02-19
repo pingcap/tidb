@@ -424,14 +424,17 @@ func ReduceCheckInterval(t testing.TB) {
 	taskCheckIntervalBak := taskexecutor.TaskCheckInterval
 	checkIntervalBak := taskexecutor.SubtaskCheckInterval
 	maxIntervalBak := taskexecutor.MaxSubtaskCheckInterval
+	detectModifyIntBak := taskexecutor.DetectParamModifyInterval
 	t.Cleanup(func() {
 		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
 		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
 		taskexecutor.TaskCheckInterval = taskCheckIntervalBak
 		taskexecutor.SubtaskCheckInterval = checkIntervalBak
 		taskexecutor.MaxSubtaskCheckInterval = maxIntervalBak
+		taskexecutor.DetectParamModifyInterval = detectModifyIntBak
 	})
 	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
 	taskexecutor.TaskCheckInterval, taskexecutor.MaxSubtaskCheckInterval, taskexecutor.SubtaskCheckInterval =
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
+	taskexecutor.DetectParamModifyInterval = 10 * time.Millisecond
 }
