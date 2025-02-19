@@ -49,6 +49,8 @@ func DefaultTickDurationConfig() tickDurationConfig {
 }
 
 type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
+	Path() string
+
 	LoadCheckpointData(context.Context, func(K, LV)) (time.Duration, error)
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
 	LoadCheckpointMetadata(context.Context) (*M, error)
@@ -125,6 +127,10 @@ func NewSnapshotTableMetaManager(
 		dom:      dom,
 		dbName:   dbName,
 	}, nil
+}
+
+func (manager *TableMetaManager[K, SV, LV, M]) Path() string {
+	return fmt.Sprintf("database[%s]", manager.dbName)
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) Close() {
@@ -292,6 +298,10 @@ func NewLogStorageMetaManager(
 		cipher:   cipher,
 		taskName: taskName,
 	}
+}
+
+func (manager *StorageMetaManager[K, SV, LV, M]) Path() string {
+	return fmt.Sprintf("path[%s]", manager.taskName)
 }
 
 func (manager *StorageMetaManager[K, SV, LV, M]) Close() {}
