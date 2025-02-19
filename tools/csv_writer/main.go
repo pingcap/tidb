@@ -664,6 +664,7 @@ func checkCSVUniqueness(credentialPath, f string) {
 			reader := csv.NewReader(bytes.NewReader(res))
 			idx := *checkColUniqueness
 			// Read each record and check for duplicates
+			mInner := map[uint32]struct{}{}
 			for {
 				record, err := reader.Read()
 				if err != nil {
@@ -679,20 +680,30 @@ func checkCSVUniqueness(credentialPath, f string) {
 				case <-cancelChan: // Exit early if a duplicate was found
 					return
 				default:
-					mu.Lock()
-					if _, ok := m[hash]; !ok {
-						m[hash] = struct{}{}
-					} else {
-						// Log and send cancellation signal to other goroutines
-						log.Fatal("duplicate value: ", record[idx], " in file: ", fileName)
-						atomic.StoreInt32(&duplicateFound, 1)
-						cancelChan <- struct{}{} // Send the cancellation signal
-						mu.Unlock()
-						return
-					}
-					mu.Unlock()
+					mInner[hash] = struct{}{}
 				}
 			}
+
+			mu.Lock()
+			for hash := range mInner {
+				select {
+				case <-cancelChan:
+					mu.Unlock()
+					return // 如果已经有重复，退出
+				default:
+				}
+				if _, ok := m[hash]; !ok {
+					m[hash] = struct{}{}
+				} else {
+					// Log and send cancellation signal to other goroutines
+					log.Fatal("duplicate value in file: ", fileName)
+					atomic.StoreInt32(&duplicateFound, 1)
+					cancelChan <- struct{}{} // Send the cancellation signal
+					mu.Unlock()
+					return
+				}
+			}
+			mu.Unlock()
 		}(fileName)
 	}
 
