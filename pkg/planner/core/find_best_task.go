@@ -2396,7 +2396,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logical
 		return err
 	}
 
-	if indexConds != nil {
+	if len(indexConds) != 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
