@@ -407,6 +407,12 @@ func (b *Builder) shouldUpdateFKInfo(m meta.Reader, oldTableID, newTableID int64
 	}
 	oldTableInfo := oldTable.Meta()
 
+	// if database or table name is changed, we need to update the foreign key info.
+	if oldTableInfo.Name.L != newTableInfo.Name.L || oldTableInfo.DBID != newTableInfo.DBID {
+		return true
+	}
+
+
 	// If the foreign key is changed, we need to update the foreign key info.
 	if len(newTableInfo.ForeignKeys) != len(oldTableInfo.ForeignKeys) {
 		return true
