@@ -88,7 +88,7 @@ func parseSQLSchema(schema string) []Column {
 	lines := strings.Split(schema, "\n")
 	columns := []Column{}
 
-	hasPk := false
+	//hasPk := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		// Skip empty lines, CREATE TABLE and ");"
@@ -120,8 +120,9 @@ func parseSQLSchema(schema string) []Column {
 			}
 		}
 		col := Column{Name: colName, Type: colType, Enum: enumValues}
-		if strings.Contains(strings.ToUpper(line), "PRIMARY KEY") && !hasPk {
-			hasPk = true
+		//if strings.Contains(strings.ToUpper(line), "PRIMARY KEY") && !hasPk {
+		if strings.Contains(strings.ToUpper(line), "PRIMARY KEY") {
+			//hasPk = true
 			col.IsPK = true
 		}
 		extractLenFromSQL(&col, line)
@@ -236,6 +237,7 @@ func generateValueByCol(col Column, num int, res []string) {
 	case strings.HasPrefix(col.Type, "BIGINT"):
 		generateBigintNoDist(num, res)
 	case strings.HasPrefix(col.Type, "TINYINT"):
+	case strings.HasPrefix(col.Type, "BOOLEAN"):
 		generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
 		generateTimestamp(num, res)
@@ -250,6 +252,8 @@ func generateValueByCol(col Column, num int, res []string) {
 		generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "CHAR"):
 		generateChar(num, res, col.Len)
+	case strings.HasPrefix(col.Type, "DECIMAL"):
+		generateDecimal(num, res)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
@@ -278,6 +282,17 @@ func generateLetterWithNum(len int, randomLen bool) string {
 		}
 	}
 	return builder.String()
+}
+
+func generateDecimal(num int, res []string) {
+	if len(res) != num {
+		res = make([]string, num)
+	}
+	for i := 0; i < num; i++ {
+		intPart := rand.Int63n(1_000_000_000_000_000_000)
+		decimalPart := rand.Intn(1_000_000_000)
+		res[i] = fmt.Sprintf("%d.%010d", intPart, decimalPart)
+	}
 }
 
 func generateBigintNoDist(num int, res []string) {
