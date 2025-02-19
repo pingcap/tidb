@@ -788,6 +788,40 @@ func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, worker
 	}
 }
 
+func generateTotalRandomBigintForPk(num int, path string) {
+	res := make([]string, num)
+	intMap := make(map[int]struct{})
+	// generate uniform distribute bigint
+	for len(intMap) < num {
+		intMap[faker.Number(math.MinInt64, math.MaxInt64)] = struct{}{}
+	}
+	i := 0
+	for v := range intMap {
+		res[i] = strconv.Itoa(v)
+		i++
+	}
+	writeCSVToLocalDisk(path+"/uniform_bigint_pk.csv", nil, [][]string{res})
+	// generate normal distribute bigint
+	res = make([]string, num)
+	intMap = make(map[int]struct{})
+	for len(intMap) < num {
+		randomFloat := rand.NormFloat64()
+		randomInt := int(math.Round(randomFloat))
+		if randomInt > math.MaxInt64 {
+			randomInt = math.MaxInt64
+		} else if randomInt < math.MinInt64 {
+			randomInt = math.MinInt64
+		}
+		intMap[randomInt] = struct{}{}
+	}
+	i = 0
+	for v := range intMap {
+		res[i] = strconv.Itoa(v)
+		i++
+	}
+	writeCSVToLocalDisk(path+"/normal_bigint_pk.csv", nil, [][]string{res})
+}
+
 func main() {
 	// Parse command-line arguments.
 	flag.Parse()
