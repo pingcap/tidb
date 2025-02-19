@@ -126,18 +126,26 @@ func init() {
 // IsClusterTableByName used to check whether the table is a cluster memory table.
 // Export for PhysicalTableScan.ExplainID
 func IsClusterTableByName(dbName, tableName string) bool {
-	intest.Assert(dbName == strings.ToLower(dbName))
+	intest.AssertFunc(func() bool {
+		return dbName == strings.ToLower(dbName)
+	})
 	switch dbName {
 	case util.InformationSchemaName.L, util.PerformanceSchemaName.L:
-		intest.Assert(tableName == strings.ToLower(tableName))
+		intest.AssertFunc(func() bool {
+			return tableName == strings.ToLower(tableName)
+		})
 		for _, name := range memTableToAllTiDBClusterTablesWithLowerCase {
-			intest.Assert(name == strings.ToLower(name))
+			intest.AssertFunc(func() bool {
+				return name == strings.ToLower(name)
+			})
 			if name == tableName {
 				return true
 			}
 		}
 		for _, name := range memTableToDDLOwnerClusterTablesWithLowerCase {
-			intest.Assert(name == strings.ToLower(name))
+			intest.AssertFunc(func() bool {
+				return name == strings.ToLower(name)
+			})
 			if name == tableName {
 				return true
 			}
