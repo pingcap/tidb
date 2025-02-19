@@ -220,7 +220,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		}
 
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-
+		tableCount := 0
 		dbs := is.AllSchemaNames()
 		for _, db := range dbs {
 			// Ignore the memory and system database.
@@ -235,6 +235,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 
 			// We need to check every partition of every table to see if it needs to be analyzed.
 			for _, tblInfo := range tbls {
+				tableCount++
 				// If table locked, skip analyze all partitions of the table.
 				if _, ok := lockedTables[tblInfo.ID]; ok {
 					continue
@@ -291,6 +292,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				}
 			}
 		}
+
+		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", tableCount), zap.Duration("duration", time.Since(start)))
 
 		return nil
 	}, statsutil.FlagWrapTxn)
