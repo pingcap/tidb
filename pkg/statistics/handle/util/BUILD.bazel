@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "interfaces.go",
+        "table_info.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/table",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/sqlexec",
+        "//pkg/util/sqlexec/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["util_test.go"],
+    flaky = True,
+    deps = [
+        ":util",
+        "//pkg/domain/infosync",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -284,6 +284,16 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
+<<<<<<< HEAD:statistics/handle/handle_hist.go
+=======
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
+		}
+>>>>>>> d8d4e74a5ed (statistics: add Destroy method and handle session recycling (#59546) (#59634)):pkg/statistics/handle/handle_hist.go
 	}()
 	item := task.TableItemID
 	oldCache := h.statsCache.Load().(statsCache)
