@@ -3332,8 +3332,8 @@ def go_deps():
         name = "com_github_petermattis_goid",
         build_file_proto_mode = "disable",
         importpath = "github.com/petermattis/goid",
-        sum = "h1:64bxqeTEN0/xoEqhKGowgihNuzISS9rEG6YUMU4bzJo=",
-        version = "v0.0.0-20211229010228-4d14c490ee36",
+        sum = "h1:Dx7Ovyv/SFnMFw3fD4oEoeorXc6saIiQ23LrGLth0Gw=",
+        version = "v0.0.0-20240813172612-4fcff4a6cae7",
     )
 
     go_repository(
@@ -3742,8 +3742,8 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable",
         importpath = "github.com/sasha-s/go-deadlock",
-        sum = "h1:lMqc+fUb7RrFS3gQLtoQsJ7/6TV/pAIFvBsqX73DK8Y=",
-        version = "v0.2.0",
+        sum = "h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb2NsU=",
+        version = "v0.3.5",
     )
     go_repository(
         name = "com_github_sashamelentyev_interfacebloat",
