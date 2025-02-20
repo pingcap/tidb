@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -414,14 +415,19 @@ func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
-// Run runs the server.
+// Run runs the server only for test now.
 func (s *Server) Run(dom *domain.Domain) error {
+	return s.RunWithStore(dom, nil)
+}
+
+// RunWithStore runs the server.
+func (s *Server) RunWithStore(dom *domain.Domain, store kv.Storage) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		err := s.startStatusHTTP()
+		err := s.startStatusHTTP(store)
 		if err != nil {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 			return err

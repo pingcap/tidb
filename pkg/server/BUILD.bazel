@@ -74,7 +74,6 @@ go_library(
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/util",
-        "//pkg/store",
         "//pkg/store/driver/error",
         "//pkg/store/helper",
         "//pkg/tablecodec",
