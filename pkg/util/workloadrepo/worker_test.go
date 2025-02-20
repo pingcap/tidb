@@ -887,6 +887,7 @@ func TestRecoverSnapID(t *testing.T) {
 	etcd2 := setupEtcd(t)
 	worker2 := setupWorker(ctx, t, etcd2, dom, "worker2", true)
 	snapIDStr, err := worker2.etcdGet(ctx, snapIDKey)
+	require.Nil(t, err)
 	require.Equal(t, "", snapIDStr)
 
 	_, err = worker2.getSnapID(ctx)
