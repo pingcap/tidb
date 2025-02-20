@@ -1,0 +1,218 @@
+{
+  "delete": [
+    {
+      "sql": "CREATE TABLE t (id INT, data VARCHAR(10));INSERT INTO t VALUES (1, NULL), (2, 'abc');DELETE FROM t WHERE data IS NULL;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id VARCHAR(10));INSERT INTO t VALUES ('5'), ('10a');DELETE FROM t WHERE id = 5;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, dt DATE);INSERT INTO t VALUES (1, '2023-01-01'), (2, '2023-02-01');DELETE FROM t WHERE dt BETWEEN '2023-01-15' AND '2023-02-15';SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT);INSERT INTO t VALUES (1), (2), (3);DELETE FROM t ORDER BY id DESC LIMIT 1;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, active TINYINT(1));INSERT INTO t VALUES (1, 1), (2, 0);DELETE FROM t WHERE active = TRUE;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t1 (id INT);CREATE TABLE t2 (id INT);INSERT INTO t1 VALUES (1), (2);INSERT INTO t2 VALUES (2);DELETE FROM t1 WHERE id IN (SELECT id FROM t2);SELECT * FROM t1 ORDER BY id;DROP TABLE t1, t2;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (name VARCHAR(10) COLLATE utf8_bin);INSERT INTO t VALUES ('a'), ('A');DELETE FROM t WHERE name = 'A' COLLATE utf8_bin;SELECT * FROM t ORDER BY name;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT);INSERT INTO t VALUES (5), (10);DELETE FROM t WHERE id + 5 = 10;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id VARCHAR(10));INSERT INTO t VALUES ('0'), ('1');DELETE FROM t WHERE id = 0;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (name VARCHAR(10));INSERT INTO t VALUES ('a'), ('abcd');DELETE FROM t WHERE LENGTH(name) \u003e 3;SELECT * FROM t ORDER BY name;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    }
+  ],
+  "insert": [
+    {
+      "sql": "CREATE TABLE t (id INT, name VARCHAR(25));INSERT INTO t VALUES (1, NULL);SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT);INSERT INTO t VALUES ('2a');SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, name VARCHAR(25));INSERT INTO t VALUES (1, 'O''Connor');SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id VARCHAR(25));INSERT INTO t VALUES (123);SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (d DATE);INSERT INTO t VALUES ('2023-10-05');SELECT * FROM t ORDER BY d;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (b BLOB);INSERT INTO t VALUES (X'0123');SELECT HEX(b) FROM t ORDER BY b;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, name VARCHAR(25) DEFAULT 'unknown');INSERT INTO t (id) VALUES (1);SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT);INSERT INTO t VALUES (2147483647);SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT UNSIGNED);INSERT INTO t VALUES (-1);SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, name VARCHAR(25));INSERT INTO t VALUES (3, 'a'), (4, 'b');SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    }
+  ],
+  "update": [
+    {
+      "sql": "CREATE TABLE t (id INT, name VARCHAR(10));INSERT INTO t VALUES (1, 'a'), (2, NULL);UPDATE t SET name = 123 WHERE id = 2;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (a INT, b INT);INSERT INTO t VALUES (1, 5), (NULL, NULL);UPDATE t SET a = 10 WHERE b IS NULL;SELECT * FROM t ORDER BY a;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id VARCHAR(2), val INT);INSERT INTO t VALUES ('1', 10), ('2', 20);UPDATE t SET val = 30 WHERE id = 1;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (a INT, b VARCHAR(5), c DATE);INSERT INTO t VALUES (5, 'test', '2024-01-01');UPDATE t SET a = '10', b = 15, c = '2024-02-02' WHERE a = 5;SELECT * FROM t ORDER BY a;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, s VARCHAR(20));INSERT INTO t VALUES (1, 'old');UPDATE t SET s = '\\\\n\\t' WHERE id = 1;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, active TINYINT(1));INSERT INTO t VALUES (1, 0), (2, 1);UPDATE t SET active = TRUE WHERE id = 1;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (d DATE);INSERT INTO t VALUES ('2024-01-01');UPDATE t SET d = '2024-02-30' WHERE d = '2024-01-01';SELECT * FROM t ORDER BY d;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (f FLOAT);INSERT INTO t VALUES (10.5);UPDATE t SET f = '20.5' WHERE f = 10.5;SELECT * FROM t ORDER BY f;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (d DECIMAL(5,2));INSERT INTO t VALUES (3.14);UPDATE t SET d = 5 WHERE d = 3.14;SELECT * FROM t ORDER BY d;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t (id INT, hex_col VARCHAR(10));INSERT INTO t VALUES (1, 'a');UPDATE t SET hex_col = 0x6162 WHERE id = 1;SELECT * FROM t ORDER BY id;DROP TABLE t;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    }
+  ]
+}
