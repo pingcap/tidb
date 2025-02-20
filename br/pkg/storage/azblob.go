@@ -46,6 +46,7 @@ const (
 
 	azblobPremisedCopySpeedPerSecond      = 100 * units.MiB
 	azblobPremisedCopySpeedPerMilliSecond = azblobPremisedCopySpeedPerSecond / 1000
+	azblobCopyPollPendingMinimalDuration  = 2 * time.Second
 )
 
 const azblobRetryTimes int32 = 5
@@ -445,7 +446,12 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 			}
 			rem := total - finished
 			toSleep := time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond) * time.Millisecond
-			logutil.CL(ctx).Info("AzureBlobStorage: asyncrhonous copy triggered",
+			// In practice, most copies finish when the initial request returns.
+			// To avoid a busy loop of requesting, we need a minimal sleep duration.
+			if toSleep < azblobCopyPollPendingMinimalDuration {
+				toSleep = azblobCopyPollPendingMinimalDuration
+			}
+			logutil.CL(ctx).Info("AzureBlobStorage: asynchronous copy triggered",
 				zap.Int("finished", finished), zap.Int("total", total),
 				zap.Stringp("copy-id", prop.CopyID), zap.Duration("to-sleep", toSleep),
 				zap.Stringp("copy-desc", prop.CopyStatusDescription),
