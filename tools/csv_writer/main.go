@@ -239,13 +239,13 @@ func extractStdMeanFromSQL(col *Column, s string) {
 // Generate data for each column
 func (t *Task) generateValueByCol(col Column, num int, res []string) {
 	switch {
-	case strings.HasPrefix(col.Type, "INT"):
-		generateInt(num, res, col.StdDev)
-	case strings.HasPrefix(col.Type, "BIGINT"):
+	case strings.HasPrefix(col.Type, "INT"): // int32
+		generateInt32(num, res, col.StdDev)
+	case strings.HasPrefix(col.Type, "BIGINT"): // int64
 		if col.IsUnique {
 			generateBigint(num, res, col.Order, t.begin, t.end)
 		} else {
-			generateBigintNoDist(num, res)
+			generateBigintWithNoLimit(num, res)
 		}
 	case strings.HasPrefix(col.Type, "TINYINT"):
 		generateTinyint1(num, res)
@@ -308,7 +308,7 @@ func generateDecimal(num int, res []string) {
 	}
 }
 
-func generateBigintNoDist(num int, res []string) {
+func generateBigintWithNoLimit(num int, res []string) {
 	if len(res) != num {
 		res = make([]string, num)
 	}
@@ -356,18 +356,18 @@ func generateNormalFloat(num int, res []string) {
 	}
 }
 
-func generateInt(num int, res []string, stdDev float64) {
+func generateInt32(num int, res []string, stdDev float64) {
 	if len(res) != num {
 		res = make([]string, num)
 	}
 	if stdDev == 0 {
-		generateInt32(num, res)
+		generateInt32WithNoLimit(num, res)
 	} else {
-		generateNormalInt32(num, res, stdDev, 0.0)
+		generateNormalDistributeInt32(num, res, stdDev, 0.0)
 	}
 }
 
-func generateInt32(num int, res []string) {
+func generateInt32WithNoLimit(num int, res []string) {
 	if len(res) != num {
 		res = make([]string, num)
 	}
@@ -376,7 +376,7 @@ func generateInt32(num int, res []string) {
 	}
 }
 
-func generateNormalInt32(num int, res []string, stdDev, mean float64) {
+func generateNormalDistributeInt32(num int, res []string, stdDev, mean float64) {
 	if len(res) != num {
 		res = make([]string, num)
 	}
