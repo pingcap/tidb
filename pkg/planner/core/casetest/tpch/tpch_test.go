@@ -103,4 +103,32 @@ limit 10;`).Check(testkit.Rows(
 		"                  └─ExchangeReceiver_57(Probe) 162359270.28 mpp[tiflash]  ",
 		"                    └─ExchangeSender_56 162359270.28 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
 		"                      └─TableFullScan_54 162359270.28 mpp[tiflash] table:lineitem pushed down filter:gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000), keep order:false"))
+	tk.MustQuery(`explain SELECT /*+ HASH_JOIN(c, o) HASH_JOIN(o2, l) */
+    c.C_CUSTKEY AS A,
+    o.O_ORDERKEY AS B,
+    l.*
+FROM
+    customer c
+JOIN orders o ON c.C_CUSTKEY = o.O_CUSTKEY
+JOIN lineitem l ON l.L_ORDERKEY = o.O_ORDERKEY
+JOIN orders o2 ON o2.O_ORDERKEY = l.L_ORDERKEY;`).Check(testkit.Rows(
+		"TableReader_96 308934636.96 root  MppVersion: 3, data:ExchangeSender_95",
+		"└─ExchangeSender_95 308934636.96 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Projection_94 308934636.96 mpp[tiflash]  test.customer.c_custkey, test.orders.o_orderkey, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_linenumber, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.lineitem.l_tax, test.lineitem.l_returnflag, test.lineitem.l_linestatus, test.lineitem.l_shipdate, test.lineitem.l_commitdate, test.lineitem.l_receiptdate, test.lineitem.l_shipinstruct, test.lineitem.l_shipmode, test.lineitem.l_comment",
+		"    └─HashJoin_77 308934636.96 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
+		"      ├─ExchangeReceiver_93(Build) 75000000.00 mpp[tiflash]  ",
+		"      │ └─ExchangeSender_92 75000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
+		"      │   └─TableFullScan_91 75000000.00 mpp[tiflash] table:o2 keep order:false",
+		"      └─HashJoin_78(Probe) 304437471.33 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+		"        ├─ExchangeReceiver_87(Build) 74999990.00 mpp[tiflash]  ",
+		"        │ └─ExchangeSender_86 74999990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
+		"        │   └─Projection_85 74999990.00 mpp[tiflash]  test.customer.c_custkey, test.orders.o_orderkey",
+		"        │     └─HashJoin_80 74999990.00 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"        │       ├─ExchangeReceiver_83(Build) 7500000.00 mpp[tiflash]  ",
+		"        │       │ └─ExchangeSender_82 7500000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"        │       │   └─TableFullScan_81 7500000.00 mpp[tiflash] table:c keep order:false",
+		"        │       └─TableFullScan_84(Probe) 75000000.00 mpp[tiflash] table:o keep order:false",
+		"        └─ExchangeReceiver_90(Probe) 300005811.00 mpp[tiflash]  ",
+		"          └─ExchangeSender_89 300005811.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
+		"            └─TableFullScan_88 300005811.00 mpp[tiflash] table:l keep order:false"))
 }
