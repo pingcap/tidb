@@ -16,7 +16,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -106,8 +105,10 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		} else {
 			count = vardef.MaxUserConnectionsValue.Load()
 		}
-		logutil.BgLogger().Error(fmt.Sprintf("User %s has exceeded the maximum allowed connections", authUser.LoginString()),
-			zap.Uint32("max-user-connections", count), zap.Error(servererr.ErrConCount))
+		logutil.BgLogger().Error(("has exceeded the maximum allowed connections"),
+			zap.String("user", authUser.LoginString()),
+			zap.Uint32("max-user-connections", count),
+			zap.Error(servererr.ErrConCount))
 		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(authUser.LoginString())
 	}
 
