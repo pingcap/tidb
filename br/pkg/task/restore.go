@@ -1434,6 +1434,11 @@ func handleTableRenames(
 		start := dbIDAndTableName[0]
 		end := dbIDAndTableName[1]
 
+		// skip if it contains partition
+		if start.IsPartition || end.IsPartition {
+			continue
+		}
+
 		startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
 		if !exists {
 			continue
@@ -1483,6 +1488,72 @@ func handleTableRenames(
 	}
 }
 
+// handlePartitionExchanges checks for partition exchanges and returns an error if a partition
+// was exchanged between tables where one is in the filter and one is not
+func handlePartitionExchanges(
+	history *stream.LogBackupTableHistoryManager,
+	snapshotDBMap map[int64]*metautil.Database,
+	cfg *RestoreConfig,
+) error {
+	for tableId, dbIDAndTableName := range history.GetTableHistory() {
+		start := dbIDAndTableName[0]
+		end := dbIDAndTableName[1]
+
+		// skip if not a partition or if partition parent table didn't change
+		if !start.IsPartition || start.ParentTableID == end.ParentTableID {
+			continue
+		}
+
+		var startTracked, endTracked bool
+		if start.IsPartition {
+			startTracked = cfg.PiTRTableTracker.ContainsTableId(start.DbID, start.ParentTableID)
+		} else {
+			startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
+			if !exists {
+				continue
+			}
+			startTracked = utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
+		}
+		if end.IsPartition {
+			endTracked = cfg.PiTRTableTracker.ContainsTableId(end.DbID, end.ParentTableID)
+		} else {
+			endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
+			if !exists {
+				continue
+			}
+			endTracked = utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable)
+		}
+
+		// error out if partition is exchanged between tables where one is tracked and one isn't
+		if startTracked != endTracked {
+			startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
+			if !exists {
+				startDBName = fmt.Sprintf("(unknown db name %d)", start.DbID)
+			}
+			endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
+			if !exists {
+				endDBName = fmt.Sprintf("(unknown db name %d)", end.DbID)
+			}
+
+			return errors.Annotatef(berrors.ErrRestoreModeMismatch,
+				"partition exchange detected: partition ID %d was exchanged from table '%s.%s' (ID: %d) "+
+					"eventually to table '%s.%s' (ID: %d), which is not supported in table filter",
+				tableId, startDBName, start.TableName, start.ParentTableID,
+				endDBName, end.TableName, end.ParentTableID)
+		}
+
+		// if we reach here, it will only be both sides are tracked or untracked,
+		// if tracked and is table, add to table tracker
+		if startTracked && !start.IsPartition {
+			cfg.PiTRTableTracker.TrackTableId(start.DbID, tableId)
+		}
+		if endTracked && !end.IsPartition {
+			cfg.PiTRTableTracker.TrackTableId(end.DbID, tableId)
+		}
+	}
+	return nil
+}
+
 func AdjustTablesToRestoreAndCreateTableTracker(
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
 	cfg *RestoreConfig,
@@ -1493,6 +1564,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 ) (err error) {
 	// build tracker for pitr restore to use later
 	piTRIdTracker := utils.NewPiTRIdTracker()
+	cfg.PiTRTableTracker = piTRIdTracker
 
 	// track newly created databases
 	newlyCreatedDBs := logBackupTableHistory.GetNewlyCreatedDBHistory()
@@ -1505,7 +1577,10 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	// first handle table renames to determine which tables we need
 	handleTableRenames(logBackupTableHistory, snapshotDBMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
 
-	// handle partition exchange if needed in future
+	// handle partition exchange after all tables are tracked
+	if err := handlePartitionExchanges(logBackupTableHistory, snapshotDBMap, cfg); err != nil {
+		return err
+	}
 
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {
@@ -1513,7 +1588,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	log.Info("pitr table tracker", zap.String("map", piTRIdTracker.String()))
-	cfg.PiTRTableTracker = piTRIdTracker
 	return nil
 }
 

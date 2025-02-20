@@ -704,6 +704,133 @@ test_index_filter() {
     echo "Index filter test passed"
 }
 
+test_partition_exchange() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "start testing partition exchange with filter"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+
+    run_sql "CREATE TABLE $DB.source_table (
+        id INT,
+        value INT,
+        PRIMARY KEY(id, value)
+    ) PARTITION BY RANGE (value) (
+        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p1 VALUES LESS THAN (200)
+    );"
+
+    run_sql "CREATE TABLE $DB.target_table (
+        id INT,
+        value INT,
+        PRIMARY KEY(id, value)
+    );"
+
+    # insert data with clear patterns to verify later
+    run_sql "INSERT INTO $DB.source_table VALUES (1, 50), (2, 150);"  # one row in p0, one in p1
+    run_sql "INSERT INTO $DB.target_table VALUES (3, 50);"  # will be exchanged with p0
+
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    # exchange partition between tables
+    run_sql "ALTER TABLE $DB.source_table EXCHANGE PARTITION p0 WITH TABLE $DB.target_table;"
+
+    # verify data immediately after exchange
+    echo "verifying data after exchange..."
+    # source_table should now have (3,50) in p0 and (2,150) in p1
+    run_sql "SELECT * FROM $DB.source_table ORDER BY id" || {
+        echo "Failed to query source_table"
+        exit 1
+    }
+    # target_table should now have (1,50)
+    run_sql "SELECT * FROM $DB.target_table ORDER BY id" || {
+        echo "Failed to query target_table"
+        exit 1
+    }
+
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "case 1: should fail - only source table in filter"
+    restore_fail=0
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.source_table" || restore_fail=1
+
+    if [ $restore_fail -ne 1 ]; then
+        echo "Expected restore to fail when only source table is in filter"
+        exit 1
+    fi
+
+    # verify the error message contains partition exchange information
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.source_table" 2>&1 | grep "partition exchange detected" || {
+        echo "Error message does not contain partition exchange information"
+        exit 1
+    }
+
+    echo "case 2: should fail - source table not in filter, target table in filter"
+    run_sql "drop schema if exists $DB;"
+    restore_fail=0
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.target_table" || restore_fail=1
+
+    if [ $restore_fail -ne 1 ]; then
+        echo "Expected restore to fail when only target table is in filter"
+        exit 1
+    fi
+
+    echo "case 3: should succeed - both tables in filter"
+    run_sql "drop schema if exists $DB;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.source_table" -f "$DB.target_table" || {
+        echo "Expected restore to succeed when both tables are in filter"
+        exit 1
+    }
+
+    # verify data after restore - should match the state after exchange
+    echo "verifying data after restore..."
+    # verify source_table data
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.source_table PARTITION (p0) WHERE id = 3 AND value = 50" || {
+        echo "source_table p0 doesn't have expected data after restore"
+        exit 1
+    }
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.source_table PARTITION (p1) WHERE id = 2 AND value = 150" || {
+        echo "source_table p1 doesn't have expected data after restore"
+        exit 1
+    }
+    # verify target_table data
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.target_table WHERE id = 1 AND value = 50" || {
+        echo "target_table doesn't have expected data after restore"
+        exit 1
+    }
+
+    echo "case 4: should succeed - neither table in filter"
+    run_sql "drop schema if exists $DB;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.unrelated_table" || {
+        echo "Expected restore to succeed when neither table is in filter"
+        exit 1
+    }
+
+    # verify no tables were restored
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables after neither tables in filter"
+        exit 1
+    }
+
+    # cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+
+    echo "partition exchange test passed"
+}
+
 echo "run all test cases"
 test_basic_filter
 test_with_full_backup_filter
@@ -712,5 +839,6 @@ test_with_checkpoint
 test_system_tables
 test_foreign_keys
 test_index_filter
+test_partition_exchange
 
 echo "br pitr table filter all tests passed"
