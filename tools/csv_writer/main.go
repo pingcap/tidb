@@ -298,9 +298,6 @@ func generateLetterWithNum(len int, randomLen bool) string {
 }
 
 func generateDecimal(num int, res []string) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	for i := 0; i < num; i++ {
 		intPart := rand.Int63n(1_000_000_000_000_000_000)
 		decimalPart := rand.Intn(1_000_000_000)
@@ -309,18 +306,12 @@ func generateDecimal(num int, res []string) {
 }
 
 func generateBigintWithNoLimit(num int, res []string) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	for i := 0; i < num; i++ {
 		res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
 	}
 }
 
 func generateBigint(num int, res []string, order string, begin, end int) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
 	intRes := make([]int64, num)
 	for uk := begin; uk < end; uk++ {
@@ -356,9 +347,6 @@ func generateNormalFloat(num int, res []string) {
 }
 
 func generateInt32(num int, res []string, stdDev float64) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	if stdDev == 0 {
 		generateInt32WithNoLimit(num, res)
 	} else {
@@ -367,18 +355,12 @@ func generateInt32(num int, res []string, stdDev float64) {
 }
 
 func generateInt32WithNoLimit(num int, res []string) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	for i := 0; i < num; i++ {
 		res[i] = strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
 	}
 }
 
 func generateNormalDistributeInt32(num int, res []string, stdDev, mean float64) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	for i := 0; i < num; i++ {
 		randomFloat := rand.NormFloat64()*stdDev + mean
 		randomInt := int(math.Round(randomFloat))
@@ -420,9 +402,6 @@ func generateMediumblob(num int, res []string) {
 }
 
 func generateChar(num int, res []string, charLen int) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
 	for i := 0; i < num; i++ {
 		res[i] = generateLetterWithNum(charLen, false)
 	}
@@ -454,10 +433,6 @@ func escapeJSONString(jsonStr string) string {
 }
 
 func generateJSONObject(num int, res []string) {
-	if len(res) != num {
-		res = make([]string, num)
-	}
-
 	for i := 0; i < num; i++ {
 		r := generateJSON()
 		if *localPath == "" {
