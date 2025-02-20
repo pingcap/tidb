@@ -357,7 +357,8 @@ func (c *TestDXFContext) electIfNeeded() {
 	newOwnerIdx := int(rand.Int31n(int32(len(c.mu.nodes))))
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, proto.NodeResourceForTest)
+	nodeRes := proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB)
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, nodeRes)
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()

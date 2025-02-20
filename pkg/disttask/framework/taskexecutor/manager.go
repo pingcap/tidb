@@ -63,16 +63,13 @@ type Manager struct {
 		taskExecutors map[int64]TaskExecutor
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id          string
-	wg          tidbutil.WaitGroupWrapper
-	executorWG  tidbutil.WaitGroupWrapper
-	ctx         context.Context
-	cancel      context.CancelFunc
-	logger      *zap.Logger
-	slotManager *slotManager
-
-	totalCPU     int
-	totalMem     int64
+	id           string
+	wg           tidbutil.WaitGroupWrapper
+	executorWG   tidbutil.WaitGroupWrapper
+	ctx          context.Context
+	cancel       context.CancelFunc
+	logger       *zap.Logger
+	slotManager  *slotManager
 	nodeResource *proto.NodeResource
 }
 
