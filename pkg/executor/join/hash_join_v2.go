@@ -634,6 +634,8 @@ type HashJoinV2Exec struct {
 	prepared  bool
 	inRestore bool
 
+	IsGA bool
+
 	isMemoryClearedForTest bool
 }
 
@@ -748,6 +750,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	if e.stats != nil {
 		e.stats.reset()
 		e.stats.spill.partitionNum = int(e.partitionNumber)
+		e.stats.isHashJoinGA = e.IsGA
 	}
 	return nil
 }
