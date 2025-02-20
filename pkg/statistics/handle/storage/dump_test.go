@@ -46,14 +46,15 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Equal(t, b.ColNum(), a.ColNum())
 	a.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
-		require.True(t, statistics.HistogramEqual(&col.Histogram, &b.GetCol(i).Histogram, false))
-		if col.CMSketch == nil {
-			require.Nil(t, b.GetCol(i).CMSketch)
+		require.True(t, statistics.HistogramEqual(col.GetHistogramImmutable(), b.GetCol(i).GetHistogramImmutable(), false))
+		cms := col.GetCMSketchImmutable()
+		if cms == nil {
+			require.Nil(t, b.GetCol(i).GetCMSketchImmutable())
 		} else {
-			require.True(t, col.CMSketch.Equal(b.GetCol(i).CMSketch))
+			require.True(t, cms.Equal(b.GetCol(i).GetCMSketchImmutable()))
 		}
 		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		require.Truef(t, col.TopN.Equal(b.GetCol(i).TopN), "%v, %v", col.TopN, b.GetCol(i).TopN)
+		require.Truef(t, col.GetTopNImmutable().Equal(b.GetCol(i).GetTopNImmutable()), "%v, %v", col.GetTopNImmutable(), b.GetCol(i).GetTopNImmutable())
 		return false
 	})
 	require.Equal(t, b.IdxNum(), a.IdxNum())
@@ -410,12 +411,12 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, stat.GetCol(tableInfo.Columns[0].ID).GetHistogramImmutable(), cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 
 	stat = h.GetTableStats(tableInfo)
-	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).CMSketch
+	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).GetCMSketchImmutable()
 	require.NotNil(t, cmsFromStore)
 	require.True(t, cms.Equal(cmsFromStore))
 
@@ -424,7 +425,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
 	require.NoError(t, err)
 	stat = h.GetTableStats(tableInfo)
-	cmsFromJSON := stat.GetCol(tableInfo.Columns[0].ID).CMSketch.Copy()
+	cmsFromJSON := stat.GetCol(tableInfo.Columns[0].ID).GetCMSketchImmutable().Copy()
 	require.True(t, cms.Equal(cmsFromJSON))
 }
 

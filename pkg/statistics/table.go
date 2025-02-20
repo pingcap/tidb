@@ -712,11 +712,11 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	}
 	if colStatsInfo, ok := t.columns[id]; ok {
 		if needCopy {
-			return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
-				colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
+			return colStatsInfo.Histogram.Copy(), colStatsInfo.cmSketch.Copy(),
+				colStatsInfo.topN.Copy(), colStatsInfo.FMSketch.Copy(), true
 		}
-		return &colStatsInfo.Histogram, colStatsInfo.CMSketch,
-			colStatsInfo.TopN, colStatsInfo.FMSketch, true
+		return &colStatsInfo.Histogram, colStatsInfo.cmSketch,
+			colStatsInfo.topN, colStatsInfo.FMSketch, true
 	}
 	// newly added column which is not analyzed yet
 	return nil, nil, nil, nil, false
