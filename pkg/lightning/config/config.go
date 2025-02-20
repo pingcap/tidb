@@ -803,69 +803,72 @@ func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 
 // CSVConfig is the config for CSV files.
 type CSVConfig struct {
-	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
-	Separator         string              `toml:"separator" json:"separator"`
-	Delimiter         string              `toml:"delimiter" json:"delimiter"`
-	Terminator        string              `toml:"terminator" json:"terminator"`
-	Null              StringOrStringSlice `toml:"null" json:"null"`
-	Header            bool                `toml:"header" json:"header"`
-	HeaderSchemaMatch bool                `toml:"header-schema-match" json:"header-schema-match"`
-	TrimLastSep       bool                `toml:"trim-last-separator" json:"trim-last-separator"`
-	NotNull           bool                `toml:"not-null" json:"not-null"`
+	// FieldsTerminatedBy, FieldsEnclosedBy and LinesTerminatedBy should all be in utf8mb4 encoding.
+	FieldsTerminatedBy string              `toml:"separator" json:"separator"`
+	FieldsEnclosedBy   string              `toml:"delimiter" json:"delimiter"`
+	LinesTerminatedBy  string              `toml:"terminator" json:"terminator"`
+	FieldNullDefinedBy StringOrStringSlice `toml:"null" json:"null"`
+	Header             bool                `toml:"header" json:"header"`
+	HeaderSchemaMatch  bool                `toml:"header-schema-match" json:"header-schema-match"`
+	TrimLastEmptyField bool                `toml:"trim-last-separator" json:"trim-last-separator"`
+	NotNull            bool                `toml:"not-null" json:"not-null"`
 	// deprecated, use `escaped-by` instead.
 	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
-	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
-	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
+	// FieldsEscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
+	FieldsEscapedBy string `toml:"escaped-by" json:"escaped-by"`
 
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
-	StartingBy     string `toml:"-" json:"-"`
-	AllowEmptyLine bool   `toml:"-" json:"-"`
-	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
+	LinesStartingBy string `toml:"-" json:"-"`
+	AllowEmptyLine  bool   `toml:"-" json:"-"`
+	// For non-empty FieldsEnclosedBy (for example quotes), null elements inside quotes are not considered as null except for
 	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
+	// this option is our extension to the standard LOAD DATA, to allow quoted
+	// FieldNullDefinedBy fields to be treated as text instead of NULL when we have
+	// `FIELDS DEFINED NULL BY 'xxx'` without `OPTIONALLY ENCLOSED`.
+	// in all other cases, it's always false.
 	QuotedNullIsText bool `toml:"-" json:"-"`
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html
 	// > If the field begins with the ENCLOSED BY character, instances of that character are recognized as terminating a
 	// > field value only if followed by the field or line TERMINATED BY sequence.
-	// This means we will meet unescaped quote in a quoted field
-	// > The "BIG" boss      -> The "BIG" boss
 	// This means we will meet unescaped quote in a unquoted field
+	// > The "BIG" boss      -> The "BIG" boss
 	UnescapedQuote bool `toml:"-" json:"-"`
 }
 
 func (csv *CSVConfig) adjust() error {
-	if len(csv.Separator) == 0 {
+	if len(csv.FieldsTerminatedBy) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
 	}
 
-	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
+	if len(csv.FieldsEnclosedBy) > 0 && (strings.HasPrefix(csv.FieldsTerminatedBy, csv.FieldsEnclosedBy) || strings.HasPrefix(csv.FieldsEnclosedBy, csv.FieldsTerminatedBy)) {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
-	if len(csv.EscapedBy) > 1 {
+	if len(csv.FieldsEscapedBy) > 1 {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
 	}
-	if csv.BackslashEscape && csv.EscapedBy == "" {
-		csv.EscapedBy = `\`
+	if csv.BackslashEscape && csv.FieldsEscapedBy == "" {
+		csv.FieldsEscapedBy = `\`
 	}
-	if !csv.BackslashEscape && csv.EscapedBy == `\` {
-		csv.EscapedBy = ""
+	if !csv.BackslashEscape && csv.FieldsEscapedBy == `\` {
+		csv.FieldsEscapedBy = ""
 	}
 
 	// keep compatibility with old behaviour
-	if !csv.NotNull && len(csv.Null) == 0 {
-		csv.Null = []string{""}
+	if !csv.NotNull && len(csv.FieldNullDefinedBy) == 0 {
+		csv.FieldNullDefinedBy = []string{""}
 	}
 
-	if len(csv.EscapedBy) > 0 {
-		if csv.Separator == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+	if len(csv.FieldsEscapedBy) > 0 {
+		if csv.FieldsTerminatedBy == csv.FieldsEscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.FieldsEscapedBy)
 		}
-		if csv.Delimiter == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
+		if csv.FieldsEnclosedBy == csv.FieldsEscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.FieldsEscapedBy)
 		}
-		if csv.Terminator == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+		if csv.LinesTerminatedBy == csv.FieldsEscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.FieldsEscapedBy)
 		}
 	}
 	return nil
@@ -906,7 +909,7 @@ func (m *MydumperRuntime) adjust() error {
 	if err := m.CSV.adjust(); err != nil {
 		return err
 	}
-	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+	if m.StrictFormat && len(m.CSV.LinesTerminatedBy) == 0 {
 		return common.ErrInvalidConfig.GenWithStack(
 			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
 	}
@@ -1479,15 +1482,15 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:         ",",
-				Delimiter:         `"`,
-				Header:            true,
-				HeaderSchemaMatch: true,
-				NotNull:           false,
-				Null:              []string{`\N`},
-				BackslashEscape:   true,
-				EscapedBy:         `\`,
-				TrimLastSep:       false,
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   `"`,
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{`\N`},
+				BackslashEscape:    true,
+				FieldsEscapedBy:    `\`,
+				TrimLastEmptyField: false,
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,

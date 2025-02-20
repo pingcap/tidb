@@ -565,6 +565,7 @@ func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) 
 
 type storageAndMore interface {
 	kv.Storage
+	kv.StorageWithPD
 	kv.EtcdBackend
 	helper.Storage
 }

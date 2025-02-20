@@ -132,7 +132,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, WithoutDB(true))
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -165,7 +165,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
+	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return bindingNoDBDigest, nil
 }
 
@@ -367,44 +367,14 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	return bindings[0]
 }
 
-type option struct {
-	specifiedDB string
-	noDB        bool
-}
-
-type optionFunc func(*option)
-
-// WithoutDB specifies whether to eliminate schema names.
-func WithoutDB(noDB bool) optionFunc {
-	return func(user *option) {
-		user.noDB = noDB
-	}
-}
-
-// WithSpecifiedDB specifies the specified DB name.
-func WithSpecifiedDB(specifiedDB string) optionFunc {
-	return func(user *option) {
-		user.specifiedDB = specifiedDB
-	}
-}
-
-// NormalizeStmtForBinding normalizes a statement for binding.
-// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
-	opt := &option{}
-	for _, option := range options {
-		option(opt)
-	}
-	return normalizeStmt(stmtNode, opt.specifiedDB, opt.noDB)
-}
-
 // NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
+// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest

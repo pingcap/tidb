@@ -23,6 +23,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -51,6 +53,7 @@ type LitBackfillScheduler struct {
 	*scheduler.BaseScheduler
 	d          *ddl
 	GlobalSort bool
+	nodeRes    *proto.NodeResource
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
@@ -59,6 +62,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, para
 	sch := LitBackfillScheduler{
 		d:             d,
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+		nodeRes:       param.GetNodeResource(),
 	}
 	return &sch
 }
@@ -70,7 +74,8 @@ func NewBackfillingSchedulerForTest(d DDL) (scheduler.Extension, error) {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
 	return &LitBackfillScheduler{
-		d: ddl,
+		d:       ddl,
+		nodeRes: &proto.NodeResource{TotalCPU: 4, TotalMem: 16 * units.GiB, TotalDisk: 100 * units.GiB},
 	}, nil
 }
 
@@ -122,6 +127,9 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
+		// TODO(tangenta): use available disk during adding index.
+		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
+		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
@@ -192,8 +200,23 @@ func (*LitBackfillScheduler) IsRetryableErr(error) bool {
 }
 
 // ModifyMeta implements scheduler.Extension interface.
-func (*LitBackfillScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
-	return oldMeta, nil
+func (sch *LitBackfillScheduler) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(oldMeta, taskMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, m := range modifies {
+		switch m.Type {
+		case proto.ModifyBatchSize:
+			taskMeta.Job.ReorgMeta.SetBatchSize(int(m.To))
+		case proto.ModifyMaxWriteSpeed:
+			taskMeta.Job.ReorgMeta.SetMaxWriteSpeed(int(m.To))
+		default:
+			logutil.DDLLogger().Warn("invalid modify type",
+				zap.Int64("taskId", sch.GetTask().ID), zap.Stringer("modify", m))
+		}
+	}
+	return json.Marshal(taskMeta)
 }
 
 func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
