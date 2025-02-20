@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1195,4 +1196,39 @@ func TestSetupOptions(t *testing.T) {
 	_ = md.WithMaxScanFiles
 	_ = md.ReturnPartialResultOnError
 	_ = md.WithFileIterator
+}
+
+func TestParallelProcess(t *testing.T) {
+	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		return strings.ToLower(f.Path), nil
+	}
+
+	letters := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	randomString := func() string {
+		b := make([]rune, 10)
+		for i := range b {
+			b[i] = letters[rand.Intn(len(letters))]
+		}
+		return string(b)
+	}
+
+	oneTest := func(length int, concurrency int) {
+		original := make([]md.RawFile, 0, length)
+		for i := 0; i < length; i++ {
+			original = append(original, md.RawFile{Path: randomString()})
+		}
+
+		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
+		require.NoError(t, err)
+
+		for i, s := range original {
+			require.Equal(t, strings.ToLower(s.Path), res[i])
+		}
+	}
+
+	oneTest(10, 0)
+	oneTest(10, 4)
+	oneTest(10, 16)
+	oneTest(1, 10)
+	oneTest(2, 2)
 }

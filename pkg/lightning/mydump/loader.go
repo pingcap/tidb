@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -146,6 +145,9 @@ type MDLoaderSetupConfig struct {
 	// MaxScanFiles specifies the maximum number of files to scan.
 	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
 	MaxScanFiles int
+
+	ScanFileConcurrency int
+
 	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
 	// and return the partial result.
 	ReturnPartialResultOnError bool
@@ -171,6 +173,15 @@ func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 		if maxScanFiles > 0 {
 			cfg.MaxScanFiles = maxScanFiles
 			cfg.ReturnPartialResultOnError = true
+		}
+	}
+}
+
+// WithMaxScanFiles generates an option that set the concurrency to scan files when setting up a MDLoader.
+func WithScanFileConcurrency(concurrency int) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		if concurrency > 0 {
+			cfg.ScanFileConcurrency = concurrency
 		}
 	}
 }
@@ -456,7 +467,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	}
 
 	// Parallel process all files
-	allInfos, err := ParallelProcess(ctx, allFiles, runtime.NumCPU()*2, s.constructFileInfo)
+	allInfos, err := ParallelProcess(ctx, allFiles, s.setupCfg.ScanFileConcurrency, s.constructFileInfo)
 	if err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
