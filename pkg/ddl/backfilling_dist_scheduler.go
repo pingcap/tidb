@@ -26,6 +26,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -518,6 +519,9 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, startKey)
 		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
 		regionSplitKeys = append(regionSplitKeys, endKey)
+		for i, k := range regionSplitKeys {
+			logger.Warn("[date0218]splitSubtaskMetaForOneKVMetaGroup", zap.Int("i", i), brlogutil.Key("key", k))
+		}
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,

@@ -20,6 +20,7 @@ import (
 	"context"
 	"slices"
 
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -228,6 +229,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		}
 		if r.recordRegionSplitAfterNextProp {
 			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.firstKey))
+			lastKey := r.regionSplitKeys[len(r.regionSplitKeys)-1]
+			r.logger.Warn("[date0218] SplitOneRangesGroup", zap.Int("len(key)", len(lastKey)), brlogutil.Key("key", lastKey))
 			r.recordRegionSplitAfterNextProp = false
 		}
 
