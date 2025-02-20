@@ -518,7 +518,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 			return fmt.Errorf("failed to write to GCS: %w", err)
 		}
 	}
-	fmt.Println("ready to write: ", fileName)
+	log.Println("ready to write: ", fileName)
 	_, err = writer.Write(context.Background(), []byte(strings.Join(strBatch, "")))
 	if err != nil {
 		log.Printf("Write to GCS failed, deleting file: %s", fileName)
