@@ -10,8 +10,6 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//parser/model",
-        "//statistics",
         "//statistics/handle",
         "//testkit",
         "//tests/realtikvtest",
