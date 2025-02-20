@@ -4,6 +4,7 @@ go_test(
     name = "addindextest3_test",
     timeout = "long",
     srcs = [
+        "functional_test.go",
         "main_test.go",
         "operator_test.go",
     ],
@@ -20,6 +21,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/table/tables",
+        "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/util/chunk",
         "//tests/realtikvtest",
