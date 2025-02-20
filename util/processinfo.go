@@ -193,7 +193,13 @@ type SessionManager interface {
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
+<<<<<<< HEAD:util/processinfo.go
 	DeleteInternalSession(se interface{})
+=======
+	DeleteInternalSession(se any)
+	// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager.
+	ContainsInternalSession(se any) bool
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546)):pkg/util/processinfo.go
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions

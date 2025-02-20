@@ -120,6 +120,17 @@ func (msm *MockSessionManager) ServerID() uint64 {
 // StoreInternalSession is to store internal session.
 func (*MockSessionManager) StoreInternalSession(interface{}) {}
 
+// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager
+func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if msm.internalSessions == nil {
+		return false
+	}
+	_, ok := msm.internalSessions[se]
+	return ok
+}
+
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
 func (*MockSessionManager) DeleteInternalSession(interface{}) {}
 
