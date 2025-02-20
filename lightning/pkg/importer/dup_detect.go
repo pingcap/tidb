@@ -203,6 +203,8 @@ func (d *dupDetector) addKeysByChunk(
 	adder *duplicate.KeyAdder,
 	chunk *checkpoints.ChunkCheckpoint,
 ) error {
+	chunk.FileMeta.ParquetMeta.UseStreaming = true
+	chunk.FileMeta.ParquetMeta.UseSampleAllocator = false
 	parser, err := openParser(ctx, d.rc.cfg, chunk, d.rc.ioWorkers, d.rc.store, d.tr.tableInfo.Core)
 	if err != nil {
 		return err

@@ -88,6 +88,7 @@ const (
 	fieldsEnclosedByOption      = "fields_enclosed_by"
 	fieldsEscapedByOption       = "fields_escaped_by"
 	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	fieldsEncodedByOption       = "fields_encoded_by"
 	linesTerminatedByOption     = "lines_terminated_by"
 	skipRowsOption              = "skip_rows"
 	splitFileOption             = "split_file"
@@ -114,6 +115,7 @@ var (
 		fieldsEnclosedByOption:      true,
 		fieldsEscapedByOption:       true,
 		fieldsDefinedNullByOption:   true,
+		fieldsEncodedByOption:       true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
 		splitFileOption:             false,
@@ -218,6 +220,8 @@ type Plan struct {
 	// for IMPORT INTO, it is always non-nil.
 	Charset          *string
 	ImportantSysVars map[string]string
+
+	FieldsEncodedBy config.FieldEncodeType
 
 	// used for LOAD DATA and CSV format of IMPORT INTO
 	FieldNullDef []string
@@ -515,6 +519,19 @@ func (e *LoadDataController) checkFieldParams() error {
 		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
+		if e.FieldsEncodedBy == config.FieldEncodeBase64 {
+			if e.Format == DataFormatCSV {
+				if e.FieldsEnclosedBy != "" {
+					return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("fields_enclosed_by must be empty when fields_encoded_by is 'base64'")
+				}
+				if e.FieldsEscapedBy != "" {
+					return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("fields_escaped_by must be empty when fields_encoded_by is 'base64'")
+				}
+				if e.Charset != nil && *e.Charset != "binary" {
+					return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("character_set must be 'binary' when fields_encoded_by is 'base64'")
+				}
+			}
+		}
 	} else {
 		if e.NullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
@@ -653,6 +670,17 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.FieldNullDef = []string{v}
+	}
+	if opt, ok := specifiedOptions[fieldsEncodedByOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		v = strings.ToLower(v)
+		if config.FieldEncodeType(v) != config.FieldEncodeBase64 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.FieldsEncodedBy = config.FieldEncodeType(v)
 	}
 	if opt, ok := specifiedOptions[linesTerminatedByOption]; ok {
 		v, err := optAsString(opt)
@@ -1141,6 +1169,27 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
+	// Fill memory usage info
+	if sourceType == mydump.SourceTypeParquet {
+		_, memoryUsage, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, dataFile := range dataFiles {
+			// To reduce the memory usage, we only use streaming mode to read file.
+			dataFile.ParquetMeta = mydump.ParquetFileMeta{
+				MemoryUsageStream:  memoryUsage,
+				MemoryUsageFull:    memoryUsageFull,
+				MemoryQuota:        mydump.GetMemoryQuota(e.ThreadCnt),
+				UseStreaming:       true,
+				UseSampleAllocator: false,
+				Base64:             e.FieldsEncodedBy == config.FieldEncodeBase64,
+			}
+		}
+
+		// TODO(joechnerh): maybe we can adjust thread count for parquet here
+	}
+
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
@@ -1240,6 +1289,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
