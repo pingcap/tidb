@@ -55,6 +55,9 @@ var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 
+	// UseExecOptionUseSessionPool to make sure the sql is executed in tmp session from pool.
+	UseExecOptionUseSessionPool = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}
+
 	// StatsCtx is used to mark the request is from stats module.
 	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 )
