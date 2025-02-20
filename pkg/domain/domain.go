@@ -2122,9 +2122,12 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		inactiveTicker := time.NewTicker(10 * bindinfo.Lease)
+		var lastInactiveTime time.Time
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
+			inactiveTicker.Stop()
 		}()
 		for {
 			select {
@@ -2146,6 +2149,13 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
+			case <-inactiveTicker.C:
+				// TODO: add a switch
+				err := do.BindHandle().RecordInactiveBindings(lastInactiveTime)
+				if err != nil {
+					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
+				}
+				lastInactiveTime = time.Now()
 			}
 		}
 	}, "globalBindHandleWorkerLoop")

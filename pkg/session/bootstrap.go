@@ -3353,6 +3353,7 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	}
 
 	writeClusterID(s)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX plan_index (`plan_digest`)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer243(s sessiontypes.Session, ver int64) {
