@@ -1429,7 +1429,7 @@ func TestPITRIDMap(t *testing.T) {
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseTableMappingManager)
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
@@ -2073,7 +2073,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
 		infoschema = s.Mock.InfoSchema()
 		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 		require.NoError(t, err)
@@ -2128,7 +2128,10 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
 		require.NoError(t, err)
 	}()
-	require.NoError(t, checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	require.NoError(t, err)
+	defer logCheckpointMetaManager.Close()
+	require.NoError(t, logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
 		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
 			{
 				// from checkpoint and old index (i1) id is found
@@ -2160,7 +2163,7 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		},
 	}))
 	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g))
 	infoschema = s.Mock.InfoSchema()
 	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 	require.NoError(t, err)
