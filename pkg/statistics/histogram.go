@@ -1601,6 +1601,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				slices.Reverse(mergeBuffer)
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
+				checkBucket4MergingIsSorted(sc.TypeCtx(), mergeBuffer)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				if err != nil {
 					return nil, err
@@ -1632,18 +1633,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 						break
 					}
 				}
-				intest.AssertFunc(func() bool {
-					for j := i; j < leftMostInvalidPosForNextRound; j++ {
-						res, err := buckets[j].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
-						if err != nil {
-							return false
-						}
-						if res != 0 {
-							return false
-						}
-					}
-					return true
-				}, "the buckets are not sorted actually")
+				checkBucket4MergingIsSorted(sc.TypeCtx(), buckets[i:leftMostInvalidPosForNextRound])
 				i = leftMostInvalidPosForNextRound
 			}
 			currentLeftMost.Copy(merged.lower)
@@ -1728,6 +1718,29 @@ func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error
 		return res
 	})
 	return sortError
+}
+
+// checkBucket4MergingIsSorted checks whether the buckets are sorted by upper bound first, then by lower bound.
+// using intest.AssertFunc to avoid the check in production.
+func checkBucket4MergingIsSorted(ctx types.Context, buckets []*bucket4Merging) {
+	intest.AssertFunc(func() bool {
+		var sortErr error
+		isOrdered := slices.IsSortedFunc(buckets, func(i, j *bucket4Merging) int {
+			res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			if res != 0 {
+				return res
+			}
+			res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			return res
+		})
+		return isOrdered && sortErr == nil
+	}, "the buckets are not sorted actually")
 }
 
 const (
