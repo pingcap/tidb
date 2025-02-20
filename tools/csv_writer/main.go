@@ -504,6 +504,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	rowCnt := len(data[0])
 	colCnt := len(data)
 	row := make([]string, 0, rowCnt)
+	startTime := time.Now()
 	for i := 0; i < rowCnt; i++ {
 		for j := 0; j < colCnt; j++ {
 			if *base64Encode {
@@ -520,7 +521,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 			return fmt.Errorf("failed to write to GCS: %w", err)
 		}
 	}
-	log.Println("ready to write: ", fileName)
+	log.Println("ready to write: ", fileName, " cost time: ", time.Since(startTime))
 	_, err = writer.Write(context.Background(), []byte(strings.Join(strBatch, "")))
 	if err != nil {
 		log.Printf("Write to GCS failed, deleting file: %s", fileName)
