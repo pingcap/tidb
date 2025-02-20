@@ -884,7 +884,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
+<<<<<<< HEAD
 	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+=======
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
@@ -1323,6 +1327,13 @@ func Exhaust(ec <-chan error) []error {
 }
 
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+<<<<<<< HEAD
+=======
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
