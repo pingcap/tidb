@@ -284,6 +284,9 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		if err == nil { // only recycle when no error
 			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	var skipTypes map[string]struct{}
