@@ -22,12 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"go.uber.org/zap"
 )
 
 const InitialTempId int64 = 0
@@ -527,4 +531,95 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 func (tm *TableMappingManager) generateTempID() DownstreamID {
 	tm.tempIDCounter--
 	return tm.tempIDCounter
+}
+
+// UpdateTempIDsFromInfoSchema updates all temporary IDs (IDs < 0) in DBReplaceMap with real downstream IDs from InfoSchema.
+// It returns error if any object cannot be found in InfoSchema or if tables are not in restore mode.
+func (tm *TableMappingManager) UpdateTempIDsFromInfoSchema(ctx context.Context, dom *domain.Domain) error {
+	is := dom.InfoSchema()
+
+	// list all schemas and tables for debugging
+	allSchemas := is.AllSchemas()
+	log.Info("current schemas in InfoSchema")
+	for _, schema := range allSchemas {
+		log.Info("schema", zap.String("name", schema.Name.O), zap.Int64("id", schema.ID))
+		tables, err := is.SchemaTableInfos(ctx, schema.Name)
+		if err != nil {
+			log.Warn("failed to get tables",
+				zap.String("schema", schema.Name.O),
+				zap.Error(err))
+			continue
+		}
+		for _, table := range tables {
+			log.Info("table",
+				zap.String("schema", schema.Name.O),
+				zap.String("table", table.Name.O),
+				zap.Int64("id", table.ID),
+				zap.String("mode", string(table.TableMode)))
+		}
+	}
+
+	// update database IDs
+	for upstreamID, dbReplace := range tm.DBReplaceMap {
+		log.Info("######### db", zap.Any("up", upstreamID))
+		if dbReplace.FilteredOut {
+			log.Info("######### db out", zap.Any("up", upstreamID))
+			continue
+		}
+		if dbReplace.DbID < 0 {
+			dbInfo, exists := is.SchemaByName(ast.NewCIStr(dbReplace.Name))
+			if !exists {
+				return errors.Errorf("database %s not found in InfoSchema", dbReplace.Name)
+			}
+			dbReplace.DbID = dbInfo.ID
+			tm.globalIdMap[upstreamID] = dbReplace.DbID
+		}
+
+		// update table IDs
+		for upstreamID, tableReplace := range dbReplace.TableMap {
+			log.Info("######### table", zap.Any("up", upstreamID), zap.Any("down", tableReplace.TableID), zap.Any("down", tableReplace.Name))
+			if tableReplace.FilteredOut {
+				log.Info("######### table out", zap.Any("up", upstreamID))
+				continue
+			}
+
+			if tableReplace.TableID < 0 {
+				tbl, err := is.TableByName(ctx, ast.NewCIStr(dbReplace.Name), ast.NewCIStr(tableReplace.Name))
+				if err != nil {
+					return errors.Errorf("table %s.%s not found in InfoSchema", dbReplace.Name, tableReplace.Name)
+				}
+
+				// verify table mode
+				if tbl.Meta().TableMode != model.TableModeRestore {
+					return errors.Errorf("table %s.%s is not in restore mode, current mode: %s",
+						dbReplace.Name, tableReplace.Name, tbl.Meta().TableMode)
+				}
+
+				tableReplace.TableID = tbl.Meta().ID
+				tm.globalIdMap[upstreamID] = tableReplace.TableID
+
+				log.Info("found restore mode table",
+					zap.String("db", dbReplace.Name),
+					zap.String("table", tableReplace.Name),
+					zap.Int64("upstream", tableReplace.TableID),
+					zap.Int64("downstream", tbl.Meta().ID))
+			}
+		}
+	}
+	return nil
+}
+
+// UpdateDownstreamId updates the mapping from old table ID to new table ID.
+// It updates both the globalIdMap and the corresponding table in DBReplaceMap.
+func (tm *TableMappingManager) UpdateDownstreamId(oldTableID, newTableID int64) {
+	// update global id map
+	tm.globalIdMap[oldTableID] = newTableID
+
+	// find and update the table in DBReplaceMap
+	for _, dbReplace := range tm.DBReplaceMap {
+		if tableReplace, exists := dbReplace.TableMap[oldTableID]; exists {
+			tableReplace.TableID = newTableID
+			return
+		}
+	}
 }
