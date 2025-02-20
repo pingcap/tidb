@@ -146,6 +146,12 @@ type Param struct {
 	slotMgr        *SlotManager
 	serverID       string
 	allocatedSlots bool
+	nodeRes        *proto.NodeResource
+}
+
+// GetNodeResource returns the node resource.
+func (p *Param) GetNodeResource() *proto.NodeResource {
+	return p.nodeRes
 }
 
 // schedulerFactoryFn is used to create a scheduler.

@@ -139,6 +139,40 @@ connection default;
 REVOKE SELECT on test_rc.* FROM resource_group_admin;
 REVOKE SELECT on test_rc.* FROM resource_group_user;
 DROP DATABASE test_rc;
+DROP USER resource_group_admin;
+DROP USER resource_group_user;
+DROP RESOURCE GROUP test;
+
+# TestSetSessionStatesPriv
+CREATE USER resource_group_user;
+CREATE USER no_resource_group;
+
+connection default;
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
+
+connect (no_resource_group,localhost,no_resource_group,,);
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+connect (resource_group_user,localhost,resource_group_user,,);
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+set @@global.tidb_resource_control_strict_mode = 0;
+
+connection no_resource_group;
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+disconnect resource_group_user;
+disconnect no_resource_group;
+connection default;
+set @@global.tidb_resource_control_strict_mode = default;
+DROP RESOURCE GROUP test;
+DROP USER resource_group_user;
+DROP USER no_resource_group;
 
 # TestGrantReferences
 CREATE SCHEMA IF NOT EXISTS privilege__privileges;

@@ -90,7 +90,7 @@ func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
 	return &subtask, nil
 }
 
-func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
+func (s *backfillDistExecutor) newBackfillStepExecutor(
 	stage proto.Step,
 ) (execute.StepExecutor, error) {
 	jobMeta := &s.taskMeta.Job
@@ -174,7 +174,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
-		return s.newBackfillSubtaskExecutor(task.Step)
+		return s.newBackfillStepExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}

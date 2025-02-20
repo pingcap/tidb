@@ -133,12 +133,14 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("example_schema"), ast.NewCIStr("example_table"))
 	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
-			113: {},
-			114: {},
+			partitionInfo.Definitions[0].ID: {},
+			partitionInfo.Definitions[1].ID: {},
 		},
 		Weight: 2,
 	}

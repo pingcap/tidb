@@ -14,12 +14,16 @@
 
 package operator
 
-import "strings"
+import (
+	"strings"
+	"sync/atomic"
+)
 
 // AsyncPipeline wraps a list of Operators.
 // The dataflow is from the first operator to the last operator.
 type AsyncPipeline struct {
-	ops []Operator
+	ops     []Operator
+	started atomic.Bool
 }
 
 // Execute opens all operators, it's run asynchronously.
@@ -35,7 +39,13 @@ func (p *AsyncPipeline) Execute() error {
 			return err
 		}
 	}
+	p.started.Store(true)
 	return nil
+}
+
+// IsStarted returns whether the pipeline is started.
+func (p *AsyncPipeline) IsStarted() bool {
+	return p.started.Load()
 }
 
 // Close waits all tasks done.
@@ -47,6 +57,7 @@ func (p *AsyncPipeline) Close() error {
 			firstErr = err
 		}
 	}
+	p.started.Store(false)
 	return firstErr
 }
 
