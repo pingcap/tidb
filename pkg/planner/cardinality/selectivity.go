@@ -136,14 +136,14 @@ func Selectivity(
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cnt, _, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cnt, _, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -202,7 +202,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+			cnt, _, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -1178,7 +1178,7 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		rowCount, _, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}

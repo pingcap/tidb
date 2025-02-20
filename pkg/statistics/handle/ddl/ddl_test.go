@@ -328,10 +328,10 @@ func TestDDLHistogram(t *testing.T) {
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(3, false))
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[3].ID).IsStatsInitialized())
 	sctx := mock.NewContext()
-	count, err := cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(0), tableInfo.Columns[3].ID)
+	count, _, err := cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
-	count, err = cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(1), tableInfo.Columns[3].ID)
+	count, _, err = cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(0), count)
 
