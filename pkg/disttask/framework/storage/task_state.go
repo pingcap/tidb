@@ -40,8 +40,8 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?)`,
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
+		 where task_key = %? and state in (%?, %?, %?)`,
+		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateAwaitingResolution)
 	return err
 }
 
