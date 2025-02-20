@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -96,6 +97,12 @@ func getTableImporter(
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
+
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
+		// For `IMPORT INTO format "parquet"`, we set the memory usage for parquet reader to 40%.
+		mydump.SetMemoryLimitForParquet(40)
+	}
+
 	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
@@ -272,6 +279,10 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
+		mydump.FreeMemoryForParquet()
+	}
+
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()

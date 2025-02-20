@@ -16,8 +16,6 @@ package mydump
 
 import (
 	"math"
-	"os"
-	"runtime"
 	"runtime/debug"
 	"sync"
 	"unsafe"
@@ -37,38 +35,32 @@ var (
 	readerMemoryLimit   int
 	readerMemoryLimiter *membuf.Limiter
 
+	// globalPool is used for all parquet import tasks.
+	// We use importCount to track and release memory.
+	lk          sync.Mutex
+	globalPool  *membuf.Pool
+	importCount int
+
 	// AllocSize returns actual allocated size from arena
 	AllocSize func(int) int
 
 	// GetArena creates a new arena
-	GetArena func(int) arena
+	GetArena func(*membuf.Buffer) arena
 )
-
-// InitializeGlobalArena initialize a global arena pool.
-func InitializeGlobalArena(size int, reuse bool) {
-	maxArenaCount := size / defaultArenaSize
-	if globalPool == nil {
-		globalPool = &arenaPool{
-			maxArenaCount: maxArenaCount,
-			reuse:         reuse,
-			arenas:        make(chan arena, 1024),
-		}
-		return
-	}
-
-	globalPool.adjustMaxArenaCount(maxArenaCount)
-}
-
-// FreeMemory free all the memory allocated for arenas.
-func FreeMemory() {
-	if globalPool != nil {
-		globalPool.free()
-	}
-}
 
 // SetMemoryLimitForParquet set the memory limit for parquet reader.
 // If reuse = true, remember to call FreeMemory to free the memory.
-func SetMemoryLimitForParquet(percent int, reuse bool) {
+func SetMemoryLimitForParquet(percent int) {
+	lk.Lock()
+	defer lk.Unlock()
+
+	importCount++
+	if importCount > 1 {
+		return
+	}
+
+	debug.SetGCPercent(50)
+
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
 		// Set limit to int max, which means no limiter
@@ -76,12 +68,28 @@ func SetMemoryLimitForParquet(percent int, reuse bool) {
 	}
 	readerMemoryLimit = int(memTotal) * min(percent, 90) / 100
 	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
-	InitializeGlobalArena(readerMemoryLimit, reuse)
+
+	globalPool = membuf.NewPool(
+		// membuf.WithAllocator(manual.Allocator{}),
+		membuf.WithBlockNum(readerMemoryLimit/defaultArenaSize),
+		membuf.WithBlockSize(defaultArenaSize),
+	)
 
 	log.L().Info("set memory limit",
 		zap.Int("total memory", int(memTotal)),
 		zap.Int("memory limit", readerMemoryLimit),
 	)
+}
+
+func FreeMemoryForParquet() {
+	lk.Lock()
+	defer lk.Unlock()
+
+	importCount--
+	if importCount == 0 {
+		globalPool.Destroy()
+		debug.SetGCPercent(100)
+	}
 }
 
 // GetMemoryQuota get the memory quota for non-streaming mode read.
@@ -100,10 +108,6 @@ func GetMemoryQuota(concurrency int) int {
 func init() {
 	AllocSize = simpleGetAllocationSize
 	GetArena = getSimpleAllocator
-
-	// This is used for `IMPORT INTO`.
-	// We set the default memory usage to 40% and don't reuse arenas.
-	SetMemoryLimitForParquet(40, false)
 }
 
 // Get the address of a buffer, return 0 if the buffer is nil
@@ -123,110 +127,11 @@ type arena interface {
 	reset()
 }
 
-type arenaPool struct {
-	arenas        chan arena
-	maxArenaCount int
-	allocated     int
-	reuse         bool
-	lock          sync.Mutex
-}
-
-func (ap *arenaPool) adjustGCPercent() {
-	gogc := os.Getenv("GOGC")
-	memTotal, err := tidbmemory.MemTotal()
-	if gogc == "" && err == nil {
-		if ap.allocated == 0 {
-			debug.SetGCPercent(100)
-			return
-		}
-		percent := int(memTotal)*100/(ap.allocated*defaultArenaSize) - 100
-		percent = min(percent, 50)
-		percent = max(percent, 5)
-
-		old := debug.SetGCPercent(percent)
-		//nolint: all_revive,revive
-		runtime.GC()
-		log.L().Debug("set gc percentage",
-			zap.Int("old", old),
-			zap.Int("new", percent),
-			zap.Int("total memory", int(memTotal)),
-			zap.Int("allocated memory", ap.allocated*defaultArenaSize),
-		)
-	}
-}
-
-func (ap *arenaPool) adjustMaxArenaCount(newCount int) {
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	ap.maxArenaCount = newCount
-	for ap.allocated > newCount && len(ap.arenas) > 0 {
-		a := <-ap.arenas
-		a.reset()
-		ap.allocated--
-	}
-
-	ap.adjustGCPercent()
-}
-
-func (ap *arenaPool) get() arena {
-	// First try to get cached arena
-	select {
-	case a := <-ap.arenas:
-		return a
-	default:
-	}
-
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	// Create a new one and return
-	if ap.allocated < ap.maxArenaCount {
-		ap.allocated++
-		bd := GetArena(defaultArenaSize)
-		ap.adjustGCPercent()
-		return bd
-	}
-
-	// We can't create new arena, return nil
-	return nil
-}
-
-func (ap *arenaPool) put(a arena) {
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	if ap.reuse && ap.allocated <= ap.maxArenaCount {
-		ap.arenas <- a
-		return
-	}
-
-	a.reset()
-	ap.allocated--
-	ap.adjustGCPercent()
-}
-
-func (ap *arenaPool) free() {
-	ap.lock.Lock()
-	defer ap.lock.Unlock()
-
-	ap.allocated = 0
-	for len(ap.arenas) > 0 {
-		a := <-ap.arenas
-		a.reset()
-	}
-	ap.adjustGCPercent()
-}
-
-var globalPool *arenaPool
-
 type defaultAllocator struct {
-	arenas       []arena
-	allocatedBuf map[uintptr]int
-}
+	arenas []arena
+	mbufs  []*membuf.Buffer
 
-func (alloc *defaultAllocator) init() {
-	alloc.allocatedBuf = make(map[uintptr]int, 8)
+	allocatedBuf map[uintptr]int
 }
 
 func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
@@ -236,12 +141,10 @@ func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
 			return buf
 		}
 	}
+	mbuf := globalPool.NewBuffer()
+	alloc.mbufs = append(alloc.mbufs, mbuf)
 
-	na := globalPool.get()
-	if na == nil {
-		return make([]byte, size)
-	}
-
+	na := GetArena(mbuf)
 	buf := na.allocate(size)
 	alloc.allocatedBuf[addressOf(buf)] = len(alloc.arenas)
 	alloc.arenas = append(alloc.arenas, na)
@@ -264,15 +167,16 @@ func (alloc *defaultAllocator) Reallocate(size int, buf []byte, tp memory.Buffer
 func (alloc *defaultAllocator) Close() {
 	for _, a := range alloc.arenas {
 		a.reset()
-		globalPool.put(a)
 	}
-
+	for _, mbuf := range alloc.mbufs {
+		mbuf.Destroy()
+	}
 	alloc.arenas = nil
 }
 
 // GetAllocator get a default allocator
 func GetAllocator() memory.Allocator {
-	a := &defaultAllocator{}
-	a.init()
-	return a
+	return &defaultAllocator{
+		allocatedBuf: make(map[uintptr]int, 32),
+	}
 }

@@ -17,6 +17,7 @@ package mydump
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -75,16 +76,20 @@ type simpleAllocator struct {
 	bytesAloc   int
 }
 
-func getSimpleAllocator(size int) arena {
-	a := &simpleAllocator{}
-	a.init(size)
-	return a
-}
+func getSimpleAllocator(mbuf *membuf.Buffer) arena {
+	var buf []byte
+	if mbuf != nil {
+		buf = mbuf.AllocBytes(defaultArenaSize)
+	} else {
+		buf = make([]byte, defaultArenaSize)
+	}
 
-func (sa *simpleAllocator) init(bufSize int) {
-	sa.buf = make([]byte, bufSize)
-	sa.base = int(addressOf(sa.buf))
-	sa.reset()
+	a := &simpleAllocator{
+		buf:  buf,
+		base: int(addressOf(buf)),
+	}
+	a.reset()
+	return a
 }
 
 func (sa *simpleAllocator) getOffset(buf []byte) int {
