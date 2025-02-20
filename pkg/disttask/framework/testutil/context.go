@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -166,13 +167,14 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr)
+	nodeRes := proto.NewNodeResource(16, 32*units.GiB)
+	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, nodeRes)
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
 	require.NoError(c.T, exeMgr.Start())
 	var schMgr *scheduler.Manager
 	if owner {
-		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id)
+		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, nodeRes)
 		schMgr.Start()
 	}
 	node := &tidbNode{
@@ -354,7 +356,7 @@ func (c *TestDXFContext) electIfNeeded() {
 	newOwnerIdx := int(rand.Int31n(int32(len(c.mu.nodes))))
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id)
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, proto.NewNodeResource(16, 32*units.GiB))
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()

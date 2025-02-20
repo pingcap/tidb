@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -152,6 +156,7 @@ func NewAddIndexIngestPipeline(
 	backendCtx ingest.BackendCtx,
 	engines []ingest.Engine,
 	jobID int64,
+	subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -183,7 +188,7 @@ func NewAddIndexIngestPipeline(
 		reorgMeta.GetBatchSize(), rm, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, rowCntListener)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener, jobID, subtaskID, nil, nil, nil, nil, nil)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -216,6 +221,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	concurrency int,
 	resource *proto.StepResource,
 	rowCntListener RowCountListener,
+	readSummaryMap *sync.Map,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -230,14 +236,34 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	backend, err := storage.ParseBackend(extStoreURI, nil)
+	extBackend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	extStore, err := storage.NewWithDefaultOpt(ctx, extBackend)
 	if err != nil {
 		return nil, err
 	}
+
+	var destStore storage.ExternalStorage
+	// TODO(tangenta): put this config to global task to avoid changes during execution.
+	if vardef.EnableGlobalSortLocalStore.Load() {
+		tidbCfg := config.GetGlobalConfig()
+		sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
+		sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+		localBackend, err := storage.ParseBackend(fmt.Sprintf("local://%s", sortPath), nil)
+		if err != nil {
+			return nil, err
+		}
+		localStore, err := storage.NewWithDefaultOpt(ctx, localBackend)
+		if err != nil {
+			return nil, err
+		}
+		destStore = localStore
+	} else {
+		destStore = extStore
+	}
+
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
 	failpoint.Inject("mockWriterMemSize", func() {
@@ -249,10 +275,11 @@ func NewWriteIndexToExternalStoragePipeline(
 		reorgMeta.GetBatchSize(), nil, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
-		tbl, indexes, extStore, srcChkPool, writerCnt,
+		tbl, indexes, destStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta,
 	)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener,
+		jobID, subtaskID, destStore, extStore, readSummaryMap, onClose, resource)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -922,6 +949,14 @@ type indexWriteResultSink struct {
 
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
+
+	jobID          int64
+	subtaskID      int64
+	localStore     storage.ExternalStorage
+	resource       *proto.StepResource
+	extStore       storage.ExternalStorage
+	readSummaryMap *sync.Map
+	onClose        external.OnCloseFunc
 }
 
 func newIndexWriteResultSink(
@@ -930,6 +965,12 @@ func newIndexWriteResultSink(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	rowCntListener RowCountListener,
+	jobID, subtaskID int64,
+	localStore storage.ExternalStorage,
+	extStore storage.ExternalStorage,
+	readSummaryMap *sync.Map,
+	onClose external.OnCloseFunc,
+	resoure *proto.StepResource,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
 		ctx:            ctx,
@@ -938,6 +979,13 @@ func newIndexWriteResultSink(
 		indexes:        indexes,
 		errGroup:       errgroup.Group{},
 		rowCntListener: rowCntListener,
+		jobID:          jobID,
+		subtaskID:      subtaskID,
+		localStore:     localStore,
+		resource:       resoure,
+		extStore:       extStore,
+		readSummaryMap: readSummaryMap,
+		onClose:        onClose,
 	}
 }
 
@@ -975,6 +1023,50 @@ func (s *indexWriteResultSink) collectResult() error {
 
 func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
+		if s.localStore != nil {
+			prefix := path.Join(strconv.Itoa(int(s.jobID)), strconv.Itoa(int(s.subtaskID)))
+			res := s.resource
+			memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
+			partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
+			cs, ok := s.readSummaryMap.Load(s.subtaskID)
+			if !ok {
+				return errors.Errorf("cannot load read summary")
+			}
+			curSum := cs.(*readIndexSummary)
+			s.readSummaryMap.Store(s.subtaskID, &readIndexSummary{
+				metaGroups: make([]*external.SortedKVMeta, len(s.indexes)),
+			})
+			for _, metaGroup := range curSum.metaGroups {
+				err := external.MergeOverlappingFiles(
+					s.ctx,
+					metaGroup.GetDataFiles(),
+					s.localStore, s.extStore,
+					partSize,
+					prefix,
+					external.DefaultBlockSize,
+					s.onClose,
+					4,
+					false,
+				)
+				if err != nil {
+					return err
+				}
+				// Remove uploaded temporary files.
+				tempPathPrefix := ingest.GetIngestTempDataDir()
+				for _, stat := range metaGroup.MultipleFilesStats {
+					for _, f := range stat.Filenames {
+						err = os.RemoveAll(path.Join(tempPathPrefix, f[0]))
+						if err != nil {
+							logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
+						}
+						err = os.RemoveAll(path.Join(tempPathPrefix, f[1]))
+						if err != nil {
+							logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
+						}
+					}
+				}
+			}
+		}
 		return nil
 	}
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
@@ -989,4 +1081,8 @@ func (s *indexWriteResultSink) Close() error {
 
 func (*indexWriteResultSink) String() string {
 	return "indexWriteResultSink"
+}
+
+func cleanupUploadedFiles() {
+
 }

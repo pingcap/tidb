@@ -206,6 +206,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
+		memStore,
 		int64(5*size.MB),
 		"/test2",
 		"mergeID",
@@ -312,6 +313,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/one-file"},
+		memStore,
 		memStore,
 		int64(5*size.MB),
 		"/test2",

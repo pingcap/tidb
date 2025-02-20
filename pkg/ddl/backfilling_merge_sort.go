@@ -93,6 +93,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		ctx,
 		sm.DataFiles,
 		store,
+		store,
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
