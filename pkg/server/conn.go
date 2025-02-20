@@ -205,6 +205,10 @@ type clientConn struct {
 	ppEnabled bool
 }
 
+type userResourceLimits struct {
+	connections int
+}
+
 func (cc *clientConn) getCtx() *TiDBContext {
 	cc.ctx.RLock()
 	defer cc.ctx.RUnlock()
@@ -375,6 +379,7 @@ func (cc *clientConn) Close() error {
 	//
 	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
 	// times.
+
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
@@ -797,6 +802,11 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	host, port, err := cc.PeerHost(hasPassword, false)
+	if err != nil {
+		return err
+	}
+
+	err = cc.checkUserConnectionCount(host)
 	if err != nil {
 		return err
 	}
