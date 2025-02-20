@@ -311,7 +311,7 @@ func generateBigintWithNoLimit(num int, res []string) {
 }
 
 func generateBigint(res []string, order string, begin, end int) {
-	// total row num should less than 11 digits, 999 Billion
+	// WARN: total row num should less than 12 digits, 1000 Billion!
 	switch order {
 	case totalOrdered:
 		generateTotalOrderBigint(res, begin, end)
@@ -346,11 +346,11 @@ func generateTotalRandomBigint(res []string, begin, end int) {
 	}
 }
 
-// Total data num should less than 11 digits
-// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
+// Total data num should less than 12 digits
+// Bigint has almost 19 digits, use 18 digits. The first 6 are random, The last 12 are ordered.
 func generateUniqueRandomBigint(uk int) string {
-	random := faker.Number(-999_9999, 999_9999)
-	r := fmt.Sprintf("%d%011d", random, uk)
+	random := faker.Number(-999_999, 999_999)
+	r := fmt.Sprintf("%d%012d", random, uk)
 	_, err := strconv.ParseInt(r, 10, 64)
 	if err != nil {
 		panic(err)
