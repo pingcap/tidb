@@ -64,12 +64,23 @@ func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
+<<<<<<< HEAD
 	case *DataSource:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
 	case *LogicalApply:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
 	case *LogicalJoin:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
+=======
+	case *logicalop.DataSource:
+		strs = append(strs, "{"+x.FDs().String()+"}")
+	case *logicalop.LogicalApply:
+		strs = append(strs, "{"+x.FDs().String()+"}")
+	case *logicalop.LogicalJoin:
+		strs = append(strs, "{"+x.FDs().String()+"}")
+	case *logicalop.LogicalUnionAll:
+		strs = append(strs, "{"+x.FDs().String()+"}")
+>>>>>>> ed9b7d5771b (planner: fix planner can't error for union-all query when new-only-full-group-check is enabled (#59212))
 	default:
 	}
 	return strs, idxs
