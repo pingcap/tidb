@@ -15,7 +15,6 @@ import (
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -243,7 +242,7 @@ func (t *Task) generateValueByCol(col Column, num int, res []string) {
 		generateInt32(num, res, col.StdDev)
 	case strings.HasPrefix(col.Type, "BIGINT"): // int64
 		if col.IsUnique {
-			generateBigint(num, res, col.Order, t.begin, t.end)
+			generateBigint(res, col.Order, t.begin, t.end)
 		} else {
 			generateBigintWithNoLimit(num, res)
 		}
@@ -311,32 +310,51 @@ func generateBigintWithNoLimit(num int, res []string) {
 	}
 }
 
-func generateBigint(num int, res []string, order string, begin, end int) {
-	// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
-	intRes := make([]int64, num)
+func generateBigint(res []string, order string, begin, end int) {
+	switch order {
+	case totalOrdered:
+		generateTotalOrderBigint(res, begin, end)
+	case partialOrdered:
+		generatePartialOrderBigint(res, begin, end)
+	case totalRandom:
+		generateTotalRandomBigint(res, begin, end)
+	default:
+		log.Printf("Unsupported order: %s", order)
+	}
+}
+
+func generateTotalOrderBigint(res []string, begin, end int) {
 	for uk := begin; uk < end; uk++ {
-		random := faker.Number(-999_9999, 999_9999)
-		r := fmt.Sprintf("%d%011d", random, uk)
-		intR, err := strconv.ParseInt(r, 10, 64)
-		if err != nil {
-			panic(err)
-		}
-		intRes[uk-begin] = intR
+		res[uk-begin] = strconv.Itoa(uk)
 	}
-	if order == totalOrdered {
-		slices.Sort(intRes)
-	} else if order == partialOrdered {
-		// every 1000 rows, sort 999 rows
-		sortTimes := num / 10
-		for i := 0; i < sortTimes; i++ {
-			b := i * 10
-			e := b + 9
-			slices.Sort(intRes[b:e])
+}
+
+func generatePartialOrderBigint(res []string, begin, end int) {
+	for uk := begin; uk < end; uk++ {
+		if uk%1000 == 0 {
+			res[uk-begin] = generateUniqueRandomBigint(uk)
+		} else {
+			res[uk-begin] = strconv.Itoa(uk)
 		}
 	}
-	for i, v := range intRes {
-		res[i] = strconv.FormatInt(v, 10)
+}
+
+func generateTotalRandomBigint(res []string, begin, end int) {
+	for uk := begin; uk < end; uk++ {
+		res[uk-begin] = generateUniqueRandomBigint(uk)
 	}
+}
+
+// Total data num should less than 11 digits
+// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
+func generateUniqueRandomBigint(uk int) string {
+	random := faker.Number(-999_9999, 999_9999)
+	r := fmt.Sprintf("%d%011d", random, uk)
+	_, err := strconv.ParseInt(r, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 func generateNormalFloat(num int, res []string) {
