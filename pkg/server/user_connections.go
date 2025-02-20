@@ -16,7 +16,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/privilege"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -27,19 +29,19 @@ import (
 // incrementUserConnectionsCounter increases the count of connections when user login the database.
 func (cc *clientConn) incrementUserConnectionsCounter() {
 	user := cc.ctx.GetSessionVars().User
-	targetUser := user.AuthUsername + user.AuthHostname
+	targetUser := user.LoginString()
 
 	cc.server.userResLock.Lock()
-	_, ok := cc.server.userResource[targetUser]
+	defer cc.server.userResLock.Unlock()
+	ur, ok := cc.server.userResource[targetUser]
 	if !ok {
 		userHost := &userResourceLimits{
-			connections: 0,
+			connections: 1,
 		}
 		cc.server.userResource[targetUser] = userHost
+	} else {
+		ur.connections++
 	}
-
-	cc.server.userResource[targetUser].connections++
-	cc.server.userResLock.Unlock()
 }
 
 // decrementUserConnectionsCounter decreases the count of connections when user logout the database.
@@ -51,20 +53,23 @@ func (cc *clientConn) decrementUserConnectionsCounter() {
 
 	user := tidbContext.GetSessionVars().User
 	if user != nil {
-		targetUser := user.AuthUsername + user.AuthHostname
-
+		targetUser := user.LoginString()
 		cc.server.userResLock.Lock()
-		_, ok := cc.server.userResource[targetUser]
-		if ok && cc.server.userResource[targetUser].connections > 0 {
-			cc.server.userResource[targetUser].connections--
-		}
+		defer cc.server.userResLock.Unlock()
 
-		cc.server.userResLock.Unlock()
+		ur, ok := cc.server.userResource[targetUser]
+		if ok && ur.connections > 0 {
+			ur.connections--
+			if ur.connections <= 0 {
+				delete(cc.server.userResource, targetUser)
+			}
+		}
 	}
 }
 
 // getUserConnectionsCounter gets the count of connections.
-func (cc *clientConn) getUserConnectionsCounter(targetUser string) int {
+func (cc *clientConn) getUserConnectionsCounter(user *auth.UserIdentity) int {
+	targetUser := user.LoginString()
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
 
@@ -93,9 +98,7 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		return nil
 	}
 
-	targetUser := authUser.Username + authUser.Hostname
-	conns := int64(cc.getUserConnectionsCounter(targetUser))
-
+	conns := int64(cc.getUserConnectionsCounter(authUser))
 	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsValue.Load())) {
 		var count uint32
 		if connections > 0 {
@@ -103,9 +106,9 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		} else {
 			count = vardef.MaxUserConnectionsValue.Load()
 		}
-		logutil.BgLogger().Error("The current user has too many connections",
-			zap.Uint32("max user connections", count), zap.Error(servererr.ErrConCount))
-		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(authUser.Username)
+		logutil.BgLogger().Error(fmt.Sprintf("User %s has exceeded the maximum allowed connections", authUser.LoginString()),
+			zap.Uint32("max-user-connections", count), zap.Error(servererr.ErrConCount))
+		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(authUser.LoginString())
 	}
 
 	return nil

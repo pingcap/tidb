@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUser_connections_counter(t *testing.T) {
+func TestUserConnectionsCounter(t *testing.T) {
 	cfg := util.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -66,12 +66,11 @@ func TestUser_connections_counter(t *testing.T) {
 	cc.incrementUserConnectionsCounter()
 	cc.incrementUserConnectionsCounter()
 
-	targetUser := sess.User.AuthUsername + sess.User.AuthHostname
-	conns := cc.getUserConnectionsCounter(targetUser)
+	conns := cc.getUserConnectionsCounter(sess.User)
 	require.Equal(t, conns, 2)
 
 	cc.decrementUserConnectionsCounter()
 	cc.decrementUserConnectionsCounter()
-	conns = cc.getUserConnectionsCounter(targetUser)
+	conns = cc.getUserConnectionsCounter(sess.User)
 	require.Equal(t, conns, 0)
 }
