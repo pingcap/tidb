@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -20,6 +21,7 @@ import (
 )
 
 func (e *Explain) UnityOffline() string {
+	begin := time.Now()
 	allPossibleHintSets := e.unityOfflinePossibleHints()
 	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
@@ -50,6 +52,9 @@ func (e *Explain) UnityOffline() string {
 		plans = append(plans, plan)
 		if currentBestInMS == 0 || plan.TimeInMS < float64(currentBestInMS) {
 			currentBestInMS = int(plan.TimeInMS)
+		}
+		if time.Since(begin) > 30*time.Minute {
+			break // hard-code timeout
 		}
 	}
 
