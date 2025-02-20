@@ -19,7 +19,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -57,6 +59,8 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+
+	updateReferenceForeignKeys bool
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -384,6 +388,43 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 	}
 }
 
+func (b *Builder) markFKUpdated(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) {
+	b.updateReferenceForeignKeys = b.shouldUpdateFKInfo(m, oldTableID, newTableID, dbInfo)
+}
+
+func (b *Builder) shouldUpdateFKInfo(m meta.Reader, oldTableID, newTableID int64, dbInfo *model.DBInfo) bool {
+	if !tableIDIsValid(oldTableID) || !tableIDIsValid(newTableID) || oldTableID != newTableID {
+		return true
+	}
+
+	oldTable, ok := b.infoschemaV2.TableByID(context.Background(), oldTableID)
+	if !ok {
+		return true
+	}
+	newTableInfo, err := m.GetTable(dbInfo.ID, newTableID)
+	if err != nil || newTableInfo == nil {
+		return true
+	}
+	oldTableInfo := oldTable.Meta()
+
+	// if database or table name is changed, we need to update the foreign key info.
+	if oldTableInfo.Name.L != newTableInfo.Name.L || oldTableInfo.DBID != newTableInfo.DBID {
+		return true
+	}
+
+	// If the foreign key is changed, we need to update the foreign key info.
+	if len(newTableInfo.ForeignKeys) != len(oldTableInfo.ForeignKeys) {
+		return true
+	}
+	sort.Slice(newTableInfo.ForeignKeys, func(i, j int) bool {
+		return newTableInfo.ForeignKeys[i].ID < newTableInfo.ForeignKeys[j].ID
+	})
+	sort.Slice(oldTableInfo.ForeignKeys, func(i, j int) bool {
+		return oldTableInfo.ForeignKeys[i].ID < oldTableInfo.ForeignKeys[j].ID
+	})
+	return !reflect.DeepEqual(newTableInfo.ForeignKeys, oldTableInfo.ForeignKeys)
+}
+
 func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
 	tblIDs := make([]int64, 0, 2)
 	var keptAllocs autoid.Allocators
@@ -693,8 +734,6 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
-	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
-
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
@@ -898,7 +937,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(dbInfos, policies, resourceGroups)
+	b.initMisc(policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
@@ -988,6 +1027,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
+		if b.updateReferenceForeignKeys {
+			b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
+		}
 		b.infoData.add(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,
@@ -998,6 +1040,8 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
+		// Maintain foreign key reference information.
+		b.infoSchema.addReferredForeignKeys(di.Name, tblInfo)
 	}
 }
 
@@ -1016,12 +1060,13 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
-		Requirement:  r,
-		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
-		dirtyDB:      make(map[string]bool),
-		factory:      factory,
-		infoData:     infoData,
-		enableV2:     useV2,
+		Requirement:                r,
+		infoschemaV2:               NewInfoSchemaV2(r, factory, infoData),
+		dirtyDB:                    make(map[string]bool),
+		factory:                    factory,
+		infoData:                   infoData,
+		enableV2:                   useV2,
+		updateReferenceForeignKeys: true,
 	}
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
