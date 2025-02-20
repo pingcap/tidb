@@ -386,7 +386,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		f, err := mydump.ParseFormat(ctx, nil, plan.Path)
+		f, err := mydump.ParseFormat(ctx, plan.Path)
 		if err != nil {
 			return nil, err
 		}

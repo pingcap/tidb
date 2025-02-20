@@ -442,7 +442,7 @@ type RouteResult struct {
 	Type        SourceType
 }
 
-func ParseFormat(ctx context.Context, store storage.ExternalStorage, path string) (string, error) {
+func ParseFormat(ctx context.Context, path string) (string, error) {
 	format := TypeCSV
 	u, err := storage.ParseRawURL(path)
 	if err != nil {
@@ -451,15 +451,13 @@ func ParseFormat(ctx context.Context, store storage.ExternalStorage, path string
 	dir, filePattern := filepath.Split(u.Path)
 	u.Path = dir
 
-	if store == nil {
-		b, err := storage.ParseBackendFromURL(u, nil)
-		if err != nil {
-			return "", err
-		}
-		store, err = storage.NewWithDefaultOpt(ctx, b)
-		if err != nil {
-			return "", err
-		}
+	b, err := storage.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return "", err
+	}
+	store, err := storage.NewWithDefaultOpt(ctx, b)
+	if err != nil {
+		return "", err
 	}
 	err = store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		ok, err := filepath.Match(filePattern, path)

@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -334,6 +333,15 @@ func TestParseFormat(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
+	// test no file under path
+	format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, "*"))
+	require.NoError(t, err)
+	require.Equal(t, TypeCSV, format)
+	// test file not exist
+	format, err = ParseFormat(context.Background(), filepath.Join(tmpDir, "1.sql"))
+	require.NoError(t, err)
+	require.Equal(t, TypeCSV, format)
+
 	fileNames := []string{
 		"1.sql", "2.sql", "1.sql.gz", "1.csv.gz", "2.csv.gz", "1.sql.gzip", "1.sql.zst", "1.sql.zstd", "1.sql.snappy",
 		"1.csv", "2.csv", "1.csv.gzip", "2.csv.gzip", "1.csv.zst", "2.csv.zst", "1.csv.zstd", "2.csv.zstd", "1.csv.snappy", "2.csv.snappy",
@@ -343,28 +351,24 @@ func TestParseFormat(t *testing.T) {
 		_, err = os.Create(filepath.Join(tmpDir, fileName))
 		require.NoError(t, err)
 	}
-	b, err := storage.ParseBackend(tmpDir, nil)
-	require.NoError(t, err)
-	store, err := storage.NewWithDefaultOpt(context.Background(), b)
-	require.NoError(t, err)
 
 	sqlPatterns := []string{"*.sql", "1.sql", "[12].sql", "*.sql.gz", "*.sql.gzip", "*.sql.zst", "*.sql.zstd", "*.sql.snappy"}
 	for _, sqlPattern := range sqlPatterns {
-		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
 		require.Equal(t, TypeSQL, format)
 	}
 
 	csvPatterns := []string{"*.csv", "1.csv", "[12].csv", "*.csv.gz", "*.csv.gzip", "*.csv.zst", "*.csv.zstd", "*.csv.snappy"}
 	for _, sqlPattern := range csvPatterns {
-		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
 		require.Equal(t, TypeCSV, format)
 	}
 
 	parquetPatterns := []string{"*.parquet", "1.parquet", "[12].gz.parquet"}
 	for _, sqlPattern := range parquetPatterns {
-		format, err := ParseFormat(context.Background(), store, sqlPattern)
+		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
 		require.Equal(t, TypeParquet, format)
 	}
