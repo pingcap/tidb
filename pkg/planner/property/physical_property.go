@@ -255,6 +255,9 @@ type PhysicalProperty struct {
 		*expression.VSInfo
 		TopK uint32
 	}
+
+	// IsLogicalPlanParentJoin indicates whether the parent of the logical plan is a join.
+	IsLogicalPlanParentJoin bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -279,7 +282,7 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 
 // IsSubsetOf check if the keys can match the needs of partition.
 func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
-	if len(p.MPPPartitionCols) < len(keys) {
+	if len(p.MPPPartitionCols) > len(keys) {
 		return nil
 	}
 	matches := make([]int, 0, len(keys))
@@ -299,14 +302,19 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 	return matches
 }
 
-// IsSubsetWithEquivalence checks if the keys can match the needs of partition with equivalence.
-func (p *PhysicalProperty) IsSubsetWithEquivalence(keys []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
+// NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
+func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn,
+	fd *funcdep.FDSet) bool {
+	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
+	if len(p.MPPPartitionCols) < len(keys) {
+		return true
+	}
 	// if hash cols's collation is different from partition cols, then need to enforce exchange.
 	hashColUniqueID := intset.NewFastIntSet()
 	for _, hashCol := range keys {
 		for _, col := range p.MPPPartitionCols {
 			if hashCol.CollateID != col.CollateID {
-				return false
+				return true
 			}
 		}
 		hashColUniqueID.Insert(int(hashCol.Col.UniqueID))
@@ -314,10 +322,10 @@ func (p *PhysicalProperty) IsSubsetWithEquivalence(keys []*MPPPartitionColumn, f
 	equivCal := fd.ClosureOfStrict(hashColUniqueID)
 	for _, col := range p.MPPPartitionCols {
 		if !equivCal.Has(int(col.Col.UniqueID)) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
