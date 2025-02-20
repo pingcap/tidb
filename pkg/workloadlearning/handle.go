@@ -106,14 +106,14 @@ func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	handle.SaveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
 }
 
-func (handle *Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
+func (*Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
 	// step1: get all record from statement_summary
 	// step2: abstract table cost metrics from each record
 	return nil
 }
 
 // TODO
-func (handle *Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, time.Time, time.Time) {
+func (*Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, time.Time, time.Time) {
 	// step1: get all record from statement_stats
 	// step2: abstract table cost metrics from each record
 	// TODO change the mock value
@@ -122,7 +122,7 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, t
 
 // SaveReadTableCostMetrics table cost metrics, workload-based start and end time, version,
 func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableCostMetrics,
-	startTime, endTime time.Time, infoSchema infoschema.InfoSchema) {
+	_, _ time.Time, infoSchema infoschema.InfoSchema) {
 	// TODO save the workload job info such as start end time into workload_jobs table
 	// step1: create a new session, context, txn for saving table cost metrics
 	se, err := handle.sysSessionPool.Get()
