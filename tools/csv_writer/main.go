@@ -311,6 +311,7 @@ func generateBigintWithNoLimit(num int, res []string) {
 }
 
 func generateBigint(res []string, order string, begin, end int) {
+	// total row num should less than 11 digits, 999 Billion
 	switch order {
 	case totalOrdered:
 		generateTotalOrderBigint(res, begin, end)
