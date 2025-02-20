@@ -442,6 +442,8 @@ type RouteResult struct {
 	Type        SourceType
 }
 
+// ParseFormat will traverse all matching files based on the given path and pick arbitrary one file to detect the format.
+// If no files are matched, it will default to returning the CSV format.
 func ParseFormat(ctx context.Context, path string) (string, error) {
 	format := TypeCSV
 	u, err := storage.ParseRawURL(path)
