@@ -356,7 +356,8 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
-      "pkg/util/": "util code"
+      "pkg/util/": "util code",
+      "pkg/workloadlearning": "workloadlearning code"
     }
   },
   "inspect": {
@@ -563,7 +564,8 @@
       "pkg/keyspace/": "keyspace code",
       "pkg/owner/": "owner code",
       "pkg/timer/": "timer code",
-      "pkg/domain": "domain code"
+      "pkg/domain": "domain code",
+      "pkg/workloadlearning": "workloadlearning code"
     }
   },
   "shift": {
