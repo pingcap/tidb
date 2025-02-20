@@ -501,9 +501,11 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	defer writer.Close(context.Background())
 
 	var strBatch []string
-	for i := 0; i < len(data[0]); i++ {
-		row := make([]string, 0, len(data[0]))
-		for j := 0; j < len(data); j++ {
+	rowCnt := len(data[0])
+	colCnt := len(data)
+	for i := 0; i < rowCnt; i++ {
+		row := make([]string, 0, rowCnt)
+		for j := 0; j < colCnt; j++ {
 			if *base64Encode {
 				row = append(row, base64.StdEncoding.EncodeToString([]byte(data[j][i])))
 			} else {
