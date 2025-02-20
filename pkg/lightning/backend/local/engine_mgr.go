@@ -649,7 +649,8 @@ func prepareSortDir(config BackendConfig) error {
 	}
 
 	if shouldCreate {
-		err := os.Mkdir(config.LocalStoreDir, 0o700)
+		// Allow sub directories to be created all together
+		err := os.MkdirAll(config.LocalStoreDir, 0o700)
 		if err != nil {
 			return common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
 		}
