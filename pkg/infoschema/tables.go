@@ -1096,7 +1096,6 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "LEASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
 	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
@@ -2494,7 +2493,7 @@ func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error)
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if IsClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
+	if IsClusterTableByName(util.InformationSchemaName.L, meta.Name.L) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

@@ -388,7 +388,7 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 		}
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.AntiSemiJoin, logicalop.SemiJoin:
 		return true
 	default:
 		return false

@@ -152,10 +152,20 @@ type BufferOption func(*Buffer)
 // blockSize*ceil(limit/blockSize).
 func WithBufferMemoryLimit(limit uint64) BufferOption {
 	return func(b *Buffer) {
-		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize
+		blockCntLimit := int(getBlockCnt(limit, uint64(b.pool.blockSize)))
 		b.blockCntLimit = blockCntLimit
 		b.blocks = make([][]byte, 0, blockCntLimit)
 	}
+}
+
+// GetAlignedSize returns the size after aligned by blockSize.
+func GetAlignedSize(size, blockSize uint64) uint64 {
+	return getBlockCnt(size, blockSize) * blockSize
+}
+
+// ceil(limit/blockSize)
+func getBlockCnt(size, blockSize uint64) uint64 {
+	return (size + blockSize - 1) / blockSize
 }
 
 // NewBuffer creates a new buffer in current pool. The buffer can gradually
@@ -308,6 +318,7 @@ func (b *Buffer) addBlock() {
 	b.curIdx = 0
 }
 
+// GetSlice returns the byte slice for the slice location.
 func (b *Buffer) GetSlice(loc SliceLocation) []byte {
 	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.length]
 }

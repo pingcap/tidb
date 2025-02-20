@@ -240,6 +240,8 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// Check tidb_ttl_table_status table
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+	// Check mysql.tidb_workload_values table
+	MustExec(t, se, "SELECT * from mysql.tidb_workload_values")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
@@ -614,19 +616,19 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
 	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
 	row = req.GetRow(1)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
 	row = req.GetRow(2)
 	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
 
 	require.NoError(t, r.Close())
@@ -2355,13 +2357,13 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
-	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
+	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", false) })
 	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
 }
 
 func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 	t.Run("test dist task running", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", false)
 	})
 	t.Run("test dist task succeed", func(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
@@ -2373,10 +2375,10 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
 	})
 	t.Run("test dist task paused", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", false)
 	})
 	t.Run("test dist task other", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", false)
 	})
 }
 
@@ -2703,4 +2705,60 @@ func TestGetFuncName(t *testing.T) {
 			t.Errorf("Expected error 'function is nil', got: %v", err)
 		}
 	})
+}
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version241
+	ver241 := version241
+	seV241 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver241))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV241, ver241)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV241)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver241), ver)
+	seV241.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
 }

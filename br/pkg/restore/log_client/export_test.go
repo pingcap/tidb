@@ -65,19 +65,19 @@ func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	m *stream.TableMappingManager,
 ) error {
-	return rc.saveIDMap(ctx, m)
+	return rc.SaveIdMapWithFailPoints(ctx, m)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.initSchemasMap(ctx, restoreTS)
+	return rc.loadSchemasMap(ctx, restoreTS)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
-	metas, err := rc.streamingMeta(ctx)
+func (lm *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
+	metas, err := lm.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +99,10 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 		},
 		clusterID: clusterID,
 	}
+}
+
+func (rc *LogClient) SetUseCheckpoint() {
+	rc.useCheckpoint = true
 }
 
 func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {

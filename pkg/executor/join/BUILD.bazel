@@ -108,6 +108,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
         "//pkg/expression",
         "//pkg/parser/ast",

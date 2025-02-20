@@ -115,7 +115,7 @@ func NewHandle(
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	is infoschema.InfoSchema,
-	pool pkgutil.SessionPool,
+	pool pkgutil.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
@@ -198,6 +198,33 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 				})
 			}
 			return tbl
+		}
+		return nil
+	}
+	return tbl
+}
+
+// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
+	return h.getPartitionStatsByID(is, pid)
+}
+
+func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
+	var statsTbl *statistics.Table
+	intest.Assert(h != nil, "stats handle is nil")
+	tbl, ok := h.Get(pid)
+	if !ok {
+		tbl, ok := h.TableInfoByID(is, pid)
+		if !ok {
+			return nil
+		}
+		// TODO: it's possible don't rely on the full table meta to do it here.
+		statsTbl = statistics.PseudoTable(tbl.Meta(), false, true)
+		statsTbl.PhysicalID = pid
+		if tbl.Meta().GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
 		}
 		return nil
 	}
