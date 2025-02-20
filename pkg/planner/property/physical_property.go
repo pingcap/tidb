@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -277,7 +279,7 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 
 // IsSubsetOf check if the keys can match the needs of partition.
 func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
-	if len(p.MPPPartitionCols) > len(keys) {
+	if len(p.MPPPartitionCols) < len(keys) {
 		return nil
 	}
 	matches := make([]int, 0, len(keys))
@@ -295,6 +297,31 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 		}
 	}
 	return matches
+}
+
+// NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
+func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
+	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
+	if len(p.MPPPartitionCols) < len(keys) {
+		return true
+	}
+	// if hash cols's collation is different from partition cols, then need to enforce exchange.
+	hashColUniqueID := intset.NewFastIntSet()
+	for _, hashCol := range keys {
+		for _, col := range p.MPPPartitionCols {
+			if hashCol.CollateID != col.CollateID {
+				return true
+			}
+		}
+		hashColUniqueID.Insert(int(hashCol.Col.UniqueID))
+	}
+	equivCal := fd.ClosureOfStrict(hashColUniqueID)
+	for _, col := range p.MPPPartitionCols {
+		if !equivCal.Has(int(col.Col.UniqueID)) {
+			return true
+		}
+	}
+	return false
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
