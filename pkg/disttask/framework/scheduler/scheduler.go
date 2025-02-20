@@ -398,7 +398,7 @@ func (s *BaseScheduler) onRunning() error {
 		if len(subTaskErrs) > 0 {
 			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
 			// we only store the first error as task error.
-			return s.revertTask(subTaskErrs[0])
+			return s.revertOnSubtaskErr(subTaskErrs[0])
 		}
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
@@ -539,7 +539,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 // change them all.
 var FailTaskDirectlyInTest = true
 
-func (s *BaseScheduler) revertTask(taskErr error) error {
+func (s *BaseScheduler) revertOnSubtaskErr(taskErr error) error {
 	task := *s.GetTask()
 	if intest.InTest && FailTaskDirectlyInTest {
 		if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
@@ -554,6 +554,17 @@ func (s *BaseScheduler) revertTask(taskErr error) error {
 		task.State = proto.TaskStateAwaitingResolution
 		task.Error = taskErr
 	}
+	s.task.Store(&task)
+	return nil
+}
+
+func (s *BaseScheduler) revertTask(taskErr error) error {
+	task := *s.GetTask()
+	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+		return err
+	}
+	task.State = proto.TaskStateReverting
+	task.Error = taskErr
 	s.task.Store(&task)
 	return nil
 }

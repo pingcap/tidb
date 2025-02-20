@@ -73,9 +73,9 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
 			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err := importinto.GetTaskImportedRows(ctx, 111)
+	rows, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), rows)
+	require.Equal(t, uint64(3), rows.ImportRows)
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
@@ -105,7 +105,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
 			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err = importinto.GetTaskImportedRows(ctx, 222)
+	rows, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)
-	require.Equal(t, uint64(33), rows)
+	require.Equal(t, uint64(33), rows.ImportRows)
 }

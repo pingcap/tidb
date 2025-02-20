@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -2280,11 +2281,15 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
-		rows, err := importinto.GetTaskImportedRows(ctx, info.ID)
+		runInfo, err := importinto.GetRuntimeInfoForJob(ctx, info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(rows)
+		importedRowCount = int64(runInfo.ImportRows)
+		if runInfo.Status == proto.TaskStateAwaitingResolution {
+			info.Status = string(runInfo.Status)
+			info.ErrorMessage = runInfo.ErrorMsg
+		}
 	}
 	fillOneImportJobInfo(info, result, importedRowCount)
 	return nil
