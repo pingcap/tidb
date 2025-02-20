@@ -72,7 +72,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 					globalStatsID.tableID,
 				)
 				if err != nil {
-					logutil.BgLogger().Warn("merge global stats failed",
+					logutil.ErrVerboseLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				}
 				return err

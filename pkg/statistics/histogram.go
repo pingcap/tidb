@@ -1597,6 +1597,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					return nil, err
 				}
 			} else {
+				// mergedBuffer is in reverse order, we need to reverse it.
+				slices.Reverse(mergeBuffer)
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
