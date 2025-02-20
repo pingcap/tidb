@@ -127,13 +127,10 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
-		if tblInfo.Partition != nil {
-			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
-		}
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
 	case proto.BackfillStepWriteAndIngest:
@@ -234,62 +231,54 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(
-	ctx context.Context,
-	store kv.StorageWithPD,
-	tblInfo *model.TableInfo,
-) (metas [][]byte, err error) {
-	defs := tblInfo.Partition.Definitions
-	physicalIDs := make([]int64, len(defs))
-	for i := range defs {
-		physicalIDs[i] = defs[i].ID
-	}
-
-	subTaskMetas := make([][]byte, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		// It should be different for each subtask to determine if there are duplicate entries.
-		importTS, err := allocNewTS(ctx, store)
-		if err != nil {
-			return nil, err
-		}
-		subTaskMeta := &BackfillSubTaskMeta{
-			PhysicalTableID: physicalID,
-			TS:              importTS,
-		}
-
-		metaBytes, err := json.Marshal(subTaskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
-}
-
 const (
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
 )
 
-func generateNonPartitionPlan(
+func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int,
+	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
+	if tblInfo.Partition == nil {
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, instanceCnt, logger)
+	}
+	defs := tblInfo.Partition.Definitions
+	for _, def := range defs {
+		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, instanceCnt, logger)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, partMeta...)
+	}
+	return metas, nil
+}
+
+func generatePlanForPhysicalTable(
+	ctx context.Context,
+	d *ddl,
+	tbl table.PhysicalTable,
+	job *model.Job,
+	useCloud bool,
+	instanceCnt int,
+	logger *zap.Logger,
+) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(d.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl, ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -303,7 +292,6 @@ func generateNonPartitionPlan(
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-
 		if err != nil {
 			return false, err
 		}
@@ -327,6 +315,12 @@ func generateNonPartitionPlan(
 		}
 
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		logger.Info("calculate region batch",
+			zap.Int("totalRegionCnt", len(recordRegionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", instanceCnt),
+			zap.Bool("useCloud", useCloud),
+		)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			// It should be different for each subtask to determine if there are duplicate entries.
@@ -340,9 +334,10 @@ func generateNonPartitionPlan(
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
-				RowStart: batch[0].StartKey(),
-				RowEnd:   batch[len(batch)-1].EndKey(),
-				TS:       importTS,
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        batch[0].StartKey(),
+				RowEnd:          batch[len(batch)-1].EndKey(),
+				TS:              importTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
