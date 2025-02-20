@@ -340,6 +340,28 @@ func generateBigint(num int, res []string, order string, begin, end int) {
 	}
 }
 
+func genrateBegint1(num int, res []string, begin, end int) {
+	if len(res) < num {
+		res = make([]string, num)
+	}
+	// Bigint has almost 19 digits. The last 11 are ordered, and the first 7 are random.
+	intRes := make([]int, num)
+	for i := begin; i < end; i++ {
+		random := faker.Number(-999_9999, 999_9999)
+		r := fmt.Sprintf("%d%011d", random, i)
+		intR, err := strconv.ParseInt(r, 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		intRes[i-begin] = int(intR)
+	}
+	sort.Ints(intRes)
+	for i, v := range intRes {
+		res[i] = strconv.Itoa(v)
+		fmt.Println(res[i])
+	}
+}
+
 func generateNormalFloat(num int, res []string) {
 	intRes := make([]float64, num)
 	for i := 0; i < num; i++ {
