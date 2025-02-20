@@ -240,6 +240,8 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// Check tidb_ttl_table_status table
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+	// Check mysql.tidb_workload_values table
+	MustExec(t, se, "SELECT * from mysql.tidb_workload_values")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {

@@ -2672,7 +2672,7 @@ func modifyTaskParamLoop(
 	jobID, taskID int64,
 	lastConcurrency, lastBatchSize, lastMaxWriteSpeed int,
 ) {
-	logger := logutil.DDLLogger().With(zap.Int64("jobId", jobID), zap.Int64("taskId", taskID))
+	logger := logutil.DDLLogger().With(zap.Int64("jobID", jobID), zap.Int64("taskID", taskID))
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 	defer ticker.Stop()
 	for {
