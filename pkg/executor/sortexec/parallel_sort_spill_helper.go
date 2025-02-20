@@ -124,18 +124,25 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
 	sortedRowsIters := make([]*chunk.Iterator4Slice, workerNum)
+	errChannel := make(chan error, workerNum*2)
 	for i := 0; i < workerNum; i++ {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
-					processPanicAndLog(p.errOutputChan, r)
+					errChannel <- util.GetRecoverError(r)
 				}
 				workerWaiter.Done()
 			}()
 
+			err := injectErrorForIssue59655(10)
+			if err != nil {
+				errChannel <- err
+				return
+			}
+
 			sortedRows, err := p.sortExec.Parallel.workers[idx].sortLocalRows()
 			if err != nil {
-				p.errOutputChan <- rowWithError{err: err}
+				errChannel <- err
 				return
 			}
 			sortedRowsIters[idx] = chunk.NewIterator4Slice(sortedRows)
@@ -144,6 +151,10 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	}
 
 	workerWaiter.Wait()
+	close(errChannel)
+	for err := range errChannel {
+		return err
+	}
 
 	totalRows := 0
 	for i := range sortedRowsIters {
@@ -180,7 +191,7 @@ func (p *parallelSortSpillHelper) initForSpill() {
 	}
 }
 
-func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
+func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) (err error) {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.initForSpill()
 	p.tmpSpillChunk.Reset()
@@ -196,17 +207,22 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				processPanicAndLog(p.errOutputChan, r)
+				err = util.GetRecoverError(r)
 			}
 			close(spilledRowChannel)
 		}()
 
 		injectParallelSortRandomFail(200)
 
+		err = injectErrorForIssue59655(500)
+		if err != nil {
+			return
+		}
+
 		for {
-			row, err := merger.next()
-			if err != nil {
-				p.errOutputChan <- rowWithError{err: err}
+			row, mergerErr := merger.next()
+			if mergerErr != nil {
+				err = mergerErr
 				break
 			}
 			if row.IsEmpty() {
@@ -227,9 +243,9 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		case row, ok = <-spilledRowChannel:
 			if !ok {
 				if p.tmpSpillChunk.NumRows() > 0 {
-					err := p.spillTmpSpillChunk(inDisk)
+					err = p.spillTmpSpillChunk(inDisk)
 					if err != nil {
-						return err
+						return
 					}
 				}
 
@@ -245,9 +261,9 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
-			err := p.spillTmpSpillChunk(inDisk)
+			err = p.spillTmpSpillChunk(inDisk)
 			if err != nil {
-				return err
+				return
 			}
 		}
 	}
