@@ -970,7 +970,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// reload or register the checkpoint
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, g, mgr.GetStorage(), schedulersConfig, checkpointFirstRun)
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
+			ctx, g, mgr.GetStorage(), schedulersConfig, logRestoredTS, checkpointFirstRun)
 		if err != nil {
 			return errors.Trace(err)
 		}
