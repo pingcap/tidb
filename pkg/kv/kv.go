@@ -179,8 +179,10 @@ type MemBuffer interface {
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	// Deprecated: use GetSnapshot instead.
 	SnapshotIter(k, upperbound Key) Iterator
 	// SnapshotIterReverse returns a reverse Iterator for a snapshot of MemBuffer.
+	// Deprecated: use GetSnapshot instead.
 	SnapshotIterReverse(k, lowerBound Key) Iterator
 
 	// Len returns the number of entries in the DB.
@@ -858,4 +860,31 @@ func decodeTableID(key Key) int64 {
 }
 
 // MemBufferSnapshot is a snapshot of MemBuffer, used for in-txn read.
-type MemBufferSnapshot = tikv.MemBufferSnapshot
+type MemBufferSnapshot interface {
+	Getter
+
+	// ForEachInSnapshotRange scans the key-value pairs in the state[0] snapshot if it exists,
+	// otherwise it uses the current checkpoint as snapshot.
+	//
+	// NOTE: returned kv-pairs are only valid during the iteration. If you want to use them after the iteration,
+	// you need to make a copy.
+	//
+	// The method is protected by a RWLock to prevent potential iterator invalidation, i.e.
+	// You cannot modify the MemBuffer during the iteration.
+	//
+	// Use it when you need to scan the whole range, otherwise consider using BatchedSnapshotIter.
+	ForEachInSnapshotRange(lower []byte, upper []byte, f func(k, v []byte) (stop bool, err error), reverse bool) error
+
+	// BatchedSnapshotIter returns an iterator of the "snapshot", namely stage[0].
+	// It iterates in batches and prevents iterator invalidation.
+	//
+	// Use it when you need on-demand "next", otherwise consider using ForEachInSnapshotRange.
+	// NOTE: you should never use it when there are no stages.
+	//
+	// The iterator becomes invalid when any operation that may modify the "snapshot",
+	// e.g. RevertToCheckpoint or releasing stage[0].
+	BatchedSnapshotIter(lower, upper []byte, reverse bool) Iterator
+
+	// Close releases the snapshot.
+	Close()
+}
