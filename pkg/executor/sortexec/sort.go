@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
+// ResultChannelCapacity shows the capacity of `resultChannel`
 const ResultChannelCapacity = 10
 
 // SortExec represents sorting executor.
