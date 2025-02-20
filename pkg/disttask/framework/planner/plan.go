@@ -49,6 +49,7 @@ type PlanCtx struct {
 // To integrate with current distribute framework, the flow becomes:
 // logical plan -> task meta -> physical plan -> subtaskmetas -> pipelines.
 type LogicalPlan interface {
+	GetTaskExtraParams() proto.ExtraParams
 	ToTaskMeta() ([]byte, error)
 	FromTaskMeta([]byte) error
 	ToPhysicalPlan(PlanCtx) (*PhysicalPlan, error)
