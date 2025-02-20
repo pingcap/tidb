@@ -959,41 +959,25 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	if cfg.AdvancerCfg.OwnershipCycleInterval > 0 {
-		err = advancerd.ForceToBeOwner(ctx)
-		if err != nil {
-			return err
-		}
-		log.Info("command line advancer forced to be the owner")
-		go runOwnershipCycle(ctx, advancerd, cfg.AdvancerCfg.OwnershipCycleInterval, true)
+		go runOwnershipCycle(ctx, advancerd, cfg.AdvancerCfg.OwnershipCycleInterval)
 	}
 	loop()
 	return nil
 }
 
 // runOwnershipCycle handles the periodic cycling of ownership for the advancer
-func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycleDuration time.Duration, isOwner bool) {
+func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycleDuration time.Duration) {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !isOwner {
-				// try to become owner
-				if err := advancerd.ForceToBeOwner(ctx); err != nil {
-					log.Error("command line advancer failed to force ownership", zap.Error(err))
-					continue
-				}
-				log.Info("command line advancer forced to be the owner")
-				isOwner = true
-			} else {
-				// retire from being owner
-				advancerd.RetireIfOwner()  // stops advancer
-				advancerd.CampaignCancel() // kills etcd session so election can happen
-				log.Info("command line advancer retired from being owner")
-				isOwner = false
+			log.Info("command line advancer start to force owner switch")
+			if err := advancerd.ForceOwnerSwitch(ctx); err != nil {
+				log.Error("command line advancer failed to force owner switch", zap.Error(err))
+				continue
 			}
 		}
 	}

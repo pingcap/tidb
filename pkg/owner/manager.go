@@ -88,6 +88,9 @@ type Manager interface {
 	// a distributed lock when there are multiple instances of new version TiDB trying
 	// to be the owner. See runInBootstrapSession for where we lock it in DDL.
 	ForceToBeOwner(ctx context.Context) error
+	// ForceOwnerSwitch deletes the current owner's key to trigger a ownership change
+	// Note: this is only used in chaos testing
+	ForceOwnerSwitch(ctx context.Context) error
 }
 
 const keyOpDefaultTimeout = 5 * time.Second
@@ -693,4 +696,45 @@ func (ol *ListenersWrapper) OnRetireOwner() {
 // NewListenersWrapper creates a new OwnerListeners.
 func NewListenersWrapper(listeners ...Listener) *ListenersWrapper {
 	return &ListenersWrapper{listeners: listeners}
+}
+
+// ForceOwnerSwitch deletes the current owner's key to trigger a ownership change
+func (m *ownerManager) ForceOwnerSwitch(ctx context.Context) error {
+	keyPrefix := m.key + "/"
+
+	// get all keys with their revisions
+	getResp, err := m.etcdCli.Get(ctx, keyPrefix, clientv3.WithPrefix(),
+		clientv3.WithSort(clientv3.SortByCreateRevision, clientv3.SortAscend))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(getResp.Kvs) == 0 {
+		m.logger.Info("no campaign keys found")
+		return nil
+	}
+
+	// the first key is the one with lowest revision (current owner)
+	ownerKey := string(getResp.Kvs[0].Key)
+	ownerID := string(getResp.Kvs[0].Value)
+	ownerRev := getResp.Kvs[0].CreateRevision
+
+	m.logger.Info("found current owner",
+		zap.String("key", ownerKey),
+		zap.String("id", ownerID),
+		zap.Int64("revision", ownerRev))
+
+	// delete just the owner's key
+	ctx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+	defer cancel()
+
+	_, err = m.etcdCli.Delete(ctx, ownerKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	m.logger.Info("successfully deleted owner key, waiting for new election",
+		zap.String("deleted_key", ownerKey))
+
+	return nil
 }

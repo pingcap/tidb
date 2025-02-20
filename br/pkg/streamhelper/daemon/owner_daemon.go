@@ -89,7 +89,7 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 					zap.String("daemon-id", od.daemon.Name()))
 				return
 			case <-tick.C:
-				log.Debug("daemon tick start",
+				log.Info("daemon tick start",
 					zap.Bool("is-owner", od.manager.IsOwner()),
 					zap.String("daemon-id", od.daemon.Name()))
 				if od.manager.IsOwner() {
@@ -103,14 +103,6 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 	return loop, nil
 }
 
-func (od *OwnerDaemon) ForceToBeOwner(ctx context.Context) error {
-	return od.manager.ForceToBeOwner(ctx)
-}
-
-func (od *OwnerDaemon) RetireIfOwner() {
-	od.manager.RetireOwner()
-}
-
-func (od *OwnerDaemon) CampaignCancel() {
-	od.manager.CampaignCancel()
+func (od *OwnerDaemon) ForceOwnerSwitch(ctx context.Context) error {
+	return od.manager.ForceOwnerSwitch(ctx)
 }
