@@ -64,7 +64,6 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-        "//pkg/util/parser",
         "//pkg/util/stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
