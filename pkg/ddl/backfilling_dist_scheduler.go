@@ -62,7 +62,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, para
 	sch := LitBackfillScheduler{
 		d:             d,
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
-		nodeRes:       param.GetNodeReource(),
+		nodeRes:       param.GetNodeResource(),
 	}
 	return &sch
 }

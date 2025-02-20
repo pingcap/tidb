@@ -149,8 +149,8 @@ type Param struct {
 	nodeRes        *proto.NodeResource
 }
 
-// GetNodeReource returns the node resource.
-func (p *Param) GetNodeReource() *proto.NodeResource {
+// GetNodeResource returns the node resource.
+func (p *Param) GetNodeResource() *proto.NodeResource {
 	return p.nodeRes
 }
 

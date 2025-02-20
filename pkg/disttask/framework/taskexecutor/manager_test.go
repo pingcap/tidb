@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -30,14 +29,12 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-var testNodeRes = proto.NewNodeResource(16, 32*units.GiB)
-
 func TestManageTaskExecutor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	m, err := NewManager(context.Background(), "test", mockTaskTable, testNodeRes)
+	m, err := NewManager(context.Background(), "test", mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	// add executor 1
@@ -98,7 +95,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 6}
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task).AnyTimes()
 
-	m, err := NewManager(ctx, id, mockTaskTable, testNodeRes)
+	m, err := NewManager(ctx, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -167,7 +164,7 @@ func TestManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, testNodeRes)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
@@ -208,7 +205,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, testNodeRes)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -289,7 +286,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, testNodeRes)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(10)
 

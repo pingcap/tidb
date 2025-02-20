@@ -67,6 +67,7 @@ type TestDXFContext struct {
 		nodeIndices  map[string]int
 		nodes        []*tidbNode
 	}
+	mockCPUNum int
 }
 
 // NewDXFContextWithRandomNodes creates a new TestDXFContext with random number
@@ -108,6 +109,7 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 		ReduceCheckInterval(c.T)
 	}
 	// all nodes are isometric
+	c.mockCPUNum = cpuCount
 	term := fmt.Sprintf("return(%d)", cpuCount)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -167,14 +169,13 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	nodeRes := proto.NewNodeResource(16, 32*units.GiB)
-	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, nodeRes)
+	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
 	require.NoError(c.T, exeMgr.Start())
 	var schMgr *scheduler.Manager
 	if owner {
-		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, nodeRes)
+		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 		schMgr.Start()
 	}
 	node := &tidbNode{
@@ -356,7 +357,7 @@ func (c *TestDXFContext) electIfNeeded() {
 	newOwnerIdx := int(rand.Int31n(int32(len(c.mu.nodes))))
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, proto.NewNodeResource(16, 32*units.GiB))
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, proto.NodeResourceForTest)
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()

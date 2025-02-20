@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
@@ -57,7 +56,7 @@ func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
 func TestManagerSchedulersOrdered(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mgr := NewManager(context.Background(), nil, "1", proto.NewNodeResource(16, 32*units.GiB))
+	mgr := NewManager(context.Background(), nil, "1", proto.NodeResourceForTest)
 	for i := 1; i <= 5; i++ {
 		task := &proto.Task{TaskBase: proto.TaskBase{
 			ID: int64(i * 10),
@@ -100,7 +99,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	ctx := context.Background()
-	mgr := NewManager(ctx, taskMgr, "1", proto.NewNodeResource(16, 32*units.GiB))
+	mgr := NewManager(ctx, taskMgr, "1", proto.NodeResourceForTest)
 
 	// normal
 	tasks := []*proto.Task{
@@ -144,7 +143,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	mgr := NewManager(context.Background(), taskMgr, "1", proto.NewNodeResource(16, 32*units.GiB))
+	mgr := NewManager(context.Background(), taskMgr, "1", proto.NodeResourceForTest)
 	RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param Param) Scheduler {
 			mockScheduler := NewBaseScheduler(ctx, task, param)

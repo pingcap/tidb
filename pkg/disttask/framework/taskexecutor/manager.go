@@ -71,8 +71,9 @@ type Manager struct {
 	logger      *zap.Logger
 	slotManager *slotManager
 
-	totalCPU int
-	totalMem int64
+	totalCPU     int
+	totalMem     int64
+	nodeResource *proto.NodeResource
 }
 
 // NewManager creates a new task executor Manager.
@@ -83,12 +84,11 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *p
 	}
 
 	m := &Manager{
-		id:          id,
-		taskTable:   taskTable,
-		logger:      logger,
-		slotManager: newSlotManager(resource.TotalCPU),
-		totalCPU:    resource.TotalCPU,
-		totalMem:    resource.TotalMem,
+		id:           id,
+		taskTable:    taskTable,
+		logger:       logger,
+		slotManager:  newSlotManager(resource.TotalCPU),
+		nodeResource: resource,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
@@ -349,7 +349,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 }
 
 func (m *Manager) getNodeResource() *proto.NodeResource {
-	return proto.NewNodeResource(m.totalCPU, m.totalMem)
+	ret := *m.nodeResource
+	return &ret
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {

@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
@@ -103,7 +102,7 @@ func newTaskExecutorRunEnv0(t *testing.T) *taskExecutorRunEnv {
 	taskExecutor := NewBaseTaskExecutor(context.Background(), &task1, Param{
 		taskTable: taskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    proto.NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NodeResourceForTest,
 		execID:    "id",
 	})
 	taskExecutor.Extension = taskExecExt
@@ -1127,7 +1126,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 	taskExecutor := NewBaseTaskExecutor(ctx, task, Param{
 		taskTable: mockSubtaskTable,
 		slotMgr:   newSlotManager(16),
-		nodeRc:    proto.NewNodeResource(16, 32*units.GiB),
+		nodeRc:    proto.NodeResourceForTest,
 		execID:    "tidb1",
 	})
 	taskExecutor.Extension = mockExtension

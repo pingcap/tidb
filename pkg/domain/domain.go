@@ -1818,7 +1818,7 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResourceWithDisk(totalCPU, int64(totalMem), totalDisk), nil
+	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {

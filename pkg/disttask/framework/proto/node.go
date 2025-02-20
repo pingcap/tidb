@@ -14,6 +14,8 @@
 
 package proto
 
+import "github.com/docker/go-units"
+
 // ManagedNode is a TiDB node that is managed by the framework.
 type ManagedNode struct {
 	// ID see GenerateExecID, it's named as host in the meta table.
@@ -33,22 +35,16 @@ type NodeResource struct {
 }
 
 // NewNodeResource creates a new NodeResource.
-func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
-	return &NodeResource{
-		TotalCPU:  totalCPU,
-		TotalMem:  totalMem,
-		TotalDisk: 0,
-	}
-}
-
-// NewNodeResourceWithDisk creates a new NodeResource with totalDisk initialized.
-func NewNodeResourceWithDisk(totalCPU int, totalMem int64, totalDisk uint64) *NodeResource {
+func NewNodeResource(totalCPU int, totalMem int64, totalDisk uint64) *NodeResource {
 	return &NodeResource{
 		TotalCPU:  totalCPU,
 		TotalMem:  totalMem,
 		TotalDisk: totalDisk,
 	}
 }
+
+// NodeResourceForTest is only used for test.
+var NodeResourceForTest = NewNodeResource(32, 32*units.GB, 100*units.GB)
 
 // GetStepResource gets the step resource according to concurrency.
 func (nr *NodeResource) GetStepResource(concurrency int) *StepResource {
