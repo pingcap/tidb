@@ -85,7 +85,6 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
 
 	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
@@ -93,10 +92,12 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", ""},
 
-	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
+	// TODO: These tables are excluded for now, because reading from them adds unnecessary load to the PD.
+	//{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
 	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
 }
 
 type sessionPool interface {
