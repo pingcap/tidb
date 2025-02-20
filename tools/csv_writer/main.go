@@ -885,7 +885,7 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 		count := task.end - task.begin
 		// Try to get a [][]string slice from the pool
 		buf := pool.Get().([][]string)
-		if cap(buf) != colNum {
+		if len(buf) != colNum {
 			buf = make([][]string, colNum)
 		}
 		for i := range buf {
