@@ -169,13 +169,13 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 	require.Len(t, res, 0)
 
 	// manually trigger snapshot by sending a tick to all workers
-	wrk1.snapshotChan <- struct{}{}
+	wrk1.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 1
 	}, time.Minute, time.Second)
 
-	wrk2.snapshotChan <- struct{}{}
+	wrk2.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 2

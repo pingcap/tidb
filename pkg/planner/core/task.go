@@ -2647,7 +2647,15 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		}
 		// TODO: consider equalivant class
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
-		return !prop.IsSubset(t.hashCols)
+		if len(prop.MPPPartitionCols) != len(t.hashCols) {
+			return true
+		}
+		for i, col := range prop.MPPPartitionCols {
+			if !col.Equal(t.hashCols[i]) {
+				return true
+			}
+		}
+		return false
 	}
 }
 
