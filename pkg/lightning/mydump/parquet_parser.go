@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
@@ -50,6 +51,8 @@ const (
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
 )
+
+var openedParser atomic.Int32
 
 // columnDumper is a helper struct to read data from one column.
 type columnDumper struct {
@@ -703,6 +706,8 @@ func (pp *ParquetParser) Close() error {
 		if pp.memLimiter != nil {
 			pp.memLimiter.Release(pp.memoryUsage)
 		}
+
+		openedParser.Add(-1)
 	}()
 
 	pp.resetReader()
@@ -918,6 +923,7 @@ func NewParquetParser(
 		zap.String("memory usage full", fmt.Sprintf("%d MB", meta.MemoryUsageFull>>20)),
 		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryQuota>>20)),
 		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
+		zap.Int32("opened parser", openedParser.Add(1)),
 		zap.Bool("streaming mode", meta.UseStreaming),
 		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
