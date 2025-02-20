@@ -49,7 +49,7 @@ func DefaultTickDurationConfig() tickDurationConfig {
 }
 
 type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
-	Path() string
+	RootPath() string
 
 	LoadCheckpointData(context.Context, func(K, LV)) (time.Duration, error)
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
@@ -129,7 +129,7 @@ func NewSnapshotTableMetaManager(
 	}, nil
 }
 
-func (manager *TableMetaManager[K, SV, LV, M]) Path() string {
+func (manager *TableMetaManager[K, SV, LV, M]) RootPath() string {
 	return fmt.Sprintf("database[%s]", manager.dbName)
 }
 
@@ -267,41 +267,46 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 }
 
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
-	storage  storage.ExternalStorage
-	cipher   *backuppb.CipherInfo
-	taskName string
+	storage   storage.ExternalStorage
+	cipher    *backuppb.CipherInfo
+	clusterID uint64
+	taskName  string
 }
 
 func NewSnapshotStorageMetaManager(
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
-	taskName string,
+	clusterID uint64,
+	prefix string,
 ) SnapshotMetaManagerT {
 	return &StorageMetaManager[
 		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
 	]{
-		storage:  storage,
-		cipher:   cipher,
-		taskName: taskName,
+		storage:   storage,
+		cipher:    cipher,
+		clusterID: clusterID,
+		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
 	}
 }
 
 func NewLogStorageMetaManager(
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
-	taskName string,
+	clusterID uint64,
+	prefix string,
 ) LogMetaManagerT {
 	return &StorageMetaManager[
 		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
 	]{
-		storage:  storage,
-		cipher:   cipher,
-		taskName: taskName,
+		storage:   storage,
+		cipher:    cipher,
+		clusterID: clusterID,
+		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
 	}
 }
 
-func (manager *StorageMetaManager[K, SV, LV, M]) Path() string {
-	return fmt.Sprintf("path[%s]", manager.taskName)
+func (manager *StorageMetaManager[K, SV, LV, M]) RootPath() string {
+	return fmt.Sprintf("path[%s%d]", CheckpointRestoreDirFormat, manager.clusterID)
 }
 
 func (manager *StorageMetaManager[K, SV, LV, M]) Close() {}

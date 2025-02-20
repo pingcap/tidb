@@ -60,9 +60,9 @@ func TestCheckpointMetaForRestoreOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
 	defer snapshotMetaManager.Close()
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, "log")
+	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log")
 	defer logMetaManager.Close()
 	testCheckpointMetaForRestore(t, snapshotMetaManager, logMetaManager)
 }
@@ -300,7 +300,7 @@ func TestCheckpointRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
 	defer snapshotMetaManager.Close()
 	testCheckpointRestoreRunner(t, snapshotMetaManager)
 }
@@ -408,7 +408,7 @@ func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerRetry(t, snapshotMetaManager)
 }
@@ -474,7 +474,7 @@ func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
 }
@@ -528,7 +528,7 @@ func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, "log")
+	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log")
 	defer logMetaManager.Close()
 	testCheckpointLogRestoreRunner(t, logMetaManager)
 }

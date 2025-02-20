@@ -557,18 +557,6 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	}
 }
 
-func (cfg *RestoreConfig) getSnapshotCheckpointTaskName(downstreamClusterID uint64) string {
-	return fmt.Sprintf("snapshot-%d", downstreamClusterID)
-}
-
-func (cfg *RestoreConfig) getLogCheckpointTaskName(downstreamClusterID uint64) string {
-	return fmt.Sprintf("log-%d/log", downstreamClusterID)
-}
-
-func (cfg *RestoreConfig) getSstCheckpointTaskName(downstreamClusterID uint64) string {
-	return fmt.Sprintf("log-%d/sst", downstreamClusterID)
-}
-
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	ctx context.Context,
 	downstreamClusterID uint64,
@@ -579,12 +567,12 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	}
 	if len(cfg.FullBackupStorage) > 0 {
 		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(downstreamClusterID))
+			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
 	}
 	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, cfg.getLogCheckpointTaskName(downstreamClusterID))
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log")
 	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, cfg.getSstCheckpointTaskName(downstreamClusterID))
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst")
 	return nil
 }
 
@@ -600,7 +588,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 		return errors.Trace(err)
 	}
 	cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, cfg.getSnapshotCheckpointTaskName(downstreamClusterID))
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
 	return nil
 }
 
