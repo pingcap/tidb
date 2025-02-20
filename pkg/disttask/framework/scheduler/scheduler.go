@@ -388,7 +388,7 @@ func (s *BaseScheduler) onRunning() error {
 		if len(subTaskErrs) > 0 {
 			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
 			// we only store the first error as task error.
-			return s.revertTask(subTaskErrs[0])
+			return s.revertTaskOrManualRecover(subTaskErrs[0])
 		}
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
@@ -577,20 +577,27 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 
 func (s *BaseScheduler) revertTask(taskErr error) error {
 	task := s.getTaskClone()
+	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+		return err
+	}
+	task.State = proto.TaskStateReverting
+	task.Error = taskErr
+	s.task.Store(task)
+	return nil
+}
+
+func (s *BaseScheduler) revertTaskOrManualRecover(taskErr error) error {
+	task := s.getTaskClone()
 	if task.ManualRecovery {
 		if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 			return err
 		}
 		task.State = proto.TaskStateAwaitingResolution
-	} else {
-		if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
-			return err
-		}
-		task.State = proto.TaskStateReverting
+		task.Error = taskErr
+		s.task.Store(task)
+		return nil
 	}
-	task.Error = taskErr
-	s.task.Store(task)
-	return nil
+	return s.revertTask(taskErr)
 }
 
 // MockServerInfo exported for scheduler_test.go

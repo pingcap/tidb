@@ -47,7 +47,7 @@ func TestOnTaskError(t *testing.T) {
 		require.Equal(t, proto.TaskStateReverted, task.State)
 	})
 
-	t.Run("task enter awaiting-resolution state if ManualRecovery set", func(t *testing.T) {
+	prepareForAwaitingResolutionTestFn := func(t *testing.T, taskKey string) int64 {
 		subtaskErrRetryable := atomic.Bool{}
 		executorExt := testutil.GetTaskExecutorExt(c.MockCtrl,
 			func(task *proto.Task) (execute.StepExecutor, error) {
@@ -66,7 +66,7 @@ func TestOnTaskError(t *testing.T) {
 			executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
-		taskID, err := tm.CreateTask(c.Ctx, "key3-1", proto.TaskTypeExample, 1, "",
+		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "",
 			2, proto.ExtraParams{ManualRecovery: true}, nil)
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
@@ -75,10 +75,24 @@ func TestOnTaskError(t *testing.T) {
 			return task.State == proto.TaskStateAwaitingResolution
 		}, 10*time.Second, 100*time.Millisecond)
 		subtaskErrRetryable.Store(true)
+		return taskID
+	}
+
+	t.Run("task enter awaiting-resolution state if ManualRecovery set, success after manual recover", func(t *testing.T) {
+		taskKey := "key3-1"
+		taskID := prepareForAwaitingResolutionTestFn(t, taskKey)
 		tk := testkit.NewTestKit(t, c.Store)
 		tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set state='pending' where state='failed' and task_key= %d", taskID))
 		tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='running' where id = %d", taskID))
-		task := testutil.WaitTaskDone(c.Ctx, t, "key3-1")
+		task := testutil.WaitTaskDone(c.Ctx, t, taskKey)
 		require.Equal(t, proto.TaskStateSucceed, task.State)
+	})
+
+	t.Run("task enter awaiting-resolution state if ManualRecovery set, cancel also works", func(t *testing.T) {
+		taskKey := "key4-1"
+		taskID := prepareForAwaitingResolutionTestFn(t, taskKey)
+		require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, taskID))
+		task := testutil.WaitTaskDone(c.Ctx, t, taskKey)
+		require.Equal(t, proto.TaskStateReverted, task.State)
 	})
 }
