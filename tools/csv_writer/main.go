@@ -318,7 +318,7 @@ func generateBigintWithNoLimit(num int, res []string) {
 }
 
 func generateBigint(num int, res []string, order string, begin, end int) {
-	if len(res) < num {
+	if len(res) != num {
 		res = make([]string, num)
 	}
 	// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
@@ -345,7 +345,6 @@ func generateBigint(num int, res []string, order string, begin, end int) {
 	}
 	for i, v := range intRes {
 		res[i] = strconv.FormatInt(v, 10)
-		fmt.Println(res[i])
 	}
 }
 
