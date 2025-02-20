@@ -269,7 +269,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
 	storage   storage.ExternalStorage
 	cipher    *backuppb.CipherInfo
-	clusterID uint64
+	clusterID string
 	taskName  string
 }
 
@@ -284,7 +284,7 @@ func NewSnapshotStorageMetaManager(
 	]{
 		storage:   storage,
 		cipher:    cipher,
-		clusterID: clusterID,
+		clusterID: fmt.Sprintf("%d", clusterID),
 		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
 	}
 }
@@ -300,13 +300,13 @@ func NewLogStorageMetaManager(
 	]{
 		storage:   storage,
 		cipher:    cipher,
-		clusterID: clusterID,
+		clusterID: fmt.Sprintf("%d", clusterID),
 		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
 	}
 }
 
 func (manager *StorageMetaManager[K, SV, LV, M]) RootPath() string {
-	return fmt.Sprintf("path[%s%d]", CheckpointRestoreDirFormat, manager.clusterID)
+	return fmt.Sprintf("path[%s]", fmt.Sprintf(CheckpointRestoreDirFormat, manager.clusterID))
 }
 
 func (manager *StorageMetaManager[K, SV, LV, M]) Close() {}
