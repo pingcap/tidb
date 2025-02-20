@@ -15,6 +15,7 @@ import (
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -317,47 +318,33 @@ func generateBigintNoDist(num int, res []string) {
 }
 
 func generateBigint(num int, res []string, order string, begin, end int) {
-	intRes := make([]int, num)
-	idx := 0
-	for uk := begin; uk < end; uk++ { // [begin, end) total ordered
-		intRes[idx] = uk
-		idx++
-	}
-
-	if order == totalRandom {
-		rand.Shuffle(num, func(i, j int) { intRes[i], intRes[j] = intRes[j], intRes[i] })
-	} else if order == partialOrdered {
-		unOrderIdx := faker.Number(0, num-2)
-		unOrderValue := intRes[unOrderIdx]
-		copy(intRes[unOrderIdx:], intRes[unOrderIdx+1:])
-		intRes[num-1] = unOrderValue
-	}
 	if len(res) < num {
 		res = make([]string, num)
 	}
-	for i, v := range intRes {
-		res[i] = strconv.Itoa(v)
-	}
-}
-
-func genrateBegint1(num int, res []string, begin, end int) {
-	if len(res) < num {
-		res = make([]string, num)
-	}
-	// Bigint has almost 19 digits. The last 11 are ordered, and the first 7 are random.
-	intRes := make([]int, num)
-	for i := begin; i < end; i++ {
+	// Bigint has almost 19 digits, use 18 digits. The first 7 are random, The last 11 are ordered.
+	intRes := make([]int64, num)
+	for uk := begin; uk < end; uk++ {
 		random := faker.Number(-999_9999, 999_9999)
-		r := fmt.Sprintf("%d%011d", random, i)
+		r := fmt.Sprintf("%d%011d", random, uk)
 		intR, err := strconv.ParseInt(r, 10, 64)
 		if err != nil {
 			panic(err)
 		}
-		intRes[i-begin] = int(intR)
+		intRes[uk-begin] = intR
 	}
-	sort.Ints(intRes)
+	if order == totalOrdered {
+		slices.Sort(intRes)
+	} else if order == partialOrdered {
+		// every 1000 rows, sort 999 rows
+		sortTimes := num / 10
+		for i := 0; i < sortTimes; i++ {
+			b := i * 10
+			e := b + 9
+			slices.Sort(intRes[b:e])
+		}
+	}
 	for i, v := range intRes {
-		res[i] = strconv.Itoa(v)
+		res[i] = strconv.FormatInt(v, 10)
 		fmt.Println(res[i])
 	}
 }
