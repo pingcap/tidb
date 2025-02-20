@@ -18,7 +18,15 @@ import (
 
 const OnlyOneTask int = -1
 
-var spinnerText []string = []string{".", "..", "..."}
+func coloredSpinner(s []string) []string {
+	c := color.New(color.Bold, color.FgGreen)
+	for i := range s {
+		s[i] = c.Sprint(s[i])
+	}
+	return s
+}
+
+var spinnerText []string = coloredSpinner([]string{"/", "-", "\\", "|"})
 
 type pbProgress struct {
 	bar      *mpb.Bar
@@ -44,6 +52,13 @@ func (p pbProgress) GetCurrent() int64 {
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
 func (p pbProgress) Close() {
+	// This wait shouldn't block.
+	// We are just waiting the progress bar refresh to the finished state.
+	defer func() {
+		p.bar.Wait()
+		p.progress.Wait()
+	}()
+
 	if p.bar.Completed() || p.bar.Aborted() {
 		return
 	}
@@ -162,7 +177,7 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 }
 
 var (
-	spinnerDoneText = fmt.Sprintf("... %s", color.GreenString("DONE"))
+	spinnerDoneText = fmt.Sprintf(":: %s", color.GreenString("DONE"))
 )
 
 func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
