@@ -79,6 +79,7 @@ func TestBasicPubSub(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
@@ -148,6 +149,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		func() (pools.Resource, error) {
 			return tk.Session(), nil
 		},
+		nil,
 		nil,
 		nil,
 	)
@@ -324,6 +326,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
@@ -458,6 +461,7 @@ func TestBeginTwice(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
@@ -506,6 +510,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 		func() (pools.Resource, error) {
 			return testkit.NewTestKit(t, store).Session(), nil
 		},
+		nil,
 		nil,
 		nil,
 	)
@@ -559,6 +564,7 @@ func TestCommitFailed(t *testing.T) {
 		func() (pools.Resource, error) {
 			return testkit.NewTestKit(t, store).Session(), nil
 		},
+		nil,
 		nil,
 		nil,
 	)
