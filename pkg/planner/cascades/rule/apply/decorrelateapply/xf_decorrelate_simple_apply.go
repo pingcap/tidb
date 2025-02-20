@@ -48,8 +48,8 @@ func (*XFDeCorrelateSimpleApply) ID() uint {
 // XForm implements the Rule interface.
 func (*XFDeCorrelateSimpleApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, bool, error) {
 	children := applyGE.Children()
-	outerPlanGE := children[0]
 	innerPlanGE := children[1]
+	outerPlanGE := children[0]
 	// remove means whether the intermediary apply should be removed from memo
 	remove := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply).HasFlag(logicalop.ApplyGenFromXFDeCorrelateRuleFlag)
 	// don't modify the apply op's CorCols in-place, which will change the hash64, apply should be re-inserted into the group otherwise.
