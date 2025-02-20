@@ -38,11 +38,19 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
+<<<<<<< HEAD
 	pool util.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
 func NewStatsLock(pool util.SessionPool) types.StatsLock {
+=======
+	pool pkgutil.DestroyableSessionPool
+}
+
+// NewStatsLock creates a new StatsLock.
+func NewStatsLock(pool pkgutil.DestroyableSessionPool) types.StatsLock {
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 	return &statsLockImpl{pool: pool}
 }
 

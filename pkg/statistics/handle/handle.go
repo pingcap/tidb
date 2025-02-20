@@ -110,7 +110,12 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
+<<<<<<< HEAD
 	pool util.SessionPool,
+=======
+	is infoschema.InfoSchema,
+	pool pkgutil.DestroyableSessionPool,
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {

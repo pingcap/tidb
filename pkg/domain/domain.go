@@ -143,8 +143,16 @@ type Domain struct {
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
+<<<<<<< HEAD
 	sysSessionPool  *sessionPool
 	exit            chan struct{}
+=======
+	schemaLease     time.Duration
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool util.DestroyableSessionPool
+	exit           chan struct{}
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1108,9 +1116,35 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
+<<<<<<< HEAD
 		store:             store,
 		exit:              make(chan struct{}),
 		sysSessionPool:    newSessionPool(capacity, factory),
+=======
+		store: store,
+		exit:  make(chan struct{}),
+		sysSessionPool: util.NewSessionPool(
+			capacity, factory,
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.StoreInternalSession(r)
+			},
+			func(r pools.Resource) {
+				sctx, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				intest.AssertFunc(func() bool {
+					txn, _ := sctx.Txn(false)
+					return txn == nil || !txn.Valid()
+				})
+				infosync.DeleteInternalSession(r)
+			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
+		),
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 		statsLease:        statsLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1671,7 +1705,11 @@ func (p *sessionPool) Close() {
 }
 
 // SysSessionPool returns the system session pool.
+<<<<<<< HEAD
 func (do *Domain) SysSessionPool() *sessionPool {
+=======
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
+>>>>>>> 9f5f53a645e (statistics: add Destroy method and handle session recycling (#59546))
 	return do.sysSessionPool
 }
 
@@ -2355,7 +2393,7 @@ func (do *Domain) initStats() {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2384,7 +2422,7 @@ func (do *Domain) loadStatsWorker() {
 			}
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
