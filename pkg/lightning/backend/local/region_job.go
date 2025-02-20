@@ -515,7 +515,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
 		if needDupCheck {
-			if lastKey4DupCheck != nil && bytes.Compare(lastKey4DupCheck, k) == 0 {
+			if lastKey4DupCheck != nil && bytes.Equal(lastKey4DupCheck, k) {
 				return errors.Errorf("duplicate key found: %s", hex.EncodeToString(lastKey4DupCheck))
 			}
 			lastKey4DupCheck = k
@@ -550,7 +550,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			if iter.Next() {
 				remainingStartKey = append([]byte{}, iter.Key()...)
 				if needDupCheck {
-					if lastKey4DupCheck != nil && bytes.Compare(lastKey4DupCheck, remainingStartKey) == 0 {
+					if lastKey4DupCheck != nil && bytes.Equal(lastKey4DupCheck, remainingStartKey) {
 						return errors.Errorf("duplicate key found: %s", hex.EncodeToString(lastKey4DupCheck))
 					}
 				}
