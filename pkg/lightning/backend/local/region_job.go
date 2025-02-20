@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -501,9 +503,23 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//nolint: errcheck
 	defer iter.Close()
 
-	var remainingStartKey []byte
+	// init to start and remainingStartKey, to found duplication across multiple engines
+	var (
+		remainingStartKey []byte
+		needDupCheck      bool
+		lastKey4DupCheck  []byte
+	)
+	if _, ok := j.ingestData.(*external.MemoryIngestData); ok {
+		needDupCheck = true
+	}
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
+		if needDupCheck {
+			if lastKey4DupCheck != nil && bytes.Compare(lastKey4DupCheck, k) == 0 {
+				return errors.Errorf("duplicate key found: %s", hex.EncodeToString(lastKey4DupCheck))
+			}
+			lastKey4DupCheck = k
+		}
 		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {
@@ -533,6 +549,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
 				remainingStartKey = append([]byte{}, iter.Key()...)
+				if needDupCheck {
+					if lastKey4DupCheck != nil && bytes.Compare(lastKey4DupCheck, remainingStartKey) == 0 {
+						return errors.Errorf("duplicate key found: %s", hex.EncodeToString(lastKey4DupCheck))
+					}
+				}
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
