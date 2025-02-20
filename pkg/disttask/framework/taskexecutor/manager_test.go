@@ -25,39 +25,16 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
-
-func TestBuildManager(t *testing.T) {
-	m, err := NewManager(context.Background(), "test", nil)
-	require.NoError(t, err)
-	require.NotNil(t, m)
-
-	bak := memory.MemTotal
-	defer func() {
-		memory.MemTotal = bak
-	}()
-	memory.MemTotal = func() (uint64, error) {
-		return 0, errors.New("mock error")
-	}
-	_, err = NewManager(context.Background(), "test", nil)
-	require.ErrorContains(t, err, "mock error")
-
-	memory.MemTotal = func() (uint64, error) {
-		return 0, nil
-	}
-	_, err = NewManager(context.Background(), "test", nil)
-	require.ErrorContains(t, err, "invalid cpu or memory")
-}
 
 func TestManageTaskExecutor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	m, err := NewManager(context.Background(), "test", mockTaskTable)
+	m, err := NewManager(context.Background(), "test", mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	// add executor 1
@@ -118,7 +95,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 6}
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task).AnyTimes()
 
-	m, err := NewManager(ctx, id, mockTaskTable)
+	m, err := NewManager(ctx, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -187,7 +164,7 @@ func TestManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
@@ -228,7 +205,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -309,7 +286,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable)
+	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(10)
 

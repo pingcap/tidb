@@ -142,7 +142,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id bigint auto_random primary key)")
