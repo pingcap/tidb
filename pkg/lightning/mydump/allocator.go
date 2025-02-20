@@ -93,13 +93,11 @@ func FreeMemoryForParquet() {
 }
 
 // GetMemoryQuota get the memory quota for non-streaming mode read.
-// TODO(joechenrh): set a more proper memory quota
 func GetMemoryQuota(concurrency int) int {
 	quotaPerTask := readerMemoryLimit / concurrency
 
-	// Because other part like encoder also need memory,
+	// Because other parts like encoder also consume memory,
 	// we assume that the reader can use up to 80% of the memroy.
-	// Maybe we can have a more accurate estimation later.
 	quotaPerReader := quotaPerTask * 8 / 10
 	quotaPerReader = quotaPerReader / defaultArenaSize * defaultArenaSize
 	return quotaPerReader

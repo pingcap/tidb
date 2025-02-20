@@ -687,7 +687,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet we use the size of all read datum to estimate the scanned positon.
+// For parquet we use the size of all read datum to estimate the scanned position.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
 	return int64(pp.totalBytesRead), nil
 }

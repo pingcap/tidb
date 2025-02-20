@@ -1177,11 +1177,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		for _, dataFile := range dataFiles {
 			// To reduce the memory usage, we only use streaming mode to read file.
-			// TODO(joechenrh): set a more proper memory quota
 			dataFile.ParquetMeta = mydump.ParquetFileMeta{
 				MemoryUsageStream:  memoryUsage,
 				MemoryUsageFull:    memoryUsageFull,
-				MemoryQuota:        mydump.GetMemoryQuota(runtime.NumCPU()),
+				MemoryQuota:        mydump.GetMemoryQuota(e.ThreadCnt),
 				UseStreaming:       true,
 				UseSampleAllocator: false,
 				Base64:             e.FieldsEncodedBy == config.FieldEncodeBase64,
