@@ -32,7 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/syncload/stats_syncload.go
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -294,6 +298,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 	}
 
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
@@ -312,6 +317,43 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 			wrapper.col = nil
 		} else {
 			wrapper.col = col
+=======
+	item := task.Item.TableItemID
+	statsTbl, ok := s.statsHandle.Get(item.TableID)
+
+	if !ok {
+		return nil
+	}
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	isPkIsHandle := tblInfo.PKIsHandle
+	wrapper := &statsWrapper{}
+	if item.IsIndex {
+		index, loadNeeded := statsTbl.IndexIsLoadNeeded(item.ID)
+		if !loadNeeded {
+			return nil
+		}
+		if index != nil {
+			wrapper.idxInfo = index.Info
+		} else {
+			wrapper.idxInfo = tblInfo.FindIndexByID(item.ID)
+		}
+	} else {
+		col, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
+		if !loadNeeded {
+			return nil
+		}
+		if col != nil {
+			wrapper.colInfo = col.Info
+		} else {
+			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+			// so we have to get the column info from the domain.
+			wrapper.colInfo = tblInfo.GetColumnByID(item.ID)
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/syncload/stats_syncload.go
 		}
 		if skipTypes != nil && wrapper.col != nil && wrapper.col.Info != nil {
 			_, skip := skipTypes[types.TypeToStr(wrapper.col.Info.FieldType.GetType(), wrapper.col.Info.FieldType.GetCharset())]
@@ -357,6 +399,19 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
+=======
+	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	if err != nil {
+		return nil, err
+	}
+	if hg == nil {
+		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
+		)
+		return nil, errGetHistMeta
+	}
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/syncload/stats_syncload.go
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
@@ -536,14 +591,40 @@ func (*Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtc
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index) (updated bool) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
+=======
+func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+	s.StatsLoad.Lock()
+	defer s.StatsLoad.Unlock()
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/syncload/stats_syncload.go
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 		return true
+=======
+		return false
+	}
+	if !tbl.ColAndIdxExistenceMap.Checked() {
+		tbl = tbl.Copy()
+		for _, col := range tbl.HistColl.GetColSlice() {
+			if tblInfo.FindColumnByID(col.ID) == nil {
+				tbl.HistColl.DelCol(col.ID)
+				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+			}
+		}
+		for _, idx := range tbl.HistColl.GetIdxSlice() {
+			if tblInfo.FindIndexByID(idx.ID) == nil {
+				tbl.HistColl.DelIdx(idx.ID)
+				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+			}
+		}
+		tbl.ColAndIdxExistenceMap.SetChecked()
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
 	if !item.IsIndex && colHist != nil {
 		tbl = tbl.Copy()

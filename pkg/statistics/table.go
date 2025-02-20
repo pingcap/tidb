@@ -71,6 +71,121 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
 	TblInfoUpdateTS uint64
+<<<<<<< HEAD
+=======
+
+	IsPkIsHandle bool
+}
+
+// ColAndIdxExistenceMap is the meta map for statistics.Table.
+// It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
+type ColAndIdxExistenceMap struct {
+	checked     bool
+	colAnalyzed map[int64]bool
+	idxAnalyzed map[int64]bool
+}
+
+// DeleteColAnalyzed deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+	delete(m.colAnalyzed, id)
+}
+
+// DeleteIdxAnalyzed deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+	delete(m.idxAnalyzed, id)
+}
+
+// Checked returns whether the map has been checked.
+func (m *ColAndIdxExistenceMap) Checked() bool {
+	return m.checked
+}
+
+// SetChecked set the map as checked.
+func (m *ColAndIdxExistenceMap) SetChecked() {
+	m.checked = true
+}
+
+// HasAnalyzed checks whether a column/index stats exists and it has stats.
+// TODO: the map should only keep the analyzed cols.
+// There's three possible status of column/index's statistics:
+//  1. We don't have this column/index.
+//  2. We have it, but it hasn't been analyzed yet.
+//  3. We have it and its statistics.
+//
+// To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+	if isIndex {
+		analyzed, ok := m.idxAnalyzed[id]
+		return ok && analyzed
+	}
+	analyzed, ok := m.colAnalyzed[id]
+	return ok && analyzed
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.idxAnalyzed[id]
+		return ok
+	}
+	_, ok := m.colAnalyzed[id]
+	return ok
+}
+
+// InsertCol inserts a column with its meta into the map.
+func (m *ColAndIdxExistenceMap) InsertCol(id int64, analyzed bool) {
+	m.colAnalyzed[id] = analyzed
+}
+
+// InsertIndex inserts an index with its meta into the map.
+func (m *ColAndIdxExistenceMap) InsertIndex(id int64, analyzed bool) {
+	m.idxAnalyzed[id] = analyzed
+}
+
+// IsEmpty checks whether the map is empty.
+func (m *ColAndIdxExistenceMap) IsEmpty() bool {
+	return len(m.colAnalyzed)+len(m.idxAnalyzed) == 0
+}
+
+// ColNum returns the number of columns in the map.
+func (m *ColAndIdxExistenceMap) ColNum() int {
+	return len(m.colAnalyzed)
+}
+
+// Clone deeply copies the map.
+func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
+	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
+	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
+	return mm
+}
+
+const (
+	defaultColCap = 16
+	defaultIdxCap = 4
+)
+
+// NewColAndIndexExistenceMapWithoutSize return a new object with default capacity.
+func NewColAndIndexExistenceMapWithoutSize() *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colAnalyzed: make(map[int64]bool, defaultColCap),
+		idxAnalyzed: make(map[int64]bool, defaultIdxCap),
+	}
+}
+
+// NewColAndIndexExistenceMap return a new object with the given capcity.
+func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colAnalyzed: make(map[int64]bool, colCap),
+		idxAnalyzed: make(map[int64]bool, idxCap),
+	}
+}
+
+// ColAndIdxExistenceMapIsEqual is used in testing, checking whether the two are equal.
+func ColAndIdxExistenceMapIsEqual(m1, m2 *ColAndIdxExistenceMap) bool {
+	return maps.Equal(m1.colAnalyzed, m2.colAnalyzed) && maps.Equal(m1.idxAnalyzed, m2.idxAnalyzed)
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -463,9 +578,47 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
+<<<<<<< HEAD
 type neededStatsMap struct {
 	items map[model.TableItemID]struct{}
 	m     sync.RWMutex
+=======
+// ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
+// Also, if the stats has been loaded into the memory, we also don't need to load it.
+// We return the Column together with the checking result, to avoid accessing the map multiple times.
+// The first bool is whether we need to load it into memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+	col, ok := t.columns[id]
+	if !ok {
+		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
+	}
+
+	// If it's not analyzed yet.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
+	// After this check, we will always have ok && hasAnalyzed.
+	if !hasAnalyzed {
+		return nil, false, false
+	}
+
+	// Restore the condition from the simplified form:
+	// 1. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 2. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+		return col, true, true
+	}
+
+	// Otherwise don't need load it.
+	return col, false, true
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
 }
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {

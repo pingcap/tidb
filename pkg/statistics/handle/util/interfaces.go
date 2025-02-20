@@ -105,6 +105,8 @@ type StatsHistory interface {
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
@@ -128,7 +130,12 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
+<<<<<<< HEAD:pkg/statistics/handle/util/interfaces.go
 	Update(is infoschema.InfoSchema) error
+=======
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803)):pkg/statistics/handle/types/interfaces.go
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
