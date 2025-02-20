@@ -367,6 +367,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	return bindings[0]
 }
 
+// RestoreDBForBinding restores the DB name for the binding.
 func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
 	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
 }
