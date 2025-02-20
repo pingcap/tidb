@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -123,4 +124,14 @@ func TestShowIndexWithGlobalIndex(t *testing.T) {
 	tk.MustExec("insert test_t1 values (1, 1);")
 	tk.MustExec("alter table test_t1 add unique index p_a (a) GLOBAL;")
 	tk.MustQuery("show index from test_t1").Check(testkit.Rows("test_t1 0 p_a 1 a A 0 <nil> <nil> YES BTREE   YES <nil> NO YES"))
+}
+
+func TestShowSessionStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk1.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
 }

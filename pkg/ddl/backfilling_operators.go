@@ -173,8 +173,8 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	rm := reorgMeta
-	if rm.IsDistReorg {
-		// Currently, only the batch size of local ingest mode can be adjusted
+	if rm.UseCloudStorage {
+		// param cannot be modified at runtime for global sort right now.
 		rm = nil
 	}
 
@@ -566,7 +566,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
 		})
-		failpoint.InjectCall("scanRecordExec")
+		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err

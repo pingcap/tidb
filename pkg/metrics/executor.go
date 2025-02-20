@@ -54,6 +54,9 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
+
+	// NetworkTransmissionStats records the network transmission for queries
+	NetworkTransmissionStats *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -129,4 +132,12 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+
+	NetworkTransmissionStats = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "network_transmission",
+			Help:      "Counter of network transmission bytes.",
+		}, []string{LblType})
 }

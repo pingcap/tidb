@@ -8203,7 +8203,7 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.InsertFunc), Args: $3.([]ast.ExprNode)}
 	}
-|	"MOD" '(' BitExpr ',' BitExpr ')'
+|	"MOD" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3, R: $5}
 	}

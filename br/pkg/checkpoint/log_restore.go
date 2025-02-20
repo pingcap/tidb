@@ -194,14 +194,14 @@ func ExistsLogRestoreCheckpointMetadata(
 		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointMetaTableName))
 }
 
-// A progress type for snapshot + log restore.
+// RestoreProgress is a progress type for snapshot + log restore.
 //
-// Before the id-maps is persist into external storage, the snapshot restore and
-// id-maps constructure can be repeated. So if the progress is in `InSnapshotRestore`,
+// Before the id-maps is persisted into external storage, the snapshot restore and
+// id-maps building can be retried. So if the progress is in `InSnapshotRestore`,
 // it can retry from snapshot restore.
 //
-// After the id-maps is persist into external storage, there are some meta-kvs has
-// been restored into the cluster, such as `rename ddl`. Where would be a situation:
+// After the id-maps is persisted into external storage, there are some meta-kvs has
+// been restored into the cluster, such as `rename ddl`. A situation could be:
 //
 // the first execution:
 //
@@ -209,7 +209,7 @@ func ExistsLogRestoreCheckpointMetadata(
 //	     table A (id 80)       -------------->        table B (id 80)
 //	  ( snapshot restore )                            ( log restore )
 //
-// the second execution if don't skip snasphot restore:
+// the second execution if don't skip snapshot restore:
 //
 //	table A is created again in snapshot restore, because there is no table named A
 //	     table A (id 81)       -------------->   [not in id-maps, so ignored]
@@ -221,8 +221,8 @@ type RestoreProgress int
 
 const (
 	InSnapshotRestore RestoreProgress = iota
-	// Only when the id-maps is persist, status turns into it.
-	InLogRestoreAndIdMapPersist
+	// Only when the id-maps is persisted, status turns into it.
+	InLogRestoreAndIdMapPersisted
 )
 
 type CheckpointProgress struct {
@@ -254,8 +254,8 @@ func ExistsCheckpointProgress(
 		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointProgressTableName))
 }
 
-// CheckpointTaskInfo is unique information within the same cluster id. It represents the last
-// restore task executed for this cluster.
+// CheckpointTaskInfoForLogRestore is tied to a specific cluster.
+// It represents the last restore task executed in this cluster.
 type CheckpointTaskInfoForLogRestore struct {
 	Metadata            *CheckpointMetadataForLogRestore
 	HasSnapshotMetadata bool
@@ -304,6 +304,9 @@ type CheckpointIngestIndexRepairSQL struct {
 	IndexName  string    `json:"index-name"`
 	AddSQL     string    `json:"add-sql"`
 	AddArgs    []any     `json:"add-args"`
+
+	OldIndexIDFound bool `json:"-"`
+	IndexRepaired   bool `json:"-"`
 }
 
 type CheckpointIngestIndexRepairSQLs struct {

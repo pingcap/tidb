@@ -75,3 +75,19 @@ func (op *LogicalJoin) OtherConditionsShallowRef() expression.CNFExprs {
 	op.OtherConditions = OtherConditionsCP
 	return op.OtherConditions
 }
+
+// LogicalProjectionShallowRef implements the copy-on-write usage.
+func (op *LogicalProjection) LogicalProjectionShallowRef() *LogicalProjection {
+	shallow := *op
+	return &shallow
+}
+
+// ExprsShallowRef implements the copy-on-write usage.
+func (op *LogicalProjection) ExprsShallowRef() []expression.Expression {
+	ExprsCP := make([]expression.Expression, 0, len(op.Exprs))
+	for _, one := range op.Exprs {
+		ExprsCP = append(ExprsCP, one)
+	}
+	op.Exprs = ExprsCP
+	return op.Exprs
+}

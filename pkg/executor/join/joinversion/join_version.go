@@ -40,7 +40,7 @@ var (
 
 func init() {
 	// This variable is set to true for test, need to be set back to false in release version
-	UseHashJoinV2ForNonGAJoin = true
+	UseHashJoinV2ForNonGAJoin = false
 }
 
 // IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized

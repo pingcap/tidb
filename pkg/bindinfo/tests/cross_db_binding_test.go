@@ -342,4 +342,6 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 
 func (p *mockSessionPool) Put(pools.Resource) {}
 
+func (p *mockSessionPool) Destroy(pools.Resource) {}
+
 func (p *mockSessionPool) Close() {}

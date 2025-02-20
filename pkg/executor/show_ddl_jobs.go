@@ -330,6 +330,9 @@ func showCommentsFromJob(job *model.Job) string {
 		if m.TargetScope != "" {
 			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
 		}
+		if m.MaxNodeCount != 0 {
+			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
+		}
 	}
 	return strings.Join(labels, ", ")
 }

@@ -36,6 +36,14 @@ import (
 	"google.golang.org/protobuf/protoadapt"
 )
 
+// ByteNumOneGiB shows how many bytes one GiB contains
+const ByteNumOneGiB int64 = 1024 * 1024 * 1024
+
+// ByteToGiB converts Byte to GiB
+func ByteToGiB(bytes float64) float64 {
+	return bytes / float64(ByteNumOneGiB)
+}
+
 // SliceToMap converts slice to map
 // nolint:unused
 func SliceToMap(slice []string) map[string]any {

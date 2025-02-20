@@ -136,7 +136,8 @@ type TableInfo struct {
 	MaxForeignKeyID int64 `json:"max_fk_id"`
 	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
-	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	// These changing schema operations don't include 'truncate table', 'rename table',
+	// 'rename tables', 'truncate partition' and 'exchange partition'.
 	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,

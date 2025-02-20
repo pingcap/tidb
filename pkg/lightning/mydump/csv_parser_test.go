@@ -147,9 +147,9 @@ func TestTPCH(t *testing.T) {
 	reader := mydump.NewStringReader(input)
 
 	cfg := config.CSVConfig{
-		Separator:   "|",
-		Delimiter:   "",
-		TrimLastSep: true,
+		FieldsTerminatedBy: "|",
+		FieldsEnclosedBy:   "",
+		TrimLastEmptyField: true,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, reader, int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
@@ -224,9 +224,9 @@ func TestTPCHMultiBytes(t *testing.T) {
 		require.Len(t, allExpectedParserPos, len(datums))
 
 		cfg := config.CSVConfig{
-			Separator:   SepAndQuote[0],
-			Delimiter:   SepAndQuote[1],
-			TrimLastSep: false,
+			FieldsTerminatedBy: SepAndQuote[0],
+			FieldsEnclosedBy:   SepAndQuote[1],
+			TrimLastEmptyField: false,
 		}
 
 		reader := mydump.NewStringReader(inputStr)
@@ -246,8 +246,8 @@ func TestTPCHMultiBytes(t *testing.T) {
 
 func TestRFC4180(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
 	}
 
 	// example 1, trailing new lines
@@ -398,12 +398,12 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 
 func TestMySQL(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator:  ",",
-		Delimiter:  `"`,
-		Terminator: "\n",
-		EscapedBy:  `\`,
-		NotNull:    false,
-		Null:       []string{`\N`},
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
+		LinesTerminatedBy:  "\n",
+		FieldsEscapedBy:    `\`,
+		NotNull:            false,
+		FieldNullDefinedBy: []string{`\N`},
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"\"","\\","\?"
@@ -507,11 +507,11 @@ func TestMySQL(t *testing.T) {
 
 func TestCustomEscapeChar(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
-		EscapedBy: `!`,
-		NotNull:   false,
-		Null:      []string{`!N`},
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `!`,
+		NotNull:            false,
+		FieldNullDefinedBy: []string{`!N`},
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"!"","!!","!\"
@@ -546,11 +546,11 @@ func TestCustomEscapeChar(t *testing.T) {
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 
 	cfg = config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
-		EscapedBy: ``,
-		NotNull:   false,
-		Null:      []string{`NULL`},
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    ``,
+		NotNull:            false,
+		FieldNullDefinedBy: []string{`NULL`},
 	}
 
 	parser, err = mydump.NewCSVParser(
@@ -572,9 +572,9 @@ func TestCustomEscapeChar(t *testing.T) {
 func TestSyntaxErrorCSV(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: ",",
-			Delimiter: `"`,
-			EscapedBy: `\`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			FieldsEscapedBy:    `\`,
 		},
 	}
 
@@ -592,19 +592,19 @@ func TestSyntaxErrorCSV(t *testing.T) {
 
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), inputs)
 
-	cfg.CSV.EscapedBy = ""
+	cfg.CSV.FieldsEscapedBy = ""
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), []string{`"\`})
 }
 
 func TestTSV(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator:         "\t",
-		Delimiter:         "",
-		BackslashEscape:   false,
-		NotNull:           false,
-		Null:              []string{""},
-		Header:            true,
-		HeaderSchemaMatch: true,
+		FieldsTerminatedBy: "\t",
+		FieldsEnclosedBy:   "",
+		BackslashEscape:    false,
+		NotNull:            false,
+		FieldNullDefinedBy: []string{""},
+		Header:             true,
+		HeaderSchemaMatch:  true,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`a	b	c	d	e	f
@@ -664,9 +664,9 @@ func TestTSV(t *testing.T) {
 
 func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
-		Null:      []string{""},
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
+		FieldNullDefinedBy: []string{""},
 	}
 	data := " \r\n\r\n0,,abc\r\n \r\n123,1999-12-31,test\r\n"
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
@@ -718,8 +718,8 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 
 func TestEmpty(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
@@ -742,8 +742,8 @@ func TestEmpty(t *testing.T) {
 
 func TestCRLF(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
 	}
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader("a\rb\r\nc\n\n\n\nd"), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
@@ -781,8 +781,8 @@ func TestCRLF(t *testing.T) {
 
 func TestQuotedSeparator(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`",",','`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
@@ -811,8 +811,8 @@ func TestConsecutiveFields(t *testing.T) {
 
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: ",",
-			Delimiter: `"`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
 		},
 	}
 
@@ -825,7 +825,7 @@ func TestConsecutiveFields(t *testing.T) {
 
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), testCases)
 
-	cfg.CSV.Delimiter = "|+|"
+	cfg.CSV.FieldsEnclosedBy = "|+|"
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), []string{
 		"abc|1|+||+|\r\n",
 	})
@@ -834,8 +834,8 @@ func TestConsecutiveFields(t *testing.T) {
 func TestTooLargeRow(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: ",",
-			Delimiter: `"`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
 		},
 	}
 	bak := mydump.LargestEntryLimit
@@ -885,7 +885,7 @@ func TestTooLargeRow(t *testing.T) {
 
 func TestSpecialChars(t *testing.T) {
 	cfg := config.MydumperRuntime{
-		CSV: config.CSVConfig{Separator: ",", Delimiter: `"`},
+		CSV: config.CSVConfig{FieldsTerminatedBy: ",", FieldsEnclosedBy: `"`},
 	}
 	testCases := []testCase{
 		{
@@ -924,10 +924,10 @@ func TestSpecialChars(t *testing.T) {
 func TestContinuationCSV(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:   ",",
-			Delimiter:   `"`,
-			EscapedBy:   `\`,
-			TrimLastSep: true,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			FieldsEscapedBy:    `\`,
+			TrimLastEmptyField: true,
 		},
 	}
 
@@ -959,9 +959,9 @@ func TestContinuationCSV(t *testing.T) {
 func TestBackslashAsSep(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: `\`,
-			Delimiter: `"`,
-			Null:      []string{""},
+			FieldsTerminatedBy: `\`,
+			FieldsEnclosedBy:   `"`,
+			FieldNullDefinedBy: []string{""},
 		},
 	}
 
@@ -987,9 +987,9 @@ func TestBackslashAsSep(t *testing.T) {
 func TestBackslashAsDelim(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: ",",
-			Delimiter: `\`,
-			Null:      []string{""},
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `\`,
+			FieldNullDefinedBy: []string{""},
 		},
 	}
 
@@ -1008,10 +1008,10 @@ func TestBackslashAsDelim(t *testing.T) {
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:        ",",
-			Delimiter:        `\`,
-			Null:             []string{""},
-			QuotedNullIsText: true,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `\`,
+			FieldNullDefinedBy: []string{""},
+			QuotedNullIsText:   true,
 		},
 	}
 
@@ -1041,8 +1041,8 @@ func (*errorReader) Close() error {
 
 func TestReadError(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, &errorReader{}, int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
@@ -1054,8 +1054,8 @@ func TestReadError(t *testing.T) {
 func TestSyntaxErrorLog(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: "\t",
-			Delimiter: "'",
+			FieldsTerminatedBy: "\t",
+			FieldsEnclosedBy:   "'",
 		},
 	}
 
@@ -1073,13 +1073,13 @@ func TestSyntaxErrorLog(t *testing.T) {
 	)
 }
 
-// TestTrimLastSep checks that set `TrimLastSep` to true trim only the last empty filed.
+// TestTrimLastSep checks that set `TrimLastEmptyField` to true trim only the last empty filed.
 func TestTrimLastSep(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:   ",",
-			Delimiter:   `"`,
-			TrimLastSep: true,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			TrimLastEmptyField: true,
 		},
 	}
 	parser, err := mydump.NewCSVParser(
@@ -1102,8 +1102,8 @@ func TestTrimLastSep(t *testing.T) {
 func TestTerminator(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  "|+|",
-			Terminator: "|+|\n",
+			FieldsTerminatedBy: "|+|",
+			LinesTerminatedBy:  "|+|\n",
 		},
 	}
 
@@ -1119,7 +1119,7 @@ func TestTerminator(t *testing.T) {
 
 	runTestCasesCSV(t, &cfg, 1, testCases)
 
-	cfg.CSV.Delimiter = "|+>"
+	cfg.CSV.FieldsEnclosedBy = "|+>"
 
 	testCases = []testCase{
 		{
@@ -1136,8 +1136,8 @@ func TestTerminator(t *testing.T) {
 func TestReadUntilTerminator(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  "#",
-			Terminator: "#\n",
+			FieldsTerminatedBy: "#",
+			LinesTerminatedBy:  "#\n",
 		},
 	}
 	parser, err := mydump.NewCSVParser(
@@ -1168,12 +1168,12 @@ func TestNULL(t *testing.T) {
 
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:        ",",
-			Delimiter:        `"`,
-			Terminator:       "\n",
-			Null:             []string{`\N`, `NULL`},
-			EscapedBy:        `\`,
-			QuotedNullIsText: true,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			FieldNullDefinedBy: []string{`\N`, `NULL`},
+			FieldsEscapedBy:    `\`,
+			QuotedNullIsText:   true,
 		},
 	}
 	testCases := []testCase{
@@ -1192,11 +1192,11 @@ func TestNULL(t *testing.T) {
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  ``,
-			Terminator: "\n",
-			Null:       []string{`\N`},
-			EscapedBy:  `\`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   ``,
+			LinesTerminatedBy:  "\n",
+			FieldNullDefinedBy: []string{`\N`},
+			FieldsEscapedBy:    `\`,
 		},
 	}
 	testCases = []testCase{
@@ -1215,11 +1215,11 @@ func TestNULL(t *testing.T) {
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  ``,
-			Terminator: "\n",
-			Null:       []string{`\N`},
-			EscapedBy:  `\`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   ``,
+			LinesTerminatedBy:  "\n",
+			FieldNullDefinedBy: []string{`\N`},
+			FieldsEscapedBy:    `\`,
 		},
 	}
 	testCases = []testCase{
@@ -1238,12 +1238,12 @@ func TestNULL(t *testing.T) {
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:        ",",
-			Delimiter:        `"`,
-			Terminator:       "\n",
-			Null:             []string{`NULL`},
-			EscapedBy:        ``,
-			QuotedNullIsText: true,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			FieldNullDefinedBy: []string{`NULL`},
+			FieldsEscapedBy:    ``,
+			QuotedNullIsText:   true,
 		},
 	}
 	testCases = []testCase{
@@ -1264,10 +1264,10 @@ func TestNULL(t *testing.T) {
 func TestStartingBy(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			StartingBy: "xxx",
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			LinesStartingBy:    "xxx",
 		},
 	}
 	testCases := []testCase{
@@ -1297,7 +1297,7 @@ ghi,3
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
 
-	// test that special characters appears before StartingBy, and StartingBy only takes effect after once
+	// test that special characters appears before LinesStartingBy, and LinesStartingBy only takes effect after once
 
 	testCases = []testCase{
 		{
@@ -1323,14 +1323,14 @@ yyy",5,xxxxxx,8
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
 
-	// test StartingBy contains special characters
+	// test LinesStartingBy contains special characters
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			StartingBy: "x,xx",
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			LinesStartingBy:    "x,xx",
 		},
 	}
 	testCases = []testCase{
@@ -1354,10 +1354,10 @@ yyy",5,xx,xxxx,8`,
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			StartingBy: `x"xx`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			LinesStartingBy:    `x"xx`,
 		},
 	}
 	testCases = []testCase{
@@ -1382,10 +1382,10 @@ yyy",5,xx"xxxx,8
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			StartingBy: "x\nxx",
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
+			LinesTerminatedBy:  "\n",
+			LinesStartingBy:    "x\nxx",
 		},
 	}
 	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkersForCSV, false, nil)
@@ -1395,8 +1395,8 @@ yyy",5,xx"xxxx,8
 func TestCharsetConversion(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  "，",
-			Terminator: "。\n",
+			FieldsTerminatedBy: "，",
+			LinesTerminatedBy:  "。\n",
 		},
 		DataCharacterSet:       "gb18030",
 		DataInvalidCharReplace: string(utf8.RuneError),
@@ -1463,7 +1463,7 @@ func BenchmarkReadRowUsingMydumpCSVParser(b *testing.B) {
 		require.NoError(b, file.Close())
 	}()
 
-	cfg := config.CSVConfig{Separator: ","}
+	cfg := config.CSVConfig{FieldsTerminatedBy: ","}
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, file, 65536, ioWorkersForCSV, false, nil)
 	require.NoError(b, err)
 	parser.SetLogger(log.Logger{Logger: zap.NewNop()})
@@ -1519,8 +1519,8 @@ func BenchmarkReadRowUsingEncodingCSV(b *testing.B) {
 func TestHeaderSchemaMatch(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator: ",",
-			Delimiter: `"`,
+			FieldsTerminatedBy: ",",
+			FieldsEnclosedBy:   `"`,
 		},
 	}
 

@@ -4,6 +4,7 @@ go_test(
     name = "addindextest2_test",
     timeout = "long",
     srcs = [
+        "alter_job_test.go",
         "global_sort_test.go",
         "main_test.go",
     ],
@@ -11,8 +12,12 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/disttask/framework/testutil",
+        "//pkg/disttask/operator",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
+        "//pkg/lightning/backend/local",
         "//pkg/meta/model",
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",

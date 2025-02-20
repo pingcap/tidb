@@ -16,6 +16,7 @@ package generatedexpr
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -53,6 +54,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	return inNode, true
 }
 
+var parserPool = &sync.Pool{New: func() any { return parser.New() }}
+
 // ParseExpression parses an ExprNode from a string.
 // When TiDB loads infoschema from TiKV, `GeneratedExprString`
 // of `ColumnInfo` is a string field, so we need to parse
@@ -60,7 +63,9 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	stmts, _, err := parser.New().ParseSQL(expr,
+	parse := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(parse)
+	stmts, _, err := parse.ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
 	if err == nil {

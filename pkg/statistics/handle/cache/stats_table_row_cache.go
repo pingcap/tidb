@@ -121,28 +121,6 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	return nil
 }
 
-// Update tries to update the cache.
-func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		return c.updateDirtyIDs(sctx)
-	}
-	tableRows, err := getRowCountTables(sctx)
-	if err != nil {
-		return err
-	}
-	colLength, err := getColLengthTables(sctx)
-	if err != nil {
-		return err
-	}
-	c.tableRows = tableRows
-	c.colLength = colLength
-	c.modifyTime = time.Now()
-	c.dirtyIDs = c.dirtyIDs[:0]
-	return nil
-}
-
 // EstimateDataLength returns the estimated data length in bytes of a given table info.
 // Returns row count, average row length, total data length, and all indexed column length.
 func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
