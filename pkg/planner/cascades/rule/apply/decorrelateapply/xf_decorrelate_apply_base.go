@@ -30,10 +30,5 @@ type XFDeCorrelateApplyBase struct {
 // PreCheck implements the Rule interface.
 func (*XFDeCorrelateApplyBase) PreCheck(applyGE base.LogicalPlan) bool {
 	apply := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
-	if apply.NoDecorrelate {
-		// false
-		return !(apply.NoDecorrelate)
-	}
-	// true
 	return !apply.NoDecorrelate
 }
