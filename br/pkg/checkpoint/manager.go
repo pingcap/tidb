@@ -130,7 +130,7 @@ func NewSnapshotTableMetaManager(
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) RootPath() string {
-	return fmt.Sprintf("database[%s]", manager.dbName)
+	return fmt.Sprintf("databases[such as %s]", manager.dbName)
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) Close() {
