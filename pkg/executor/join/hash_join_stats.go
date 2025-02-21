@@ -221,7 +221,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 			buf.WriteString(", time:")
 			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
 			buf.WriteString(", fetch:")
-			buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.maxBuildHashTable - e.maxPartitionData)))
 			buf.WriteString(", max_partition:")
 			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 			buf.WriteString(", total_partition:")
