@@ -560,3 +560,8 @@ select json_extract('[1E27]', '$');
 # TestIssue58897
 select json_extract("{\"\\b\":\"\"}", "$");
 select json_extract("{\"\\f\":\"\"}", "$");
+
+# TestJSONExtractObjectFromLast
+select json_extract('{"a":"b"}', '$[0]');
+select json_extract('{"a":"b"}', '$[last]');
+select json_set('{"a":"b"}', '$[last]', 1);

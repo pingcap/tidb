@@ -277,13 +277,13 @@ func (bj BinaryJSON) extractTo(buf []BinaryJSON, pathExpr JSONPathExpression, du
 	if currentLeg.typ == jsonPathLegArraySelection {
 		if bj.TypeCode != JSONTypeCodeArray {
 			// If the current object is not an array, still append them if the selection includes
-			// 0. But for asterisk, it still returns NULL.
+			// 0 or last. But for asterisk, it still returns NULL.
 			//
 			// don't call `getIndexRange` or `getIndexFromStart`, they will panic if the argument
 			// is not array.
 			switch selection := currentLeg.arraySelection.(type) {
 			case jsonPathArraySelectionIndex:
-				if selection.index == 0 {
+				if selection.index == 0 || selection.index == -1 {
 					buf = bj.extractTo(buf, subPathExpr, dup, one)
 				}
 			case jsonPathArraySelectionRange:
