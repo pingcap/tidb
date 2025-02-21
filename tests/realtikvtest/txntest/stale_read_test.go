@@ -1506,3 +1506,210 @@ func TestStaleReadNoBackoff(t *testing.T) {
 	require.Regexp(t, ".*rpc_errors:{data_is_not_ready:1.*", explain)
 	require.NotRegexp(t, ".*dataNotReady_backoff.*", explain)
 }
+
+func TestStaleReadAllCombinations(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	// Save old config to restore later
+	oldConfig := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&oldConfig)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	// Insert row #1
+	tk.MustExec("insert into t values (1, 10)")
+	time.Sleep(500 * time.Millisecond)
+	// Record approximate insert time for row #1 (offset: 250ms)
+	firstTime := time.Now().Add(-250 * time.Millisecond)
+	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
+	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	if err != nil {
+		t.Fatalf("failed to get TSO: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	// Insert row #2
+	tk.MustExec("insert into t values (2, 20)")
+	time.Sleep(500 * time.Millisecond)
+	// Record approximate insert time for row #2 (offset: 250ms)
+	secondTime := time.Now().Add(-250 * time.Millisecond)
+
+	staleReadMethods := []struct {
+		name   string
+		setup  func()
+		query  string
+		clean  func()
+		expect []string
+	}{
+		{
+			name: "tidb_read_staleness",
+			setup: func() {
+				tk.MustExec("set @@tidb_read_staleness='-1'")
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_read_staleness=''")
+			},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees only first row",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees both rows (using secondTime)",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", secondTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10", "2 20"},
+		},
+		/*
+			We cannot test TIDB_BOUNDED_STALENESS here because it relies
+			on the update of safe ts, which cannot be controlled by the test
+			{
+				name:   "AS OF TIMESTAMP with TIDB_BOUNDED_STALENESS",
+				setup:  func() {},
+				query:  "select * from t as of timestamp tidb_bounded_staleness(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))",
+				clean:  func() {},
+				expect: []string{"1 10", "2 20"},
+			},
+		*/
+		{
+			name: "SET TRANSACTION",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query:  "select * from t",
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name: "external ts read",
+			setup: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=1")
+				// ignore the failure when setting external_ts, as it reports error if not set to a larger value
+				_, _ = tk.Exec(fmt.Sprintf("set @@global.tidb_external_ts=%d", externalTS))
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=0")
+				// cannot set it
+				// tk.MustExec("set @@global.tidb_external_ts=0")
+			},
+			expect: []string{"1 10"},
+		},
+	}
+
+	labelSettings := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name:   "no labels",
+			labels: map[string]string{},
+		},
+		{
+			name: "with DC label",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+			},
+		},
+	}
+
+	replicaReadSettings := []string{
+		"leader",
+		"follower",
+		"closest-replicas",
+		"closest-adaptive",
+	}
+
+	transactionModes := []struct {
+		name  string
+		start func()
+		check func()
+	}{
+		{
+			name: "START TRANSACTION READ ONLY AS OF",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		{
+			name: "SET TRANSACTION then BEGIN",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+				tk.MustExec("BEGIN")
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		/*
+			    We cannot test TIDB_BOUNDED_STALENESS here because it relies
+				on the update of safe ts, which cannot be controlled by the test
+			{
+				name: "TIDB_BOUNDED_STALENESS TXN",
+				start: func() {
+					tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))")
+				},
+				check: func() {
+					result := tk.MustQuery("select * from t")
+					result.Check(testkit.Rows("1 10", "2 20"))
+					tk.MustExec("commit")
+				},
+			},
+		*/
+	}
+
+	// Test all combinations
+	for _, label := range labelSettings {
+		t.Run(label.name, func(t *testing.T) {
+			// Update global config with current label setting
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
+					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+
+					for _, method := range staleReadMethods {
+						t.Run(method.name, func(t *testing.T) {
+							// Setup stale read method
+							defer method.clean()
+							method.setup()
+
+							// Execute query and verify results
+							result := tk.MustQuery(method.query)
+							result.Check(testkit.Rows(method.expect...))
+
+							// Cleanup
+						})
+					}
+
+					for _, txnMode := range transactionModes {
+						t.Run(txnMode.name, func(t *testing.T) {
+							tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+							txnMode.start()
+							txnMode.check()
+						})
+					}
+				})
+			}
+		})
+	}
+}
