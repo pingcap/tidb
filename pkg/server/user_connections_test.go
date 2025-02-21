@@ -63,14 +63,14 @@ func TestUserConnectionsCounter(t *testing.T) {
 		AuthHostname: "127.0.0.1",
 	}
 
-	cc.incrementUserConnectionsCounter()
-	cc.incrementUserConnectionsCounter()
+	cc.increaseUserConnectionsCounter()
+	cc.increaseUserConnectionsCounter()
 
-	conns := cc.getUserConnectionsCounter(sess.User)
+	conns := cc.getUserConnectionCount(sess.User)
 	require.Equal(t, conns, 2)
 
-	cc.decrementUserConnectionsCounter()
-	cc.decrementUserConnectionsCounter()
-	conns = cc.getUserConnectionsCounter(sess.User)
+	cc.decreaseUserConnectionCount()
+	cc.decreaseUserConnectionCount()
+	conns = cc.getUserConnectionCount(sess.User)
 	require.Equal(t, conns, 0)
 }

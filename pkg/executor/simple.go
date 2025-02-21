@@ -1739,7 +1739,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		maxUpdatesPerHour:     0,
 		maxConnectionsPerHour: 0,
 		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
-		// -1(invalid value) as a default parameter.
+		// so we use -1(invalid value) as default.
 		maxUserConnections: -1,
 	}
 

@@ -705,12 +705,12 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		conn.decrementUserConnectionsCounter()
+		conn.decreaseUserConnectionCount()
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	conn.incrementUserConnectionsCounter()
+	conn.increaseUserConnectionsCounter()
 
 	if !s.registerConn(conn) {
 		return

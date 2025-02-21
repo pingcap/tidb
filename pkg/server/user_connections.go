@@ -25,8 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// incrementUserConnectionsCounter increases the count of connections when user login the database.
-func (cc *clientConn) incrementUserConnectionsCounter() {
+// increaseUserConnectionsCounter increases the count of connections when user login the database.
+func (cc *clientConn) increaseUserConnectionsCounter() {
 	user := cc.ctx.GetSessionVars().User
 	targetUser := user.LoginString()
 
@@ -43,8 +43,8 @@ func (cc *clientConn) incrementUserConnectionsCounter() {
 	}
 }
 
-// decrementUserConnectionsCounter decreases the count of connections when user logout the database.
-func (cc *clientConn) decrementUserConnectionsCounter() {
+// decreaseUserConnectionCount decreases the count of connections when user logout the database.
+func (cc *clientConn) decreaseUserConnectionCount() {
 	tidbContext := cc.getCtx()
 	if tidbContext == nil {
 		return
@@ -66,8 +66,8 @@ func (cc *clientConn) decrementUserConnectionsCounter() {
 	}
 }
 
-// getUserConnectionsCounter gets the count of connections.
-func (cc *clientConn) getUserConnectionsCounter(user *auth.UserIdentity) int {
+// getUserConnectionCount gets the count of connections.
+func (cc *clientConn) getUserConnectionCount(user *auth.UserIdentity) int {
 	targetUser := user.LoginString()
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
@@ -97,7 +97,7 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		return nil
 	}
 
-	conns := int64(cc.getUserConnectionsCounter(authUser))
+	conns := int64(cc.getUserConnectionCount(authUser))
 	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsValue.Load())) {
 		var count uint32
 		if connections > 0 {
@@ -105,7 +105,7 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 		} else {
 			count = vardef.MaxUserConnectionsValue.Load()
 		}
-		logutil.BgLogger().Error(("has exceeded the maximum allowed connections"),
+		logutil.BgLogger().Error(("the maximum allowed connections exceeded"),
 			zap.String("user", authUser.LoginString()),
 			zap.Uint32("max-user-connections", count),
 			zap.Error(servererr.ErrConCount))
