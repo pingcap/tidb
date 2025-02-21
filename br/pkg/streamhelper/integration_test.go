@@ -469,6 +469,7 @@ func testPauseTaskWithErr(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	}
 	metaCli.PauseTask(ctx, taskName, func(pv *streamhelper.PauseV2) { req.NoError(pv.SetBakcupStreamError(bError)) })
 	task, err := metaCli.GetTask(ctx, taskName)
+	req.NoError(err)
 	p, err := task.GetPauseV2(ctx)
 	req.NoError(err)
 	pl, err := p.GetPayload()
