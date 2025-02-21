@@ -9,7 +9,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )
 
@@ -49,14 +48,15 @@ func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error
 		if err != nil {
 			// TODO:
 		}
-		restoredSQL := utilparser.RestoreWithDefaultDB(originNode, schema, query)
-		bindSQL = utilparser.RestoreWithDefaultDB(hintNode, schema, hintNode.Text())
-		db := utilparser.GetDefaultDB(originNode, schema)
+		restoredSQL := RestoreDBForBinding(originNode, schema)
+		bindSQL = RestoreDBForBinding(hintNode, schema)
 		originalSQL, sqlDigest := parser.NormalizeDigestForBinding(restoredSQL)
 
 		// TODO: improve the write performance
-		stmtInsert := fmt.Sprintf("insert ignore into mysql.bind_info values ('%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')",
-			originalSQL, bindSQL, db, charset, collation, sqlDigest, planDigest)
+		stmtInsert := fmt.Sprintf(`insert ignore into mysql.bind_info
+    (binding_digest, original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values
+    ('','%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')`,
+			originalSQL, bindSQL, schema, charset, collation, sqlDigest, planDigest)
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 			_, err = exec(sctx, stmtInsert)
 			return err
