@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error) {
+func (h *globalBindingHandle) AutoRecordBindings(since time.Time) (err error) {
 	// TODO: improve the scan performance
 	stmtQuery := fmt.Sprintf(`select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
 				from information_schema.statements_summary

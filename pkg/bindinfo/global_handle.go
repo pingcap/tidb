@@ -71,7 +71,7 @@ type GlobalBindingHandle interface {
 	// GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
 	GCGlobalBinding() (err error)
 
-	RecordInactiveBindings(since time.Time) error
+	AutoRecordBindings(since time.Time) error
 
 	// Methods for memory control.
 
