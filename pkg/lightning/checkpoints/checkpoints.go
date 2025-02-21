@@ -270,19 +270,6 @@ func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
 	}
 }
 
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
-}
-
 // ChunkCheckpoint is the checkpoint for a chunk.
 type ChunkCheckpoint struct {
 	Key               ChunkCheckpointKey

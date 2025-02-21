@@ -87,6 +87,19 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
+// Chunk records the chunk information.
+type Chunk struct {
+	Path         string
+	FileSize     int64
+	Offset       int64
+	EndOffset    int64
+	PrevRowIDMax int64
+	RowIDMax     int64
+	Type         mydump.SourceType
+	Compression  mydump.Compression
+	Timestamp    int64
+}
+
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
 func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
 	importDir := GetImportRootDir(tidbCfg)
@@ -369,7 +382,7 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]checkpoints.Chunk, err error) {
+func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]Chunk, err error) {
 	task := log.BeginTask(e.logger, "populate chunks")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
@@ -407,15 +420,15 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 
 	timestamp := time.Now().Unix()
 	// engineChunks indicates the map that contains the k-v: the engineID -> []chunk.
-	engineChunks := make(map[int32][]checkpoints.Chunk, 0)
+	engineChunks := make(map[int32][]Chunk, 0)
 
 	for _, region := range tableRegions {
 		chunks, found := engineChunks[region.EngineID]
 		if !found {
-			chunks = make([]checkpoints.Chunk, 0)
+			chunks = make([]Chunk, 0)
 		}
 
-		engineChunks[region.EngineID] = append(chunks, checkpoints.Chunk{
+		engineChunks[region.EngineID] = append(chunks, Chunk{
 			Path:         region.FileMeta.Path,
 			FileSize:     region.FileMeta.FileSize,
 			Offset:       region.Chunk.Offset,
@@ -429,7 +442,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 	}
 
 	// Add index engine checkpoint
-	engineChunks[common.IndexEngineID] = make([]checkpoints.Chunk, 0)
+	engineChunks[common.IndexEngineID] = make([]Chunk, 0)
 	return engineChunks, nil
 }
 
