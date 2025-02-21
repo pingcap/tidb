@@ -52,11 +52,14 @@ func (h *globalBindingHandle) RecordInactiveBindings(since time.Time) (err error
 		bindSQL = RestoreDBForBinding(hintNode, schema)
 		originalSQL, sqlDigest := parser.NormalizeDigestForBinding(restoredSQL)
 
+		// TODO: calculate binding digest
+		bindingDigest := planDigest
+
 		// TODO: improve the write performance
 		stmtInsert := fmt.Sprintf(`insert ignore into mysql.bind_info
     (binding_digest, original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values
-    ('','%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')`,
-			originalSQL, bindSQL, schema, charset, collation, sqlDigest, planDigest)
+    ('%s', '%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')`,
+			bindingDigest, originalSQL, bindSQL, schema, charset, collation, sqlDigest, planDigest)
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 			_, err = exec(sctx, stmtInsert)
 			return err
