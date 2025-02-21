@@ -582,3 +582,13 @@ CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
 SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 c0	c0
+drop table if exists t;
+create table t (id int unique key, c int);
+insert into t values (1, 10);
+insert into t values (2, 20);
+insert into t values (3, 30);
+select _tidb_rowid from t where id in (1, 2, 3);
+_tidb_rowid
+1
+2
+3
