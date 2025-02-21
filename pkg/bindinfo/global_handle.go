@@ -73,6 +73,8 @@ type GlobalBindingHandle interface {
 
 	AutoRecordBindings(since time.Time) error
 
+	AutoBindingsForSQL(SQLOrDigest string) ([]*AutoBindingInfo, error)
+
 	// Methods for memory control.
 
 	// GetMemUsage returns the memory usage for the bind cache.

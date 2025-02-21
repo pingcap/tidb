@@ -71,9 +71,10 @@ type Binding struct {
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *hint.HintsSet `json:"-"`
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
-	ID         string `json:"-"`
-	SQLDigest  string
-	PlanDigest string
+	ID            string `json:"-"`
+	SQLDigest     string
+	PlanDigest    string
+	BindingDigest string
 
 	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`

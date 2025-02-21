@@ -329,6 +329,22 @@ func (e *ShowExec) fetchBindingPlans() error {
 			mysql.TypeDouble, mysql.TypeDouble, mysql.TypeDouble, mysql.TypeVarchar, mysql.TypeVarchar}
 	*/
 
+	bindings, err := domain.GetDomain(e.Ctx()).BindHandle().AutoBindingsForSQL(e.SQLOrDigest)
+	if err != nil {
+		return err
+	}
+
+	for _, binding := range bindings {
+		e.appendRow([]any{
+			binding.Binding.BindingDigest,
+			binding.Binding.OriginalSQL,
+			binding.Binding.BindSQL,
+			"",
+			0, 0, 0, 0, 0, 0,
+			"NO",
+			""})
+	}
+
 	e.appendRow([]any{"binding_digest", "statement", "plan", "binding", 0, 0, 0, 0, 0, 0, "NO", ""})
 	return nil
 }

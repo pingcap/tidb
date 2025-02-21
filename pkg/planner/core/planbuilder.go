@@ -5706,7 +5706,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"bindings_in_cache", "bindings_in_table", "memory_usage", "memory_quota"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindingPlan:
-		names = []string{"binding_digest", "statement", "plan", "binding", "avg_latency", "exec_times", "avg_scan_rows",
+		names = []string{"binding_digest", "statement", "binding_hint", "plan", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDouble, mysql.TypeDouble,
 			mysql.TypeDouble, mysql.TypeDouble, mysql.TypeDouble, mysql.TypeVarchar, mysql.TypeVarchar}

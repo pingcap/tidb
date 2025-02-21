@@ -67,3 +67,23 @@ func (h *globalBindingHandle) AutoRecordBindings(since time.Time) (err error) {
 	}
 	return nil
 }
+
+type BindingExecInfo struct {
+	Plan                 string
+	AvgLatency           float64
+	ExecTimes            int64
+	AvgScanRows          float64
+	AvgReturnedRows      float64
+	LatencyPerReturnRow  float64
+	ScanRowsPerReturnRow float64
+}
+
+type AutoBindingInfo struct {
+	*Binding
+	*BindingExecInfo
+}
+
+func (h *globalBindingHandle) AutoBindingsForSQL(SQLOrDigest string) ([]*AutoBindingInfo, error) {
+
+	return nil, nil
+}
