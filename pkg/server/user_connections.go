@@ -26,6 +26,9 @@ import (
 )
 
 // increaseUserConnectionsCount increases the count of connections when user login the database.
+// Note: increaseUserConnectionsCount() is called when create connections only, and not in 'changeUser'(COM_CHANGE_USER).
+// In mysql, 'COM_CHANGE_USER' will only reset the session state (such as permissions, default database, etc.),
+// but will not change the ownership of the number of connections.
 func (cc *clientConn) increaseUserConnectionsCount() {
 	user := cc.ctx.GetSessionVars().User
 	targetUser := user.LoginString()
