@@ -233,16 +233,17 @@ func (p *printByJSON) PrintTasks() {
 		LastError backuppb.StreamBackupError `json:"last_error"`
 	}
 	type jsonTask struct {
-		Name         string           `json:"name"`
-		StartTS      uint64           `json:"start_ts,omitempty"`
-		EndTS        uint64           `json:"end_ts,omitempty"`
-		Status       string           `json:"status"`
-		TableFilter  []string         `json:"table_filter"`
-		Progress     []storeProgress  `json:"progress"`
-		Storage      string           `json:"storage"`
-		CheckpointTS uint64           `json:"checkpoint"`
-		EstQPS       float64          `json:"estimate_qps"`
-		LastErrors   []storeLastError `json:"last_errors"`
+		Name                  string           `json:"name"`
+		StartTS               uint64           `json:"start_ts,omitempty"`
+		EndTS                 uint64           `json:"end_ts,omitempty"`
+		Status                string           `json:"status"`
+		TableFilter           []string         `json:"table_filter"`
+		Progress              []storeProgress  `json:"progress"`
+		Storage               string           `json:"storage"`
+		CheckpointTS          uint64           `json:"checkpoint"`
+		EstQPS                float64          `json:"estimate_qps"`
+		LastErrors            []storeLastError `json:"last_errors"`
+		ExtraPauseInformation *PauseV2         `json:"extra_pause_information,omitempty"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
@@ -263,16 +264,17 @@ func (p *printByJSON) PrintTasks() {
 			})
 		}
 		return jsonTask{
-			Name:         t.Info.GetName(),
-			StartTS:      t.Info.GetStartTs(),
-			EndTS:        t.Info.GetEndTs(),
-			Status:       t.StatusString(),
-			TableFilter:  t.Info.GetTableFilter(),
-			Progress:     sp,
-			Storage:      s.String(),
-			CheckpointTS: t.globalCheckpoint,
-			EstQPS:       t.QPS,
-			LastErrors:   se,
+			Name:                  t.Info.GetName(),
+			StartTS:               t.Info.GetStartTs(),
+			EndTS:                 t.Info.GetEndTs(),
+			Status:                t.StatusString(),
+			TableFilter:           t.Info.GetTableFilter(),
+			Progress:              sp,
+			Storage:               s.String(),
+			CheckpointTS:          t.globalCheckpoint,
+			EstQPS:                t.QPS,
+			LastErrors:            se,
+			ExtraPauseInformation: t.PauseV2,
 		}
 	}
 	mustMarshal := func(i any) string {
