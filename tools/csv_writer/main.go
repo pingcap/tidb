@@ -509,9 +509,9 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	for i := 0; i < rowCnt; i++ {
 		for j := 0; j < colCnt; j++ {
 			if *base64Encode {
-				row = append(row, base64.StdEncoding.EncodeToString([]byte(data[j][i])))
+				row[j] = base64.StdEncoding.EncodeToString([]byte(data[j][i]))
 			} else {
-				row = append(row, data[j][i])
+				row[j] = data[j][i]
 			}
 		}
 		strBatch = append(strBatch, strings.Join(row, ",")+"\n")
