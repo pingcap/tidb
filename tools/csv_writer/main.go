@@ -524,15 +524,20 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 		}
 	}
 	log.Println("ready to write: ", fileName, " cost time: ", time.Since(startTime))
-	//for i, str := range strBatch {
-	//	log.Printf("line %d str: %s\n", i, str)
-	//}
-	_, err = writer.Write(context.Background(), []byte(strings.Join(strBatch, "")))
-	if err != nil {
-		log.Printf("Write to GCS failed, deleting file: %s", fileName)
-		store.DeleteFile(context.Background(), fileName) // Delete the file if write fails
-		return fmt.Errorf("failed to write to GCS: %w", err)
+
+	startTime = time.Now()
+	for _, str := range strBatch {
+		//	log.Printf("line %d str: %s\n", i, str)
+		//}
+		_, err = writer.Write(context.Background(), []byte(str))
+		if err != nil {
+			log.Printf("Write to GCS failed, deleting file: %s", fileName)
+			store.DeleteFile(context.Background(), fileName) // Delete the file if write fails
+			return fmt.Errorf("failed to write to GCS: %w", err)
+		}
 	}
+	//_, err = writer.Write(context.Background(), []byte(strings.Join(strBatch, "")))
+	log.Println("write finished: ", fileName, " cost time: ", time.Since(startTime))
 	return nil
 }
 
