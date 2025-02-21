@@ -45,23 +45,16 @@ func (cc *clientConn) increaseUserConnectionsCount() {
 
 // decreaseUserConnectionCount decreases the count of connections when user logout the database.
 func (cc *clientConn) decreaseUserConnectionCount() {
-	tidbContext := cc.getCtx()
-	if tidbContext == nil {
-		return
-	}
+	user := cc.ctx.GetSessionVars().User
+	targetUser := user.LoginString()
 
-	user := tidbContext.GetSessionVars().User
-	if user != nil {
-		targetUser := user.LoginString()
-		cc.server.userResLock.Lock()
-		defer cc.server.userResLock.Unlock()
-
-		ur, ok := cc.server.userResource[targetUser]
-		if ok && ur.connections > 0 {
-			ur.connections--
-			if ur.connections <= 0 {
-				delete(cc.server.userResource, targetUser)
-			}
+	cc.server.userResLock.Lock()
+	defer cc.server.userResLock.Unlock()
+	ur, ok := cc.server.userResource[targetUser]
+	if ok && ur.connections > 0 {
+		ur.connections--
+		if ur.connections <= 0 {
+			delete(cc.server.userResource, targetUser)
 		}
 	}
 }
