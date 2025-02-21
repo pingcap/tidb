@@ -1545,7 +1545,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 
 	// All tables are read, we can free memory used for parquet.
 	logTask.Info("Read table done, free memory and call GC")
-	mydump.FreeMemory()
+	mydump.FreeMemoryForParquet()
 
 	postProgress = func() error {
 		close(postProcessTaskChan)

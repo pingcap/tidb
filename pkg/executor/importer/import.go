@@ -1170,7 +1170,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	// Fill memory usage info
-	if sourceType == mydump.SourceTypeParquet {
+	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
 		_, memoryUsage, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
 		if err != nil {
 			return errors.Trace(err)
@@ -1187,7 +1187,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}
 		}
 
-		// TODO(joechnerh): maybe we can adjust thread count for parquet here
+		// TODO(joechnerh): Maybe we can adjust thread count for parquet here,
+		// when we support global sort using thread < 8.
 	}
 
 	e.dataFiles = dataFiles

@@ -208,10 +208,6 @@ func (sa *simpleAllocator) reallocate(buf []byte, size int) []byte {
 	return sa.allocate(size)
 }
 
-func (sa *simpleAllocator) allocated() int64 {
-	return int64(sa.blocksAlloc)
-}
-
 func (sa *simpleAllocator) sanityCheck() {
 	if !intest.InTest {
 		return

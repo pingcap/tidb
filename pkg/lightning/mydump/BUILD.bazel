@@ -51,6 +51,7 @@ go_library(
         "@com_github_joechenrh_arrow_go_v18//parquet/schema",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_spkg_bom//:bom",
         "@org_golang_x_sync//errgroup",
         "@org_golang_x_text//encoding",

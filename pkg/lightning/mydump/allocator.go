@@ -21,7 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/joechenrh/arrow-go/v18/arrow/memory"
-	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -49,7 +49,7 @@ var (
 )
 
 // SetMemoryLimitForParquet set the memory limit for parquet reader.
-// If reuse = true, remember to call FreeMemory to free the memory.
+// Remember to call FreeMemoryForParquet to free the memory.
 func SetMemoryLimitForParquet(percent int) {
 	lk.Lock()
 	defer lk.Unlock()
@@ -59,18 +59,21 @@ func SetMemoryLimitForParquet(percent int) {
 		return
 	}
 
-	debug.SetGCPercent(50)
-
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
+		log.L().Warn("Fail to get total memory")
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
 	readerMemoryLimit = int(memTotal) * min(percent, 90) / 100
 	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
 
+	gcPercent := (10000/percent - 100) / 10 * 10
+	gcPercent = max(gcPercent, 10)
+	gcPercent = min(gcPercent, 50)
+	debug.SetGCPercent(gcPercent)
+
 	globalPool = membuf.NewPool(
-		// membuf.WithAllocator(manual.Allocator{}),
 		membuf.WithBlockNum(readerMemoryLimit/defaultArenaSize),
 		membuf.WithBlockSize(defaultArenaSize),
 	)
@@ -78,6 +81,7 @@ func SetMemoryLimitForParquet(percent int) {
 	log.L().Info("set memory limit",
 		zap.Int("total memory", int(memTotal)),
 		zap.Int("memory limit", readerMemoryLimit),
+		zap.Int("GC Percentage", gcPercent),
 	)
 }
 
@@ -121,7 +125,6 @@ func addressOf(buf []byte) uintptr {
 type arena interface {
 	allocate(int) []byte
 	free([]byte)
-	allocated() int64
 	reset()
 }
 
