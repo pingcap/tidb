@@ -24,14 +24,17 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clitutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 const (
@@ -715,7 +718,9 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 		args       = make([]any, 0, len(subtasks)*7)
 	)
 	sb.WriteString(`insert into mysql.tidb_background_subtask(` + InsertSubtaskColumns + `) values `)
-	for _, subtask := range subtasks {
+	for i, subtask := range subtasks {
+		logutil.BgLogger().Warn("[date0218] insertSubtasks", zap.Int("i", i), zap.Int64("id", subtask.TaskID), zap.Int64("step", int64(subtask.Step)),
+			brlogutil.Key("meta", subtask.Meta))
 		markerList = append(markerList, "(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')")
 		args = append(args, subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
 			proto.SubtaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)

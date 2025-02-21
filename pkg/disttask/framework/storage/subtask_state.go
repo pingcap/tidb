@@ -17,9 +17,12 @@ package storage
 import (
 	"context"
 
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // StartSubtask updates the subtask state to running.
@@ -47,6 +50,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 
 // FinishSubtask updates the subtask meta and mark state to succeed.
 func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int64, meta []byte) error {
+	logutil.BgLogger().Warn("[date0218] FinishSubtask", zap.Int64("id", id), brlogutil.Key("meta", meta))
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?`,

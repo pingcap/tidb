@@ -386,7 +386,17 @@ func generateGlobalSortIngestPlan(
 				if kvMetaGroups[i] == nil {
 					kvMetaGroups[i] = &external.SortedKVMeta{}
 				}
+				logger.Warn("[date0218] generateGlobalSortIngestPlan before merged", zap.Int("i", i),
+					brlogutil.Key("startKey", kvMetaGroups[i].StartKey),
+					brlogutil.Key("endKey", kvMetaGroups[i].EndKey),
+					brlogutil.Key("cur.startKey", cur.StartKey),
+					brlogutil.Key("cur.endKey", cur.EndKey),
+				)
 				kvMetaGroups[i].Merge(cur)
+				// [date0218] All of these endKey can NOT be decoded
+				logger.Warn("[date0218] generateGlobalSortIngestPlan after merged",
+					brlogutil.Key("startKey", kvMetaGroups[i].StartKey),
+					brlogutil.Key("endKey", kvMetaGroups[i].EndKey))
 			}
 		})
 		if err != nil {
@@ -470,6 +480,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
+	logger.Warn("[date0218] splitSubtaskMetaForOneKVMetaGroup", brlogutil.Key("startKey", kvMeta.StartKey), brlogutil.Key("endKey", kvMeta.EndKey))
 	for {
 		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
@@ -477,8 +488,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		}
 		if len(endKeyOfGroup) == 0 {
 			endKey = kvMeta.EndKey
+			logger.Warn("[date0218] splitSubtaskMetaForOneKVMetaGroup get endKey with kvMeta.EndKey")
 		} else {
 			endKey = kv.Key(endKeyOfGroup).Clone()
+			logger.Warn("[date0218] splitSubtaskMetaForOneKVMetaGroup get endKey without kvMeta.EndKey", brlogutil.Key("endKey", endKey))
 		}
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
@@ -497,7 +510,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		for i, k := range regionSplitKeys {
-			logger.Warn("[date0218]splitSubtaskMetaForOneKVMetaGroup", zap.Int("i", i), brlogutil.Key("key", k))
+			logger.Warn("[date0218] splitSubtaskMetaForOneKVMetaGroup regionSplitKeys", zap.Int("i", i), brlogutil.Key("key", k))
 		}
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
@@ -669,6 +682,7 @@ func forEachBackfillSubtaskMeta(
 	}
 	for _, subTaskMeta := range subTaskMetas {
 		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
+		// TODO: 0218 add log here for subtask
 		if err != nil {
 			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)

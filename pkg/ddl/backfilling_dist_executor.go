@@ -71,6 +71,8 @@ type BackfillSubTaskMeta struct {
 	external.SortedKVMeta `json:",inline"`
 }
 
+var DecodeBackfillSubTaskMeta4Test = decodeBackfillSubTaskMeta
+
 func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
