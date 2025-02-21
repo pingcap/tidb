@@ -500,12 +500,9 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	}
 	defer writer.Close(context.Background())
 
-	//var strBatch []string
 	rowCnt := len(data[0])
 	colCnt := len(data)
 	row := make([]string, colCnt)
-	startTime := time.Now()
-	log.Printf("Start to write: %s, rowCount: %d, colCount %d", fileName, rowCnt, colCnt)
 	for i := 0; i < rowCnt; i++ {
 		for j := 0; j < colCnt; j++ {
 			if *base64Encode {
@@ -514,8 +511,6 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 				row[j] = data[j][i]
 			}
 		}
-		//log.Printf("before string join len(row): %d", len(row))
-		//strBatch = append(strBatch, strings.Join(row, ",")+"\n")
 		_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
 		if err != nil {
 			log.Printf("Write to GCS failed, deleting file: %s", fileName)
@@ -523,21 +518,6 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 			return fmt.Errorf("failed to write to GCS: %w", err)
 		}
 	}
-	//log.Println("ready to write: ", fileName, " cost time: ", time.Since(startTime))
-	//
-	//startTime = time.Now()
-	//for _, str := range strBatch {
-	//	//	log.Printf("line %d str: %s\n", i, str)
-	//	//}
-	//	_, err = writer.Write(context.Background(), []byte(str))
-	//	if err != nil {
-	//		log.Printf("Write to GCS failed, deleting file: %s", fileName)
-	//		store.DeleteFile(context.Background(), fileName) // Delete the file if write fails
-	//		return fmt.Errorf("failed to write to GCS: %w", err)
-	//	}
-	//}
-	////_, err = writer.Write(context.Background(), []byte(strings.Join(strBatch, "")))
-	log.Println("write finished: ", fileName, " cost time: ", time.Since(startTime))
 	return nil
 }
 
