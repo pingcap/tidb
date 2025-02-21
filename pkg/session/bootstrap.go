@@ -3367,7 +3367,8 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	}
 	writeClusterID(s)
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX plan_index (`plan_digest`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, `alter table mysql.bind_info add column binding_digest varchar(64)`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, `alter table mysql.bind_info add unique index binding_index (binding_digest)`, dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer243(s sessiontypes.Session, ver int64) {
