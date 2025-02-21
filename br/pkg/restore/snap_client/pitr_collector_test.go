@@ -299,11 +299,14 @@ func TestConcurrency(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(time.Second)
-	require.Equal(t, atomic.LoadInt64(&cnt), 2)
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt64(&cnt) == 2
+	}, time.Second, 10*time.Millisecond)
 	close(fence)
 
 	for _, cb := range cbs {
 		require.NoError(t, cb())
 	}
+
+	coll.Done()
 }

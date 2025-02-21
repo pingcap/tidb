@@ -250,7 +250,7 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 
 		for _, file := range fileSet.SSTFiles {
 			fileCount += 1
-			eg.Go(func() error {
+			c.concControl.ApplyOnErrorGroup(eg, func() error {
 				if err := c.putSST(ectx, file); err != nil {
 					return errors.Annotatef(err, "failed to put sst %s", file.GetName())
 				}
