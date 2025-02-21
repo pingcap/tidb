@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -61,6 +62,7 @@ type importStepExecutor struct {
 	dataKVMemSizePerCon     uint64
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
+	memPool                 *membuf.Pool
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -114,6 +116,11 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
+	s.memPool = membuf.NewPool(
+		membuf.WithBlockNum(int(s.dataKVMemSizePerCon)/getKVGroupBlockSize(dataKVGroup)*s.taskMeta.Plan.ThreadCnt),
+		membuf.WithBlockSize(getKVGroupBlockSize(dataKVGroup)),
+	)
+
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
@@ -265,6 +272,12 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
+	defer func() {
+		if s.memPool != nil {
+			s.memPool.Destroy()
+		}
+	}()
+
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()

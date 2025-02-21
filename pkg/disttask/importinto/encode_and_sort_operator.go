@@ -91,7 +91,7 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
+			return newChunkWorker(ctx, op, executor.memPool, executor.dataKVMemSizePerCon,
 				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
 		},
 	)
@@ -150,8 +150,12 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
+func newChunkWorker(
+	ctx context.Context,
+	op *encodeAndSortOperator, memPool *membuf.Pool,
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64,
+	indexBlockSize int,
+) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -176,9 +180,9 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
+			SetMemPool(memPool).
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
-			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetMemorySizeLimit(dataKVMemSizePerCon)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)

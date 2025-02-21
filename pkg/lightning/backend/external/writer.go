@@ -115,6 +115,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	memPool         *membuf.Pool
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -146,6 +147,11 @@ func (b *WriterBuilder) SetPropSizeDistance(dist uint64) *WriterBuilder {
 // SetPropKeysDistance sets the distance of range keys for each property.
 func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 	b.propKeysDist = dist
+	return b
+}
+
+func (b *WriterBuilder) SetMemPool(pool *membuf.Pool) *WriterBuilder {
+	b.memPool = pool
 	return b
 }
 
@@ -191,10 +197,15 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	p := membuf.NewPool(
-		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(b.blockSize),
-	)
+
+	p := b.memPool
+	if p == nil {
+		p = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(b.blockSize),
+		)
+	}
+
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
