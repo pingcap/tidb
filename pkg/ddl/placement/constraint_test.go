@@ -64,6 +64,15 @@ func TestNewConstraint(t *testing.T) {
 			},
 		},
 		{
+			name:  "not tiflash_compute",
+			input: "-engine  =  tiflash_compute  ",
+			label: Constraint{
+				Key:    "engine",
+				Op:     NotIn,
+				Values: []string{"tiflash_compute"},
+			},
+		},
+		{
 			name:  "disallow tiflash",
 			input: "+engine=Tiflash",
 			err:   ErrUnsupportedConstraint,
