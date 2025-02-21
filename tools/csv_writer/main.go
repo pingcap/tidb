@@ -514,6 +514,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 				row[j] = data[j][i]
 			}
 		}
+		log.Printf("before string join len(row): %d", len(row))
 		strBatch = append(strBatch, strings.Join(row, ",")+"\n")
 		//_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
 		if err != nil {
