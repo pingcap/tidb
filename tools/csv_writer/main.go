@@ -503,7 +503,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	var strBatch []string
 	rowCnt := len(data[0])
 	colCnt := len(data)
-	row := make([]string, 0, rowCnt)
+	row := make([]string, rowCnt)
 	startTime := time.Now()
 	log.Printf("Start to write: %s, rowCount: %d, colCount %d", fileName, rowCnt, colCnt)
 	for i := 0; i < rowCnt; i++ {
