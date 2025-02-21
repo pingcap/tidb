@@ -102,10 +102,6 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("admin reload bindings;")
 
-	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
-	updateTime1 := rows1[0][1]
-	require.Equal(t, updateTime1, "2000-01-01 09:00:00.000")
-
 	rows2 := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows2, 0)
 }

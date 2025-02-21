@@ -187,6 +187,10 @@ func (h *globalBindingHandle) readBindingsFromStorage(condition string) (binding
 				continue
 			}
 			binding := newBindingFromStorage(row)
+			if hErr := prepareHints(sctx, binding); hErr != nil {
+				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
+				continue
+			}
 			bindings = append(bindings, binding)
 		}
 		return nil
