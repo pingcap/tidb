@@ -11726,6 +11726,13 @@ ShowStmt:
 			Procedure: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "PLAN" "FOR" stringLit
+	{
+		$$ = &ast.ShowStmt{
+			Tp:          ast.ShowBindingPlan,
+			SQLOrDigest: $4,
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
