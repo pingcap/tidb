@@ -182,6 +182,10 @@ func (h *globalBindingHandle) readBindingsFromStorage(condition string) (binding
 		}
 		bindings = make([]*Binding, 0, len(rows))
 		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
 			binding := newBindingFromStorage(row)
 			bindings = append(bindings, binding)
 		}
