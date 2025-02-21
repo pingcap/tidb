@@ -505,6 +505,7 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	colCnt := len(data)
 	row := make([]string, 0, rowCnt)
 	startTime := time.Now()
+	log.Printf("Start to write: %s, rowCount: %d, colCount %d", fileName, rowCnt, colCnt)
 	for i := 0; i < rowCnt; i++ {
 		for j := 0; j < colCnt; j++ {
 			if *base64Encode {
