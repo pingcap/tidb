@@ -322,7 +322,14 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchBindingPlans() error {
-	e.appendRow([]any{"test1", "test2"})
+	/*
+		names = []string{"binding_digest", "statement", "plan", "binding", "avg_latency", "exec_times", "avg_scan_rows",
+			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDouble, mysql.TypeDouble,
+			mysql.TypeDouble, mysql.TypeDouble, mysql.TypeDouble, mysql.TypeVarchar, mysql.TypeVarchar}
+	*/
+
+	e.appendRow([]any{"binding_digest", "statement", "plan", "binding", 0, 0, 0, 0, 0, 0, "NO", ""})
 	return nil
 }
 
