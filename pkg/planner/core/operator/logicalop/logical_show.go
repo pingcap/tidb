@@ -59,6 +59,8 @@ type ShowContents struct {
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
 	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
+
+	SQLOrDigest string
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
