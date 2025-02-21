@@ -260,6 +260,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
+	case ast.ShowBindingPlan:
+		return e.fetchBindingPlans()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -317,6 +319,11 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+func (e *ShowExec) fetchBindingPlans() error {
+	e.appendRow([]any{"test1", "test2"})
+	return nil
 }
 
 func (e *ShowExec) fetchShowBind() error {
