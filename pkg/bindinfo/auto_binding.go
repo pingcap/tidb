@@ -83,7 +83,62 @@ type AutoBindingInfo struct {
 	*BindingExecInfo
 }
 
-func (h *globalBindingHandle) AutoBindingsForSQL(SQLOrDigest string) ([]*AutoBindingInfo, error) {
+func (h *globalBindingHandle) AutoBindingsForSQL(stmtOrDigest string) ([]*AutoBindingInfo, error) {
+	normStmt, isStmt := h.normalizeSQLForBinding(stmtOrDigest)
 
-	return nil, nil
+	var whereCond string
+	if isStmt {
+		whereCond = fmt.Sprintf("where original_sql='%s'", normStmt)
+	} else {
+		whereCond = fmt.Sprintf("where sql_digest='%s'", normStmt)
+	}
+
+	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
+       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
+       %s`, whereCond)
+	var bindings []*Binding
+
+	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, selectStmt)
+		if err != nil {
+			return err
+		}
+
+		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			_, binding, err := newBindingFromStorage(sctx, row)
+			if err != nil {
+				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+				continue
+			}
+			bindings = append(bindings, binding)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var autoBindings []*AutoBindingInfo
+	for _, binding := range bindings {
+		//execInfo, err := h.getBindingExecInfo(binding.BindSQL)
+		autoBindings = append(autoBindings, &AutoBindingInfo{
+			Binding: binding,
+		})
+	}
+
+	return autoBindings, nil
+}
+
+func (h *globalBindingHandle) normalizeSQLForBinding(SQLOrDigest string) (normStmt string, isStmt bool) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(SQLOrDigest, "", "")
+	if err != nil {
+		return "", false
+	}
+	normStmt, _ = NormalizeStmtForBinding(stmt, "test", false)
+	return normStmt, true
 }
