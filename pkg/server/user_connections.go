@@ -25,8 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// increaseUserConnectionsCounter increases the count of connections when user login the database.
-func (cc *clientConn) increaseUserConnectionsCounter() {
+// increaseUserConnectionsCount increases the count of connections when user login the database.
+func (cc *clientConn) increaseUserConnectionsCount() {
 	user := cc.ctx.GetSessionVars().User
 	targetUser := user.LoginString()
 

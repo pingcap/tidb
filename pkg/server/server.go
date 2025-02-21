@@ -710,7 +710,7 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	conn.increaseUserConnectionsCounter()
+	conn.increaseUserConnectionsCount()
 
 	if !s.registerConn(conn) {
 		return
