@@ -345,7 +345,6 @@ func (e *ShowExec) fetchBindingPlans() error {
 			""})
 	}
 
-	e.appendRow([]any{"binding_digest", "statement", "plan", "binding", 0, 0, 0, 0, 0, 0, "NO", ""})
 	return nil
 }
 
