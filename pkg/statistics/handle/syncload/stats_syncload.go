@@ -301,6 +301,9 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if err == nil { // only recycle when no error
 			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
 			s.statsHandle.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			s.statsHandle.SPool().Destroy(se)
 		}
 	}()
 	item := task.Item.TableItemID
