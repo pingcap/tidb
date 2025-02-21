@@ -309,3 +309,110 @@ func TestIsLocal(t *testing.T) {
 		})
 	}
 }
+
+func TestParseBackend(t *testing.T) {
+	{
+		backendOptions := &BackendOptions{
+			S3:     S3BackendOptions{},
+			GCS:    GCSBackendOptions{},
+			Azblob: AzblobBackendOptions{},
+		}
+		_, err := ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&sse-kms-key-id=TestKey&xyz=abc", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, "", backendOptions.S3.SseKmsKeyID)
+		_, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1&predefined-acl=1234", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, "", backendOptions.GCS.PredefinedACL)
+		_, err = ParseBackend("azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user&encryption-scope=test", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, "", backendOptions.Azblob.EncryptionScope)
+	}
+	{
+		backendOptions := &BackendOptions{
+			S3:     S3BackendOptions{StorageClass: "test"},
+			GCS:    GCSBackendOptions{StorageClass: "test"},
+			Azblob: AzblobBackendOptions{AccessTier: "test"},
+		}
+		u, err := ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&sse-kms-key-id=TestKey&xyz=abc", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, S3BackendOptions{StorageClass: "test"}, backendOptions.S3)
+		retBackend1, ok := u.Backend.(*backuppb.StorageBackend_S3)
+		require.True(t, ok)
+		require.Equal(t, backuppb.S3{
+			Endpoint:     "https://127.0.0.1:9000",
+			Bucket:       "bucket3",
+			Prefix:       "prefix/path",
+			StorageClass: "test",
+			SseKmsKeyId:  "TestKey",
+		}, *retBackend1.S3)
+		u, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1&predefined-acl=1234", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, GCSBackendOptions{StorageClass: "test"}, backendOptions.GCS)
+		retBackend2, ok := u.Backend.(*backuppb.StorageBackend_Gcs)
+		require.True(t, ok)
+		require.Equal(t, backuppb.GCS{
+			Endpoint:      "http://127.0.0.1",
+			Bucket:        "bucket",
+			StorageClass:  "test",
+			PredefinedAcl: "1234",
+		}, *retBackend2.Gcs)
+		u, err = ParseBackend("azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user&encryption-scope=test", backendOptions)
+		require.NoError(t, err)
+		require.Equal(t, AzblobBackendOptions{AccessTier: "test"}, backendOptions.Azblob)
+		retBackend3, ok := u.Backend.(*backuppb.StorageBackend_AzureBlobStorage)
+		require.True(t, ok)
+		require.Equal(t, backuppb.AzureBlobStorage{
+			Endpoint:        "http://127.0.0.1/user",
+			Bucket:          "bucket1",
+			Prefix:          "prefix/path",
+			StorageClass:    "test",
+			AccountName:     "user",
+			SharedKey:       "cGFzc3dk",
+			EncryptionScope: "test",
+		}, *retBackend3.AzureBlobStorage)
+	}
+	{
+		u, err := ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&sse-kms-key-id=TestKey&xyz=abc", nil)
+		require.NoError(t, err)
+		retBackend1, ok := u.Backend.(*backuppb.StorageBackend_S3)
+		require.True(t, ok)
+		require.Equal(t, backuppb.S3{
+			Endpoint:    "https://127.0.0.1:9000",
+			Bucket:      "bucket3",
+			Prefix:      "prefix/path",
+			SseKmsKeyId: "TestKey",
+		}, *retBackend1.S3)
+		u, err = ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&sse-kms-key-id=TestKey&xyz=abc", nil)
+		require.NoError(t, err)
+		retBackend1, ok = u.Backend.(*backuppb.StorageBackend_S3)
+		require.True(t, ok)
+		require.Equal(t, backuppb.S3{
+			Endpoint:       "https://127.0.0.1:9000",
+			Bucket:         "bucket3",
+			Prefix:         "prefix/path",
+			ForcePathStyle: true,
+			SseKmsKeyId:    "TestKey",
+		}, *retBackend1.S3)
+		u, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1&predefined-acl=1234", nil)
+		require.NoError(t, err)
+		retBackend2, ok := u.Backend.(*backuppb.StorageBackend_Gcs)
+		require.True(t, ok)
+		require.Equal(t, backuppb.GCS{
+			Endpoint:      "http://127.0.0.1",
+			Bucket:        "bucket",
+			PredefinedAcl: "1234",
+		}, *retBackend2.Gcs)
+		u, err = ParseBackend("azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user&encryption-scope=test", nil)
+		require.NoError(t, err)
+		retBackend3, ok := u.Backend.(*backuppb.StorageBackend_AzureBlobStorage)
+		require.True(t, ok)
+		require.Equal(t, backuppb.AzureBlobStorage{
+			Endpoint:        "http://127.0.0.1/user",
+			Bucket:          "bucket1",
+			Prefix:          "prefix/path",
+			AccountName:     "user",
+			SharedKey:       "cGFzc3dk",
+			EncryptionScope: "test",
+		}, *retBackend3.AzureBlobStorage)
+	}
+}

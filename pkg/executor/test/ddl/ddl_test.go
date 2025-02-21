@@ -118,31 +118,20 @@ func TestCreateTable(t *testing.T) {
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
-
-	// test Err case for multiple collate specified in column when create.
-	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
+
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -356,7 +345,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -366,7 +355,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -377,12 +366,12 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test Err case for multiple collate modification in column.
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustContainErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", "Multiple COLLATE clauses")
 }
 
 func TestColumnCharsetAndCollate(t *testing.T) {

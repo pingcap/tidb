@@ -308,7 +308,6 @@ func TestDDLColumnDefRestore(t *testing.T) {
 		{"id text charset UTF8", "`id` TEXT CHARACTER SET UTF8"},
 		{"id varchar(50) collate UTF8MB4_CZECH_CI", "`id` VARCHAR(50) COLLATE utf8mb4_czech_ci"},
 		{"id varchar(50) collate utf8_bin", "`id` VARCHAR(50) COLLATE utf8_bin"},
-		{"id varchar(50) collate utf8_unicode_ci collate utf8mb4_bin", "`id` VARCHAR(50) COLLATE utf8_unicode_ci COLLATE utf8mb4_bin"},
 		{"c1 char(10) character set LATIN1 collate latin1_german1_ci", "`c1` CHAR(10) CHARACTER SET LATIN1 COLLATE latin1_german1_ci"},
 
 		{"id int(11) PRIMARY KEY", "`id` INT(11) PRIMARY KEY"},
@@ -320,7 +319,6 @@ func TestDDLColumnDefRestore(t *testing.T) {
 		{"id INT(11) DEFAULT 1.1", "`id` INT(11) DEFAULT 1.1"},
 		{"id INT(11) UNIQUE KEY", "`id` INT(11) UNIQUE KEY"},
 		{"id INT(11) COLLATE ascii_bin", "`id` INT(11) COLLATE ascii_bin"},
-		{"id INT(11) collate ascii_bin collate utf8_bin", "`id` INT(11) COLLATE ascii_bin COLLATE utf8_bin"},
 		{"id INT(11) on update CURRENT_TIMESTAMP", "`id` INT(11) ON UPDATE CURRENT_TIMESTAMP()"},
 		{"id INT(11) comment 'hello'", "`id` INT(11) COMMENT 'hello'"},
 		{"id INT(11) generated always as(id + 1)", "`id` INT(11) GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
