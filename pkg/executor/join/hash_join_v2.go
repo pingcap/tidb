@@ -356,8 +356,9 @@ type ProbeWorkerV2 struct {
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.workerFetchAndProbe, int64(t))
 	setMaxValue(&w.HashJoinCtx.stats.maxProbeForCurrentRound, probeTime)
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbeForCurrentRound, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxWorkerFetchAndProbeForCurrentRound, int64(t))
 }
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start time.Time) {
