@@ -5,10 +5,13 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -129,8 +132,7 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		return tsoCnt.Add(1), nil
 	}
 	coll.restoreSuccess = restoreSuccess.Load
-	coll.goPersister()
-	coll.resetCommitting()
+	coll.init()
 
 	return pitrCollectorT{
 		t:       t,
@@ -268,4 +270,40 @@ func TestConflict(t *testing.T) {
 	require.Error(t, cb())
 
 	coll.Done()
+}
+
+func TestConcurrency(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	coll.coll.setConcurrency(2)
+
+	cnt := int64(0)
+	fence := make(chan struct{})
+
+	failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst", func() {
+		atomic.AddInt64(&cnt, 1)
+		<-fence
+	})
+
+	cbs := []func() error{}
+	l := sync.Mutex{}
+	for i := range 10 {
+		batch := restore.BatchBackupFileSet{
+			backupFileSet(withFile(nameFile(fmt.Sprintf("foo%02d.txt", i)))),
+		}
+
+		go func() {
+			cb := coll.RestoreAFile(batch)
+			l.Lock()
+			cbs = append(cbs, cb)
+			l.Unlock()
+		}()
+	}
+
+	time.Sleep(time.Second)
+	require.Equal(t, atomic.LoadInt64(&cnt), 2)
+	close(fence)
+
+	for _, cb := range cbs {
+		require.NoError(t, cb())
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -25,6 +26,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	DefaultMaxConcurrentCopy = 1024
 )
 
 type persistCall struct {
@@ -147,12 +152,15 @@ type pitrCollector struct {
 	// restoreUUID is the identity of this restoration.
 	// This will be kept among restarting from checkpoints.
 	restoreUUID uuid.UUID
+	// maxCopyConcurrency is the maximum number of concurrent copy operations.
+	maxCopyConcurrency int
 
 	// Mutable state.
 	ingestedSSTMeta     ingestedSSTsMeta
 	ingestedSSTMetaLock sync.Mutex
 	putMigOnce          sync.Once
 	writerRoutine       persisterHandle
+	concControl         *util.WorkerPool
 
 	// Delegates.
 
@@ -250,7 +258,7 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 			})
 		}
 		for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
-			eg.Go(func() error {
+			c.concControl.ApplyOnErrorGroup(eg, func() error {
 				if err := c.putRewriteRule(ectx, hint.Origin, hint.Rewritten); err != nil {
 					return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)
 				}
@@ -304,6 +312,7 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	}
 
 	begin := time.Now()
+	failpoint.InjectCall("put-sst")
 
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)
@@ -440,6 +449,21 @@ func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
 	return ts, c.persistExtraBackupMeta(ctx)
 }
 
+func (c *pitrCollector) init() {
+	maxConc := c.maxCopyConcurrency
+	if maxConc <= 0 {
+		maxConc = DefaultMaxConcurrentCopy
+	}
+
+	c.setConcurrency(maxConc)
+	c.goPersister()
+	c.resetCommitting()
+}
+
+func (c *pitrCollector) setConcurrency(maxConc int) {
+	c.concControl = util.NewWorkerPool(uint(maxConc), "copy-sst")
+}
+
 func (c *pitrCollector) resetCommitting() {
 	c.ingestedSSTMeta = ingestedSSTsMeta{
 		rewrites: map[int64]int64{},
@@ -454,6 +478,18 @@ type PiTRCollDep struct {
 	PDCli   pd.Client
 	EtcdCli *clientv3.Client
 	Storage *pb.StorageBackend
+
+	maxCopyConcurrency int
+}
+
+func (deps *PiTRCollDep) LoadMaxCopyConcurrency(ctx context.Context, maxConcPerTiKV uint) error {
+	stores, err := deps.PDCli.GetAllStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	deps.maxCopyConcurrency = int(maxConcPerTiKV) * len(stores)
+	log.Info("Load max copy concurrency", zap.Int("maxCopyConcurrency", deps.maxCopyConcurrency), zap.Int("stores", len(stores)))
+	return nil
 }
 
 // newPiTRColl creates a new PiTR collector.
@@ -476,7 +512,8 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 
 	coll := &pitrCollector{
-		enabled: true,
+		enabled:            true,
+		maxCopyConcurrency: deps.maxCopyConcurrency,
 	}
 
 	strg, err := storage.Create(ctx, ts[0].Info.Storage, false)
@@ -503,7 +540,6 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 	coll.restoreStorage = restoreStrg
 	coll.restoreSuccess = summary.Succeed
-	coll.goPersister()
-	coll.resetCommitting()
+	coll.init()
 	return coll, nil
 }
