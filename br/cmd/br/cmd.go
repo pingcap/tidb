@@ -172,13 +172,7 @@ func setupMemoryMonitoring(ctx context.Context, memTotal, memUsed uint64) error 
 		dumpDir = defaultHeapDumpDir
 	}
 
-	monitorCfg := utils.MemoryMonitorConfig{
-		DumpDir:         dumpDir,
-		MemoryLimit:     memlimit,
-		MinDumpInterval: 1 * time.Minute,
-	}
-
-	if err := utils.StartMemoryMonitor(ctx, monitorCfg); err != nil {
+	if err := utils.RunMemoryMonitor(ctx, dumpDir, memlimit); err != nil {
 		log.Warn("Failed to start memory monitor", zap.Error(err))
 		return err
 	}
