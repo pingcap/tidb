@@ -16,6 +16,8 @@ package tikv
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -166,6 +168,11 @@ func (w writeLockWorker) run() {
 					// Ignore if the key doesn't exist
 					ls.DeleteWithHint(entry.Key.UserKey, hint)
 				default:
+					// Make sure it fits into an arena block.
+					if len(entry.Key.UserKey)+len(entry.Value) > ls.MaxEntrySize() {
+						batch.err = errors.New(fmt.Sprintf("Lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize()))
+						break
+					}
 					insertCnt++
 					ls.PutWithHint(entry.Key.UserKey, entry.Value, hint)
 				}
