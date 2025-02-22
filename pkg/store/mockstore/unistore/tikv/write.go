@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -170,7 +169,7 @@ func (w writeLockWorker) run() {
 				default:
 					// Make sure it fits into an arena block.
 					if len(entry.Key.UserKey)+len(entry.Value) > ls.MaxEntrySize() {
-						batch.err = errors.New(fmt.Sprintf("Lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize()))
+						batch.err = fmt.Errorf("Lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize())
 						break
 					}
 					insertCnt++
