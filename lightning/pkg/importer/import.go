@@ -58,7 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -70,7 +70,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -286,6 +287,8 @@ type ControllerParam struct {
 	TaskType string
 }
 
+var componentName = caller.Component("lightning-importer")
+
 // NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
@@ -363,7 +366,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -400,7 +403,7 @@ func NewImportControllerWithPauser(
 
 		taskType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, db)
 		if err != nil {
-			return nil, errors.Annotatef(err, "get system variable '%s' failed", variable.TiDBExplicitRequestSourceType)
+			return nil, errors.Annotatef(err, "get system variable '%s' failed", vardef.TiDBExplicitRequestSourceType)
 		}
 		if taskType == "" {
 			taskType = kvutil.ExplicitTypeLightning
@@ -593,7 +596,9 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logger := log.FromContext(ctx)
-	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
+	// the minimum 4 comes the fact that when connect to non-owner TiDB, the max
+	// QPS is 2 per connection due to polling every 500ms.
+	concurrency := max(2*rc.cfg.App.RegionConcurrency, 4)
 	// sql.DB is a connection pool, we set it to concurrency + 1(for job generator)
 	// to reuse connections, as we might call db.Conn/conn.Close many times.
 	// there's no API to get sql.DB.MaxIdleConns, so we revert to its default which is 2
@@ -1176,7 +1181,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

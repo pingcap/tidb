@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
 )
 
@@ -42,6 +43,8 @@ const (
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
 	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
+	// ClusterTableTiDBStatementsStats is the string constant of the cluster statement stats table.
+	ClusterTableTiDBStatementsStats = "CLUSTER_TIDB_STATEMENTS_STATS"
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
@@ -65,6 +68,7 @@ var memTableToAllTiDBClusterTables = map[string]string{
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
 	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
+	TableTiDBStatementsStats:      ClusterTableTiDBStatementsStats,
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
 	TableTrxSummary:               ClusterTableTrxSummary,
@@ -74,10 +78,14 @@ var memTableToAllTiDBClusterTables = map[string]string{
 	TableTiDBPlanCache:            ClusterTableTiDBPlanCache,
 }
 
+var memTableToAllTiDBClusterTablesWithLowerCase = make(map[string]string)
+
 // memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
 var memTableToDDLOwnerClusterTables = map[string]string{
 	TableTiFlashReplica: TableTiFlashReplica,
 }
+
+var memTableToDDLOwnerClusterTablesWithLowerCase = make(map[string]string)
 
 // ClusterTableCopDestination means the destination that cluster tables will send cop requests to.
 type ClusterTableCopDestination int
@@ -100,6 +108,7 @@ func GetClusterTableCopDestination(tableName string) ClusterTableCopDestination 
 func init() {
 	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToAllTiDBClusterTables {
+		memTableToAllTiDBClusterTablesWithLowerCase[strings.ToLower(memTableName)] = strings.ToLower(clusterMemTableName)
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
 			continue
@@ -109,23 +118,34 @@ func init() {
 		cols = append(cols, memTableCols...)
 		tableNameToColumns[clusterMemTableName] = cols
 	}
+	for memTableName, clusterMemTableName := range memTableToDDLOwnerClusterTables {
+		memTableToDDLOwnerClusterTablesWithLowerCase[strings.ToLower(memTableName)] = strings.ToLower(clusterMemTableName)
+	}
 }
 
 // IsClusterTableByName used to check whether the table is a cluster memory table.
 // Export for PhysicalTableScan.ExplainID
 func IsClusterTableByName(dbName, tableName string) bool {
-	dbName = strings.ToUpper(dbName)
+	intest.AssertFunc(func() bool {
+		return dbName == strings.ToLower(dbName)
+	})
 	switch dbName {
-	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		tableName = strings.ToUpper(tableName)
-		for _, name := range memTableToAllTiDBClusterTables {
-			name = strings.ToUpper(name)
+	case util.InformationSchemaName.L, util.PerformanceSchemaName.L:
+		intest.AssertFunc(func() bool {
+			return tableName == strings.ToLower(tableName)
+		})
+		for _, name := range memTableToAllTiDBClusterTablesWithLowerCase {
+			intest.AssertFunc(func() bool {
+				return name == strings.ToLower(name)
+			})
 			if name == tableName {
 				return true
 			}
 		}
-		for _, name := range memTableToDDLOwnerClusterTables {
-			name = strings.ToUpper(name)
+		for _, name := range memTableToDDLOwnerClusterTablesWithLowerCase {
+			intest.AssertFunc(func() bool {
+				return name == strings.ToLower(name)
+			})
 			if name == tableName {
 				return true
 			}

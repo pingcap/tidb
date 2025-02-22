@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -104,7 +104,7 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 		err   error
 		newWs []*JobWrapper
 	)
-	fastCreate := variable.EnableFastCreateTable.Load()
+	fastCreate := vardef.EnableFastCreateTable.Load()
 	if fastCreate {
 		newWs, err = mergeCreateTableJobs(jobWs)
 		if err != nil {

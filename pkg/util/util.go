@@ -32,7 +32,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/protoadapt"
 )
+
+// ByteNumOneGiB shows how many bytes one GiB contains
+const ByteNumOneGiB int64 = 1024 * 1024 * 1024
+
+// ByteToGiB converts Byte to GiB
+func ByteToGiB(bytes float64) float64 {
+	return bytes / float64(ByteNumOneGiB)
+}
 
 // SliceToMap converts slice to map
 // nolint:unused
@@ -290,6 +300,11 @@ func GetRecoverError(r any) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
+}
+
+// ProtoV1Clone clones a V1 proto message.
+func ProtoV1Clone[T protoadapt.MessageV1](p T) T {
+	return protoadapt.MessageV1Of(proto.Clone(protoadapt.MessageV2Of(p))).(T)
 }
 
 // CheckIfSameCluster reads PD addresses registered in etcd from two sources, to

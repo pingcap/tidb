@@ -23,15 +23,21 @@ PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` 
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 TASK_NAME="br_pitr"
 
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
+
 # start a new cluster
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
 run_sql_file $CUR/prepare_data/ingest_repair.sql
-# ...
+run_sql_file $CUR/prepare_data/key_types.sql
 
 # check something after prepare the data
 prepare_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range;" | tail -n 1 | awk '{print $2}')
@@ -59,7 +65,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/inc" --lastbackup
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
 run_sql_file $CUR/incremental_data/ingest_repair.sql
-# ...
+run_sql_file $CUR/incremental_data/key_types.sql
 
 # run incremental snapshot backup, but this incremental backup will fail to restore. due to limitation of ddl.
 echo "run incremental backup with special ddl jobs, modify column e.g."
@@ -89,13 +95,14 @@ check_result() {
     check_contains "DELETE_RANGE_CNT: $expect_delete_range"
     ## check feature compatibility between PITR and accelerate indexing
     bash $CUR/check/check_ingest_repair.sh
+    # check key types are restored correctly
+    bash $CUR/check/check_key_types.sh
 }
 
 # start a new cluster
-echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
-# non-compliant operation
+# non-compliant operation, need full backup specified for the first time PiTR
 echo "non compliant operation"
 restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
@@ -107,13 +114,13 @@ fi
 # PITR restore
 echo "run pitr"
 run_sql "DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint;"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint;"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
 check_result
 
 # start a new cluster for incremental + log
-echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#2"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -125,7 +132,7 @@ check_result
 
 # start a new cluster for incremental + log
 echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#3"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -139,8 +146,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # start a new cluster for corruption
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 file_corruption() {
     echo "corrupt the whole log files"
@@ -166,8 +172,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # start a new cluster for corruption
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 file_lost() {
     echo "lost the whole log files"
@@ -188,3 +193,5 @@ if [ $restore_fail -ne 1 ]; then
     echo 'pitr success on file lost'
     exit 1
 fi
+
+echo "br pitr test passed"

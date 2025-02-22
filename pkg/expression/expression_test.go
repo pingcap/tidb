@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -49,14 +48,14 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerIfNull)
 	require.NoError(t, err)
 
-	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull, true)
 	require.Nil(t, err)
 	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
 	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
 	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewOne()))
 }
@@ -76,10 +75,10 @@ func TestEvaluateExprWithNullMeetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// the inner function has an error
-	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull)
+	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
 	require.NotNil(t, err)
 	// check in NullRejectCheck ctx
-	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull)
+	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull, true)
 	require.NotNil(t, err)
 }
 
@@ -94,7 +93,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
-	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
+	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam, true)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
@@ -102,7 +101,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
-	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam)
+	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam, true)
 	require.Nil(t, err)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
@@ -128,7 +127,7 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 
 	// after EvaluateExprWithNull, this flag should be still false
-	EvaluateExprWithNull(ctx, schema, eq)
+	EvaluateExprWithNull(ctx, schema, eq, true)
 	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 }
@@ -247,7 +246,7 @@ func (builder *testTableBuilder) add(name string, tp byte, flag uint) *testTable
 func (builder *testTableBuilder) build() *model.TableInfo {
 	ti := &model.TableInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr(builder.tableName),
+		Name:  ast.NewCIStr(builder.tableName),
 		State: model.StatePublic,
 	}
 	for i, colName := range builder.columnNames {
@@ -262,7 +261,7 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
-			Name:      pmodel.NewCIStr(colName),
+			Name:      ast.NewCIStr(colName),
 			Offset:    i,
 			FieldType: *fieldType,
 			State:     model.StatePublic,

@@ -11,7 +11,7 @@ go_library(
         "//pkg/server/err",
         "//pkg/server/internal/util",
         "//pkg/server/metrics",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
     ],

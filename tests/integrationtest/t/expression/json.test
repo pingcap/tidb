@@ -242,6 +242,17 @@ select
 		json_keys('{"a": 1, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}', "$.a");
+
+# issue 56788
+SELECT JSON_KEYS('[{"X": 1}, {"Y": 2}]', '$[1]');
+SELECT JSON_KEYS('[{"A1": 1, "B1": 2, "C1": 3}, {"A2": 10, "B2": 20, "C2": {"D": 4}}, {"A3": 1, "B3": 2, "C3": 6}]', '$[1]');
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C');
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C[1]');
+SELECT JSON_KEYS('[{"A": 1, "B": 2}, {"C": 3, "D": [{"F": 5}, {"E": 55}]}]', '$[1].D[1]');
+SELECT JSON_KEYS('[{"X": 1}, {"Y": {"a": 1, "b": 2, "c": 3}}]', '$[1].Y');
+-- error 3140
+SELECT JSON_KEYS('[{"X": 1}, {"Y": [a,b,c]}]', '$.Y');
+
 select
 		json_length('1'),
 		json_length('{}'),
@@ -538,3 +549,14 @@ SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
 prepare stmt from 'select json_object(?, ?)';
 set @a=1;
 execute stmt using @a, @a;
+
+# TestIssue58888
+select json_extract("0.0", "$");
+select json_extract("[1E17]", "$");
+
+# TestIssue58894
+select json_extract('[1E27]', '$');
+
+# TestIssue58897
+select json_extract("{\"\\b\":\"\"}", "$");
+select json_extract("{\"\\f\":\"\"}", "$");

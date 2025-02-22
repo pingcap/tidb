@@ -38,12 +38,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store"
 	tidbdriver "github.com/pingcap/tidb/pkg/store/driver"
@@ -495,7 +495,7 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 }
 
 func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), model.NewCIStr("test_ddl"), model.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), ast.NewCIStr("test_ddl"), ast.NewCIStr(name))
 	require.NoError(t, err)
 	return tbl
 }
@@ -565,7 +565,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -577,7 +577,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 }
 
 func TestSimple(t *testing.T) {

@@ -70,17 +70,21 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 
 	validJoinKeysBuffer [][]byte
+	spilledValidRowNum  uint64
 
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
 	canSpillFlag atomic.Bool
 
+	round int
+
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
 	spillTriggedInBuildingStageForTest           bool
 	spillTriggeredBeforeBuildingHashTableForTest bool
 	allPartitionsSpilledForTest                  bool
+	skipProbeInRestoreForTest                    atomic.Bool
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -95,6 +99,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
+	helper.spilledValidRowNum = 0
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 
@@ -107,6 +112,8 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
+
+	helper.round = 0
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -287,7 +294,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
 	for i := 0; i < rowLen; i++ {
@@ -296,6 +303,8 @@ func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, va
 	for _, pos := range seg.validJoinKeyPos {
 		validJoinKeys[pos] = byte(1)
 	}
+
+	h.spilledValidRowNum += uint64(len(seg.validJoinKeyPos))
 	return validJoinKeys
 }
 
@@ -373,7 +382,43 @@ func (h *hashJoinSpillHelper) init() {
 
 		h.buildRowsInDisk = make([][]*chunk.DataInDiskByChunks, h.hashJoinExec.Concurrency)
 		h.probeRowsInDisk = make([][]*chunk.DataInDiskByChunks, h.hashJoinExec.Concurrency)
+
+		for _, worker := range h.hashJoinExec.BuildWorkers {
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.buildSpillChkFieldTypes)
+			}
+		}
+
+		for _, worker := range h.hashJoinExec.ProbeWorkers {
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.probeSpillFieldTypes)
+			}
+		}
 	}
+}
+
+func (h *hashJoinSpillHelper) getSpilledPartitionsNum() int {
+	return len(h.getSpilledPartitions())
+}
+
+func (h *hashJoinSpillHelper) getBuildSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.buildRowsInDisk)
+}
+
+func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.probeRowsInDisk)
+}
+
+func (*hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
+	totalBytes := int64(0)
+	for _, disk := range disks {
+		for _, d := range disk {
+			if d != nil {
+				totalBytes += d.GetTotalBytesInDisk()
+			}
+		}
+	}
+	return totalBytes
 }
 
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
@@ -483,6 +528,7 @@ func (h *hashJoinSpillHelper) reset() {
 		h.spilledPartitions[i] = false
 	}
 
+	h.spilledValidRowNum = 0
 	h.spillTriggered = false
 }
 
@@ -538,6 +584,10 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
+}
+
+func (h *hashJoinSpillHelper) isProbeSkippedInRestoreForTest() bool {
+	return h.skipProbeInRestoreForTest.Load()
 }
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {

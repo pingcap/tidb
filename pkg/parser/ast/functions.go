@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -310,13 +309,9 @@ const (
 	AesEncrypt               = "aes_encrypt"
 	Compress                 = "compress"
 	Decode                   = "decode"
-	DesDecrypt               = "des_decrypt"
-	DesEncrypt               = "des_encrypt"
 	Encode                   = "encode"
-	Encrypt                  = "encrypt"
 	MD5                      = "md5"
-	OldPassword              = "old_password"
-	PasswordFunc             = "password_func"
+	PasswordFunc             = "password"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
 	SHA                      = "sha"
@@ -373,9 +368,6 @@ const (
 	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
 
-	// MVCC information fetching function.
-	GetMvccInfo = "get_mvcc_info"
-
 	// Sequence function.
 	NextVal = "nextval"
 	LastVal = "lastval"
@@ -393,9 +385,9 @@ const (
 type FuncCallExpr struct {
 	funcNode
 	Tp     FuncCallExprType
-	Schema model.CIStr
+	Schema CIStr
 	// FnName is the function name.
-	FnName model.CIStr
+	FnName CIStr
 	// Args is the function args.
 	Args []ExprNode
 }
@@ -927,7 +919,7 @@ type WindowFuncExpr struct {
 	FromLast bool
 	// Spec is the specification of this window.
 	Spec WindowSpec
-	
+
 	// Order is used in PERCENTILE_CONT
 	Order *OrderByClause
 }

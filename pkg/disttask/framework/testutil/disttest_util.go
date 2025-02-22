@@ -25,26 +25,27 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
 // GetCommonTaskExecutorExt returns a common task executor extension.
-func GetCommonTaskExecutorExt(ctrl *gomock.Controller, stepExec *mockexecute.MockStepExecutor) *mock.MockExtension {
+func GetCommonTaskExecutorExt(ctrl *gomock.Controller, getStepExecFn func(*proto.Task) (execute.StepExecutor, error)) *mock.MockExtension {
 	executorExt := mock.NewMockExtension(ctrl)
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(stepExec, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).DoAndReturn(getStepExecFn).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	return executorExt
 }
 
 // GetCommonStepExecutor returns one mock subtaskExecutor.
-func GetCommonStepExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mockexecute.MockStepExecutor {
+func GetCommonStepExecutor(ctrl *gomock.Controller, step proto.Step, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mockexecute.MockStepExecutor {
 	executor := mockexecute.NewMockStepExecutor(ctrl)
 	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
+	executor.EXPECT().GetStep().Return(step).AnyTimes()
 	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	return executor
 }
@@ -85,8 +86,8 @@ func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt schedu
 	})
 
 	taskexecutor.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, task, param)
 			s.Extension = executorExt
 			return s
 		},
@@ -99,13 +100,15 @@ func RegisterTaskTypeForRollback(t testing.TB, ctrl *gomock.Controller, schedule
 		testContext.CollectSubtask(subtask)
 		return nil
 	}
-	executorExt := GetCommonTaskExecutorExt(ctrl, GetCommonStepExecutor(ctrl, subtaskRunFn))
+	executorExt := GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
+		return GetCommonStepExecutor(ctrl, task.Step, subtaskRunFn), nil
+	})
 	RegisterExampleTask(t, schedulerExt, executorExt, GetCommonCleanUpRoutine(ctrl))
 }
 
 // SubmitAndWaitTask schedule one task.
 func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, targetScope string, concurrency int) *proto.TaskBase {
-	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, nil)
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, 0, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }

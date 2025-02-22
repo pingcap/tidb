@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -165,6 +165,8 @@ func TestRangeIntersection(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_opt_fix_control = "54337:ON"`)
 	tk.MustExec("create table t1 (a1 int, b1 int, c1 int, key pkx (a1,b1));")
+
+	tk.MustExec("create table t_inlist_test(a1 int,b1 int,c1 varbinary(767) DEFAULT NULL, KEY twoColIndex (a1,b1));")
 	tk.MustExec("insert into t1 values (1,1,1);")
 	tk.MustExec("insert into t1 values (null,1,1);")
 	tk.MustExec("insert into t1 values (1,null,1);")
@@ -283,7 +285,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
 	tk.MustExec("insert into t values(1, '[1, 0]', '[1, 0, 0]', '{\"a\": 1}')")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.ID, true)

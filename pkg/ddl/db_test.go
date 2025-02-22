@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,17 +33,17 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -144,7 +145,7 @@ func TestIssue22307(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1);")
 
 	var checkErr1, checkErr2 error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -175,7 +176,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -323,7 +324,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -387,7 +388,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	}()
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
 
@@ -409,7 +410,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
-	originalVal := variable.GetDDLErrorCountLimit()
+	originalVal := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", originalVal))
 
@@ -519,7 +520,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	var rs []sqlexec.RecordSet
 
 	// Test when cancelling cannot be retried and adding index succeeds.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() {
@@ -539,7 +540,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
@@ -649,10 +650,10 @@ func TestSnapshotVersion(t *testing.T) {
 	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
 
 	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(pmodel.NewCIStr("test2"))
+	dbInfo, ok := currSnapIs.SchemaByName(ast.NewCIStr("test2"))
 	require.True(t, ok)
 
-	tbl, err := currSnapIs.TableByName(context.Background(), pmodel.NewCIStr("test2"), pmodel.NewCIStr("t"))
+	tbl, err := currSnapIs.TableByName(context.Background(), ast.NewCIStr("test2"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	m := dom.GetSnapshotMeta(snapTS)
@@ -932,7 +933,7 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -954,7 +955,7 @@ func TestHashPartitionAddColumn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -975,7 +976,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	var wg sync.WaitGroup
 	var checkErr error
 	one := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
 		}
@@ -1014,7 +1015,7 @@ func TestMDLTruncateTable(t *testing.T) {
 	var timetk3 time.Time
 
 	one := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if one {
 			return
 		}
@@ -1056,7 +1057,7 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 	var timetk3 time.Time
 
 	first := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if first || job.Type != model.ActionTruncateTable {
 			return
 		}
@@ -1090,7 +1091,7 @@ func TestInsertIgnore(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
@@ -1170,16 +1171,16 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
 	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 8)
+	require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 256)
+	require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
 
 	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
 	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 16)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 512)
+	require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
+	require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
 	deleteJobMetaByID(tk, job.ID)
 }
 
@@ -1231,20 +1232,21 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 
 	job = model.Job{
 		ID:   1,
 		Type: model.ActionAddIndex,
 		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg: true,
+			IsDistReorg:     true,
+			UseCloudStorage: true,
 		},
 	}
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 }
 
@@ -1269,4 +1271,45 @@ func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
 	j := getJobMetaByID(t, tk, job.ID)
 	require.Equal(t, j.ReorgMeta, job.ReorgMeta)
 	deleteJobMetaByID(tk, job.ID)
+}
+
+func TestGetAllTableInfos(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create table test.t1 (a int)")
+
+	tblInfos1 := make([]*model.TableInfo, 0)
+	tblInfos2 := make([]*model.TableInfo, 0)
+	dbs := dom.InfoSchema().AllSchemas()
+	maxDBID := int64(0)
+	for _, db := range dbs {
+		if infoschema.IsSpecialDB(db.Name.L) {
+			continue
+		}
+		if db.ID > maxDBID {
+			maxDBID = db.ID
+		}
+		info, err := dom.InfoSchema().SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		tblInfos1 = append(tblInfos1, info...)
+	}
+
+	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 10, func(tblInfo *model.TableInfo) error {
+		tblInfos2 = append(tblInfos2, tblInfo)
+		return nil
+	}, maxDBID)
+	require.NoError(t, err)
+
+	slices.SortFunc(tblInfos1, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+	slices.SortFunc(tblInfos2, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+	require.Equal(t, len(tblInfos1), len(tblInfos2))
+	for i := range tblInfos1 {
+		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
+		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
+	}
 }

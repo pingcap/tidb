@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -126,6 +126,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	infoCache             infoschemaMinTS
 }
 
 // ServerInfo is server static information.
@@ -202,6 +203,10 @@ func SetPDHttpCliForTest(cli pdhttp.Client) func() {
 	}
 }
 
+type infoschemaMinTS interface {
+	GetAndResetRecentInfoSchemaTS(now uint64) uint64
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -211,6 +216,7 @@ func GlobalInfoSyncerInit(
 	pdCli pd.Client, pdHTTPCli pdhttp.Client,
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
+	infoCache infoschemaMinTS,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -224,6 +230,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		infoCache:         infoCache,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -323,7 +330,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -773,7 +780,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, vardef.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
@@ -798,6 +805,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
+		}
+	}
+
+	if is.infoCache != nil {
+		schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
+		if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
+			minStartTS = schemaTS
 		}
 	}
 
@@ -895,6 +910,22 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
+}
+
+// RemoveTopologyInfo remove self server topology information from etcd.
+func (is *InfoSyncer) RemoveTopologyInfo() {
+	if is.etcdCli == nil {
+		return
+	}
+	prefix := fmt.Sprintf(
+		"%s/%s",
+		TopologyInformationPath,
+		net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))),
+	)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
+	}
 }
 
 // GetPrometheusAddr gets prometheus Address
@@ -1306,6 +1337,21 @@ func DeleteInternalSession(se any) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// ContainsInternalSessionForTest is the entry function for check whether an internal session is in SessionManager.
+// It is only used for test.
+func ContainsInternalSessionForTest(se any) bool {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return false
+	}
+
+	return sm.ContainsInternalSession(se)
 }
 
 // SetEtcdClient is only used for test.

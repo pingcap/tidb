@@ -22,18 +22,18 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -1876,7 +1876,7 @@ func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExpr
 type outerJoinEliminator struct {
 }
 
-func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs set.Int64Set) {
+func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs intset.FastIntSet) {
 	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	switch join.JoinType {
@@ -1891,9 +1891,9 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 	outerGroup = joinExpr.Children[1^innerChildIdx]
 	innerGroup = joinExpr.Children[innerChildIdx]
 
-	outerUniqueIDs = set.NewInt64Set()
+	outerUniqueIDs = intset.NewFastIntSet()
 	for _, outerCol := range outerGroup.Prop.Schema.Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
+		outerUniqueIDs.Insert(int(outerCol.UniqueID))
 	}
 
 	ok = true
@@ -1904,7 +1904,7 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
 	// builds UniqueKey info of innerGroup.
 	innerGroup.BuildKeyInfo()
-	for _, keyInfo := range innerGroup.Prop.Schema.Keys {
+	for _, keyInfo := range innerGroup.Prop.Schema.PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			if !joinKeys.Contains(col) {
@@ -1956,11 +1956,11 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 
 	// only when agg only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(agg.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
-	_, aggCols := plannercore.GetDupAgnosticAggCols(agg, nil)
+	_, aggCols := logicalop.GetDupAgnosticAggCols(agg, nil)
 	if len(aggCols) > 0 {
 		newAggExpr := memo.NewGroupExpr(agg)
 		newAggExpr.SetChildren(outerGroup)
@@ -2018,7 +2018,7 @@ func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (new
 	}
 
 	// only when proj only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(proj.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(proj.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 
@@ -2191,7 +2191,7 @@ func (*TransformAggToProj) Match(expr *memo.ExprIter) bool {
 	childGroup := expr.GetExpr().Children[0]
 	childGroup.BuildKeyInfo()
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
-	for _, key := range childGroup.Prop.Schema.Keys {
+	for _, key := range childGroup.Prop.Schema.PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			return true
 		}

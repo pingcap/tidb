@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -50,27 +50,43 @@ const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
 	SET status = 'finished',
 		status_update_time = %?,
 		state = %?
-	WHERE job_id = %? AND scan_id = %?`
+	WHERE job_id = %? AND scan_id = %? AND status = 'running' AND owner_id = %?`
 
-func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []any, error) {
+func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time, ownerID string) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
+	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID, ownerID}, nil
 }
 
-const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
+const updateTTLTaskHeartBeatTemplate = `UPDATE mysql.tidb_ttl_task
     SET state = %?,
 		owner_hb_time = %?
-    WHERE job_id = %? AND scan_id = %?`
+    WHERE job_id = %? AND scan_id = %? AND owner_id = %?`
 
-func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []any, error) {
+func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState, ownerID string) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return updateTTLTaskHeartBeatTempalte, []any{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
+	return updateTTLTaskHeartBeatTemplate, []any{string(stateStr), now.Format(timeFormat), jobID, scanID, ownerID}, nil
+}
+
+const resignOwnerSQLTemplate = `UPDATE mysql.tidb_ttl_task
+    SET state = %?,
+        status = 'waiting',
+        owner_id = NULL,
+        status_update_time = %?,
+		owner_hb_time = NULL
+    WHERE job_id = %? AND scan_id = %? AND owner_id = %?`
+
+func resignOwnerSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState, ownerID string) (string, []any, error) {
+	stateStr, err := json.Marshal(state)
+	if err != nil {
+		return "", nil, err
+	}
+	return resignOwnerSQLTemplate, []any{string(stateStr), now.Format(timeFormat), jobID, scanID, ownerID}, nil
 }
 
 const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
@@ -102,8 +118,13 @@ type taskManager struct {
 }
 
 func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
+	ctx = logutil.WithKeyValue(ctx, "ttl-worker", "task-manager")
+	if intest.InTest {
+		// in test environment, in the same log there will be multiple ttl managers, so we need to distinguish them
+		ctx = logutil.WithKeyValue(ctx, "ttl-worker", id)
+	}
 	return &taskManager{
-		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
+		ctx:      ctx,
 		sessPool: sessPool,
 
 		id: id,
@@ -122,11 +143,11 @@ func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCa
 }
 
 func (m *taskManager) resizeWorkersWithSysVar() {
-	err := m.resizeScanWorkers(int(variable.TTLScanWorkerCount.Load()))
+	err := m.resizeScanWorkers(int(vardef.TTLScanWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize scan workers", zap.Error(err))
 	}
-	err = m.resizeDelWorkers(int(variable.TTLDeleteWorkerCount.Load()))
+	err = m.resizeDelWorkers(int(vardef.TTLDeleteWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize delete workers", zap.Error(err))
 	}
@@ -162,6 +183,7 @@ func (m *taskManager) resizeScanWorkers(count int) error {
 			scanErr = errors.New("timeout to cancel scan task")
 
 			result = curTask.result(scanErr)
+			result.reason = ReasonWorkerStop
 		}
 
 		task := findTaskWithID(m.runningTasks, jobID, scanID)
@@ -194,6 +216,8 @@ func (m *taskManager) resizeDelWorkers(count int) error {
 	return err
 }
 
+var waitWorkerStopTimeout = 30 * time.Second
+
 // resizeWorkers scales the worker, and returns the full set of workers as the first return value. If there are workers
 // stopped, return the stopped worker in the second return value
 func (m *taskManager) resizeWorkers(workers []worker, count int, factory func() worker) ([]worker, []worker, error) {
@@ -206,9 +230,9 @@ func (m *taskManager) resizeWorkers(workers []worker, count int, factory func() 
 
 		var errs error
 		// don't use `m.ctx` here, because when shutdown the server, `m.ctx` has already been cancelled
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), waitWorkerStopTimeout)
 		for _, w := range workers[count:] {
-			err := w.WaitStopped(ctx, 30*time.Second)
+			err := w.WaitStopped(ctx, waitWorkerStopTimeout)
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to stop ttl worker", zap.Error(err))
 				errs = multierr.Append(errs, err)
@@ -238,7 +262,7 @@ func (m *taskManager) resizeWorkers(workers []worker, count int, factory func() 
 func (m *taskManager) handleScanFinishedTask() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
-		logger := logutil.Logger(m.ctx).With(zap.Int64("tableID", result.task.tbl.ID), zap.String("jobID", result.task.JobID), zap.Int64("scanID", result.task.ScanID))
+		logger := result.task.taskLogger(logutil.Logger(m.ctx))
 		if result.err != nil {
 			logger = logger.With(zap.Error(result.err))
 		}
@@ -290,9 +314,22 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
+	if len(tasks) == 0 {
+		return
+	}
+
+	err = m.infoSchemaCache.Update(se)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to update infoSchemaCache", zap.Error(err))
+		return
+	}
 loop:
 	for _, t := range tasks {
-		logger := logutil.Logger(m.ctx).With(zap.String("jobID", t.JobID), zap.Int64("scanID", t.ScanID))
+		logger := logutil.Logger(m.ctx).With(
+			zap.String("jobID", t.JobID),
+			zap.Int64("scanID", t.ScanID),
+			zap.Int64("tableID", t.TableID),
+		)
 
 		task, err := m.lockScanTask(se, t, now)
 		if err != nil {
@@ -305,7 +342,7 @@ loop:
 				// don't step into the next step to avoid exceeding the limit
 				break loop
 			}
-			logutil.Logger(m.ctx).Warn("fail to lock scan task", zap.Error(err))
+			logger.Warn("fail to lock scan task", zap.Error(err))
 			continue
 		}
 
@@ -319,7 +356,19 @@ loop:
 			continue
 		}
 
-		logger.Info("scheduled ttl task")
+		var prevTotalRows, prevSuccessRows, prevErrorRows uint64
+		if state := task.TTLTask.State; state != nil {
+			prevTotalRows = state.TotalRows
+			prevSuccessRows = state.SuccessRows
+			prevErrorRows = state.ErrorRows
+		}
+
+		logger.Info(
+			"scheduled ttl task",
+			zap.Uint64("prevTotalRows", prevTotalRows),
+			zap.Uint64("prevSuccessRows", prevSuccessRows),
+			zap.Uint64("prevErrorRows", prevErrorRows),
+		)
 		m.runningTasks = append(m.runningTasks, task)
 
 		if len(idleScanWorkers) == 0 {
@@ -330,7 +379,7 @@ loop:
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * getTaskManagerHeartBeatInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
@@ -368,7 +417,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return err
 		}
-		if task.OwnerID != "" && !task.OwnerHBTime.Add(getTaskManagerHeartBeatExpireInterval()).Before(now) {
+		if task.OwnerID != "" && !task.OwnerHBTime.Add(2*getTaskManagerHeartBeatInterval()).Before(now) {
 			return errors.WithStack(errAlreadyScheduled)
 		}
 
@@ -379,6 +428,23 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		}
 		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0)), task.Status) {
 			return errors.WithStack(errTooManyRunningTasks)
+		}
+
+		if task.OwnerID != "" {
+			logutil.Logger(m.ctx).Info(
+				"try to lock a heartbeat timeout task",
+				zap.String("jobID", task.JobID),
+				zap.Int64("scanID", task.ScanID),
+				zap.String("prevOwner", task.OwnerID),
+				zap.Time("lastHeartbeat", task.OwnerHBTime),
+			)
+		} else if task.State != nil && task.State.PreviousOwner != "" {
+			logutil.Logger(m.ctx).Info(
+				"try to lock a task resigned from another instance",
+				zap.String("jobID", task.JobID),
+				zap.Int64("scanID", task.ScanID),
+				zap.String("prevOwner", task.State.PreviousOwner),
+			)
 		}
 
 		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
@@ -439,33 +505,114 @@ func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID
 }
 
 // updateHeartBeat updates the heartbeat for all tasks with current instance as owner
-func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
+func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
 	for _, task := range m.runningTasks {
-		state := &cache.TTLTaskState{
-			TotalRows:   task.statistics.TotalRows.Load(),
-			SuccessRows: task.statistics.SuccessRows.Load(),
-			ErrorRows:   task.statistics.ErrorRows.Load(),
-		}
-		if task.result != nil && task.result.err != nil {
-			state.ScanTaskErr = task.result.err.Error()
-		}
-
-		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
+		err := m.taskHeartbeatOrResignOwner(ctx, se, now, task, false)
 		if err != nil {
-			return err
-		}
-		_, err = se.ExecuteSQL(ctx, sql, args...)
-		if err != nil {
-			return errors.Wrapf(err, "execute sql: %s", sql)
+			task.taskLogger(logutil.Logger(m.ctx)).Warn("fail to update task heart beat", zap.Error(err))
 		}
 	}
+}
+
+func (m *taskManager) taskHeartbeatOrResignOwner(ctx context.Context, se session.Session, now time.Time, task *runningScanTask, isResignOwner bool) error {
+	state := task.dumpNewTaskState()
+
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
+	buildSQLFunc := updateTTLTaskHeartBeatSQL
+	if isResignOwner {
+		state.PreviousOwner = m.id
+		buildSQLFunc = resignOwnerSQL
+	}
+
+	sql, args, err := buildSQLFunc(task.JobID, task.ScanID, now, state, m.id)
+	if err != nil {
+		return err
+	}
+	_, err = se.ExecuteSQL(ctx, sql, args...)
+	if err != nil {
+		return errors.Wrapf(err, "execute sql: %s", sql)
+	}
+
+	if se.GetSessionVars().StmtCtx.AffectedRows() != 1 {
+		return errors.Errorf("fail to update task status, maybe the owner is not myself (%s), affected rows: %d",
+			m.id, se.GetSessionVars().StmtCtx.AffectedRows())
+	}
+
 	return nil
 }
 
+func shouldRunningTaskResignOwner(task *runningScanTask) (string, bool) {
+	if result := task.result; result != nil {
+		switch result.reason {
+		case ReasonWorkerStop:
+			return string(result.reason), true
+		}
+	}
+	return "", false
+}
+
+func (m *taskManager) tryResignTaskOwner(se session.Session, task *runningScanTask, reason string, now time.Time) bool {
+	var totalRows, successRows, errRows, processedRows uint64
+	if stats := task.statistics; stats != nil {
+		totalRows = stats.TotalRows.Load()
+		successRows = stats.SuccessRows.Load()
+		errRows = stats.ErrorRows.Load()
+		processedRows = successRows + errRows
+	}
+
+	var taskEndTime time.Time
+	if r := task.result; r != nil {
+		taskEndTime = r.time
+	}
+
+	logger := task.taskLogger(logutil.Logger(m.ctx)).With(
+		zap.Time("taskEndTime", taskEndTime),
+		zap.String("reason", reason),
+		zap.Uint64("totalRows", totalRows),
+		zap.Uint64("processedRows", processedRows),
+		zap.Uint64("successRows", successRows),
+		zap.Uint64("errRows", errRows),
+	)
+
+	sinceTaskEnd := now.Sub(taskEndTime)
+	if sinceTaskEnd < 0 {
+		logger.Warn("task end time is after current time, something may goes wrong")
+	}
+
+	if totalRows > processedRows && sinceTaskEnd < 10*time.Second && sinceTaskEnd > -10*time.Second {
+		logger.Info("wait all rows processed before resign the owner of a TTL task")
+		return false
+	}
+
+	if totalRows > processedRows {
+		logger.Info("wait all rows processed timeout, force to resign the owner of a TTL task")
+	} else {
+		logger.Info("resign the owner of a TTL task")
+	}
+
+	task.cancel()
+	// Update the task state with heartbeatTask for the last time.
+	// The task will be taken over by another instance after timeout.
+	if err := m.taskHeartbeatOrResignOwner(m.ctx, se, now, task, true); err != nil {
+		logger.Warn("fail to update the state before resign the task owner", zap.Error(err))
+	}
+
+	return true
+}
+
 func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
+	if len(m.runningTasks) == 0 {
+		return
+	}
 	stillRunningTasks := make([]*runningScanTask, 0, len(m.runningTasks))
 	for _, task := range m.runningTasks {
+		if reason, resign := shouldRunningTaskResignOwner(task); resign {
+			if !m.tryResignTaskOwner(se, task, reason, now) {
+				stillRunningTasks = append(stillRunningTasks, task)
+			}
+			continue
+		}
+
 		if !task.finished(logutil.Logger(m.ctx)) {
 			stillRunningTasks = append(stillRunningTasks, task)
 			continue
@@ -474,7 +621,7 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 		task.cancel()
 		err := m.reportTaskFinished(se, now, task)
 		if err != nil {
-			logutil.Logger(m.ctx).Error("fail to report finished task", zap.Error(err))
+			task.taskLogger(logutil.Logger(m.ctx)).Error("fail to report finished task", zap.Error(err))
 			stillRunningTasks = append(stillRunningTasks, task)
 			continue
 		}
@@ -484,17 +631,10 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 }
 
 func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task *runningScanTask) error {
-	state := &cache.TTLTaskState{
-		TotalRows:   task.statistics.TotalRows.Load(),
-		SuccessRows: task.statistics.SuccessRows.Load(),
-		ErrorRows:   task.statistics.ErrorRows.Load(),
-	}
-	if task.result.err != nil {
-		state.ScanTaskErr = task.result.err.Error()
-	}
+	state := task.dumpNewTaskState()
 
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now)
+	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now, m.id)
 	if err != nil {
 		return err
 	}
@@ -506,41 +646,59 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 	if err != nil {
 		return err
 	}
+	if se.GetSessionVars().StmtCtx.AffectedRows() != 1 {
+		return errors.Errorf("fail to update task status, maybe the owner is not myself (%s) or task is not running, affected rows: %d",
+			m.id, se.GetSessionVars().StmtCtx.AffectedRows())
+	}
+
+	task.taskLogger(logutil.Logger(m.ctx)).Info(
+		"TTL task finished",
+		zap.Uint64("finalTotalRows", state.TotalRows),
+		zap.Uint64("finalSuccessRows", state.SuccessRows),
+		zap.Uint64("finalErrorRows", state.ErrorRows),
+	)
 
 	return nil
 }
 
 // checkInvalidTask removes the task whose owner is not myself or which has disappeared
 func (m *taskManager) checkInvalidTask(se session.Session) {
+	if len(m.runningTasks) == 0 {
+		return
+	}
 	// TODO: optimize this function through cache or something else
 	ownRunningTask := make([]*runningScanTask, 0, len(m.runningTasks))
 
 	for _, task := range m.runningTasks {
 		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
-
+		l := logutil.Logger(m.ctx)
 		timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 		rows, err := se.ExecuteSQL(timeoutCtx, sql, args...)
 		cancel()
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			task.taskLogger(l).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
 			task.cancel()
 			continue
 		}
 		if len(rows) == 0 {
-			logutil.Logger(m.ctx).Warn("didn't find task", zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
+			task.taskLogger(l).Warn("didn't find task")
 			task.cancel()
 			continue
 		}
 		t, err := cache.RowToTTLTask(se, rows[0])
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to get task", zap.Error(err))
+			task.taskLogger(l).Warn("fail to get task", zap.Error(err))
 			task.cancel()
 			continue
 		}
 
-		if t.OwnerID == m.id {
-			ownRunningTask = append(ownRunningTask, task)
+		if t.OwnerID != m.id {
+			task.taskLogger(l).Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
+			task.cancel()
+			continue
 		}
+
+		ownRunningTask = append(ownRunningTask, task)
 	}
 
 	m.runningTasks = ownRunningTask
@@ -569,24 +727,24 @@ func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus)
 }
 
 func getMaxRunningTasksLimit(store kv.Storage) int {
-	ttlRunningTask := variable.TTLRunningTasks.Load()
+	ttlRunningTask := vardef.TTLRunningTasks.Load()
 	if ttlRunningTask != -1 {
 		return int(ttlRunningTask)
 	}
 
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	regionCache := tikvStore.GetRegionCache()
 	if regionCache == nil {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	limit := len(regionCache.GetStoresByType(tikvrpc.TiKV))
-	if limit > variable.MaxConfigurableConcurrency {
-		limit = variable.MaxConfigurableConcurrency
+	if limit > vardef.MaxConfigurableConcurrency {
+		limit = vardef.MaxConfigurableConcurrency
 	}
 
 	return limit
@@ -603,17 +761,34 @@ func (t *runningScanTask) Context() context.Context {
 	return t.ctx
 }
 
+// dumpNewTaskState dumps a new TTLTaskState which is used to update the task meta in the storage
+func (t *runningScanTask) dumpNewTaskState() *cache.TTLTaskState {
+	state := &cache.TTLTaskState{
+		TotalRows:   t.statistics.TotalRows.Load(),
+		SuccessRows: t.statistics.SuccessRows.Load(),
+		ErrorRows:   t.statistics.ErrorRows.Load(),
+	}
+
+	if prevState := t.TTLTask.State; prevState != nil {
+		// If a task was timeout and taken over by the current instance,
+		// adding the previous state to the current state to make the statistics more accurate.
+		state.TotalRows += prevState.SuccessRows + prevState.ErrorRows
+		state.SuccessRows += prevState.SuccessRows
+		state.ErrorRows += prevState.ErrorRows
+	}
+
+	if r := t.result; r != nil && r.err != nil {
+		state.ScanTaskErr = r.err.Error()
+	}
+
+	return state
+}
+
 func (t *runningScanTask) finished(logger *zap.Logger) bool {
 	if t.result == nil {
 		// Scan task isn't finished
 		return false
 	}
-
-	logger = logger.With(
-		zap.String("jobID", t.JobID),
-		zap.Int64("scanID", t.ScanID),
-		zap.String("table", t.tbl.Name.O),
-	)
 
 	totalRows := t.statistics.TotalRows.Load()
 	errRows := t.statistics.ErrorRows.Load()
@@ -621,8 +796,8 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 	processedRows := successRows + errRows
 	if processedRows == totalRows {
 		// All rows are processed.
-		logger.Info(
-			"mark TTL task finished because all scanned rows are processed",
+		t.taskLogger(logger).Info(
+			"will mark TTL task finished because all scanned rows are processed",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
 			zap.Uint64("errorRows", errRows),
@@ -633,8 +808,8 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 	if processedRows > totalRows {
 		// All rows are processed but processed rows are more than total rows.
 		// We still think it is finished.
-		logger.Warn(
-			"mark TTL task finished but processed rows are more than total rows",
+		t.taskLogger(logger).Warn(
+			"will mark TTL task finished but processed rows are more than total rows",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
 			zap.Uint64("errorRows", errRows),
@@ -646,8 +821,8 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		// If the scan task is finished and not all rows are processed, we should wait a certain time to report the task.
 		// After a certain time, if the rows are still not processed, we need to mark the task finished anyway to make
 		// sure the TTL job does not hang.
-		logger.Info(
-			"mark TTL task finished because timeout for waiting all scanned rows processed after scan task done",
+		t.taskLogger(logger).Info(
+			"will mark TTL task finished because timeout for waiting all scanned rows processed after scan task done",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
 			zap.Uint64("errorRows", errRows),

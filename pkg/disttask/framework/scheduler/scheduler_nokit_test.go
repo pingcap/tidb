@@ -348,6 +348,9 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	})
 	scheduler.Extension = schExt
 
+	runningTask := task
+	runningTask.State = proto.TaskStateRunning
+
 	t.Run("test onPausing", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
@@ -487,6 +490,85 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask.State = proto.TaskStateReverting
 		tmpTask.Error = fmt.Errorf("task err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("test on modifying, failed to update system table", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(fmt.Errorf("modify err"))
+		recreateScheduler, err := scheduler.onModifying()
+		require.ErrorContains(t, err, "modify err")
+		require.False(t, recreateScheduler)
+		require.Equal(t, taskBefore, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("test on modifying concurrency, success", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(nil)
+		recreateScheduler, err := scheduler.onModifying()
+		require.NoError(t, err)
+		require.True(t, recreateScheduler)
+		expectedTask := runningTask
+		expectedTask.Concurrency = 123
+		require.Equal(t, expectedTask, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("test on modifying task meta, failed to get new meta", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyMaxWriteSpeed, To: 11111},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		schExt.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("modify meta err"))
+		recreateScheduler, err := scheduler.onModifying()
+		require.ErrorContains(t, err, "modify meta err")
+		require.False(t, recreateScheduler)
+		require.Equal(t, taskBefore, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("test on modifying concurrency and task meta, success", func(t *testing.T) {
+		taskBefore := runningTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+				{Type: proto.ModifyMaxWriteSpeed, To: 11111},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		schExt.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).Return([]byte("max-11111"), nil)
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(nil)
+		recreateScheduler, err := scheduler.onModifying()
+		require.NoError(t, err)
+		require.True(t, recreateScheduler)
+		expectedTask := runningTask
+		expectedTask.Concurrency = 123
+		expectedTask.Meta = []byte("max-11111")
+		require.Equal(t, expectedTask, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 	})
 }

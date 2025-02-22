@@ -160,7 +160,7 @@
         ],
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─MergeJoin 1.00 root  left outer semi join, left key:test.t.a, right key:test.t.b",
+          "└─MergeJoin 1.00 root  left outer semi join, left side:TopN, left key:test.t.a, right key:test.t.b",
           "  ├─IndexReader(Build) 25.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 25.00 cop[tikv] table:t2, index:idx_bc(b, c) keep order:true",
           "  └─TopN(Probe) 1.00 root  test.t.a, offset:0, count:1",
@@ -235,12 +235,11 @@
           "explain format = 'brief' SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "Projection 1.00 root  test.t.a",
-          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
-          "  └─IndexReader 1.00 root  index:TopN",
-          "    └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "      └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
-          "        └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
+          "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
       }
     ]
@@ -286,7 +285,7 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11",
+        "TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11",
         "└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
       ],
@@ -298,7 +297,7 @@
         "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_11 2.00 root  MppVersion: 2, data:ExchangeSender_10",
+        "TableReader_11 2.00 root  MppVersion: 3, data:ExchangeSender_10",
         "└─ExchangeSender_10 2.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableRangeScan_9 2.00 mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
@@ -380,7 +379,7 @@
     "Cases": [
       [
         "Projection 10.00 root  Column#22",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#21)",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
@@ -394,7 +393,7 @@
       ],
       [
         "Projection 10.00 root  Column#13",
-        "└─Apply 10.00 root  CARTESIAN left outer join",
+        "└─Apply 10.00 root  CARTESIAN left outer join, left side:IndexReader",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─MaxOneRow(Probe) 10.00 root  ",
@@ -517,6 +516,22 @@
           "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
           "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue59563",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;",
+        "Plan": [
+          "Sort_5 0.02 39632.47 root  cardcore_issuing.tbl_cardcore_transaction.transaction_status, cardcore_issuing.tbl_cardcore_transaction.account_number, cardcore_issuing.tbl_cardcore_transaction.entry_date, cardcore_issuing.tbl_cardcore_transaction.id",
+          "└─IndexLookUp_14 0.02 39612.26 root  ",
+          "  ├─IndexRangeScan_11(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
+          "  └─Selection_13(Probe) 0.02 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
+          "    └─TableRowIDScan_12 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
+        ],
+        "Warn": null
       }
     ]
   }

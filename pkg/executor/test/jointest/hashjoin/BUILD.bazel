@@ -15,7 +15,7 @@ go_test(
         "//pkg/executor/join",
         "//pkg/meta/autoid",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_failpoint//:failpoint",

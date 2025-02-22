@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -288,8 +289,7 @@ func TestNotFillCacheFlag(t *testing.T) {
 func TestCheckIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	ctx := mock.NewContext()
-	ctx.Store = store
+	ctx := testkit.NewSession(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
@@ -302,11 +302,11 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	is := dom.InfoSchema()
-	db := pmodel.NewCIStr("test_admin")
+	db := ast.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	require.True(t, ok)
 
-	tblName := pmodel.NewCIStr("t")
+	tblName := ast.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), db, tblName)
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
@@ -422,7 +422,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	// Test the column's version is greater than ColumnInfoVersion1.
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
@@ -665,8 +665,8 @@ func TestPrevStmtDesensitization(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
-	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", variable.TiDBRedactLog))
+	tk.MustExec(fmt.Sprintf("set @@session.%v=1", vardef.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", vardef.TiDBRedactLog))
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
@@ -683,7 +683,7 @@ func TestIssue19148(t *testing.T) {
 	tk.MustExec("create table t(a decimal(16, 2));")
 	tk.MustExec("select * from t where a > any_value(a);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
@@ -2028,7 +2028,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 	tk.MustExec("create database test_cluster_index_is_point_get;")
 	tk.MustExec("use test_cluster_index_is_point_get;")
 
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
 	ctx := tk.Session().(sessionctx.Context)
@@ -2581,7 +2581,7 @@ func TestAdmin(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	require.Len(t, tb.Indices(), 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext().GetTableCtx(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)

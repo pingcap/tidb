@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -114,7 +114,7 @@ func (a *recordSet) Fields() []*resolve.ResultField {
 
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
-	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
+	defaultDBCIStr := ast.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
@@ -510,21 +510,21 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		oriStats, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriStats, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBBuildStatsConcurrency)
 		if !ok {
-			oriStats = strconv.Itoa(variable.DefBuildStatsConcurrency)
+			oriStats = strconv.Itoa(vardef.DefBuildStatsConcurrency)
 		}
 		oriScan := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-		oriIso, ok := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		oriIso, ok := sctx.GetSessionVars().GetSystemVar(vardef.TxnIsolation)
 		if !ok {
 			oriIso = "REPEATABLE-READ"
 		}
-		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBAutoBuildStatsConcurrency)
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBAutoBuildStatsConcurrency)
 		terror.Log(err1)
 		if err1 == nil {
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TiDBBuildStatsConcurrency, autoConcurrency))
 		}
-		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBSysProcScanConcurrency)
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBSysProcScanConcurrency)
 		terror.Log(err2)
 		if err2 == nil {
 			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
@@ -533,11 +533,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				sctx.GetSessionVars().SetAnalyzeDistSQLScanConcurrency(int(concurrency))
 			}
 		}
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().SetAnalyzeDistSQLScanConcurrency(oriScan)
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(vardef.TxnIsolation, oriIso))
 		}()
 	}
 
@@ -547,7 +547,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
-	if rm := domain.GetDomain(sctx).RunawayManager(); variable.EnableResourceControl.Load() && rm != nil {
+	if rm := domain.GetDomain(sctx).RunawayManager(); vardef.EnableResourceControl.Load() && rm != nil {
 		sessionVars := sctx.GetSessionVars()
 		stmtCtx := sessionVars.StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
@@ -1312,7 +1312,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 
 func formatSQL(sql string) string {
 	length := len(sql)
-	maxQueryLen := variable.QueryLogMaxLen.Load()
+	maxQueryLen := vardef.QueryLogMaxLen.Load()
 	if maxQueryLen <= 0 {
 		return QueryReplacer.Replace(sql) // no limit
 	}
@@ -1418,6 +1418,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
+
+	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1676,7 +1678,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          &copTaskInfo,
+		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
@@ -1689,9 +1691,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
-		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
-		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        resultRows,
 		ExecRetryCount:    a.retryCount,
@@ -1797,12 +1797,48 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	if runtimeStatsColl == nil {
 		return 0
 	}
-	rootPlanID := p.ID()
-	if !runtimeStatsColl.ExistsRootStats(rootPlanID) {
-		return 0
+	return runtimeStatsColl.GetPlanActRows(p.ID())
+}
+
+func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
+	hasMPPTraffic := a.updateMPPNetworkTraffic()
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesSentKVTotal))
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentKVCrossZone))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVTotal))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVCrossZone))
+		if hasMPPTraffic {
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesSentMPPTotal))
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentMPPCrossZone))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPTotal))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPCrossZone))
+		}
 	}
-	rootStats := runtimeStatsColl.GetRootStats(rootPlanID)
-	return rootStats.GetActRows()
+}
+
+func (a *ExecStmt) updateMPPNetworkTraffic() bool {
+	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return false
+	}
+	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
+	if tiflashNetworkStats == nil {
+		return false
+	}
+	var tikvExecDetail *util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw == nil {
+		tikvExecDetailRaw = &util.ExecDetails{}
+		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
+	}
+
+	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
+	return true
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
@@ -1936,46 +1972,19 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	sessVars.SetPrevStmtDigest(digest.String())
 
-	// No need to encode every time, so encode lazily.
-	planGenerator := func() (p string, h string, e any) {
-		defer func() {
-			e = recover()
-			if e != nil {
-				logutil.BgLogger().Warn("fail to generate plan info",
-					zap.Stack("backtrace"),
-					zap.Any("error", e))
-			}
-		}()
-		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
-		return
-	}
-	var binPlanGen func() string
-	if variable.GenerateBinaryPlan.Load() {
-		binPlanGen = func() string {
-			binPlan := getBinaryPlan(a.Ctx)
-			return binPlan
-		}
-	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
 	var planDigest string
-	var planDigestGen func() string
-	if a.Plan.TP() == plancodec.TypePointGet {
-		planDigestGen = func() string {
-			_, planDigest := GetPlanDigest(stmtCtx)
-			return planDigest.String()
-		}
-	} else {
+	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
-	copTaskInfo := stmtCtx.CopTasksDetails()
+	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.getLazyStmtText()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -2011,50 +2020,87 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
 
-	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:          strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:         &sql,
-		Charset:             charset,
-		Collation:           collation,
-		NormalizedSQL:       normalizedSQL,
-		Digest:              digest.String(),
-		PrevSQL:             prevSQL,
-		PrevSQLDigest:       prevSQLDigest,
-		PlanGenerator:       planGenerator,
-		BinaryPlanGenerator: binPlanGen,
-		PlanDigest:          planDigest,
-		PlanDigestGen:       planDigestGen,
-		User:                userString,
-		TotalLatency:        costTime,
-		ParseLatency:        sessVars.DurationParse,
-		CompileLatency:      sessVars.DurationCompile,
-		StmtCtx:             stmtCtx,
-		CopTasks:            &copTaskInfo,
-		ExecDetail:          &execDetail,
-		MemMax:              memMax,
-		DiskMax:             diskMax,
-		StartTime:           sessVars.StartTime,
-		IsInternal:          sessVars.InRestrictedSQL,
-		Succeed:             succ,
-		PlanInCache:         sessVars.FoundInPlanCache,
-		PlanInBinding:       sessVars.FoundInBinding,
-		ExecRetryCount:      a.retryCount,
-		StmtExecDetails:     stmtDetail,
-		ResultRows:          resultRows,
-		TiKVExecDetails:     tikvExecDetail,
-		Prepared:            a.isPreparedStmt,
-		KeyspaceName:        keyspaceName,
-		KeyspaceID:          keyspaceID,
-		RUDetail:            ruDetail,
-		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
-		CPUUsages:           sessVars.SQLCPUUsages.GetCPUUsages(),
-
-		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
+	if sessVars.CacheStmtExecInfo == nil {
+		sessVars.CacheStmtExecInfo = &stmtsummary.StmtExecInfo{}
 	}
+	stmtExecInfo := sessVars.CacheStmtExecInfo
+	stmtExecInfo.SchemaName = strings.ToLower(sessVars.CurrentDB)
+	stmtExecInfo.Charset = charset
+	stmtExecInfo.Collation = collation
+	stmtExecInfo.NormalizedSQL = normalizedSQL
+	stmtExecInfo.Digest = digest.String()
+	stmtExecInfo.PrevSQL = prevSQL
+	stmtExecInfo.PrevSQLDigest = prevSQLDigest
+	stmtExecInfo.PlanDigest = planDigest
+	stmtExecInfo.User = userString
+	stmtExecInfo.TotalLatency = costTime
+	stmtExecInfo.ParseLatency = sessVars.DurationParse
+	stmtExecInfo.CompileLatency = sessVars.DurationCompile
+	stmtExecInfo.StmtCtx = stmtCtx
+	stmtExecInfo.CopTasks = copTaskInfo
+	stmtExecInfo.ExecDetail = execDetail
+	stmtExecInfo.MemMax = memMax
+	stmtExecInfo.DiskMax = diskMax
+	stmtExecInfo.StartTime = sessVars.StartTime
+	stmtExecInfo.IsInternal = sessVars.InRestrictedSQL
+	stmtExecInfo.Succeed = succ
+	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
+	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
+	stmtExecInfo.ExecRetryCount = a.retryCount
+	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.ResultRows = resultRows
+	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
+	stmtExecInfo.Prepared = a.isPreparedStmt
+	stmtExecInfo.KeyspaceName = keyspaceName
+	stmtExecInfo.KeyspaceID = keyspaceID
+	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
+	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
+	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
+	stmtExecInfo.LazyInfo = a
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummaryv2.Add(stmtExecInfo)
+}
+
+// GetOriginalSQL implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetOriginalSQL() string {
+	stmt := a.getLazyStmtText()
+	return stmt.String()
+}
+
+// GetEncodedPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
+	defer func() {
+		e = recover()
+		if e != nil {
+			logutil.BgLogger().Warn("fail to generate plan info",
+				zap.Stack("backtrace"),
+				zap.Any("error", e))
+		}
+	}()
+
+	sessVars := a.Ctx.GetSessionVars()
+	p, h = getEncodedPlan(sessVars.StmtCtx, !sessVars.InRestrictedSQL)
+	return
+}
+
+// GetBinaryPlan implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetBinaryPlan() string {
+	if variable.GenerateBinaryPlan.Load() {
+		return getBinaryPlan(a.Ctx)
+	}
+	return ""
+}
+
+// GetPlanDigest implements StmtExecLazyInfo interface.
+func (a *ExecStmt) GetPlanDigest() string {
+	if a.Plan.TP() == plancodec.TypePointGet {
+		_, planDigest := GetPlanDigest(a.Ctx.GetSessionVars().StmtCtx)
+		return planDigest.String()
+	}
+	return ""
 }
 
 // GetTextToLog return the query text to log.
@@ -2159,7 +2205,7 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 
 // UpdatePlanCacheRuntimeInfo updates the runtime information of the plan in the plan cache.
 func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
-	if !variable.EnableInstancePlanCache.Load() {
+	if !vardef.EnableInstancePlanCache.Load() {
 		return // only record for Instance Plan Cache
 	}
 	v := a.Ctx.GetSessionVars().PlanCacheValue
@@ -2280,7 +2326,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     []bindinfo.Bindings{bindings},
+		SessionBindings:     [][]*bindinfo.Binding{bindings},
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []any{stmtCtx.OptimizerDebugTrace},

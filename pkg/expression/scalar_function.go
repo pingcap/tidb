@@ -16,14 +16,12 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -40,7 +38,7 @@ var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
+	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType `plan-cache-clone:"shallow"`
@@ -134,8 +132,9 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // StringWithCtx implements Expression interface.
 func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
+	buffer.WriteString(sf.FuncName.L)
+	buffer.WriteByte('(')
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
@@ -270,7 +269,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
 	}

@@ -159,9 +159,8 @@ func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bo
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		return true
-		// TODO: support aggregate functions
-		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
-		//	return true
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
+		return true
 	}
 
 	return false

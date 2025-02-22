@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
@@ -86,6 +85,9 @@ type BetweenExpr struct {
 
 // Restore implements Node interface.
 func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain("(")
+	}
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
 	}
@@ -100,6 +102,9 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" AND ")
 	if err := n.Right.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
+	}
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain(")")
 	}
 	return nil
 }
@@ -173,8 +178,10 @@ func restoreBinaryOpWithSpacesAround(ctx *format.RestoreCtx, op opcode.Op) error
 
 // Restore implements Node interface.
 func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
+	originalFlags := ctx.Flags
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain("(")
+		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
@@ -187,6 +194,7 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
+		ctx.Flags = originalFlags
 	}
 	return nil
 }
@@ -505,9 +513,9 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 // ColumnName represents column name.
 type ColumnName struct {
 	node
-	Schema model.CIStr
-	Table  model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Table  CIStr
+	Name   CIStr
 }
 
 // Restore implements Node interface.

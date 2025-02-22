@@ -35,7 +35,7 @@ import (
 )
 
 func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
-	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", nil)
+	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", 0, nil)
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
@@ -56,8 +56,8 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
-	executor := factory(ctx, ":4000", task, mgr)
-	executor.Run(&proto.StepResource{})
+	executor := factory(ctx, task, taskexecutor.NewParamForTest(mgr, nil, proto.NodeResourceForTest, ":4000"))
+	executor.Run()
 	checkSubtasks(proto.StepOne, proto.SubtaskStateSucceed)
 	// 2. stepTwo
 	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil)
@@ -68,7 +68,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	checkSubtasks(proto.StepTwo, proto.SubtaskStatePending)
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	executor.Run(&proto.StepResource{})
+	executor.Run()
 	checkSubtasks(proto.StepTwo, proto.SubtaskStateSucceed)
 }
 

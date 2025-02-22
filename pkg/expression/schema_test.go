@@ -34,7 +34,7 @@ func generateKeys4Schema(schema *Schema) {
 	for i := 0; i < keyCount; i++ {
 		keys = append(keys, []*Column{schema.Columns[i]})
 	}
-	schema.Keys = keys
+	schema.PKOrUK = keys
 }
 
 // generateSchema will generate a schema for test. Used only in this file.
@@ -63,16 +63,16 @@ func TestSchemaClone(t *testing.T) {
 	clonedSchema := schema.Clone()
 	require.Equal(t, schema.String(), clonedSchema.String())
 
-	require.NotSame(t, unsafe.SliceData(schema.Keys), unsafe.SliceData(clonedSchema.Keys))
-	require.NotSame(t, unsafe.SliceData(schema.UniqueKeys), unsafe.SliceData(clonedSchema.UniqueKeys))
+	require.NotSame(t, unsafe.SliceData(schema.PKOrUK), unsafe.SliceData(clonedSchema.PKOrUK))
+	require.NotSame(t, unsafe.SliceData(schema.NullableUK), unsafe.SliceData(clonedSchema.NullableUK))
 }
 
 func TestSchemaString(t *testing.T) {
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [] Unique key: []", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] PKOrUK: [] NullableUK: []", schema.String())
 	generateKeys4Schema(schema)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [[Column#1],[Column#2],[Column#3],[Column#4]] Unique key: []", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] PKOrUK: [[Column#1],[Column#2],[Column#3],[Column#4]] NullableUK: []", schema.String())
 }
 
 func TestSchemaRetrieveColumn(t *testing.T) {

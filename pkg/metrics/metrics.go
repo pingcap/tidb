@@ -45,6 +45,7 @@ const (
 	LabelGCWorker   = "gcworker"
 	LabelAnalyze    = "analyze"
 	LabelWorkerPool = "worker-pool"
+	LabelStats      = "stats"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -97,6 +98,10 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
+	// For now, those metrics are initialized but not registered.
+	// They will be printed to log during restoring...
+	InitBRMetrics()
+
 	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -117,8 +122,8 @@ func InitMetrics() {
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
 func RegisterMetrics() {
 	// use new go collector
-	prometheus.DefaultRegisterer.Unregister(prometheus.NewGoCollector())
-	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
+	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))
 
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
@@ -287,6 +292,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
 	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(InfoSchemaV2CacheObjCnt)
 	prometheus.MustRegister(TableByNameDuration)
 
 	prometheus.MustRegister(BindingCacheHitCounter)
@@ -295,6 +301,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
+
+	prometheus.MustRegister(NetworkTransmissionStats)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

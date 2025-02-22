@@ -35,8 +35,6 @@ import (
 // KVEncoder encodes a row of data into a KV pair.
 type KVEncoder interface {
 	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
-	// GetColumnSize returns the size of each column in the current encoder.
-	GetColumnSize() map[int64]int64
 	io.Closer
 }
 
@@ -89,10 +87,6 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	}
 
 	return en.Record2KV(record, row, rowID)
-}
-
-func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
-	return en.SessionCtx.GetColumnSize(en.TableMeta().ID)
 }
 
 // todo merge with code in load_data.go

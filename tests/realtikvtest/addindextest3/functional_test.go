@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -24,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -45,7 +46,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
@@ -69,7 +70,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t all columns;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 19, size)
@@ -84,8 +85,21 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0, 0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	var realJob *model.Job
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
+			realJob = job.Clone()
+		}
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	require.NotNil(t, realJob)
+
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	require.NoError(t, err)
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
@@ -105,10 +119,12 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	ingest.LitBackCtxMgr.Unregister(1)
+	bCtx.Close()
+	bd.Close()
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
+	t.Skip("TODO(tangenta): support memory tracking later")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -125,7 +141,7 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
@@ -142,4 +158,120 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	rows = tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 2, 2));").Rows()
 	rs = rows[0][0].(string)
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
+}
+
+func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	var splitKeyHex [][]byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
+		for _, k := range splitKeys {
+			splitKeyHex = append(splitKeyHex, bytes.Clone(k))
+		}
+	})
+	checkSplitKeys := func(idxID int64, count int, reset bool) {
+		cnt := 0
+		for _, k := range splitKeyHex {
+			indexID, err := tablecodec.DecodeIndexID(k)
+			if err == nil && indexID == idxID {
+				cnt++
+			}
+		}
+		require.Equal(t, count, cnt, splitKeyHex)
+		if reset {
+			splitKeyHex = nil
+		}
+	}
+	var idxID int64
+	nextIdxID := func() int64 {
+		idxID++
+		return idxID
+	}
+	resetIdxID := func() {
+		idxID = 0
+	}
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	retRows := tk.MustQuery("show table t regions;").Rows()
+	require.Len(t, retRows, 1)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = 4;")
+	checkSplitKeys(nextIdxID(), 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(nextIdxID(), 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) /*T![pre_split] pre_split_regions = (by (10000), (20000), (30000)) */;")
+	checkSplitKeys(nextIdxID(), 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(nextIdxID(), 2, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	nextID := nextIdxID()
+	checkSplitKeys(nextID, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|nextID, 3, true)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	// Test partition tables.
+	resetIdxID()
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(nextIdxID(), 3*4, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(nextIdxID(), 2*4, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(nextIdxID(), 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	resetIdxID()
+	tk.MustExec("drop table t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("create table t (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("alter table t add unique index p_a (a) global pre_split_regions = (by (5), (15));")
+	checkSplitKeys(tablecodec.TempIndexPrefix|nextIdxID(), 2, true)
+}
+
+func TestAddIndexPresplitFunctional(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 0);",
+		"Split index region num should be greater than 0")
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 10000);",
+		"Split index region num exceeded the limit 1000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr", "2*return")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10, 1);")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
+	tk.MustExec("drop table t;")
 }

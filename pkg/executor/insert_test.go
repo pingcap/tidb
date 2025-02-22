@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -240,6 +240,24 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 		"<nil>/<nil>/x/1.2",
 		"<nil>/<nil>/x/1.2"))
 
+	// Test issue 56829
+	tk.MustExec(`
+		CREATE TABLE cache (
+			cache_key varchar(512) NOT NULL,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			expired_at datetime GENERATED ALWAYS AS (if(expires > 0, date_add(updated_at, interval expires second), date_add(updated_at, interval 99 year))) VIRTUAL,
+			expires int(11),
+			PRIMARY KEY (cache_key) /*T![clustered_index] CLUSTERED */,
+			KEY idx_c_on_expired_at (expired_at)
+		)`)
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("admin check table cache")
+	rs1 := tk.MustQuery("select cache_key, expired_at from cache use index() order by cache_key")
+	rs2 := tk.MustQuery("select cache_key, expired_at from cache use index(idx_c_on_expired_at) order by cache_key")
+	require.True(t, rs1.Equal(rs2.Rows()))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
@@ -417,7 +435,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+	for _, enable := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 		tk.Session().GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")

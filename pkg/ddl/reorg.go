@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -225,7 +226,7 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.Exchang
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
 func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
 	rowEncoder := &rowcodec.Encoder{
-		Enable: variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1,
+		Enable: vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1,
 	}
 
 	encodingConfig := tblctx.RowEncodingConfig{
@@ -241,7 +242,7 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
 		shardID: variable.NewRowIDShardGenerator(
 			rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404
-			variable.DefTiDBShardAllocateStep,
+			vardef.DefTiDBShardAllocateStep,
 		),
 	}
 }
@@ -511,12 +512,26 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			label = metrics.LblAddIndex
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		idxNames := ""
+		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
+		} else {
+			idxNames = getIdxNamesFromArgs(args)
+		}
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		colName := ""
+		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
+		} else {
+			colName = args.OldColumnName.O
+		}
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
 }
 
@@ -598,7 +613,7 @@ func (r *reorgInfo) NewJobContext() *ReorgContext {
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
-		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+		isEnabled = r.ReorgMeta != nil && r.ReorgMeta.IsFastReorg
 	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +

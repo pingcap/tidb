@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -39,7 +39,7 @@ import (
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -53,7 +53,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
 	task := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
@@ -142,7 +142,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id bigint auto_random primary key)")
@@ -153,12 +153,12 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
 
 	sch := schManager.MockScheduler(task)
-	ext, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
-	ext.(*ddl.BackfillingSchedulerExt).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
-	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", 0, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	execIDs := []string{":4000"}
@@ -262,7 +262,7 @@ func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
-	ext := &ddl.BackfillingSchedulerExt{}
+	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
@@ -270,7 +270,7 @@ func TestGetNextStep(t *testing.T) {
 		task.Step = nextStep
 	}
 	// 2. global sort mode
-	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
+	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
@@ -284,9 +284,9 @@ func createAddIndexTask(t *testing.T,
 	tblName string,
 	taskType proto.TaskType,
 	useGlobalSort bool) *proto.Task {
-	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)

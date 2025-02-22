@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	goerrors "errors"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -23,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -92,7 +92,7 @@ type BaseScheduler struct {
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := log.L().With(zap.Int64("task-id", task.ID),
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type),
 		zap.Bool("allocated-slots", param.allocatedSlots))
 	if intest.InTest {
@@ -178,7 +178,7 @@ func (s *BaseScheduler) scheduleTask() {
 		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 		err := s.refreshTaskIfNeeded()
 		if err != nil {
-			if errors.Cause(err) == storage.ErrTaskNotFound {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				// this can happen when task is reverted/succeed, but before
 				// we reach here, cleanup routine move it to history.
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
@@ -402,9 +402,40 @@ func (s *BaseScheduler) onRunning() error {
 
 // onModifying is called when task is in modifying state.
 // the first return value indicates whether the scheduler should be recreated.
-func (*BaseScheduler) onModifying() (bool, error) {
-	// TODO: implement me
-	panic("implement me")
+func (s *BaseScheduler) onModifying() (bool, error) {
+	task := s.getTaskClone()
+	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	recreateScheduler := false
+	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
+	for _, m := range task.ModifyParam.Modifications {
+		if m.Type == proto.ModifyConcurrency {
+			if task.Concurrency == int(m.To) {
+				// shouldn't happen normally.
+				s.logger.Info("task concurrency not changed, skip", zap.Int("concurrency", task.Concurrency))
+				continue
+			}
+			s.logger.Info("modify task concurrency", zap.Int("from", task.Concurrency), zap.Int64("to", m.To))
+			recreateScheduler = true
+			task.Concurrency = int(m.To)
+		} else {
+			metaModifies = append(metaModifies, m)
+		}
+	}
+	if len(metaModifies) > 0 {
+		s.logger.Info("modify task meta", zap.Stringers("modifies", metaModifies))
+		newMeta, err := s.ModifyMeta(task.Meta, metaModifies)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		task.Meta = newMeta
+	}
+	if err := s.taskMgr.ModifiedTask(s.ctx, task); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.State = task.ModifyParam.PrevState
+	task.ModifyParam = proto.ModifyParam{}
+	s.task.Store(task)
+	return recreateScheduler, nil
 }
 
 func (s *BaseScheduler) onFinished() {
@@ -437,6 +468,12 @@ func (s *BaseScheduler) switch2NextStep() error {
 	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
+	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
+		// calculate the number of subtasks, so we need to do this before
+		// filtering nodes by available slots in scheduleSubtask.
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
 	}
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
@@ -483,7 +520,17 @@ func (s *BaseScheduler) scheduleSubTask(
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
-		// we assign the subtask to the instance in a round-robin way.
+		// our schedule target is to maximize the resource usage of all nodes while
+		// fulfilling the target of schedule tasks in the task order, we will try
+		// to pack the subtasks of different tasks onto as minimal number of nodes
+		// as possible, to allow later tasks of higher concurrency can be scheduled
+		// and run, so we order nodes, see TaskManager.GetAllNodes and assign the
+		// subtask to the instance in a round-robin way.
+		// for example:
+		//   - we have 2 node N1 and N2 of 8 cores.
+		//   - we have 2 tasks T1 and T2, each is of thread 4 and have 1 subtask.
+		//   - subtasks of T1 and T2 are all scheduled to N1
+		//   - later we have a task T3 of thread 8, we can schedule it to N2.
 		pos := i % len(adjustedEligibleNodes)
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
@@ -511,7 +558,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
 		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
-			if errors.Cause(err) == storage.ErrUnstableSubtasks {
+			if goerrors.Is(err, storage.ErrUnstableSubtasks) {
 				return false, err
 			}
 			return true, err

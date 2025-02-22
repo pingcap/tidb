@@ -34,10 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -102,10 +105,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   pmodel.MediumPriorityValue,
+			Priority:   ast.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  ast.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -762,7 +765,7 @@ func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    pmodel.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -993,6 +996,60 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 		return errors.Trace(err)
 	})
 	return errors.Trace(err)
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error, hintMaxDBID int64) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	idBatch := math.MaxInt64
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+	if hintMaxDBID == 0 {
+		concurrency = 1
+	} else {
+		idBatch = max(int(hintMaxDBID)/concurrency+1, 1)
+	}
+
+	mu := sync.Mutex{}
+	for i := 0; i < concurrency; i++ {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := DBkey(int64(i * idBatch))
+			endKey := DBkey(int64((i + 1) * idBatch))
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
 }
 
 // GetMetasByDBID return all meta information of a database.
@@ -1228,7 +1285,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}, nil
 }
 
@@ -1788,4 +1845,26 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// This function is only used by infoschema v2 currently.
+func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
+	key := codec.EncodeUint(ek, uint64(structure.StringData))
+	mvccResp, err := h.GetMvccByEncodedKeyWithTS(key, math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
+		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
+	}
+
+	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
+	var n int64
+	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
+	return n, errors.Trace(err)
 }

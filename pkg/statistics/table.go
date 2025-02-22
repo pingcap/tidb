@@ -50,7 +50,7 @@ var (
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
-	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
 	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
@@ -84,19 +84,20 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
 	checked     bool
 	colAnalyzed map[int64]bool
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -118,6 +119,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -125,6 +128,16 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	}
 	analyzed, ok := m.colAnalyzed[id]
 	return ok && analyzed
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.idxAnalyzed[id]
+		return ok
+	}
+	_, ok := m.colAnalyzed[id]
+	return ok
 }
 
 // InsertCol inserts a column with its meta into the map.
@@ -222,10 +235,7 @@ type HistColl struct {
 
 	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
 	StatsVer int
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Pseudo         bool
+	Pseudo   bool
 
 	/*
 		Fields below are only used in a query, like for estimation, and they will be useless when stored in
@@ -247,12 +257,11 @@ type HistColl struct {
 }
 
 // NewHistColl creates a new HistColl.
-func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
+func NewHistColl(id int64, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
 	return &HistColl{
 		columns:            make(map[int64]*Column, colNum),
 		indices:            make(map[int64]*Index, idxNum),
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -263,12 +272,11 @@ func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, co
 }
 
 // NewHistCollWithColsAndIdxs creates a new HistColl with given columns and indices.
-func NewHistCollWithColsAndIdxs(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
+func NewHistCollWithColsAndIdxs(id int64, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
 	return &HistColl{
 		columns:            cols,
 		indices:            idxs,
 		PhysicalID:         id,
-		HavePhysicalID:     havePhysicalID,
 		RealtimeCount:      realtimeCnt,
 		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
@@ -331,13 +339,15 @@ func (coll *HistColl) IdxNum() int {
 }
 
 // DelCol deletes the column with the given id.
-func (coll *HistColl) DelCol(id int64) {
-	delete(coll.columns, id)
+func (t *Table) DelCol(id int64) {
+	delete(t.columns, id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
-func (coll *HistColl) DelIdx(id int64) {
-	delete(coll.indices, id)
+func (t *Table) DelIdx(id int64) {
+	delete(t.indices, id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -580,14 +590,13 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        make(map[int64]*Column, len(t.columns)),
-		indices:        make(map[int64]*Index, len(t.indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       make(map[int64]*Column, len(t.columns)),
+		indices:       make(map[int64]*Index, len(t.indices)),
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	for id, col := range t.columns {
 		newHistColl.columns[id] = col.Copy()
@@ -622,14 +631,13 @@ func (t *Table) Copy() *Table {
 // The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		RealtimeCount:  t.RealtimeCount,
-		columns:        t.columns,
-		indices:        t.indices,
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-		StatsVer:       t.StatsVer,
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
 	}
 	nt := &Table{
 		HistColl:              newHistColl,
@@ -819,16 +827,18 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to force to load the stats.
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, true, true
+		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
 	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
-	// The real check condition: !ok && !hashAnalyzed.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
 	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false
@@ -915,12 +925,11 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 		}
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		columns:        cols,
+		PhysicalID:    coll.PhysicalID,
+		Pseudo:        coll.Pseudo,
+		RealtimeCount: coll.RealtimeCount,
+		ModifyCount:   coll.ModifyCount,
+		columns:       cols,
 	}
 	return newColl
 }
@@ -981,7 +990,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	}
 	newColl := &HistColl{
 		PhysicalID:         coll.PhysicalID,
-		HavePhysicalID:     coll.HavePhysicalID,
 		Pseudo:             coll.Pseudo,
 		RealtimeCount:      coll.RealtimeCount,
 		ModifyCount:        coll.ModifyCount,
@@ -1003,7 +1011,6 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	pseudoHistColl := HistColl{
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
-		HavePhysicalID:    true,
 		columns:           make(map[int64]*Column, 2),
 		indices:           make(map[int64]*Index, 2),
 		Pseudo:            true,

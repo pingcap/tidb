@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -212,7 +212,8 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -222,7 +223,13 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -309,7 +316,8 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -319,7 +327,13 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -386,7 +400,8 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -396,7 +411,13 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(val)
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -461,7 +482,8 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -475,7 +497,13 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				return err
 			}
 			b.hashSet.Insert(string(key))
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -545,7 +573,8 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -555,7 +584,13 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val.CoreTime()] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -620,7 +655,8 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -630,7 +666,13 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 				continue
 			}
 			b.hashSet[val.Duration] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -1026,11 +1068,39 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.GetVar),
+	sf := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return convertReadonlyVarToConst(ctx, sf), nil
+}
+
+// convertReadonlyVarToConst tries to convert the readonly user variables to constants.
+func convertReadonlyVarToConst(ctx BuildContext, getVar *ScalarFunction) Expression {
+	arg0, isConst := getVar.GetArgs()[0].(*Constant)
+	if !isConst || arg0.DeferredExpr != nil {
+		return getVar
+	}
+	varName := arg0.Value.GetString()
+	isReadonly := ctx.IsReadonlyUserVar(varName)
+	if !isReadonly {
+		return getVar
+	}
+	v, err := getVar.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		intest.Assert(false, "readonly user variable should not meet error when executing.")
+		return getVar
+	}
+	d, ok := ctx.GetEvalCtx().GetUserVarsReader().GetUserVarVal(varName)
+	if ok && d.Kind() == types.KindBinaryLiteral {
+		v.SetBinaryLiteral(v.GetBytes())
+	}
+	return &Constant{
+		Value:        v,
+		RetType:      getVar.RetType,
+		DeferredExpr: nil,
+	}
 }
 
 type getVarFunctionClass struct {

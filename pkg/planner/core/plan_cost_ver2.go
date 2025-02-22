@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -163,30 +163,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
 	} else if !p.isChildOfIndexLookUp {
-		// Apply cost penalty for full scans that carry high risk of underestimation
-		sessionVars := p.SCtx().GetSessionVars()
-		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
-		tblColHists := p.tblColHists
-
-		// hasUnreliableStats is a check for pseudo or zero stats
-		hasUnreliableStats := tblColHists.Pseudo || tblColHists.RealtimeCount < 1
-		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
-		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
-		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
-		var unsignedIntHandle bool
-		if p.Table.PKIsHandle {
-			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-
-		shouldApplyPenalty := hasFullRangeScan && preferRangeScanCondition
-		if shouldApplyPenalty {
-			newRowCount := max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+		newRowCount := getTableScanPenalty(p, rows)
+		if newRowCount > 0 {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
@@ -284,7 +262,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	}
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
-	tableRows := getCardinality(p.indexPlan, option.CostFlag)
+	tableRows := getCardinality(p.tablePlan, option.CostFlag)
 	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
 	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -409,7 +387,7 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
-	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
+	oomUseTmpStorage := vardef.EnableTmpStorageOnOOM.Load()
 	memQuota := p.SCtx().GetSessionVars().MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
 		oomUseTmpStorage && // spill is enabled
@@ -933,6 +911,65 @@ func doubleReadCostVer2(option *optimizetrace.PlanCostOption, numTasks float64, 
 	return costusage.NewCostVer2(option, requestFactor,
 		numTasks*requestFactor.Value,
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
+}
+
+func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
+	// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
+	// that are the child of an index scan or child is TableRangeScan
+	if len(p.rangeInfo) > 0 {
+		return float64(0)
+	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+	if !hasFullRangeScan {
+		return float64(0)
+	}
+
+	sessionVars := p.SCtx().GetSessionVars()
+	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
+	tblColHists := p.tblColHists
+	originalRows := int64(tblColHists.GetAnalyzeRowCount())
+
+	// hasUnreliableStats is a check for pseudo or zero stats
+	hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
+	// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
+	hasHighModifyCount := tblColHists.ModifyCount > originalRows
+	// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
+	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
+	// preferRangeScan check here is same as in skylinePruning
+	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
+
+	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+	hasPartitionScan := false
+	if p.PlanPartInfo != nil {
+		if len(p.PlanPartInfo.PruningConds) > 0 {
+			hasPartitionScan = true
+		}
+	}
+
+	// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
+	// penalty is applied to a full table scan (not range scan). This may also penalize a
+	// full table scan where USE/FORCE was applied to the primary key.
+	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
+	shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
+	if shouldApplyPenalty {
+		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
+		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
+		// both, and it also applies to any full table scan in the query. Use "max" to get the minimum
+		// number of rows to add as a penalty to the table scan.
+		minRows := max(MaxPenaltyRowCount, rows)
+		if hasPartitionScan {
+			return minRows
+		}
+		// If it isn't a partitioned table - choose the max that includes ModifyCount
+		return max(minRows, float64(tblColHists.ModifyCount))
+	}
+	return float64(0)
 }
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.

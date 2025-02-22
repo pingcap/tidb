@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
@@ -118,13 +118,14 @@ type Manager struct {
 		// in task order
 		schedulers []Scheduler
 	}
+	nodeRes *proto.NodeResource
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Manager {
-	logger := log.L()
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
-		logger = log.L().With(zap.String("server-id", serverID))
+		logger = logger.With(zap.String("server-id", serverID))
 	}
 	subCtx, cancel := context.WithCancel(ctx)
 	slotMgr := newSlotManager()
@@ -144,6 +145,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 		}),
 		logger:   logger,
 		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 
@@ -213,6 +215,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
+		failpoint.InjectCall("beforeGetSchedulableTasks")
 		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
 			continue
@@ -272,7 +275,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
 			if !ok {
-				// task of lower rank might be able to be scheduled.
+				// task of low ranking might be able to be scheduled.
 				continue
 			}
 		// reverting/cancelling/pausing/modifying, we don't allocate slots for them.
@@ -332,6 +335,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		slotMgr:        sm.slotMgr,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
+		nodeRes:        sm.nodeRes,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))

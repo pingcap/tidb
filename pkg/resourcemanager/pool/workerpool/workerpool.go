@@ -16,12 +16,15 @@ package workerpool
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // TaskMayPanic is a type to remind the developer that need to handle panic in
@@ -39,6 +42,10 @@ type Worker[T TaskMayPanic, R any] interface {
 	Close()
 }
 
+type tuneConfig struct {
+	wg *sync.WaitGroup
+}
+
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
 	ctx           context.Context
@@ -49,7 +56,7 @@ type WorkerPool[T TaskMayPanic, R any] struct {
 	runningTask   atomicutil.Int32
 	taskChan      chan T
 	resChan       chan R
-	quitChan      chan struct{}
+	quitChan      chan tuneConfig
 	wg            tidbutil.WaitGroupWrapper
 	createWorker  func() Worker[T, R]
 	lastTuneTs    atomicutil.Time
@@ -80,7 +87,7 @@ func NewWorkerPool[T TaskMayPanic, R any](
 		name:          name,
 		numWorkers:    int32(numWorkers),
 		originWorkers: int32(numWorkers),
-		quitChan:      make(chan struct{}),
+		quitChan:      make(chan tuneConfig),
 	}
 
 	for _, opt := range opts {
@@ -156,8 +163,11 @@ func (p *WorkerPool[T, R]) runAWorker() {
 					return
 				}
 				p.handleTaskWithRecover(w, task)
-			case <-p.quitChan:
+			case cfg, ok := <-p.quitChan:
 				w.Close()
+				if ok {
+					cfg.wg.Done()
+				}
 				return
 			case <-p.ctx.Done():
 				w.Close()
@@ -181,7 +191,9 @@ func (p *WorkerPool[T, R]) GetResultChan() <-chan R {
 }
 
 // Tune tunes the pool to the specified number of workers.
-func (p *WorkerPool[T, R]) Tune(numWorkers int32) {
+// wait: whether to wait for all workers to close when reducing workers count.
+// this method can only be called after Start.
+func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -196,8 +208,21 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32) {
 		}
 	} else if diff < 0 {
 		// Remove workers
+		var wg sync.WaitGroup
+	outer:
 		for i := 0; i < int(-diff); i++ {
-			p.quitChan <- struct{}{}
+			wg.Add(1)
+			select {
+			case p.quitChan <- tuneConfig{wg: &wg}:
+			case <-p.ctx.Done():
+				logutil.BgLogger().Info("context done when tuning worker pool",
+					zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
+				wg.Done()
+				break outer
+			}
+		}
+		if wait {
+			wg.Wait()
 		}
 	}
 	p.numWorkers = numWorkers

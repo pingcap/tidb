@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -163,7 +163,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("a"),
+		Name:         ast.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -174,7 +174,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         pmodel.NewCIStr("b"),
+		Name:         ast.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -184,7 +184,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -194,11 +194,11 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr("key_b"),
-		Table: pmodel.NewCIStr(""),
+		Name:  ast.NewCIStr("key_b"),
+		Table: ast.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   pmodel.NewCIStr("b"),
+				Name:   ast.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -209,7 +209,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       pmodel.NewCIStr("a"),
+		Name:       ast.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -351,7 +351,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("a"),
+		Name:         ast.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -362,7 +362,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         pmodel.NewCIStr("b"),
+		Name:         ast.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -373,7 +373,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -383,11 +383,11 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr("uni_b"),
-		Table: pmodel.NewCIStr(""),
+		Name:  ast.NewCIStr("uni_b"),
+		Table: ast.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   pmodel.NewCIStr("b"),
+				Name:   ast.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -398,7 +398,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       pmodel.NewCIStr("a"),
+		Name:       ast.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -706,5 +706,19 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                \x1b[0m|\n" +
 		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_view`   \x1b[0m|\n" +
 		"+---+---------------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
+
+	em.schema = "long_long_long_long_long_long_long_long_dbname"
+	output = em.Output()
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                                                   |\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`type_error_v2`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`syntax_error_v2` \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                                                    \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `long_long_long_long_long_long_long_long_dbname`.`conflict_view`   \x1b[0m|\n" +
+		"+---+---------------------+-------------+--------------------------------------------------------------------+\n"
 	require.Equal(t, expected, output)
 }

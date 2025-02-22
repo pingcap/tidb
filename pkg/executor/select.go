@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -976,12 +977,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
+	switch vardef.OOMAction.Load() {
+	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
+	case vardef.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
@@ -992,7 +993,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+	if vardef.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
 		if GlobalDiskUsageTracker != nil {
 			vars.DiskTracker.AttachTo(GlobalDiskUsageTracker)
@@ -1007,7 +1008,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		goCtx := context.Background()
-		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+		if vardef.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
@@ -1049,6 +1050,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	inImportInto := false
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
@@ -1077,12 +1079,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			!strictSQLMode || stmt.IgnoreErr,
 		)
 		sc.Priority = stmt.Priority
-		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
-			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
-				!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode || stmt.IgnoreErr ||
-				vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetTypeFlags(util.GetTypeFlagsForInsert(sc.TypeFlags(), vars.SQLMode, stmt.IgnoreErr))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -1096,6 +1093,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+	case *ast.ImportIntoStmt:
+		inImportInto = true
+		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1153,18 +1153,19 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// WithAllowNegativeToUnsigned with false value indicates values less than 0 should be clipped to 0 for unsigned integer types.
 		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !inImportInto && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
 	)
 
 	vars.PlanCacheParams.Reset()
-	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&vardef.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}
-	if vars.StmtCtx.LastInsertID > 0 {
+	if vars.StmtCtx.LastInsertIDSet {
 		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
 	} else {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
+	sc.LastInsertIDSet = false
 	sc.PrevAffectedRows = 0
 	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
@@ -1205,6 +1206,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DurationWaitTS = 0
 	vars.CurrInsertBatchExtraCols = nil
 	vars.CurrInsertValues = chunk.Row{}
+	ctx.GetPlanCtx().Reset()
 
 	return
 }
