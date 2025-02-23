@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -36,7 +35,7 @@ import (
 )
 
 func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
-	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", nil)
+	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, "", 0, nil)
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
@@ -57,7 +56,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
-	executor := factory(ctx, task, taskexecutor.NewParamForTest(mgr, nil, taskexecutor.NewNodeResource(16, 32*units.GiB), ":4000"))
+	executor := factory(ctx, task, taskexecutor.NewParamForTest(mgr, nil, proto.NodeResourceForTest, ":4000"))
 	executor.Run()
 	checkSubtasks(proto.StepOne, proto.SubtaskStateSucceed)
 	// 2. stepTwo

@@ -109,8 +109,8 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.3.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250207065327-ec9ad0fd70cf
-	github.com/tikv/pd/client v0.0.0-20250205134827-ac4e640fac03
+	github.com/tikv/client-go/v2 v2.0.8-0.20250214064015-a805ea84f300
+	github.com/tikv/pd/client v0.0.0-20250213082949-e8930327be42
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -134,7 +134,7 @@ require (
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/net v0.34.0
 	golang.org/x/oauth2 v0.25.0
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.11.0
 	golang.org/x/sys v0.30.0
 	golang.org/x/term v0.28.0
 	golang.org/x/text v0.21.0

@@ -50,7 +50,7 @@ var (
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
-	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
 	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)

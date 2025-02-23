@@ -886,17 +886,14 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
-		return
-	}
-
+// TableItemByID implements the InfoSchema interface.
+// It only contains memory operations, no worries about accessing the storage.
+func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	itm, ok := is.searchTableItemByID(tableID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-
-	return itm.dbName, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
 }
 
 // TableItem is exported from tableItem.
@@ -1258,9 +1255,7 @@ func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	var ok bool
-	var pi partitionItem
+func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi partitionItem, ok bool) {
 	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
@@ -1271,12 +1266,37 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 				return true
 			}
 			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
 				pi = item
+				ok = !item.tomb
 				return false
 			}
 			return true
-		})
+		},
+	)
+	return pi, ok
+}
+
+// TableItemByPartitionID implements InfoSchema.TableItemByPartitionID.
+// It returns the lightweight meta info, no worries about access the storage.
+func (is *infoschemaV2) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return TableItem{}, false
+	}
+	return is.TableItemByID(pi.tableID)
+}
+
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return
+	}
+	return pi.tableID, true
+}
+
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return nil, nil, nil
 	}

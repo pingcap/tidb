@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -88,8 +87,7 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-	sPool util.SessionPool
-
+	sPool        util.DestroyableSessionPool
 	bindingCache BindingCache
 
 	// lastTaskTime records the last update time for the global sql bind cache.
@@ -121,7 +119,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
 	h := &globalBindingHandle{sPool: sPool}
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.bindingCache = newBindCache()
@@ -427,7 +425,7 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
-	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	bindSQL := RestoreDBForBinding(stmtNode, defaultDB)
 	if bindSQL == "" {
 		return ""
 	}
@@ -484,6 +482,9 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.sPool.Put(resource)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.sPool.Destroy(resource)
 		}
 	}()
 	sctx := resource.(sessionctx.Context)

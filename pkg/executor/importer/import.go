@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,6 +52,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -229,6 +231,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -749,6 +752,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true
+	}
+
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.

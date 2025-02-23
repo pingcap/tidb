@@ -24,32 +24,34 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-var _ rule.Rule = &XFDeCorrelateApply{}
+var _ rule.Rule = &XFDeCorrelateSimpleApply{}
 
-// XFDeCorrelateApply pull the correlated expression from projection as child of apply.
-type XFDeCorrelateApply struct {
-	*rule.BaseRule
+// XFDeCorrelateSimpleApply pull the correlated expression from projection as child of apply.
+type XFDeCorrelateSimpleApply struct {
+	*XFDeCorrelateApplyBase
 }
 
-// NewXFDeCorrelateApply creates a new XFDeCorrelateApply rule.
-func NewXFDeCorrelateApply() *XFDeCorrelateApply {
+// NewXFDeCorrelateSimpleApply creates a new XFDeCorrelateSimpleApply rule.
+func NewXFDeCorrelateSimpleApply() *XFDeCorrelateSimpleApply {
 	pa := pattern.NewPattern(pattern.OperandApply, pattern.EngineTiDBOnly)
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly), pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly))
-	return &XFDeCorrelateApply{
-		BaseRule: rule.NewBaseRule(rule.XFDeCorrelateApply, pa),
+	return &XFDeCorrelateSimpleApply{
+		XFDeCorrelateApplyBase: &XFDeCorrelateApplyBase{BaseRule: rule.NewBaseRule(rule.XFDeCorrelateSimpleApply, pa)},
 	}
 }
 
-// Match implements the Rule interface.
-func (*XFDeCorrelateApply) Match(_ corebase.LogicalPlan) bool {
-	return true
+// ID implement the Rule interface.
+func (*XFDeCorrelateSimpleApply) ID() uint {
+	return uint(rule.XFDeCorrelateSimpleApply)
 }
 
 // XForm implements the Rule interface.
-func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, error) {
+func (*XFDeCorrelateSimpleApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.LogicalPlan, bool, error) {
 	children := applyGE.Children()
-	outerPlanGE := children[0]
 	innerPlanGE := children[1]
+	outerPlanGE := children[0]
+	// remove means whether the intermediary apply should be removed from memo
+	remove := applyGE.GetWrappedLogicalPlan().(*logicalop.LogicalApply).HasFlag(logicalop.ApplyGenFromXFDeCorrelateRuleFlag)
 	// don't modify the apply op's CorCols in-place, which will change the hash64, apply should be re-inserted into the group otherwise.
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlanGE.GetWrappedLogicalPlan(), outerPlanGE.GetWrappedLogicalPlan().Schema())
 	if len(corCols) == 0 {
@@ -61,7 +63,7 @@ func (*XFDeCorrelateApply) XForm(applyGE corebase.LogicalPlan) ([]corebase.Logic
 		// set the new GE's stats to nil, since the inherited stats is not precious, which will be filled in physicalOpt.
 		clonedJoin.ReAlloc4Cascades(plancodec.TypeJoin, clonedJoin)
 		intest.Assert(clonedJoin.Children() != nil)
-		return []corebase.LogicalPlan{clonedJoin}, nil
+		return []corebase.LogicalPlan{clonedJoin}, remove, nil
 	}
-	return nil, nil
+	return nil, false, nil
 }

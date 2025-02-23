@@ -832,10 +832,10 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250207065327-ec9ad0fd70cf h1:29d0IsInoKFTV1uSG+kEkSOirehgQgBUKhhuS7FPJbM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250207065327-ec9ad0fd70cf/go.mod h1:cFnsaAL51WBriBNxWxBbrCah0qrbabiHZEt9Bjpwa+Y=
-github.com/tikv/pd/client v0.0.0-20250205134827-ac4e640fac03 h1:v9mPm/XbLEs5UzhVwh2dycqnSBpONW3ELCIG0PnNBjo=
-github.com/tikv/pd/client v0.0.0-20250205134827-ac4e640fac03/go.mod h1:K/lO6UoWfO5hBDq9ejzDS6ojVcz2FvyFSXfi+jorJEw=
+github.com/tikv/client-go/v2 v2.0.8-0.20250214064015-a805ea84f300 h1:imV8hMAanK2keUM3sTnVgZ3qEyjB1RJ/tU0vrz68vAM=
+github.com/tikv/client-go/v2 v2.0.8-0.20250214064015-a805ea84f300/go.mod h1:C6LbDj8IjVyDsZlXAcLA57sdDRIQVrHXkgALHx7hk5g=
+github.com/tikv/pd/client v0.0.0-20250213082949-e8930327be42 h1:hvB0tf4u5ZU1vAew3MmbyxdYuogDLjIZYzSFt1ACFqo=
+github.com/tikv/pd/client v0.0.0-20250213082949-e8930327be42/go.mod h1:veL5JbFL99G5cvS/Q2cLiFQklIiSrVgsBCwFnXc+Zgo=
 github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3 h1:y4mJRFlM6fUyPhoXuFg/Yu02fg/nIPFMOY8tOqppoFg=
 github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
@@ -1109,8 +1109,8 @@ golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJ
 golang.org/x/sync v0.1.0/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sync v0.3.0/go.mod h1:FU7BRWz2tNW+3quACPkgCx/L+uEAv1htQ0V83Z9Rj+Y=
 golang.org/x/sync v0.4.0/go.mod h1:FU7BRWz2tNW+3quACPkgCx/L+uEAv1htQ0V83Z9Rj+Y=
-golang.org/x/sync v0.10.0 h1:3NQrjDixjgGwUOCaF8w2+VYHv0Ve/vGYSbdkTa98gmQ=
-golang.org/x/sync v0.10.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
+golang.org/x/sync v0.11.0 h1:GGz8+XQP4FvTTrjZPzNKTMFtSXH80RAzG+5ghFPgK9w=
+golang.org/x/sync v0.11.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
 golang.org/x/sys v0.0.0-20180816055513-1c9583448a9c/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20181205085412-a5c9d58dba9a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
