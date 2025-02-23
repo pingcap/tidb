@@ -108,6 +108,8 @@ func BuildWindowFunctions(ctx AggFuncBuildContext, windowFuncDesc *aggregation.A
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
 		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, false)
+	case ast.AggFuncPercentileCont:
+		return buildPercentileCont(ctx.GetEvalCtx(), windowFuncDesc, ordinal)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
