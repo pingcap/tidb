@@ -164,6 +164,10 @@ var (
 
 	// TikvConfigLock protects against concurrent tikv config refresh
 	TikvConfigLock sync.Mutex
+
+	// EnableReadTSValidator is not a config item in TiDB config, but an emergency feature switch. So there has to
+	// be a global variable to prevent the value from being accidentally overridden by tikvcfg.StoreGlobalConfig()
+	EnableReadTSValidator atomic.Bool
 )
 
 // Config contains configuration options.
@@ -338,6 +342,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		EnableReadTSValidator: EnableReadTSValidator.Load(),
 	}
 }
 
@@ -1451,6 +1456,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
+	EnableReadTSValidator.Store(true)
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {

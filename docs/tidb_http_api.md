@@ -712,3 +712,10 @@ timezone.*
     $curl -X POST http://127.0.0.1:10080/upgrade/start
     "success!"
     ```
+
+41. Enable/disable the read ts validator
+
+    ```shell
+    curl -X POST -d "enable_read_ts_validator=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "enable_read_ts_validator=0" http://{TiDBIP}:10080/settings
+    ```

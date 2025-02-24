@@ -235,6 +235,8 @@ github.com/dolthub/swiss v0.2.1/go.mod h1:8AhKZZ1HK7g18j7v7k6c5cYIGEZJcPn0ARsai8
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250224132404-7329f64e77c7 h1:DOIxW5V/lR3dpJd18l16kfMLdva9rpWM/4BXcFd4b98=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250224132404-7329f64e77c7/go.mod h1:C6LbDj8IjVyDsZlXAcLA57sdDRIQVrHXkgALHx7hk5g=
 github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
@@ -832,8 +834,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250214064015-a805ea84f300 h1:imV8hMAanK2keUM3sTnVgZ3qEyjB1RJ/tU0vrz68vAM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250214064015-a805ea84f300/go.mod h1:C6LbDj8IjVyDsZlXAcLA57sdDRIQVrHXkgALHx7hk5g=
 github.com/tikv/pd/client v0.0.0-20250213082949-e8930327be42 h1:hvB0tf4u5ZU1vAew3MmbyxdYuogDLjIZYzSFt1ACFqo=
 github.com/tikv/pd/client v0.0.0-20250213082949-e8930327be42/go.mod h1:veL5JbFL99G5cvS/Q2cLiFQklIiSrVgsBCwFnXc+Zgo=
 github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3 h1:y4mJRFlM6fUyPhoXuFg/Yu02fg/nIPFMOY8tOqppoFg=

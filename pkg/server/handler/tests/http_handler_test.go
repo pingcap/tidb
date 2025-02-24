@@ -1524,3 +1524,43 @@ func TestIssue52608(t *testing.T) {
 	require.Equal(t, on, true)
 	require.Equal(t, addr[:10], "127.0.0.1:")
 }
+
+func TestSQLWorkloadSimulationForReadTSValidator(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	ts.prepareData(t)
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer db.Close()
+
+	// 1. normal query succeeds
+	_, err = db.Query("select * from tidb.test")
+	require.NoError(t, err)
+
+	// 2. Enable failpoint to simulate read TS validation failure. => query error
+	err = failpoint.Enable("tikvclient/failOnValidateReadTS", `return("validation failed")`)
+	require.NoError(t, err)
+	defer failpoint.Disable("tikvclient/failOnValidateReadTS")
+	_, err = db.Query("select * from tidb.test")
+	require.Error(t, err)
+
+	// 3. Disable the read TS validator via HTTP API. => query success
+	resp, err := ts.PostStatus("/settings", "application/x-www-form-urlencoded",
+		bytes.NewBuffer([]byte("enable_read_ts_validator=0")))
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	// The response body for disabling validator is empty.
+	require.Equal(t, "", string(body))
+	resp.Body.Close()
+	_, err = db.Query("select * from tidb.test")
+	require.NoError(t, err)
+
+	// 4. Enable the read TS validator again. => query failure
+	resp, err = ts.PostStatus("/settings", "application/x-www-form-urlencoded",
+		bytes.NewBuffer([]byte("enable_read_ts_validator=1")))
+	require.NoError(t, err)
+	_, err = db.Query("select * from tidb.test")
+	require.Error(t, err)
+}

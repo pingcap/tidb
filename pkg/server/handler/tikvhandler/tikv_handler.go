@@ -576,6 +576,18 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			config.StoreGlobalConfig(cfg)
 			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
 		}
+		if enableReadTSValidator := req.Form.Get("enable_read_ts_validator"); enableReadTSValidator != "" {
+			switch enableReadTSValidator {
+			case "0":
+				config.EnableReadTSValidator.Store(false)
+			case "1":
+				config.EnableReadTSValidator.Store(true)
+			default:
+				handler.WriteError(w, errors.New("illegal argument"))
+				return
+			}
+			config.UpdateGlobal(func(*config.Config) {})
+		}
 	} else {
 		handler.WriteData(w, config.GetGlobalConfig())
 	}
