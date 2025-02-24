@@ -325,14 +325,11 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	failpoint.Inject("handleOneItemTaskPanic", nil)
 	t := time.Now()
 	needUpdate := false
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
-=======
-	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
 	if stderrors.Is(err, errGetHistMeta) {
+		metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 		return nil
 	}
->>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614)):pkg/statistics/handle/syncload/stats_syncload.go
 	if err != nil {
 		return err
 	}
@@ -368,18 +365,6 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-=======
-	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
-	if err != nil {
-		return nil, err
-	}
-	if hg == nil {
-		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errGetHistMeta
-	}
->>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614)):pkg/statistics/handle/syncload/stats_syncload.go
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
@@ -444,9 +429,11 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`",
+			zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID),
+			zap.Bool("is_index", item.IsIndex))
+		return nil, errGetHistMeta
 	}
 	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
