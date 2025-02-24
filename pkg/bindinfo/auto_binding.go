@@ -76,10 +76,18 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 	var autoBindings []*AutoBindingInfo
 	for _, binding := range bindings {
 		stmt, err := h.getStmtStatsByDigestInCluster(digest)
-		//execInfo, err := h.getBindingExecInfo(binding.BindSQL)
-		autoBindings = append(autoBindings, &AutoBindingInfo{
-			Binding: binding,
-		})
+		if err != nil {
+			logutil.BgLogger().Error("getStmtStatsByDigestInCluster", zap.String("digest", digest), zap.Error(err))
+		}
+		autoBinding := &AutoBindingInfo{Binding: binding}
+		if stmt != nil && stmt.ExecCount > 0 {
+			autoBinding.AvgLatency = float64(stmt.TotalTime) / float64(stmt.ExecCount)
+			autoBinding.AvgScanRows = float64(stmt.ProcessedKeys) / float64(stmt.ExecCount)
+			autoBinding.AvgReturnedRows = float64(stmt.ResultRows) / float64(stmt.ExecCount)
+			autoBinding.LatencyPerReturnRow = autoBinding.AvgLatency / autoBinding.AvgReturnedRows
+			autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
+		}
+		autoBindings = append(autoBindings, autoBinding)
 	}
 
 	return autoBindings, nil
@@ -100,6 +108,7 @@ type StmtStats struct {
 	ResultRows    int64
 	ExecCount     int64
 	ProcessedKeys int64
+	TotalTime     int64
 }
 
 func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime time.Time) ([]*StmtStats, error) {
@@ -110,7 +119,7 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
-				result_rows, exec_count, processed_keys,
+				result_rows, exec_count, processed_keys, total_time
 				from information_schema.tidb_statement_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
 				plan_hint != "" and
@@ -141,6 +150,7 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime
 			ResultRows:      row.GetInt64(7),
 			ExecCount:       row.GetInt64(8),
 			ProcessedKeys:   row.GetInt64(9),
+			TotalTime:       row.GetInt64(10),
 		})
 	}
 	return
@@ -174,6 +184,7 @@ func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt
 		ResultRows:      row.GetInt64(7),
 		ExecCount:       row.GetInt64(8),
 		ProcessedKeys:   row.GetInt64(9),
+		TotalTime:       row.GetInt64(10),
 	}
 	return
 }
