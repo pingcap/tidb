@@ -22,6 +22,7 @@ func (h *globalBindingHandle) AutoRecordBindings(lastTime time.Time) (err error)
 
 	logutil.BgLogger().Info("RecordInactiveBindings", zap.Int("rows", len(stmts)))
 
+	bindings := make([]*Binding, 0, len(stmts))
 	for _, stmt := range stmts {
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(stmt.QuerySampleText, stmt.Charset, stmt.Collation)
@@ -41,11 +42,30 @@ func (h *globalBindingHandle) AutoRecordBindings(lastTime time.Time) (err error)
 		// TODO: calculate binding digest
 		bindingDigest := stmt.PlanDigest
 
-		// TODO: improve the write performance
+		bindings = append(bindings, &Binding{
+			BindingDigest: bindingDigest,
+			OriginalSQL:   originalSQL,
+			BindSQL:       bindSQL,
+			Db:            stmt.SchemaName,
+			Charset:       stmt.Charset,
+			Collation:     stmt.Collation,
+			SQLDigest:     sqlDigest.String(),
+			PlanDigest:    stmt.PlanDigest,
+		})
+	}
+
+	return h.writeAutoBindings(bindings)
+}
+
+func (h *globalBindingHandle) writeAutoBindings(bindings []*Binding) (err error) {
+	// TODO: improve the write performance
+	for _, binding := range bindings {
 		stmtInsert := fmt.Sprintf(`insert ignore into mysql.bind_info
-    (binding_digest, original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) values
+    (binding_digest, original_sql, bind_sql, default_db, status, create_time, update_time,
+    charset, collation, source, sql_digest, plan_digest) values
     ('%s', '%s', '%s', '%s', 'disabled', NOW(), NOW(), '%s', '%s', 'auto', '%s', '%s')`,
-			bindingDigest, originalSQL, bindSQL, stmt.SchemaName, stmt.Charset, stmt.Collation, sqlDigest, stmt.PlanDigest)
+			binding.BindSQL, binding.OriginalSQL, binding.BindSQL, binding.Db, binding.Charset,
+			binding.Collation, binding.SQLDigest, binding.PlanDigest)
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 			_, err = exec(sctx, stmtInsert)
 			return err
