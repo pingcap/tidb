@@ -289,16 +289,11 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	btreeSet(&isd.schemaID2Name, schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
-type referredFKWithVersion struct {
-	referredFKInfo *model.ReferredFKInfo
-	schemaVersion  int64
-}
-
 type referredForeignKeysHelper struct {
 	start           referredForeignKeyItem
 	schemaVersion   int64
 	prev            *referredForeignKeyItem
-	referredFKInfos []*referredFKWithVersion
+	referredFKInfos []*model.ReferredFKInfo
 }
 
 func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
@@ -316,10 +311,7 @@ func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
 	}
 	h.prev = item
 	if !item.tomb {
-		h.referredFKInfos = append(h.referredFKInfos, &referredFKWithVersion{
-			referredFKInfo: item.referredFKInfo,
-			schemaVersion:  item.schemaVersion,
-		})
+		h.referredFKInfos = append(h.referredFKInfos, item.referredFKInfo)
 	}
 	return true
 }
@@ -328,18 +320,20 @@ func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVer
 	helper := referredForeignKeysHelper{
 		start:           referredForeignKeyItem{dbName: schema, tableName: table, schemaVersion: math.MaxInt64},
 		schemaVersion:   schemaMetaVersion,
-		referredFKInfos: make([]*referredFKWithVersion, 0),
+		referredFKInfos: make([]*model.ReferredFKInfo, 0),
 	}
 	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
 
 	sort.Slice(helper.referredFKInfos, func(i, j int) bool {
-		return helper.referredFKInfos[i].schemaVersion < helper.referredFKInfos[j].schemaVersion
+		if helper.referredFKInfos[i].ChildSchema.L != helper.referredFKInfos[j].ChildSchema.L {
+			return helper.referredFKInfos[i].ChildSchema.L < helper.referredFKInfos[j].ChildSchema.L
+		}
+		if helper.referredFKInfos[i].ChildTable.L != helper.referredFKInfos[j].ChildTable.L {
+			return helper.referredFKInfos[i].ChildTable.L < helper.referredFKInfos[j].ChildTable.L
+		}
+		return helper.referredFKInfos[i].ChildFKName.L < helper.referredFKInfos[j].ChildFKName.L
 	})
-	res := make([]*model.ReferredFKInfo, 0, len(helper.referredFKInfos))
-	for _, item := range helper.referredFKInfos {
-		res = append(res, item.referredFKInfo)
-	}
-	return res
+	return helper.referredFKInfos
 }
 
 func (isd *Data) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
