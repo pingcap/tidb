@@ -773,3 +773,67 @@ _tidb_rowid
 1
 2
 3
+drop table if exists t__os6ctn5, t_ec8h6g9ac, t_y770lt10b0, t_hh6_ty;
+create table t__os6ctn5 (
+c_euu int unique ,
+c_tr0jvz8im double unique ,
+c_k76gntv int ,
+c_o46g text not null ,
+c_n9 text ,
+c_i double ,
+c_r9c tinyint ,
+primary key(c_euu, c_k76gntv) CLUSTERED
+) pre_split_regions=2;
+create table t_eeardo8_f (
+c_ejree int not null ,
+c__4y7wl4 text ,
+c_adpy2in int ,
+c_d2mi tinyint ,
+c_t4ureymjc double ,
+c_ub_1s91wi int ,
+c_mf10bmguf double ,
+c_xq6ved tinyint ,
+c_k int ,
+primary key(c_adpy2in, c_ub_1s91wi) NONCLUSTERED,
+check(0<>0)
+) shard_row_id_bits=8 pre_split_regions=5;
+create table t_y770lt10b0 (
+c_xkdhc2i7yy int not null ,
+c_mx5_w41em tinyint ,
+c_npf text not null ,
+c_oioj1ogum text ,
+c_key_npmrt9 tinyint ,
+c_ij double ,
+c_am85keno6 int ,
+c_vb tinyint ,
+primary key(c_am85keno6) CLUSTERED
+) pre_split_regions=2;
+create table t_hh6_ty (
+c_y3ddp41ho int not null ,
+c_g tinyint ,
+c_snna51z0c double unique ,
+c_e int unique ,
+c_o3m21nowl tinyint unique ,
+c_ckudqh1 int ,
+primary key(c_ckudqh1, c_e) CLUSTERED,
+check(('lmkkv' <=> 's2mxtyyji'))
+) pre_split_regions=3;
+select *
+from
+t_y770lt10b0 as ref_38
+where ((select c_g from t_hh6_ty order by c_g limit 1 offset 3)
+not in (
+(ref_38.c_xkdhc2i7yy in (
+select
+962640907 as c0
+from
+t_eeardo8_f as ref_39
+where (8728976873944539029 <= 1761299337))), (ref_38.c_xkdhc2i7yy <> (
+select
+-8441568 as c0
+from
+t__os6ctn5 as ref_40
+where (0<>0)
+or (1=1)
+order by c0 desc limit 1))));
+c_xkdhc2i7yy	c_mx5_w41em	c_npf	c_oioj1ogum	c_key_npmrt9	c_ij	c_am85keno6	c_vb
