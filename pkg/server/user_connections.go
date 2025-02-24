@@ -32,13 +32,13 @@ import (
 func (cc *clientConn) increaseUserConnectionsCount() error {
 	var (
 		user       = cc.ctx.GetSessionVars().User
-		targetUser = user.LoginString()
+		targetUser = user.String()
 		globaLimit = vardef.MaxUserConnectionsValue.Load()
 	)
 
 	// check the number of connections again.
 	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
-	userLimit, err := pm.GetUserResources(user.Username, user.Hostname)
+	userLimit, err := pm.GetUserResources(user.AuthUsername, user.AuthHostname)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func (cc *clientConn) increaseUserConnectionsCount() error {
 // decreaseUserConnectionCount decreases the count of connections when user logout the database.
 func (cc *clientConn) decreaseUserConnectionCount() {
 	user := cc.ctx.GetSessionVars().User
-	targetUser := user.LoginString()
+	targetUser := user.String()
 
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
@@ -84,7 +84,7 @@ func (cc *clientConn) decreaseUserConnectionCount() {
 
 // getUserConnectionCount gets the count of connections.
 func (cc *clientConn) getUserConnectionCount(user *auth.UserIdentity) int {
-	targetUser := user.LoginString()
+	targetUser := user.String()
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
 
