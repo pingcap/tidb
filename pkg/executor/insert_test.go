@@ -703,3 +703,20 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
 }
+
+func TestInsertNullIntoNotNullGenerated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t3(
+		id int primary key,
+		c1 varchar(16) default null,
+		c2 varchar(16) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL NOT NULL,
+		KEY idx (c2)
+	)`)
+	tk.MustExec(`insert into t3(id, c1) values(1, "aaaa")`)
+	tk.MustExec(`insert ignore into t3 set id = 1, c1 = "bbbb" on duplicate key update id = 2, c1 = null`)
+	tk.MustExec(`insert into t3 set id = 2, c1 = "cccc" on duplicate key update c1 = "dddd"`)
+	tk.MustQuery(`select * from t3`).Check(testkit.Rows("2 dddd dddddddd"))
+}
