@@ -112,6 +112,7 @@ type StmtStats struct {
 }
 
 func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime time.Time) ([]*StmtStats, error) {
+	// TODO: to implement.
 	return nil, nil
 }
 
