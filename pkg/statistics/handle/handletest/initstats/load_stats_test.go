@@ -135,5 +135,5 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	tk.MustExec("drop table t")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.InitStats(context.Background(), is))
+	require.NoError(t, h.InitStats(is))
 }
