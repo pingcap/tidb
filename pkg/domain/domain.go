@@ -1656,7 +1656,9 @@ func (p *sessionPool) Put(resource pools.Resource) {
 }
 
 // Destroy destroys the session.
-func (p *sessionPool) Destroy(resource pools.Resource) {
+func (*sessionPool) Destroy(resource pools.Resource) {
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	resource.Close()
 }
 
