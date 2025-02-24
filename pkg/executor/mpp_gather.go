@@ -102,8 +102,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
-		// Ignore any errors during close process
-		_ = e.mppExec.Close()
+		if e.mppExec != nil {
+			// Ignore any errors during close process
+			_ = e.mppExec.Close()
+		}
 		return err
 	}
 	e.kvRanges = e.mppExec.KVRanges
