@@ -54,8 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -208,7 +206,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		_, err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
@@ -377,7 +375,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
 	rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
 			if val, ok := val.(bool); val && ok {
 				actionSpill := rowContainer.ActionSpillForTest()
