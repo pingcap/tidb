@@ -24,12 +24,9 @@ import (
 )
 
 const (
-	ownerKey       = "/tidb/workloadrepo/owner"
-	promptKey      = "workloadrepo"
-	snapIDKey      = "/tidb/workloadrepo/snap_id"
-	snapCommandKey = "/tidb/workloadrepo/snap_command"
-
-	snapCommandTake = "take_snapshot"
+	ownerKey  = "/tidb/workloadrepo/owner"
+	promptKey = "workloadrepo"
+	snapIDKey = "/tidb/workloadrepo/snap_id"
 
 	etcdOpTimeout   = 5 * time.Second
 	snapshotRetries = 5
@@ -49,4 +46,6 @@ var (
 
 	errWrongValueForVar        = dbterror.ClassUtil.NewStd(errno.ErrWrongValueForVar)
 	errUnsupportedEtcdRequired = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("etcd client required for workload repository", nil))
+	errWorkloadNotStarted      = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("Workload repository is not enabled", nil))
+	errCouldNotStartSnapshot   = dbterror.ClassUtil.NewStdErr(errno.ErrUnknown, mysql.Message("Snapshot initiation failed", nil))
 )
