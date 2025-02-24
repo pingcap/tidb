@@ -852,3 +852,12 @@ json_extract("{\"\\b\":\"\"}", "$")
 select json_extract("{\"\\f\":\"\"}", "$");
 json_extract("{\"\\f\":\"\"}", "$")
 {"\f": ""}
+select json_extract('{"a":"b"}', '$[0]');
+json_extract('{"a":"b"}', '$[0]')
+{"a": "b"}
+select json_extract('{"a":"b"}', '$[last]');
+json_extract('{"a":"b"}', '$[last]')
+{"a": "b"}
+select json_set('{"a":"b"}', '$[last]', 1);
+json_set('{"a":"b"}', '$[last]', 1)
+1

@@ -69,7 +69,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]importinto.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap: map[int32][]importinto.Chunk{
+		ChunkMap: map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/1.csv"}},
 			2: {{Path: "gs://test-load/2.csv"}},
 		},

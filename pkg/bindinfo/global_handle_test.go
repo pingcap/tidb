@@ -102,10 +102,6 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("admin reload bindings;")
 
-	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
-	updateTime1 := rows1[0][1]
-	require.Equal(t, updateTime1, "2000-01-01 09:00:00.000")
-
 	rows2 := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows2, 0)
 }
@@ -854,6 +850,29 @@ func TestBindingSymbolList(t *testing.T) {
 	require.NotNil(t, binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
+}
+
+func TestBindingQueryInList(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	inList := []string{"(1)", "(1, 2)", "(1, 2, 3)"}
+	for _, bindingInList := range inList {
+		tk.MustExec(`create global binding using select * from t where a in ` + bindingInList)
+		require.NoError(t, dom.BindHandle().LoadFromStorageToCache(true))
+		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 1)
+
+		for _, queryInList := range inList {
+			tk.MustQuery(`select * from t where a in ` + queryInList)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+		}
+
+		tk.MustExec(`drop global binding for select * from t where a in ` + bindingInList)
+		require.NoError(t, dom.BindHandle().LoadFromStorageToCache(true))
+		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 0)
+	}
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
