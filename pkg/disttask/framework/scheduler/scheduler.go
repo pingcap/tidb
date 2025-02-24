@@ -588,14 +588,13 @@ func (s *BaseScheduler) revertTask(taskErr error) error {
 
 func (s *BaseScheduler) revertTaskOrManualRecover(taskErr error) error {
 	task := s.getTaskClone()
-		if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
-			return err
-		}
-		task.State = proto.TaskStateAwaitingResolution
-		task.Error = taskErr
-		s.task.Store(task)
-		return nil
+	if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+		return err
 	}
+	task.State = proto.TaskStateAwaitingResolution
+	task.Error = taskErr
+	s.task.Store(task)
+	return nil
 }
 
 // MockServerInfo exported for scheduler_test.go
