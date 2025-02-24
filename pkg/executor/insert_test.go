@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -707,10 +708,14 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 func TestInsertLargeRow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	ver := tk.MustQuery("select tidb_version()").Rows()[0][0].(string)
+	if !strings.Contains(ver, "Store: unistore") {
+		t.Skipf("Only support 'Store: unistore'\n%s", ver)
+	}
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, b longtext)")
 	tk.MustExec("set tidb_txn_entry_size_limit = 1<<23")
 	// the unistore arena blocksize is 8MB (8388608 bytes), so Unistore cannot handle larger rows than that!
 	// since a row cannot span multiple arena blocks.
-	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "Lock entry too big")
+	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
 }
