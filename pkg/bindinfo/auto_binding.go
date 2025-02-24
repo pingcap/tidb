@@ -14,12 +14,12 @@ import (
 
 func (h *globalBindingHandle) AutoRecordBindings(beginTime time.Time) (err error) {
 	// TODO: implement h.getStmtStats to get data by using in-memory function call instead of SQL to improve performance.
-	stmts, err := h.getStmtStatsTemp(2, beginTime)
+	stmts, err := h.getStmtStatsTemp(0, beginTime)
 	if err != nil {
 		return err
 	}
 
-	logutil.BgLogger().Error("RecordInactiveBindings", zap.Int("rows", len(stmts)))
+	logutil.BgLogger().Info("RecordInactiveBindings", zap.Int("rows", len(stmts)))
 
 	for _, stmt := range stmts {
 		parser4binding := parser.New()
