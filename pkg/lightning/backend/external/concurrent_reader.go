@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
@@ -87,19 +88,14 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 				buf,
 			)
 			if err != nil {
-				log.FromContext(r.ctx).Error(
-					"concurrent read meet error",
-					zap.Int64("offset", offset),
-					zap.Int("readSize", len(buf)),
-					zap.Error(err),
-				)
-				return err
+				return errors.Annotatef(err, "offset: %d, readSize: %d", offset, len(buf))
 			}
 			return nil
 		})
 	}
 	err := eg.Wait()
 	if err != nil {
+		log.FromContext(r.ctx).Error("concurrent read meet error", zap.Error(err))
 		return nil, err
 	}
 

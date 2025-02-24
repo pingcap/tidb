@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 
@@ -157,7 +158,7 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 		return err
 	}
 	err := r.reload()
-	if err != nil && err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		// ignore EOF error, let readNBytes handle it
 		return nil
 	}
@@ -228,15 +229,11 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	hasRead := readLen > 0
 	for n > 0 {
 		err := r.reload()
-		switch err {
-		case nil:
-		case io.EOF:
-			// EOF is only allowed when we have not read any data
-			if hasRead {
-				return nil, errors.Trace(io.ErrUnexpectedEOF)
+		if err != nil {
+			if goerrors.Is(err, io.EOF) && hasRead {
+				// EOF is only allowed when we have not read any data
+				return nil, errors.Annotatef(io.ErrUnexpectedEOF, "file: %s", r.concurrentReader.filename)
 			}
-			return nil, err
-		default:
 			return nil, errors.Trace(err)
 		}
 		readLen, bs = r.next(n)
@@ -301,16 +298,15 @@ func (r *byteReader) reload() error {
 	// when not using concurrentReader, len(curBuf) == 1
 	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
 	if err != nil {
-		switch err {
-		case io.EOF:
+		switch {
+		case goerrors.Is(err, io.EOF):
 			// move curBufIdx so following read will also find EOF
 			r.curBufIdx = len(r.curBuf)
 			return err
-		case io.ErrUnexpectedEOF:
+		case goerrors.Is(err, io.ErrUnexpectedEOF):
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
-			err = errors.Trace(err)
-		case context.Canceled:
+		case goerrors.Is(err, context.Canceled):
 			return err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))

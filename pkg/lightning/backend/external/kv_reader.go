@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	goerrors "errors"
 	"io"
 
 	"github.com/docker/go-units"
@@ -77,7 +78,7 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.
 func noEOF(err error) error {
-	if err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		logutil.BgLogger().Warn("unexpected EOF", zap.Error(errors.Trace(err)))
 		return io.ErrUnexpectedEOF
 	}

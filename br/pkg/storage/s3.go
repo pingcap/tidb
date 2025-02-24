@@ -969,6 +969,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt == 0 {
+		log.L().Info("got EOF", zap.String("file", r.name),
+			zap.Int64("range-end", r.rangeInfo.End), zap.Int64("pos", r.pos),
+			zap.Int64("size", r.rangeInfo.Size))
 		return 0, io.EOF
 	}
 	if maxCnt > int64(len(p)) {
@@ -1005,6 +1008,11 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	}
 
 	r.pos += int64(n)
+	if err == io.EOF {
+		log.L().Info("got EOF", zap.String("file", r.name),
+			zap.Int64("range-end", r.rangeInfo.End), zap.Int64("pos", r.pos),
+			zap.Int64("size", r.rangeInfo.Size))
+	}
 	return
 }
 

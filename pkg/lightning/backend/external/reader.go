@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"time"
 
@@ -168,7 +169,7 @@ func readOneFile(
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
 			return errors.Trace(err)
