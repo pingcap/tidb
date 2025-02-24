@@ -74,7 +74,7 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 
 	var autoBindings []*AutoBindingInfo
 	for _, binding := range bindings {
-		stmt, err := h.getStmtStatsByDigestInCluster(digest)
+		stmt, err := h.getStmtStatsByPlanDigestInCluster(binding.PlanDigest)
 		if err != nil {
 			logutil.BgLogger().Error("getStmtStatsByDigestInCluster", zap.String("digest", digest), zap.Error(err))
 		}
@@ -158,13 +158,16 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int) (stmts []
 	return
 }
 
-func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt *StmtStats, err error) {
+func (h *globalBindingHandle) getStmtStatsByPlanDigestInCluster(planDigest string) (stmt *StmtStats, err error) {
+	if planDigest == "" {
+		return nil, nil
+	}
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
 				result_rows, exec_count, processed_keys, total_time, plan
 				from information_schema.tidb_statements_stats
-				where digest = '%v'`, digest)
+				where plan_digest = '%v'`, planDigest)
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
