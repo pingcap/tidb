@@ -53,25 +53,25 @@ type TiDBConfigProvider struct{}
 // GetMemoryUsageAlarmRatio returns the ratio of memory usage that triggers an alarm.
 // When memory usage exceeds this ratio of the total memory limit (or system memory if no limit),
 // the memory monitor will dump profiles and trigger OOM-related actions.
-func (_ *TiDBConfigProvider) GetMemoryUsageAlarmRatio() float64 {
+func (*TiDBConfigProvider) GetMemoryUsageAlarmRatio() float64 {
 	return vardef.MemoryUsageAlarmRatio.Load()
 }
 
 // GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep.
 // When the number of records exceeds this limit, older records will be deleted.
-func (_ *TiDBConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
+func (*TiDBConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
 	return vardef.MemoryUsageAlarmKeepRecordNum.Load()
 }
 
 // GetLogDir returns the directory for storing memory profiles and alarm records.
-func (_ *TiDBConfigProvider) GetLogDir() string {
+func (*TiDBConfigProvider) GetLogDir() string {
 	logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
 	return logDir
 }
 
 // GetComponentName returns the name of the component for logging and metrics.
 // This helps identify which component triggered the memory alarm.
-func (_ *TiDBConfigProvider) GetComponentName() string {
+func (*TiDBConfigProvider) GetComponentName() string {
 	return "tidb-server"
 }
 
