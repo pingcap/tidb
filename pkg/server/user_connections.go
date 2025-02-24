@@ -58,9 +58,11 @@ func (cc *clientConn) increaseUserConnectionsCount() error {
 	if (userLimit > 0 && ur.connections >= int(userLimit)) ||
 		(globaLimit > 0 && ur.connections >= int(globaLimit)) {
 		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
-	} else {
-		ur.connections++
 	}
+
+
+	
+	ur.connections++
 	return nil
 }
 
