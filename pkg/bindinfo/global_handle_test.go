@@ -852,7 +852,7 @@ func TestBindingSymbolList(t *testing.T) {
 	require.NotNil(t, binding.UpdateTime)
 }
 
-func TestBindingInList(t *testing.T) {
+func TestBindingQueryInList(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
