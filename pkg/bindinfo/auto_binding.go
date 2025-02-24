@@ -167,6 +167,7 @@ func (h *globalBindingHandle) getStmtStats(execCountThreshold int, existingPlanD
 
 func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, existingPlanDigests map[string]struct{}) (stmts []*StmtStats, err error) {
 	existingPlanDigestList := make([]string, 0, len(existingPlanDigests))
+	existingPlanDigestList = append(existingPlanDigestList, "''")
 	for planDigest := range existingPlanDigests {
 		existingPlanDigestList = append(existingPlanDigestList, fmt.Sprintf("'%v'", planDigest))
 	}
