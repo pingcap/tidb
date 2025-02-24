@@ -88,7 +88,7 @@ const (
 	// Environment variables
 	envBRHeapDumpDir = "BR_HEAP_DUMP_DIR"
 
-	// Default paths
+	// Default heap dump paths
 	defaultHeapDumpDir = "/tmp/br_heap_dumps"
 )
 
@@ -176,10 +176,6 @@ func setupMemoryMonitoring(ctx context.Context, memTotal, memUsed uint64) error 
 		log.Warn("Failed to start memory monitor", zap.Error(err))
 		return err
 	}
-
-	log.Info("Memory monitor started",
-		zap.String("dump_dir", dumpDir),
-		zap.Uint64("memory_limit_mb", memlimit/1024/1024))
 
 	return nil
 }
