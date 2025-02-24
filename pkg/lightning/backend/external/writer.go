@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -190,7 +189,7 @@ func (b *WriterBuilder) Build(
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{Logger: log.Logger{logutil.BgLogger()}}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
@@ -416,7 +415,6 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
-	// TODO[0224]: note that the minKey and maxKey here can be decoded
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{

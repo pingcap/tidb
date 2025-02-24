@@ -16,10 +16,7 @@ package common
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"go.uber.org/zap"
 )
 
 // KeyAdapter is used to encode and decode keys so that duplicate key can be
@@ -71,12 +68,10 @@ var _ KeyAdapter = NoopKeyAdapter{}
 
 // DupDetectKeyAdapter is a key adapter that appends rowID to the key to avoid
 // overwritten.
-type DupDetectKeyAdapter struct {
-	Logger log.Logger
-}
+type DupDetectKeyAdapter struct{}
 
 // Encode implements KeyAdapter.
-func (d DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
+func (DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
 	dst = codec.EncodeBytes(dst, key)
 	dst = reallocBytes(dst, len(rowID)+2)
 	dst = append(dst, rowID...)
@@ -86,21 +81,17 @@ func (d DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte
 }
 
 // Decode implements KeyAdapter.
-func (d DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+func (DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	if len(data) < 2 {
-		d.Logger.Warn("[date0218] Decode error 1", logutil.Key("data", data))
 		return nil, errors.New("insufficient bytes to decode value")
 	}
 	rowIDLen := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
 	tailLen := int(rowIDLen + 2)
 	if len(data) < tailLen {
-		d.Logger.Warn("[date0218] Decode error 2", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen), zap.Stack("stack"))
 		return nil, errors.New("insufficient bytes to decode value")
 	}
 	_, key, err := codec.DecodeBytes(data[:len(data)-tailLen], dst[len(dst):cap(dst)])
 	if err != nil {
-		d.Logger.Warn("[date0218] Decode error 3", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen),
-			logutil.Key("key", key), zap.Error(err))
 		return nil, err
 	}
 	if len(dst) == 0 {

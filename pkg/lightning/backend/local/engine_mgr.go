@@ -89,7 +89,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		if err != nil {
 			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
-		keyAdapter = common.DupDetectKeyAdapter{Logger: logger}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	alloc := manual.Allocator{}
 	if RunInTest {

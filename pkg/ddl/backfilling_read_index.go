@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -301,10 +300,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 			kvMeta = &external.SortedKVMeta{}
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
-		logutil.DDLLogger().Warn("[date0224] onClose before merge", brlogutil.Key("startKey", kvMeta.StartKey), brlogutil.Key("endKey", kvMeta.EndKey),
-			brlogutil.Key("summary.Min", summary.Min), brlogutil.Key("summary.Max", summary.Max))
 		kvMeta.MergeSummary(summary)
-		logutil.DDLLogger().Warn("[date0224] onClose after merge", brlogutil.Key("startKey", kvMeta.StartKey), brlogutil.Key("endKey", kvMeta.EndKey))
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
