@@ -1488,6 +1488,26 @@ func handleTableRenames(
 	}
 }
 
+// shouldRestoreTable checks if a table or partition is being tracked for restore
+func shouldRestoreTable(
+	dbID int64,
+	tableName string,
+	isPartition bool,
+	parentTableID int64,
+	snapshotDBMap map[int64]*metautil.Database,
+	history *stream.LogBackupTableHistoryManager,
+	cfg *RestoreConfig,
+) bool {
+	if isPartition {
+		return cfg.PiTRTableTracker.ContainsTableId(dbID, parentTableID)
+	}
+	dbName, exists := getDBNameFromIDInBackup(dbID, snapshotDBMap, history)
+	if !exists {
+		return false
+	}
+	return utils.MatchTable(cfg.TableFilter, dbName, tableName, cfg.WithSysTable)
+}
+
 // handlePartitionExchanges checks for partition exchanges and returns an error if a partition
 // was exchanged between tables where one is in the filter and one is not
 func handlePartitionExchanges(
@@ -1499,33 +1519,23 @@ func handlePartitionExchanges(
 		start := dbIDAndTableName[0]
 		end := dbIDAndTableName[1]
 
-		// skip if not a partition or if partition parent table didn't change
-		if !start.IsPartition || start.ParentTableID == end.ParentTableID {
+		// skip if both are not partition
+		if !start.IsPartition && !end.IsPartition {
 			continue
 		}
 
-		var startTracked, endTracked bool
-		if start.IsPartition {
-			startTracked = cfg.PiTRTableTracker.ContainsTableId(start.DbID, start.ParentTableID)
-		} else {
-			startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
-			if !exists {
-				continue
-			}
-			startTracked = utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
-		}
-		if end.IsPartition {
-			endTracked = cfg.PiTRTableTracker.ContainsTableId(end.DbID, end.ParentTableID)
-		} else {
-			endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
-			if !exists {
-				continue
-			}
-			endTracked = utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable)
+		// skip if parent table id are the same (if it's a table, parent table id will be 0)
+		if start.ParentTableID == end.ParentTableID {
+			continue
 		}
 
-		// error out if partition is exchanged between tables where one is tracked and one isn't
-		if startTracked != endTracked {
+		restoreStart := shouldRestoreTable(start.DbID, start.TableName, start.IsPartition, start.ParentTableID,
+			snapshotDBMap, history, cfg)
+		restoreEnd := shouldRestoreTable(end.DbID, end.TableName, end.IsPartition, end.ParentTableID,
+			snapshotDBMap, history, cfg)
+
+		// error out if partition is exchanged between tables where one should restore and one shouldn't
+		if restoreStart != restoreEnd {
 			startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
 			if !exists {
 				startDBName = fmt.Sprintf("(unknown db name %d)", start.DbID)
@@ -1542,12 +1552,14 @@ func handlePartitionExchanges(
 				endDBName, end.TableName, end.ParentTableID)
 		}
 
-		// if we reach here, it will only be both sides are tracked or untracked,
-		// if tracked and is table, add to table tracker
-		if startTracked && !start.IsPartition {
+		// if we reach here, it will only be both are restore or not restore,
+		// if it's table, need to add to table tracker, this is for table created during log backup.
+		// if it's table and exist in snapshot, the actual table and files should already been added
+		// since matches filter.
+		if restoreStart && !start.IsPartition {
 			cfg.PiTRTableTracker.TrackTableId(start.DbID, tableId)
 		}
-		if endTracked && !end.IsPartition {
+		if restoreEnd && !end.IsPartition {
 			cfg.PiTRTableTracker.TrackTableId(end.DbID, tableId)
 		}
 	}
