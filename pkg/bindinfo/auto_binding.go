@@ -27,13 +27,15 @@ func (h *globalBindingHandle) AutoRecordBindings(lastTime time.Time) (err error)
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(stmt.QuerySampleText, stmt.Charset, stmt.Collation)
 		if err != nil {
-			// TODO:
+			logutil.BgLogger().Warn("parseOneStmt", zap.Error(err))
+			continue
 		}
 		bindSQL := GenerateBindingSQL(originNode, stmt.PlanHint, stmt.SchemaName)
 		var hintNode ast.StmtNode
 		hintNode, err = parser4binding.ParseOneStmt(bindSQL, stmt.Charset, stmt.Collation)
 		if err != nil {
-			// TODO:
+			logutil.BgLogger().Warn("parseOneStmt", zap.Error(err))
+			continue
 		}
 		restoredSQL := RestoreDBForBinding(originNode, stmt.SchemaName)
 		bindSQL = RestoreDBForBinding(hintNode, stmt.SchemaName)
