@@ -582,7 +582,6 @@ CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
 SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 c0	c0
-<<<<<<< HEAD
 drop table if exists t;
 create table t (id int unique key, c int);
 insert into t values (1, 10);
@@ -593,7 +592,6 @@ _tidb_rowid
 1
 2
 3
-=======
 drop table if exists t1, t2, t3, t4;
 CREATE TABLE t1 (a int, b int, c int);
 CREATE TABLE t2 (a int, b int, c int);
@@ -621,4 +619,3 @@ NULL	NULL	2	2	4	2
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;
->>>>>>> 10647c9d733 (statstics: avoid unnecessary try when to sync load (#56614))
