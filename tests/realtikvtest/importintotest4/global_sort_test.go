@@ -164,7 +164,11 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 		keyCnt := 1000
 		for j := 0; j < keyCnt; j++ {
 			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, j))...)
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+		}
+		if i == 9 {
+			// add a duplicate key "test-123"
+			content = append(content, []byte("99999999,test-123\n")...)
 		}
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
@@ -181,7 +185,7 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
 	err := s.tk.QueryToErr(importSQL)
 	require.ErrorContains(s.T(), err, "duplicate key found")
-	// this is the encoded value of "test-0". Because the table ID/ index ID may vary, we can't check the exact key
+	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
 	// TODO: decode the key to use readable value in the error message.
-	require.ErrorContains(s.T(), err, "746573742d300000fd")
+	require.ErrorContains(s.T(), err, "746573742d313233")
 }

@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -295,13 +297,19 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	var dupKey atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		if bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k]) < 0 { // strict comparator like < or >
+		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
+		if cmp < 0 { // strict comparator like < or >
 			if r != s {
 				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
 				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
 			}
 			return true
+		}
+		if cmp == 0 && i != k {
+			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
+			dupKey.Store(&cloned)
 		}
 		return false
 	})
@@ -311,6 +319,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
+	if k := dupKey.Load(); k != nil {
+		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
