@@ -118,7 +118,9 @@ func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime tim
 }
 
 func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime time.Time) (stmts []*StmtStats, err error) {
-	stmtQuery := fmt.Sprintf(`select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
+	stmtQuery := fmt.Sprintf(`
+				select digest, query_sample_text, charset,
+				collation, plan_hint, plan_digest, schema_name
 				from information_schema.tidb_statement_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
 				plan_hint != "" and
