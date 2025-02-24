@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUserConnectionsCounter(t *testing.T) {
+func TestUserConnectionCount(t *testing.T) {
 	cfg := util.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -41,8 +41,7 @@ func TestUserConnectionsCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER auth_session_token")
-	tk.MustExec("CREATE USER another_user")
+	tk.MustExec("CREATE USER zak@127.0.0.1 WITH MAX_USER_CONNECTIONS 2")
 
 	cc := &clientConn{
 		connectionID: 1,
@@ -52,7 +51,7 @@ func TestUserConnectionsCounter(t *testing.T) {
 		peerHost:     "localhost",
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
-		user:         "auth_session_token",
+		user:         "zak",
 	}
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 	sess := cc.ctx.GetSessionVars()
@@ -63,14 +62,39 @@ func TestUserConnectionsCounter(t *testing.T) {
 		AuthHostname: "127.0.0.1",
 	}
 
-	cc.increaseUserConnectionsCount()
-	cc.increaseUserConnectionsCount()
+	// test1: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 0 in mysql.user for zak@127.0.0.1
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.Nil(t, cc.increaseUserConnectionsCount())
 
-	conns := cc.getUserConnectionCount(sess.User)
-	require.Equal(t, conns, 2)
-
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
 	cc.decreaseUserConnectionCount()
 	cc.decreaseUserConnectionCount()
-	conns = cc.getUserConnectionCount(sess.User)
-	require.Equal(t, conns, 0)
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
+
+	// test2: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 2 in mysql.user for zak@127.0.0.1
+	tk.MustExec("ALTER USER zak@127.0.0.1 WITH MAX_USER_CONNECTIONS 2")
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+		"[server:1203]User zak@127.0.0.1 has exceeded the 'max_user_connections' resource")
+
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
+	cc.decreaseUserConnectionCount()
+	cc.decreaseUserConnectionCount()
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
+
+	// test3: global MAX_USER_CONNECTIONS = 3 and max_user_conections = 0 in mysql.user for zak@127.0.0.1
+	tk.MustExec("ALTER USER zak@127.0.0.1 WITH MAX_USER_CONNECTIONS 0")
+	tk.MustExec("set global max_user_connections = 3")
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+		"[server:1203]User zak@127.0.0.1 has exceeded the 'max_user_connections' resource")
+
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
+	cc.decreaseUserConnectionCount()
+	cc.decreaseUserConnectionCount()
+	cc.decreaseUserConnectionCount()
+	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 }

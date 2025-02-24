@@ -29,21 +29,39 @@ import (
 // Note: increaseUserConnectionsCount() is called when create connections only, and not in 'changeUser'(COM_CHANGE_USER).
 // In mysql, 'COM_CHANGE_USER' will only reset the session state (such as permissions, default database, etc.),
 // but will not change the ownership of the number of connections.
-func (cc *clientConn) increaseUserConnectionsCount() {
-	user := cc.ctx.GetSessionVars().User
-	targetUser := user.LoginString()
+func (cc *clientConn) increaseUserConnectionsCount() error {
+	var (
+		user       = cc.ctx.GetSessionVars().User
+		targetUser = user.LoginString()
+		globaLimit = vardef.MaxUserConnectionsValue.Load()
+	)
+
+	// check the number of connections again.
+	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
+	userLimit, err := pm.GetUserResources(user.Username, user.Hostname)
+	if err != nil {
+		return err
+	}
 
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
 	ur, ok := cc.server.userResource[targetUser]
 	if !ok {
+		// if not exist in userResource,
 		userHost := &userResourceLimits{
 			connections: 1,
 		}
 		cc.server.userResource[targetUser] = userHost
+		return nil
+	}
+
+	if (userLimit > 0 && ur.connections >= int(userLimit)) ||
+		(globaLimit > 0 && ur.connections >= int(globaLimit)) {
+		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
 	} else {
 		ur.connections++
 	}
+	return nil
 }
 
 // decreaseUserConnectionCount decreases the count of connections when user logout the database.
