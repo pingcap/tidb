@@ -478,7 +478,7 @@ func ParseFormat(ctx context.Context, path string) (string, error) {
 }
 
 func detectFileType(path string) string {
-	switch t := filepath.Ext(path); t {
+	switch t := strings.ToLower(filepath.Ext(path)); t {
 	case ".sql":
 		return TypeSQL
 	case ".csv":
@@ -487,7 +487,7 @@ func detectFileType(path string) string {
 		return TypeParquet
 	case ".gz", ".gzip", ".zstd", ".zst", ".snappy":
 		// If the file is compressed, detect file type by removing the compression suffix and detect file type again.
-		return detectFileType(strings.TrimSuffix(path, t))
+		return detectFileType(strings.TrimSuffix(path, filepath.Ext(path)))
 	default:
 		// If path do not contain file type, return TypeCSV as default.
 		return TypeCSV

@@ -343,30 +343,33 @@ func TestParseFormat(t *testing.T) {
 	require.Equal(t, TypeCSV, format)
 
 	fileNames := []string{
-		"1.sql", "2.sql", "1.sql.gz", "1.csv.gz", "2.csv.gz", "1.sql.gzip", "1.sql.zst", "1.sql.zstd", "1.sql.snappy",
-		"1.csv", "2.csv", "1.csv.gzip", "2.csv.gzip", "1.csv.zst", "2.csv.zst", "1.csv.zstd", "2.csv.zstd", "1.csv.snappy", "2.csv.snappy",
+		"1.sql", "2.sql", "1.sql.gz", "1.sql.gzip", "1.sql.zst", "1.sql.zstd", "1.sql.snappy",
+		"3.SQL", "3.SQL.GZ", "3.SQL.GZIP", "3.SQL.ZST", "3.SQL.ZSTD", "3.SQL.SNAPPY",
+		"1.csv", "2.csv", "1.csv.gz", "2.csv.gz", "1.csv.gzip", "2.csv.gzip", "1.csv.zst", "2.csv.zst", "1.csv.zstd", "2.csv.zstd", "1.csv.snappy", "2.csv.snappy",
+		"3.CSV", "3.CSV.GZ", "3.CSV.GZIP", "3.CSV.ZST", "3.CSV.ZSTD", "3.CSV.SNAPPY",
 		"1.parquet", "2.parquet", "1.gz.parquet",
+		"3.PARQUET", "3.GZ.PARQUET",
 	}
 	for _, fileName := range fileNames {
 		_, err = os.Create(filepath.Join(tmpDir, fileName))
 		require.NoError(t, err)
 	}
 
-	sqlPatterns := []string{"*.sql", "1.sql", "[12].sql", "*.sql.gz", "*.sql.gzip", "*.sql.zst", "*.sql.zstd", "*.sql.snappy"}
+	sqlPatterns := []string{"*.sql", "1.sql", "[12].sql", "*.sql.gz", "*.sql.gzip", "*.sql.zst", "*.sql.zstd", "*.sql.snappy", "*.SQL", "*.SQL.GZ", "*.SQL.GZIP", "*.SQL.ZST", "*.SQL.ZSTD", "*.SQL.SNAPPY"}
 	for _, sqlPattern := range sqlPatterns {
 		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
 		require.Equal(t, TypeSQL, format)
 	}
 
-	csvPatterns := []string{"*.csv", "1.csv", "[12].csv", "*.csv.gz", "*.csv.gzip", "*.csv.zst", "*.csv.zstd", "*.csv.snappy"}
+	csvPatterns := []string{"*.csv", "1.csv", "[12].csv", "*.csv.gz", "*.csv.gzip", "*.csv.zst", "*.csv.zstd", "*.csv.snappy", "*.CSV", "*.CSV.GZ", "*.CSV.GZIP", "*.CSV.ZST", "*.CSV.ZSTD", "*.CSV.SNAPPY"}
 	for _, sqlPattern := range csvPatterns {
 		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
 		require.Equal(t, TypeCSV, format)
 	}
 
-	parquetPatterns := []string{"*.parquet", "1.parquet", "[12].gz.parquet"}
+	parquetPatterns := []string{"*.parquet", "1.parquet", "[12].gz.parquet", "*.PARQUET", "*.GZ.PARQUET"}
 	for _, sqlPattern := range parquetPatterns {
 		format, err := ParseFormat(context.Background(), filepath.Join(tmpDir, sqlPattern))
 		require.NoError(t, err)
