@@ -2,13 +2,13 @@ package bindinfo
 
 import (
 	"fmt"
-
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"strings"
 )
 
 func (h *globalBindingHandle) AutoRecordBindings() (err error) {
@@ -63,6 +63,10 @@ type AutoBindingInfo struct {
 	AvgReturnedRows      float64
 	LatencyPerReturnRow  float64
 	ScanRowsPerReturnRow float64
+
+	// Recommendation
+	Recommend string
+	Reason    string
 }
 
 func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingInfo, error) {
@@ -91,7 +95,22 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 		autoBindings = append(autoBindings, autoBinding)
 	}
 
+	h.recommendAutoBinding(autoBindings)
+
 	return autoBindings, nil
+}
+
+func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingInfo) {
+	// TODO: just for demo
+	for _, autoBinding := range autoBindings {
+		autoBinding.Recommend = "NO"
+		autoBinding.Reason = ""
+
+		if strings.Contains(autoBinding.Plan, "PointGet") {
+			autoBinding.Recommend = "YES"
+			autoBinding.Reason = "PointGet/BatchPointGet is the optimal plan."
+		}
+	}
 }
 
 // TODO: expose statement_summary.go:stmtSummaryStats and use it directly? Is it thread-safe?
