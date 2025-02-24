@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -856,4 +857,111 @@ func TestCalcNextTick(t *testing.T) {
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 0, 0, 0, 0, loc)) == time.Hour*2)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 2, 0, 0, 1, loc)) == time.Hour*24-time.Nanosecond)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 1, 59, 59, 999999999, loc)) == time.Nanosecond)
+}
+
+func TestOwnerRandomDown(t *testing.T) {
+	workerNum := 3
+	testNum := 9
+
+	ctx, _, dom, addr := setupDomainAndContext(t)
+	var workers []*worker
+	for i := 0; i < workerNum; i++ {
+		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
+		wrk.samplingInterval = 6000
+		workers = append(workers, wrk)
+	}
+
+	now := time.Now()
+	for _, wrk := range workers {
+		require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+	}
+
+	require.Eventually(t, func() bool {
+		return workers[0].checkTablesExists(ctx, now)
+	}, time.Minute, 100*time.Millisecond)
+
+	// let us randomly stop the owner
+	for j := 0; j < testNum; j++ {
+		var err error
+		prevSnapID := uint64(0)
+		breakOwnerIdx := -1
+		oldOwnerIdx := -1
+
+		// stop the current owner
+		for idx, wrk := range workers {
+			if wrk.owner.IsOwner() {
+				prevSnapID, err = wrk.getSnapID(ctx)
+				require.Nil(t, err)
+
+				if j%3 == 0 {
+					// tidb is shutdown somehow
+					wrk.stop()
+
+					require.Eventually(t, func() bool {
+						return wrk.cancel == nil
+					}, time.Minute, 100*time.Millisecond)
+				} else if j%3 == 1 {
+					// unexpected owner down due to bad network or crash
+					wrk.owner.CampaignCancel()
+					require.Eventually(t, func() bool {
+						return !wrk.owner.IsOwner()
+					}, time.Minute, 100*time.Millisecond)
+					breakOwnerIdx = idx
+				} else {
+					// normal owner switch triggered somehow
+					for m := 0; m < 3; m++ {
+						wrk.owner.ResignOwner(ctx)
+						require.Eventually(t, func() bool {
+							return !wrk.owner.IsOwner()
+						}, time.Minute, 100*time.Millisecond)
+						if !wrk.owner.IsOwner() {
+							break
+						}
+					}
+					// it is very unlikely, but let us just fail if that happened
+					if wrk.owner.IsOwner() {
+						require.FailNow(t, "fail to resign owner to other nodes")
+					}
+				}
+
+				oldOwnerIdx = idx
+				break
+			}
+		}
+
+		// new owner elected
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				return workers[i].cancel != nil &&
+					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// new snapshot taken
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				if workers[i].cancel == nil {
+					return false
+				}
+				newSnapID, err := workers[i].getSnapID(ctx)
+				return err == nil && newSnapID > prevSnapID
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// recover stopped owner
+		for idx, wrk := range workers {
+			if wrk.cancel == nil {
+				require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+			}
+			if idx == breakOwnerIdx {
+				require.Nil(t, wrk.owner.CampaignOwner(3))
+			}
+		}
+		require.Eventually(t, func() bool {
+			return slice.AllOf(workers, func(i int) bool {
+				return workers[i].cancel != nil &&
+					workers[i].owner != nil
+			})
+		}, time.Minute, 100*time.Millisecond)
+	}
 }
