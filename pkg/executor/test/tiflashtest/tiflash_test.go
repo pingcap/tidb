@@ -2222,7 +2222,7 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
 }
 
-func TestIssuexxxxx(t *testing.T) {
+func TestIssue59703(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
