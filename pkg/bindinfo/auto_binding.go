@@ -2,18 +2,19 @@ package bindinfo
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"strings"
 )
 
 func (h *globalBindingHandle) AutoRecordBindings() (err error) {
 	// TODO: implement h.getStmtStats to get data by using in-memory function call instead of SQL to improve performance.
-	stmts, err := h.getStmtStatsTemp(0)
+	stmts, err := h.getStmtStatsTemp(0, h.autoBindingDigests)
 	if err != nil {
 		return err
 	}
@@ -132,20 +133,24 @@ type StmtStats struct {
 	TotalTime     int64
 }
 
-func (h *globalBindingHandle) getStmtStats(execCountThreshold int) ([]*StmtStats, error) {
+func (h *globalBindingHandle) getStmtStats(execCountThreshold int, existingPlanDigests map[string]struct{}) ([]*StmtStats, error) {
 	// TODO: to implement.
 	return nil, nil
 }
 
-func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int) (stmts []*StmtStats, err error) {
+func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, existingPlanDigests map[string]struct{}) (stmts []*StmtStats, err error) {
+	existingPlanDigestList := make([]string, 0, len(existingPlanDigests))
+	for planDigest := range existingPlanDigests {
+		existingPlanDigestList = append(existingPlanDigestList, fmt.Sprintf("'%v'", planDigest))
+	}
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
 				result_rows, exec_count, processed_keys, total_time, plan
 				from information_schema.tidb_statements_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
-				plan_hint != "" and
-				exec_count > %v`, execCountThreshold)
+				plan_hint != "" and exec_count > %v and plan_digests not in (%v)`,
+		execCountThreshold, strings.Join(existingPlanDigestList, ","))
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)

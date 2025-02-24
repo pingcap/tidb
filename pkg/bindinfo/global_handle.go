@@ -93,6 +93,8 @@ type globalBindingHandle struct {
 	sPool        util.DestroyableSessionPool
 	bindingCache BindingCache
 
+	autoBindingDigests map[string]struct{}
+
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
