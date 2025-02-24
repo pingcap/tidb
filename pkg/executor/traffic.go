@@ -244,7 +244,7 @@ func request(ctx context.Context, addrs []string, readers []io.Reader, method, p
 		if err != nil {
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("path", path), zap.String("addr", addr),
 				zap.String("resp", resp), zap.Error(err))
-			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed", addr)
+			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed: %s", addr, resp)
 		}
 		resps[addr] = resp
 	}
@@ -398,15 +398,10 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 func hasTrafficPriv(ctx context.Context, sctx sessionctx.Context) (capturePriv, replayPriv bool) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
-		// in test
-		if privs := ctx.Value(trafficPrivKey); privs != nil {
-			array := privs.([]bool)
-			return array[0], array[1]
-		}
 		return true, true
 	}
 	roles := sctx.GetSessionVars().ActiveRoles
 	capturePriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
-	replayPriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
+	replayPriv = pm.RequestDynamicVerification(roles, "TRAFFIC_REPLAY_ADMIN", false)
 	return
 }
