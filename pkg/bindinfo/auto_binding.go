@@ -114,16 +114,15 @@ type StmtStats struct {
 }
 
 func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime time.Time) ([]*StmtStats, error) {
-	/* select * from information_schema.tidb_statements_stats
-	where begin_time >= ? and exec_count > ? and
-		plan_hint != "" and plan_in_binding = 0 */
 	return nil, nil
 }
 
 func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime time.Time) (stmts []*StmtStats, err error) {
 	stmtQuery := fmt.Sprintf(`select digest, query_sample_text, charset, collation, plan_hint, plan_digest, schema_name
-				from information_schema.statements_summary
-				where stmt_type='Select' and exec_count > %v and plan_hint != "" and summary_begin_time >= '%s'`,
+				from information_schema.tidb_statement_stats
+				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
+				plan_hint != "" and
+				exec_count > %v and summary_begin_time >= '%s'`,
 		execCountThreshold,
 		beginTime.Add(-time.Minute*30).Format("2006-01-02 15:04:05"))
 	var rows []chunk.Row
