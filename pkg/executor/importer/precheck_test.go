@@ -104,16 +104,9 @@ func TestCheckRequirements(t *testing.T) {
 
 	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
-	// global sort with thread count < 8
-	c.ThreadCnt = 7
-	c.CloudStorageURI = "s3://test"
-	err = c.CheckRequirements(ctx, conn)
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "global sort requires at least 8 threads")
-
-	// reset fields, make global sort thread check pass
 	c.ThreadCnt = 1
 	c.CloudStorageURI = ""
+
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
@@ -178,8 +171,8 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 
-	// with global sort
-	c.Plan.ThreadCnt = 8
+	// with global sort with threadCnt < 8
+	c.Plan.ThreadCnt = 2
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"

@@ -15,11 +15,12 @@
 package importinto
 
 import (
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
-func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
+func toChunkCheckpoint(chunk importer.Chunk) checkpoints.ChunkCheckpoint {
 	return checkpoints.ChunkCheckpoint{
 		Key: checkpoints.ChunkCheckpointKey{
 			Path:   chunk.Path,
@@ -41,8 +42,8 @@ func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 	}
 }
 
-func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) Chunk {
-	return Chunk{
+func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) importer.Chunk {
+	return importer.Chunk{
 		Path:         chunkCheckpoint.FileMeta.Path,
 		FileSize:     chunkCheckpoint.FileMeta.FileSize,
 		Offset:       chunkCheckpoint.Chunk.Offset,
