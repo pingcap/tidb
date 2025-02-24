@@ -50,7 +50,7 @@ go_test(
     srcs = ["worker_test.go"],
     embed = [":workloadrepo"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 14,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
@@ -60,6 +60,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/util/slice",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
