@@ -15,7 +15,7 @@
 package handle
 
 import (
-	"fmt"
+	stderrors "errors"
 	"math/rand"
 	"sync"
 	"time"
@@ -80,7 +80,6 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 		}
 	})
-
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -327,6 +326,10 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
+	if stderrors.Is(err, errGetHistMeta) {
+		metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -345,6 +348,8 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	}
 	return nil
 }
+
+var errGetHistMeta = errors.New("fail to get stats version for this histogram")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
@@ -424,9 +429,11 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`",
+			zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID),
+			zap.Bool("is_index", item.IsIndex))
+		return nil, errGetHistMeta
 	}
 	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
