@@ -104,6 +104,7 @@ func (h *globalBindingHandle) normalizeSQLForBinding(SQLOrDigest string) (normSt
 
 // TODO: expose statement_summary.go:stmtSummaryStats and use it directly? Is it thread-safe?
 type StmtStats struct {
+	// meta info
 	Digest          string
 	QuerySampleText string
 	Charset         string
@@ -111,6 +112,11 @@ type StmtStats struct {
 	PlanHint        string
 	PlanDigest      string
 	SchemaName      string
+
+	// exec info
+	ResultRows    int64
+	ExecCount     int64
+	ProcessedKeys int64
 }
 
 func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime time.Time) ([]*StmtStats, error) {
@@ -120,7 +126,8 @@ func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime tim
 func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime time.Time) (stmts []*StmtStats, err error) {
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
-				collation, plan_hint, plan_digest, schema_name
+				collation, plan_hint, plan_digest, schema_name,
+				result_rows, exec_count, processed_keys,
 				from information_schema.tidb_statement_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
 				plan_hint != "" and
@@ -148,11 +155,42 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime
 			PlanHint:        row.GetString(4),
 			PlanDigest:      row.GetString(5),
 			SchemaName:      row.GetString(6),
+			ResultRows:      row.GetInt64(7),
+			ExecCount:       row.GetInt64(8),
+			ProcessedKeys:   row.GetInt64(9),
 		})
 	}
 	return
 }
 
-func (h *globalBindingHandle) getStmtStatsByDigest(digest string) ([]*StmtStats, error) {
-	return nil, nil
+func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt *StmtStats, err error) {
+	stmtQuery := fmt.Sprintf(`
+				select digest, query_sample_text, charset,
+				collation, plan_hint, plan_digest, schema_name,
+				result_rows, exec_count, processed_keys,
+				from information_schema.tidb_statement_stats
+				where digest = '%v'`, digest)
+	var rows []chunk.Row
+	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err = execRows(sctx, stmtQuery)
+		return err
+	})
+	if len(rows) > 0 {
+		// TODO: accumulate them
+	}
+
+	row := rows[0]
+	stmt = &StmtStats{
+		Digest:          row.GetString(0),
+		QuerySampleText: row.GetString(1),
+		Charset:         row.GetString(2),
+		Collation:       row.GetString(3),
+		PlanHint:        row.GetString(4),
+		PlanDigest:      row.GetString(5),
+		SchemaName:      row.GetString(6),
+		ResultRows:      row.GetInt64(7),
+		ExecCount:       row.GetInt64(8),
+		ProcessedKeys:   row.GetInt64(9),
+	}
+	return
 }
