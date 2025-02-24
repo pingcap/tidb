@@ -55,13 +55,13 @@ func (cc *clientConn) increaseUserConnectionsCount() error {
 		return nil
 	}
 
+	// check the global variables `MAX_USER_CONNECTIONS` and the max_user_conections in mysql.user
+	// with current count of active connection.
 	if (userLimit > 0 && ur.connections >= int(userLimit)) ||
 		(globaLimit > 0 && ur.connections >= int(globaLimit)) {
 		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
 	}
 
-
-	
 	ur.connections++
 	return nil
 }
