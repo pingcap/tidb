@@ -75,7 +75,7 @@ func openStoreReaderAndSeek(
 	initFileOffset uint64,
 	prefetchSize int,
 ) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{PrefetchSize: prefetchSize})
+	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{})
 	if err != nil {
 		return nil, err
 	}

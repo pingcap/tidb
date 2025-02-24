@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -95,7 +93,6 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	}
 	err := eg.Wait()
 	if err != nil {
-		log.FromContext(r.ctx).Error("concurrent read meet error", zap.Error(err))
 		return nil, err
 	}
 
