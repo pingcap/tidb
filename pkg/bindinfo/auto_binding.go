@@ -105,6 +105,7 @@ type StmtStats struct {
 	SchemaName      string
 
 	// exec info
+	Plan          string
 	ResultRows    int64
 	ExecCount     int64
 	ProcessedKeys int64
@@ -120,7 +121,7 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int) (stmts []
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
-				result_rows, exec_count, processed_keys, total_time
+				result_rows, exec_count, processed_keys, total_time, plan
 				from information_schema.tidb_statements_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
 				plan_hint != "" and
@@ -150,6 +151,7 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int) (stmts []
 			ExecCount:       row.GetInt64(8),
 			ProcessedKeys:   row.GetInt64(9),
 			TotalTime:       row.GetInt64(10),
+			Plan:            row.GetString(11),
 		})
 	}
 	return
@@ -159,7 +161,7 @@ func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
-				result_rows, exec_count, processed_keys, total_time
+				result_rows, exec_count, processed_keys, total_time, plan
 				from information_schema.tidb_statements_stats
 				where digest = '%v'`, digest)
 	var rows []chunk.Row
@@ -190,6 +192,7 @@ func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt
 		ExecCount:       row.GetInt64(8),
 		ProcessedKeys:   row.GetInt64(9),
 		TotalTime:       row.GetInt64(10),
+		Plan:            row.GetString(11),
 	}
 	return
 }
