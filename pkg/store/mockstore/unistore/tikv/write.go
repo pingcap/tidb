@@ -169,7 +169,7 @@ func (w writeLockWorker) run() {
 				default:
 					// Make sure it fits into an arena block.
 					if len(entry.Key.UserKey)+len(entry.Value) > ls.MaxEntrySize() {
-						batch.err = fmt.Errorf("Unistore lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize())
+						batch.err = fmt.Errorf("unistore lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize())
 						break
 					}
 					insertCnt++
