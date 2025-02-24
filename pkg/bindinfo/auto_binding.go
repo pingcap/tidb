@@ -66,16 +66,8 @@ type AutoBindingInfo struct {
 	ScanRowsPerReturnRow float64
 }
 
-func (h *globalBindingHandle) AutoBindingsForSQL(stmtOrDigest string) ([]*AutoBindingInfo, error) {
-	normStmt, isStmt := h.normalizeSQLForBinding(stmtOrDigest)
-
-	var whereCond string
-	if isStmt {
-		whereCond = fmt.Sprintf("where original_sql='%s'", normStmt)
-	} else {
-		whereCond = fmt.Sprintf("where sql_digest='%s'", normStmt)
-	}
-
+func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingInfo, error) {
+	whereCond := fmt.Sprintf("where sql_digest='%s'", digest)
 	bindings, err := h.readBindingsFromStorage(whereCond)
 	if err != nil {
 		return nil, err
@@ -83,6 +75,7 @@ func (h *globalBindingHandle) AutoBindingsForSQL(stmtOrDigest string) ([]*AutoBi
 
 	var autoBindings []*AutoBindingInfo
 	for _, binding := range bindings {
+		stmt, err := h.getStmtStatsByDigestInCluster(digest)
 		//execInfo, err := h.getBindingExecInfo(binding.BindSQL)
 		autoBindings = append(autoBindings, &AutoBindingInfo{
 			Binding: binding,
@@ -90,16 +83,6 @@ func (h *globalBindingHandle) AutoBindingsForSQL(stmtOrDigest string) ([]*AutoBi
 	}
 
 	return autoBindings, nil
-}
-
-func (h *globalBindingHandle) normalizeSQLForBinding(SQLOrDigest string) (normStmt string, isStmt bool) {
-	p := parser.New()
-	stmt, err := p.ParseOneStmt(SQLOrDigest, "", "")
-	if err != nil {
-		return "", false
-	}
-	normStmt, _ = NormalizeStmtForBinding(stmt, "test", false)
-	return normStmt, true
 }
 
 // TODO: expose statement_summary.go:stmtSummaryStats and use it directly? Is it thread-safe?
