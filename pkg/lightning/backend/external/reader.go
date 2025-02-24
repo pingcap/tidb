@@ -171,7 +171,7 @@ func readOneFile(
 			if err == io.EOF {
 				break
 			}
-			return err
+			return errors.Trace(err)
 		}
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)

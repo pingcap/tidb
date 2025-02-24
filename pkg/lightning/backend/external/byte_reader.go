@@ -309,6 +309,7 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
+			err = errors.Trace(err)
 		case context.Canceled:
 			return err
 		default:
