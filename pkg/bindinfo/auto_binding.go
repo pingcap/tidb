@@ -2,8 +2,6 @@ package bindinfo
 
 import (
 	"fmt"
-	"time"
-
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -12,9 +10,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *globalBindingHandle) AutoRecordBindings(beginTime time.Time) (err error) {
+func (h *globalBindingHandle) AutoRecordBindings() (err error) {
 	// TODO: implement h.getStmtStats to get data by using in-memory function call instead of SQL to improve performance.
-	stmts, err := h.getStmtStatsTemp(0, beginTime)
+	stmts, err := h.getStmtStatsTemp(0)
 	if err != nil {
 		return err
 	}
@@ -111,22 +109,20 @@ type StmtStats struct {
 	TotalTime     int64
 }
 
-func (h *globalBindingHandle) getStmtStats(execCountThreshold int, beginTime time.Time) ([]*StmtStats, error) {
+func (h *globalBindingHandle) getStmtStats(execCountThreshold int) ([]*StmtStats, error) {
 	// TODO: to implement.
 	return nil, nil
 }
 
-func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, beginTime time.Time) (stmts []*StmtStats, err error) {
+func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int) (stmts []*StmtStats, err error) {
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
 				result_rows, exec_count, processed_keys, total_time
-				from information_schema.tidb_statement_stats
+				from information_schema.tidb_statements_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
 				plan_hint != "" and
-				exec_count > %v and summary_begin_time >= '%s'`,
-		execCountThreshold,
-		beginTime.Add(-time.Minute*30).Format("2006-01-02 15:04:05"))
+				exec_count > %v`, execCountThreshold)
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
