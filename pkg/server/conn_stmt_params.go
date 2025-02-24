@@ -31,12 +31,13 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 	if enc == nil {
 		enc = util2.NewInputDecoder(charset.CharsetUTF8)
 	}
+	boundParamsSize := len(boundParams)
 
 	for i := 0; i < len(params); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
-		if boundParams[i] != nil {
+		if i < boundParamsSize && boundParams[i] != nil {
 			params[i] = param.BinaryParam{
 				Tp:  mysql.TypeBlob,
 				Val: boundParams[i],

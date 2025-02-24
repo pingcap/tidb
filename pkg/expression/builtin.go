@@ -992,9 +992,11 @@ var funcs = map[string]functionClass{
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 
 	// TiDB Sequence function.
-	ast.NextVal:         &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
-	ast.LastVal:         &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
-	ast.SetVal:          &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
+	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
+	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// TiDB Query
 	ast.QueryAttrString: &getQueryAttrFunctionClass{baseFunctionClass{ast.QueryAttrString, 1, 1}},
 }
 

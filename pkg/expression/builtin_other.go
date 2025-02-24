@@ -1840,6 +1840,7 @@ func (b *builtinGetQueryAttrStringSig) RequiredOptionalEvalProps() OptionalEvalP
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
+// This implements `mysql_query_attribute_string(str)`
 func (b *builtinGetQueryAttrStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	sessionVars, err := b.GetSessionVars(ctx)
 	if err != nil {
