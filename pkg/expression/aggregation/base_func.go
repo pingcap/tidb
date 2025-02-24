@@ -246,8 +246,8 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 
 // TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
 // compatible with mysql.
-func (a *baseFuncDesc) TypeInfer4AvgSum(isTiFlash bool, avgArgRetTp *types.FieldType) {
-	if a.RetTp.GetType() == mysql.TypeNewDecimal {
+func (a *baseFuncDesc) TypeInfer4AvgSum(isTiFlash bool, avgRetTp *types.FieldType, avgArgRetTp *types.FieldType) {
+	if avgRetTp.GetType() == mysql.TypeNewDecimal {
 		if isTiFlash && avgArgRetTp.GetType() == mysql.TypeNewDecimal {
 			// For tiflash, different precision use different type to compute decimal.
 			// For precision in (18, 38], will use Int128.
@@ -258,7 +258,10 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(isTiFlash bool, avgArgRetTp *types.Field
 			} else if avgArgRetTp.GetFlen() <= 18 {
 				a.RetTp.SetFlen(min(avgArgRetTp.GetFlen()+22, 38))
 			} else {
-				a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+				a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, avgArgRetTp.GetFlen()+22))
+			}
+			if avgArgRetTp.GetDecimal() > 0 {
+				a.RetTp.SetDecimal(avgArgRetTp.GetDecimal())
 			}
 		} else {
 			a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
