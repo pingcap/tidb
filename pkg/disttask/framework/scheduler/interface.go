@@ -45,6 +45,8 @@ type TaskManager interface {
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	// RevertTask updates task state to reverting, and task error.
 	RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
+	// AwaitingResolveTask updates task state to awaiting-resolve, also set task err.
+	AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
 	// RevertedTask updates task state to reverted.
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
