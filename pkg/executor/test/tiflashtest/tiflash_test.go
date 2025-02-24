@@ -2240,6 +2240,7 @@ func TestIssue59703(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err")
 
 	err = tk.ExecToErr("select count(*) from t")
 	require.Contains(t, err.Error(), "mock mpp error")
