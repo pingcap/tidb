@@ -132,7 +132,10 @@ func (r *ExecutorWithRetry) Close() error {
 	r.mppErrRecovery.ResetHolder()
 	r.memTracker.Detach()
 	// Need to close coordinator before unregister to avoid coord.Close() takes too long.
-	err := r.coord.Close()
+	var err error
+	if r.coord != nil {
+		err = r.coord.Close()
+	}
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	return err
 }
@@ -157,6 +160,9 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 	}
 
 	_, kvRanges, err := r.coord.Execute(ctx)
+	failpoint.Inject("mpp_coordinator_execute_err", func() {
+		err = errors.New("mock mpp error")
+	})
 	if err != nil {
 		return nil, err
 	}

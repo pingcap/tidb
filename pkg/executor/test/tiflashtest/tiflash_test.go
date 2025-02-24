@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -2219,4 +2220,28 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
 			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+}
+
+func TestIssuexxxxx(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
+
+	err = tk.ExecToErr("select count(*) from t")
+	require.Contains(t, err.Error(), "mock mpp error")
+	require.Equal(t, mppcoordmanager.InstanceMPPCoordinatorManager.GetCoordCount(), 0)
 }
