@@ -233,11 +233,11 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		case io.EOF:
 			// EOF is only allowed when we have not read any data
 			if hasRead {
-				return nil, io.ErrUnexpectedEOF
+				return nil, errors.Trace(io.ErrUnexpectedEOF)
 			}
 			return nil, err
 		default:
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		readLen, bs = r.next(n)
 		hasRead = hasRead || readLen > 0
