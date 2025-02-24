@@ -158,14 +158,17 @@ func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt
 	stmtQuery := fmt.Sprintf(`
 				select digest, query_sample_text, charset,
 				collation, plan_hint, plan_digest, schema_name,
-				result_rows, exec_count, processed_keys,
-				from information_schema.tidb_statement_stats
+				result_rows, exec_count, processed_keys, total_time
+				from information_schema.tidb_statements_stats
 				where digest = '%v'`, digest)
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
