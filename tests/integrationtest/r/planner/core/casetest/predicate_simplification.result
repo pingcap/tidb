@@ -45,8 +45,8 @@ TableReader	3583.33	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3))
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, f int);
@@ -84,8 +84,8 @@ TableReader	30.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 2)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
 id	estRows	task	access object	operator info
