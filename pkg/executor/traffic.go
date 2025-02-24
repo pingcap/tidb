@@ -145,7 +145,7 @@ func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return errors.Wrapf(err, "get tiproxy addresses failed")
 	}
 	// Cancel all traffic jobs by default.
-	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
 	args := make(map[string]string, 2)
 	if hasCapturePriv && !hasReplayPriv {
 		args["type"] = "capture"
@@ -182,7 +182,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 		return err
 	}
 	// Filter the jobs by privilege.
-	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
 	allJobs := make([]trafficJob, 0, len(resps))
 	for addr, resp := range resps {
 		var jobs []trafficJob
@@ -395,7 +395,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	return readers, nil
 }
 
-func hasTrafficPriv(ctx context.Context, sctx sessionctx.Context) (capturePriv, replayPriv bool) {
+func hasTrafficPriv(sctx sessionctx.Context) (capturePriv, replayPriv bool) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
 		return true, true
