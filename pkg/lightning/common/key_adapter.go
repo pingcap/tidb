@@ -97,7 +97,7 @@ func (d DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	rowIDLen := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
 	tailLen := int(rowIDLen + 2)
 	if len(data) < tailLen {
-		d.Logger.Warn("[date0218] Decode error 2", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen))
+		d.Logger.Warn("[date0218] Decode error 2", logutil.Key("data", data), zap.Uint16("rowIDLen", rowIDLen), zap.Int("tailLen", tailLen), zap.Stack("stack"))
 		return nil, errors.New("insufficient bytes to decode value")
 	}
 	_, key, err := codec.DecodeBytes(data[:len(data)-tailLen], dst[len(dst):cap(dst)])

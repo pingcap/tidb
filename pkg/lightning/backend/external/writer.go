@@ -416,6 +416,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+	// TODO[0224]: note that the minKey and maxKey here can be decoded
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{

@@ -268,7 +268,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 	}
 	return &SortedKVMeta{
 		StartKey:           summary.Min.Clone(),
-		EndKey:             summary.Max.Clone().Next(),
+		EndKey:             summary.Max.Clone().Next(), // TODO[0224]: maybe the source of the invalid key
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
