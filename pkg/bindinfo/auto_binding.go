@@ -106,7 +106,7 @@ func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingIn
 		autoBinding.Recommend = "NO"
 		autoBinding.Reason = ""
 
-		if strings.Contains(autoBinding.Plan, "PointGet") {
+		if strings.Contains(autoBinding.Plan, "Point_Get") {
 			autoBinding.Recommend = "YES"
 			autoBinding.Reason = "PointGet/BatchPointGet is the optimal plan."
 		}
