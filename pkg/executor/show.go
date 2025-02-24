@@ -341,8 +341,8 @@ func (e *ShowExec) fetchBindingPlans() error {
 			binding.AvgReturnedRows,
 			binding.LatencyPerReturnRow,
 			binding.ScanRowsPerReturnRow,
-			"NO",
-			""})
+			binding.Recommend,
+			binding.Reason})
 	}
 
 	return nil
