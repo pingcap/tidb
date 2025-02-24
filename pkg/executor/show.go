@@ -336,7 +336,7 @@ func (e *ShowExec) fetchBindingPlans() error {
 			binding.Binding.BindSQL,
 			binding.Plan,
 			binding.AvgLatency,
-			binding.ExecTimes,
+			float64(binding.ExecTimes),
 			binding.AvgScanRows,
 			binding.AvgReturnedRows,
 			binding.LatencyPerReturnRow,
