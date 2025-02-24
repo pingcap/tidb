@@ -262,6 +262,9 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(isTiFlash bool, avgRetTp *types.FieldTyp
 			}
 			if avgArgRetTp.GetDecimal() > 0 {
 				a.RetTp.SetDecimal(avgArgRetTp.GetDecimal())
+			} else {
+				// Normally cannot reach here for decimal type.
+				a.RetTp.SetDecimal(avgRetTp.GetDecimal())
 			}
 		} else {
 			a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
