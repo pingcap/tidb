@@ -3,12 +3,17 @@
 package prealloctableid_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,4 +127,42 @@ func TestAllocator(t *testing.T) {
 			run(t, c)
 		})
 	}
+}
+
+func TestAllocatorBound(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE TABLE test.t1 (id int);")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	currentGlobalID := int64(0)
+	err := kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) (err error) {
+		allocator := meta.NewMutator(txn)
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	rows := tk.MustQuery("ADMIN SHOW DDL JOBS WHERE JOB_ID = ?", currentGlobalID).Rows()
+	// The current global ID is used, so it cannot use anymore.
+	require.Len(t, rows, 1)
+	tableInfos := []*metautil.Table{
+		{Info: &model.TableInfo{ID: currentGlobalID}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 2}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 4}},
+	}
+	ids := prealloctableid.New(tableInfos)
+	lastGlobalID := currentGlobalID
+	err = kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		allocator := meta.NewMutator(txn)
+		if err := ids.Alloc(allocator); err != nil {
+			return err
+		}
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID), ids.String())
+	require.False(t, ids.Prealloced(tableInfos[0].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[1].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[2].Info.ID))
+	require.True(t, ids.Prealloced(currentGlobalID-1))
 }
