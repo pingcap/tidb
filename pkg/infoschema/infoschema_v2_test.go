@@ -17,6 +17,7 @@ package infoschema
 import (
 	"context"
 	"math"
+	"sort"
 	"testing"
 
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -461,6 +462,7 @@ func TestReferredFKInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 4)
 	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	sortReferredFKs(ref)
 	require.Equal(t, len(ref), 2)
 	require.Equal(t, ref[1].ChildFKName, tblInfo.ForeignKeys[1].Name)
 
@@ -736,4 +738,16 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	dbItem, ok = v2.Data.schemaMap.Load().Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.True(t, dbItem.tomb)
+}
+
+func sortReferredFKs(fks []*model.ReferredFKInfo) {
+	sort.Slice(fks, func(i, j int) bool {
+		if fks[i].ChildSchema.L != fks[j].ChildSchema.L {
+			return fks[i].ChildSchema.L < fks[j].ChildSchema.L
+		}
+		if fks[i].ChildTable.L != fks[j].ChildTable.L {
+			return fks[i].ChildTable.L < fks[j].ChildTable.L
+		}
+		return fks[i].ChildFKName.L < fks[j].ChildFKName.L
+	})
 }

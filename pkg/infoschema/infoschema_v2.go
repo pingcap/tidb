@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -289,16 +288,11 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	btreeSet(&isd.schemaID2Name, schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
-type referredFKItemWithSchemaVersion struct {
-	schemaVersion int64
-	fkInfo        *model.ReferredFKInfo
-}
-
 type referredForeignKeysHelper struct {
 	start           referredForeignKeyItem
 	schemaVersion   int64
 	prev            *referredForeignKeyItem
-	referredFKInfos []referredFKItemWithSchemaVersion
+	referredFKInfos []*model.ReferredFKInfo
 }
 
 func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
@@ -316,10 +310,7 @@ func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
 	}
 	h.prev = item
 	if !item.tomb {
-		h.referredFKInfos = append(h.referredFKInfos, referredFKItemWithSchemaVersion{
-			schemaVersion: item.schemaVersion,
-			fkInfo:        item.referredFKInfo,
-		})
+		h.referredFKInfos = append(h.referredFKInfos, item.referredFKInfo)
 	}
 	return true
 }
@@ -328,19 +319,10 @@ func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVer
 	helper := referredForeignKeysHelper{
 		start:           referredForeignKeyItem{dbName: schema, tableName: table, schemaVersion: math.MaxInt64},
 		schemaVersion:   schemaMetaVersion,
-		referredFKInfos: make([]referredFKItemWithSchemaVersion, 0),
+		referredFKInfos: make([]*model.ReferredFKInfo, 0),
 	}
 	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
-
-	sort.Slice(helper.referredFKInfos, func(i, j int) bool {
-		return helper.referredFKInfos[i].schemaVersion < helper.referredFKInfos[j].schemaVersion
-	})
-
-	result := make([]*model.ReferredFKInfo, len(helper.referredFKInfos))
-	for i, v := range helper.referredFKInfos {
-		result[i] = v.fkInfo
-	}
-	return result
+	return helper.referredFKInfos
 }
 
 func (isd *Data) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
