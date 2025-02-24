@@ -82,9 +82,6 @@ func (d DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte
 	dst = append(dst, rowID...)
 	rowIDLen := uint16(len(rowID))
 	dst = append(dst, byte(rowIDLen>>8), byte(rowIDLen))
-	if rowIDLen == 2048 {
-		d.Logger.Warn("[date0218] Encode", zap.Int("len(key)", len(key)), logutil.Key("key", key), logutil.Key("rowID", rowID), logutil.Key("dst", dst))
-	}
 	return dst
 }
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -266,9 +267,10 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 	if summary == nil || (len(summary.Min) == 0 && len(summary.Max) == 0) {
 		return &SortedKVMeta{}
 	}
+	logutil.BgLogger().Warn("[date0224] NewSortedKVMeta", brlogutil.Key("summary.Min", []byte(summary.Min)), brlogutil.Key("summary.Max", []byte(summary.Max)))
 	return &SortedKVMeta{
 		StartKey:           summary.Min.Clone(),
-		EndKey:             summary.Max.Clone().Next(), // TODO[0224]: maybe the source of the invalid key
+		EndKey:             summary.Max.Clone().Next(),
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
