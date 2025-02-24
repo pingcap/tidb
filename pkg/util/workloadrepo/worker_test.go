@@ -901,23 +901,16 @@ func TestOwnerRandomDown(t *testing.T) {
 						return wrk.cancel == nil
 					}, time.Minute, 100*time.Millisecond)
 				} else if j%3 == 1 {
-					// unexpected owner down due to bad network or crash
+					// immediate unexpected owner down due to bad network or crash
 					wrk.owner.CampaignCancel()
-					require.Eventually(t, func() bool {
-						return !wrk.owner.IsOwner()
-					}, time.Minute, 100*time.Millisecond)
+					require.False(t, wrk.owner.IsOwner())
 					breakOwnerIdx = idx
 				} else {
 					// normal owner switch triggered somehow
-					for m := 0; m < 3; m++ {
-						wrk.owner.ResignOwner(ctx)
-						require.Eventually(t, func() bool {
-							return !wrk.owner.IsOwner()
-						}, time.Minute, 100*time.Millisecond)
-						if !wrk.owner.IsOwner() {
-							break
-						}
-					}
+					wrk.owner.ResignOwner(ctx)
+					require.Eventually(t, func() bool {
+						return !wrk.owner.IsOwner()
+					}, 15*time.Second, 100*time.Millisecond)
 					// it is very unlikely, but let us just fail if that happened
 					if wrk.owner.IsOwner() {
 						require.FailNow(t, "fail to resign owner to other nodes")
