@@ -177,7 +177,7 @@ func (h *globalBindingHandle) getStmtStatsTemp(execCountThreshold int, existingP
 				result_rows, exec_count, processed_keys, total_time, plan
 				from information_schema.tidb_statements_stats
 				where stmt_type in ('Select', 'Insert', 'Update', 'Delete') and
-				plan_hint != "" and exec_count > %v and plan_digests not in (%v)`,
+				plan_hint != "" and exec_count > %v and plan_digest not in (%v)`,
 		execCountThreshold, strings.Join(existingPlanDigestList, ","))
 	var rows []chunk.Row
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
