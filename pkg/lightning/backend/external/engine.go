@@ -347,7 +347,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	}
 	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
 	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.tryDecodeKey(lastKey)
+	cur, err4 := e.tryDecodeEndKey(lastKey)
 	if err4 != nil {
 		return err4
 	}
@@ -432,7 +432,7 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	endKey, err = e.tryDecodeKey(e.endKey)
+	endKey, err = e.tryDecodeEndKey(e.endKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -442,8 +442,16 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	splitKeys := make([][]byte, len(e.splitKeys))
+	var (
+		err      error
+		splitKey []byte
+	)
 	for i, k := range e.splitKeys {
-		splitKey, err := e.tryDecodeKey(k)
+		if i < len(e.splitKeys)-1 {
+			splitKey, err = e.keyAdapter.Decode(nil, k)
+		} else {
+			splitKey, err = e.tryDecodeEndKey(k)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -452,11 +460,11 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	return splitKeys, nil
 }
 
-// tryDecodeKey tries to decode the key from two sources.
+// tryDecodeEndKey tries to decode the key from two sources.
 // When duplicate detection feature is enabled, the **end key** comes from
 // DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
 // error.
-func (e *Engine) tryDecodeKey(key []byte) (decoded []byte, err error) {
+func (e *Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
 	decoded, err = e.keyAdapter.Decode(nil, key)
 	if err == nil {
 		return
