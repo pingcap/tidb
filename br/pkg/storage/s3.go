@@ -828,6 +828,7 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		ctx:          ctx,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
