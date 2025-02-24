@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -138,58 +137,65 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		lastUpdateTime = h.lastUpdateTime.Load().(types.Time)
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
+	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
+	bindings, err := h.readBindingsFromStorage(condition)
+	if err != nil {
+		return err
+	}
 
+	for _, binding := range bindings {
+		// Update lastUpdateTime to the newest one.
+		// Even if this one is an invalid bind.
+		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
+			lastUpdateTime = binding.UpdateTime
+		}
+
+		oldBinding := h.bindingCache.GetBinding(binding.SQLDigest)
+		cachedBinding := pickCachedBinding(oldBinding, binding)
+		if cachedBinding != nil {
+			err = h.bindingCache.SetBinding(binding.SQLDigest, cachedBinding)
+			if err != nil {
+				bindingLogger().Warn("BindHandle.Update", zap.Error(err))
+			}
+		} else {
+			h.bindingCache.RemoveBinding(binding.SQLDigest)
+		}
+	}
+
+	// update last-update-time and metrics
+	h.lastUpdateTime.Store(lastUpdateTime)
+	metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
+	metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
+	metrics.BindingCacheNumBindings.Set(float64(len(h.bindingCache.GetAllBindings())))
+	return nil
+}
+
+func (h *globalBindingHandle) readBindingsFromStorage(condition string) (bindings []*Binding, err error) {
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
-       %s ORDER BY update_time, create_time`, timeCondition)
+       %s`, condition)
 
-	return h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
 		}
-
-		defer func() {
-			h.lastUpdateTime.Store(lastUpdateTime)
-			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
-			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
-			metrics.BindingCacheNumBindings.Set(float64(len(h.bindingCache.GetAllBindings())))
-		}()
-
+		bindings = make([]*Binding, 0, len(rows))
 		for _, row := range rows {
 			// Skip the builtin record which is designed for binding synchronization.
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 				continue
 			}
-			sqlDigest, binding, err := newBindingFromStorage(sctx, row)
-
-			// Update lastUpdateTime to the newest one.
-			// Even if this one is an invalid bind.
-			if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
-				lastUpdateTime = binding.UpdateTime
-			}
-
-			if err != nil {
-				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+			binding := newBindingFromStorage(row)
+			if hErr := prepareHints(sctx, binding); hErr != nil {
+				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
 				continue
 			}
-
-			oldBinding := h.bindingCache.GetBinding(sqlDigest)
-			cachedBinding := pickCachedBinding(oldBinding, binding)
-			if cachedBinding != nil {
-				err = h.bindingCache.SetBinding(sqlDigest, cachedBinding)
-				if err != nil {
-					// When the memory capacity of bing_cache is not enough,
-					// there will be some memory-related errors in multiple places.
-					// Only needs to be handled once.
-					bindingLogger().Warn("BindHandle.Update", zap.Error(err))
-				}
-			} else {
-				h.bindingCache.RemoveBinding(sqlDigest)
-			}
+			bindings = append(bindings, binding)
 		}
 		return nil
 	})
+	return
 }
 
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
@@ -391,13 +397,13 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 }
 
 // newBindingFromStorage builds Bindings from a tuple in storage.
-func newBindingFromStorage(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
+func newBindingFromStorage(row chunk.Row) *Binding {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == StatusUsing {
 		status = StatusEnabled
 	}
-	binding := &Binding{
+	return &Binding{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(row.GetString(2)),
 		BindSQL:     row.GetString(1),
@@ -410,10 +416,6 @@ func newBindingFromStorage(sctx sessionctx.Context, row chunk.Row) (string, *Bin
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
 	}
-	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err := prepareHints(sctx, binding)
-	sctx.GetSessionVars().CurrentDB = binding.Db
-	return sqlDigest.String(), binding, err
 }
 
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
