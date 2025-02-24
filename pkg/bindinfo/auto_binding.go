@@ -166,7 +166,10 @@ func (h *globalBindingHandle) getStmtStatsByDigestInCluster(digest string) (stmt
 		rows, _, err = execRows(sctx, stmtQuery)
 		return err
 	})
-	if len(rows) > 0 {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	if len(rows) > 1 {
 		// TODO: accumulate them
 	}
 
