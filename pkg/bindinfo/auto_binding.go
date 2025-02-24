@@ -80,6 +80,7 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 		}
 		autoBinding := &AutoBindingInfo{Binding: binding}
 		if stmt != nil && stmt.ExecCount > 0 {
+			autoBinding.ExecTimes = stmt.ExecCount
 			autoBinding.AvgLatency = float64(stmt.TotalTime) / float64(stmt.ExecCount)
 			autoBinding.AvgScanRows = float64(stmt.ProcessedKeys) / float64(stmt.ExecCount)
 			autoBinding.AvgReturnedRows = float64(stmt.ResultRows) / float64(stmt.ExecCount)
