@@ -340,6 +340,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// But we don't consider this situation currently.
 		// Only key made by one column is considered now.
 		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("fuck")
+		}
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
