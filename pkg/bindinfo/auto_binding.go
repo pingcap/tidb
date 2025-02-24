@@ -3,6 +3,7 @@ package bindinfo
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -12,8 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *globalBindingHandle) AutoRecordBindings() (err error) {
-	// TODO: implement h.getStmtStats to get data by using in-memory function call instead of SQL to improve performance.
+func (h *globalBindingHandle) AutoRecordBindings(lastTime time.Time) (err error) {
+	h.updateAutoBindingDigests(lastTime)
 	stmts, err := h.getStmtStatsTemp(0, h.autoBindingDigests)
 	if err != nil {
 		return err
@@ -112,6 +113,10 @@ func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingIn
 			autoBinding.Reason = "PointGet/BatchPointGet is the optimal plan."
 		}
 	}
+}
+
+func (h *globalBindingHandle) updateAutoBindingDigests(lastTime time.Time) {
+	// TODO: "select * from bind.info where create_time > lastTime" and update h.autoBindingDigests
 }
 
 // TODO: expose statement_summary.go:stmtSummaryStats and use it directly? Is it thread-safe?
