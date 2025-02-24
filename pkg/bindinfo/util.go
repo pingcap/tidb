@@ -42,4 +42,5 @@ func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 type SessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
+	Destroy(pools.Resource)
 }

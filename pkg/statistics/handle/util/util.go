@@ -75,7 +75,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := pool.Get()
 	if err != nil {
 		return err
@@ -83,6 +83,9 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -182,7 +185,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool DestroyableSessionPool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil

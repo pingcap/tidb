@@ -1655,6 +1655,11 @@ func (p *sessionPool) Put(resource pools.Resource) {
 	}
 }
 
+// Destroy destroys the session.
+func (p *sessionPool) Destroy(resource pools.Resource) {
+	resource.Close()
+}
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
