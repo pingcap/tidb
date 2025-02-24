@@ -382,8 +382,10 @@ func formatInvalidChars(src []byte) string {
 			sb.WriteString("...")
 			break
 		}
-		if src[i] > unicode.MaxASCII {
-			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
+		if src[i] > unicode.MaxASCII || src[i] < ' ' {
+			sb.WriteString(fmt.Sprintf("\\x%02X", src[i]))
+		} else if src[i] == 0x7F {
+			continue
 		} else {
 			sb.Write([]byte{src[i]})
 		}
