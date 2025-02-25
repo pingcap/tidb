@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -401,27 +400,28 @@ func ParallelProcess[T any](
 ) ([]T, error) {
 	// In some tests, the passed workerCount may be zero.
 	workerCount = max(workerCount, 1)
-	batchCounts := mathutil.Divide2Batches(len(files), workerCount)
 	res := make([]T, len(files))
 
-	// Parallel process all files
-	curStart := 0
-	eg, ctx := errgroup.WithContext(ctx)
-	for _, c := range batchCounts {
-		start, end := curStart, curStart+c
-		curStart = end
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(workerCount)
+
+	for i, file := range files {
 		eg.Go(func() error {
-			for j := start; j < end; j++ {
-				v, err := hdl(ctx, files[j])
-				if err != nil {
-					return err
-				}
-				res[j] = v
+			select {
+			case <-egCtx.Done():
+				return nil
+			default:
 			}
 
+			v, err := hdl(ctx, file)
+			if err != nil {
+				return err
+			}
+			res[i] = v
 			return nil
 		})
 	}
+
 	if err := eg.Wait(); err != nil {
 		return nil, errors.Trace(err)
 	}
