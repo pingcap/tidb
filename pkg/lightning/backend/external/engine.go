@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -464,12 +465,14 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 // When duplicate detection feature is enabled, the **end key** comes from
 // DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
 // error.
-func (e *Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
 	decoded, err = e.keyAdapter.Decode(nil, key)
 	if err == nil {
 		return
 	}
 	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
+		// NoopKeyAdapter.Decode always return nil error
+		intest.Assert(false, "Unreachable code path")
 		return nil, err
 	}
 	// handle the case that end key is from Key.Next()
