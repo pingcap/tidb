@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -178,7 +177,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) || !ok {
+		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
 			remainedItems = append(remainedItems, item)
 		}
 	}
@@ -374,41 +373,9 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 			return nil, errors.Trace(err)
 		}
 	} else {
-		if c == nil {
-			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			tbl, ok := h.TableInfoByID(is, item.TableID)
-			if !ok {
-				return nil, errors.New("no table")
-			}
-			var colInfo *model.ColumnInfo
-			for _, col := range tbl.Meta().Columns {
-				if col.ID == item.ID {
-					colInfo = col
-					break
-				}
-			}
-			if colInfo == nil {
-				return nil, errors.New("no column")
-			}
-			hg, _, _, _, err = storage.HistMetaFromStorageWithHighPriority(sctx, &item, colInfo)
-			if err != nil {
-				return nil, err
-			}
-			if hg != nil {
-				hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			c = &statistics.Column{
-				Info:     colInfo,
-				IsHandle: tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-			}
-		} else {
-			hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch

@@ -403,3 +403,55 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 		require.Error(t, rs1.Err)
 	}
 }
+
+func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
+	h := dom.StatsHandle()
+	// Skip create table event.
+	<-h.DDLEventCh()
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("analyze table t columns a, b")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, h.InitStatsLite(dom.InfoSchema()))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+	tblInfo := tbl.Meta()
+	statsTbl, ok := h.Get(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, 2, len(statsTbl.Columns))
+	// Do some DDL, one successfully handled by handleDDLEvent, the other not.
+	tk.MustExec("alter table t add column d int default 2")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+	tblInfo = tbl.Meta()
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, 3, len(statsTbl.Columns))
+
+	// Try sync load.
+	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	require.True(t, statsTbl.Columns[tblInfo.Columns[0].ID].IsFullLoad())
+	require.True(t, statsTbl.Columns[tblInfo.Columns[1].ID].IsFullLoad())
+	require.True(t, statsTbl.Columns[tblInfo.Columns[3].ID].IsFullLoad())
+	require.Nil(t, statsTbl.Columns[tblInfo.Columns[2].ID])
+
+	// Analyze c then test sync load again
+	tk.MustExec("analyze table t columns a, b, c")
+	require.NoError(t, h.InitStatsLite(dom.InfoSchema()))
+	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	// a, b, d's status is not changed.
+	require.True(t, statsTbl.Columns[tblInfo.Columns[0].ID].IsFullLoad())
+	require.True(t, statsTbl.Columns[tblInfo.Columns[1].ID].IsFullLoad())
+	require.True(t, statsTbl.Columns[tblInfo.Columns[3].ID].IsFullLoad())
+	require.True(t, statsTbl.Columns[tblInfo.Columns[2].ID].IsFullLoad())
+}
