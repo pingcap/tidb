@@ -1146,22 +1146,6 @@ func filterRestoreFiles(
 	return
 }
 
-<<<<<<< HEAD
-// restorePreWork executes some prepare work before restore.
-// TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
-	if client.IsOnline() {
-		return pdutil.Nop, nil, nil
-	}
-
-	if switchToImport {
-		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		client.SwitchToImportMode(ctx)
-	}
-
-	return mgr.RemoveSchedulersWithConfig(ctx)
-}
-
 // restorePostWork executes some post work after restore.
 // TODO: aggregate all lifetime manage methods into batcher's context manager field.
 func restorePostWork(
@@ -1183,9 +1167,7 @@ func restorePostWork(
 }
 
 // enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
-=======
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
->>>>>>> 384f858a6c8 (br/stream: allow pitr to create oversized indices (#58433))
 // return a function that could restore the config to origin.
 func tweakLocalConfForRestore() func() {
 	restoreConfig := config.RestoreFunc()
