@@ -45,11 +45,9 @@ import (
 // The keys for the mocked data that stored in context. They are only used for test.
 type tiproxyAddrKeyType struct{}
 type trafficPathKeyType struct{}
-type trafficPrivKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
 var trafficPathKey trafficPathKeyType
-var trafficPrivKey trafficPrivKeyType
 
 type trafficJob struct {
 	Instance  string `json:"-"` // not passed from TiProxy
