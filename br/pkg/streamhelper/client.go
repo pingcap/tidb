@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	SeverityError            = "ERROR"
-	SeverityRegularOperation = "REGULAR_OPERATION"
+	SeverityError  = "ERROR"
+	SeverityManual = "MANUAL"
 )
 
 // RFC3339Time is a wrapper of `time.Time` that marshals to a RFC3339
@@ -65,7 +65,7 @@ func NewLocalPauseV2() *PauseV2 {
 	}
 
 	return &PauseV2{
-		Severity:         SeverityRegularOperation,
+		Severity:         SeverityManual,
 		OperatorHostName: hostName,
 		OperatorPID:      pid,
 		OperationTime:    RFC3339Time(time.Now()),
