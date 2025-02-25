@@ -191,7 +191,7 @@ func TestCapturePath(t *testing.T) {
 	ctx := context.TODO()
 	tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
 	suite := newTrafficTestSuite(t, 10)
-	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp' duration='1s'")
+	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true' duration='1s'")
 	require.NoError(t, exec.Next(tempCtx, nil))
 
 	paths := make([]string, 0, tiproxyNum)
@@ -259,10 +259,11 @@ func TestReplayPath(t *testing.T) {
 	store := &mockExternalStorage{}
 	ctx = fillCtxWithTiProxyAddr(ctx, ports)
 	ctx = context.WithValue(ctx, trafficStoreKey, store)
+	prefix, suffix := "s3://bucket/tmp", "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true"
 	for i, test := range tests {
 		store.paths = test.paths
 		suite := newTrafficTestSuite(t, 10)
-		exec := suite.build(ctx, "traffic replay from 's3://bucket/tmp' user='root'")
+		exec := suite.build(ctx, fmt.Sprintf("traffic replay from '%s?%s' user='root'", prefix, suffix))
 		for j := 0; j < tiproxyNum; j++ {
 			handlers[j].reset()
 		}
@@ -287,8 +288,9 @@ func TestReplayPath(t *testing.T) {
 				form := httpHandler.getForm()
 				require.NotEmpty(t, form, "case %d", i)
 				input := form.Get("input")
-				require.True(t, strings.HasPrefix(input, "s3://bucket/tmp/"), input, "case %d", i)
-				formPaths = append(formPaths, input[len("s3://bucket/tmp/"):])
+				require.True(t, strings.HasPrefix(input, prefix), input)
+				require.True(t, strings.HasSuffix(input, suffix), input)
+				formPaths = append(formPaths, input[len(prefix)+1:len(input)-len(suffix)-1])
 			}
 		}
 		sort.Strings(formPaths)
