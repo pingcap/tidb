@@ -125,9 +125,8 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 }
 
 func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingInfo) {
-	h.LLM(autoBindings)
-
 	// TODO: just for demo
+	recommended := false
 	for _, autoBinding := range autoBindings {
 		autoBinding.Recommend = "NO"
 		autoBinding.Reason = ""
@@ -135,6 +134,13 @@ func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingIn
 		if strings.Contains(autoBinding.Plan, "Point_Get") {
 			autoBinding.Recommend = "YES"
 			autoBinding.Reason = "PointGet/BatchPointGet is the optimal plan."
+			recommended = true
+		}
+	}
+
+	if !recommended {
+		if err := h.LLM(autoBindings); err != nil {
+			logutil.BgLogger().Error("LLM", zap.Error(err))
 		}
 	}
 }

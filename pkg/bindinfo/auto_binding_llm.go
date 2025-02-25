@@ -3,6 +3,7 @@ package bindinfo
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,13 +12,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) {
+func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) (err error) {
 	bindingPlans := make([]string, 0, len(autoBindings))
 	for i, autoBinding := range autoBindings {
 		planText, err := h.autoBindingPlanText(autoBinding)
 		if err != nil {
-			fmt.Println("err ", err)
-			return
+			return err
 		}
 		bindingPlans = append(bindingPlans, fmt.Sprintf("%d. %v\n%v\n", i, autoBinding.BindSQL, planText))
 	}
@@ -37,7 +37,7 @@ The reason should be concise, not more than 50 words.
 Please return a valid JSON object with the key "best_number" and "reason".
 IMPORTANT: Don't put anything else in the response.
 Here is an example of output JSON:
-    {"best_number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}
+    {"number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}
 `
 	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingPlans, "\n"))
 
@@ -59,6 +59,25 @@ Here is an example of output JSON:
 		fmt.Println(resp)
 		fmt.Println("=======================================================")
 	}
+
+	r := new(LLMRecommendation)
+	err = json.Unmarshal([]byte(resp), r)
+	if err != nil {
+		return err
+	}
+
+	if r.Number < 0 || r.Number >= len(autoBindings) {
+		return errors.New("invalid result number")
+	}
+
+	autoBindings[r.Number].Recommend = "YES (from LLM)"
+	autoBindings[r.Number].Reason = r.Reason
+	return nil
+}
+
+type LLMRecommendation struct {
+	Number int    `json:"number"`
+	Reason string `json:"reason"`
 }
 
 func (h *globalBindingHandle) autoBindingPlanText(autoBinding *AutoBindingInfo) (string, error) {
