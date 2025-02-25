@@ -1612,7 +1612,9 @@ func BuildFinalModeAggregation(
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
 				if err := sumAgg.TypeInfer(sctx.GetExprCtx()); err != nil {
-					// todo err
+					partial = nil
+					final = original
+					return
 				}
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
@@ -1689,7 +1691,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
 			if err := avgSum.TypeInfer(exprCtx); err != nil {
-				// todo err
+				return nil
 			}
 			newAggFuncs = append(newAggFuncs, avgSum)
 			avgSumCol := &expression.Column{
