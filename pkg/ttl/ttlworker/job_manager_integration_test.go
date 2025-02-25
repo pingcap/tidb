@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	metrics2 "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	dbsession "github.com/pingcap/tidb/pkg/session"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -699,7 +701,7 @@ func TestJobTimeout(t *testing.T) {
 	require.Equal(t, now.Unix(), newTableStatus.CurrentJobOwnerHBTime.Unix())
 
 	// the timeout will be checked while updating heartbeat
-	require.NoError(t, m2.UpdateHeartBeat(ctx, se, now.Add(7*time.Hour)))
+	require.NoError(t, m2.UpdateHeartBeatForJob(ctx, se, now.Add(7*time.Hour), m2.RunningJobs()[0]))
 	tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("job is timeout"))
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
 }
@@ -807,10 +809,15 @@ func TestGCScanTasks(t *testing.T) {
 	addScanTaskRecord(3, 2, 1)
 	addScanTaskRecord(3, 2, 2)
 
+	isLeader := false
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
+		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	// only leader can do GC
+	m.DoGC(context.TODO(), se)
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task").Check(testkit.Rows("6"))
+	isLeader = true
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
 }
@@ -826,10 +833,15 @@ func TestGCTableStatus(t *testing.T) {
 	// insert table status without corresponding table
 	tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", 2024, 2024)
 
+	isLeader := false
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
+		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	// only leader can do GC
+	m.DoGC(context.TODO(), se)
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_table_status").Check(testkit.Rows("1"))
+	isLeader = true
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select * from mysql.tidb_ttl_table_status").Check(nil)
 
@@ -887,10 +899,15 @@ func TestGCTTLHistory(t *testing.T) {
 	addHistory(6, 91)
 	addHistory(7, 100)
 
+	isLeader := false
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
+		return isLeader
 	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	m.DoGC(context.TODO(), se)
+	// only leader can go GC
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_job_history").Check(testkit.Rows("7"))
+	isLeader = true
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
@@ -1057,6 +1074,53 @@ func TestDelayMetrics(t *testing.T) {
 	checkRecord(records, "t3", now.Add(-3*time.Hour))
 	checkRecord(records, "t4", now.Add(-3*time.Hour))
 	checkRecord(records, "t5", emptyTime)
+
+	metrics.ClearDelayMetrics()
+	getMetricCnt := func() int {
+		ch := make(chan prometheus.Metric)
+		go func() {
+			metrics2.TTLWatermarkDelay.Collect(ch)
+			close(ch)
+		}()
+
+		cnt := 0
+		for range ch {
+			cnt++
+		}
+		return cnt
+	}
+
+	isLeader := false
+	m := ttlworker.NewJobManager("test-ttl-job-manager", nil, store, nil, func() bool {
+		return isLeader
+	})
+	// If the manager is not leader, the metrics will be empty.
+	m.ReportMetrics(se)
+	require.Zero(t, getMetricCnt())
+	// leader will collect metrics
+	isLeader = true
+	m.SetLastReportDelayMetricsTime(time.Now().Add(-11 * time.Minute))
+	m.ReportMetrics(se)
+	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
+	require.InDelta(t, time.Now().Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
+	// will not collect metrics in 10 minutes
+	lastReportTime := time.Now().Add(-9 * time.Minute)
+	m.SetLastReportDelayMetricsTime(lastReportTime)
+	m.ReportMetrics(se)
+	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
+	require.Equal(t, lastReportTime.Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
+	// when back to non-leader, the metrics will be empty and last report time will not be updated.
+	isLeader = false
+	lastReportTime = time.Now().Add(-11 * time.Minute)
+	m.SetLastReportDelayMetricsTime(lastReportTime)
+	m.ReportMetrics(se)
+	require.Zero(t, getMetricCnt())
+	require.Equal(t, lastReportTime.Unix(), m.GetLastReportDelayMetricsTime().Unix())
+	// when back to leader again, the metrics will be collected.
+	isLeader = true
+	m.ReportMetrics(se)
+	require.Equal(t, len(metrics.WaterMarkScheduleDelayNames), getMetricCnt())
+	require.InDelta(t, time.Now().Unix(), m.GetLastReportDelayMetricsTime().Unix(), 5)
 }
 
 func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
@@ -1467,4 +1531,78 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 
 	// the job should have been cancelled
 	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
+}
+
+func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	testTable2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	m := ttlworker.NewJobManager("test-ttl-job-manager-1", nil, store, nil, nil)
+
+	now := se.Now()
+	// acquire two jobs
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	require.NoError(t, m.TableStatusCache().Update(ctx, se))
+	_, err = m.LockJob(context.Background(), se, m.InfoSchemaCache().Tables[testTable1.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	_, err = m.LockJob(context.Background(), se, m.InfoSchemaCache().Tables[testTable2.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running", "running"))
+
+	// assign the first job to another manager
+	tk.MustExec("update mysql.tidb_ttl_table_status set current_job_owner_id = 'test-ttl-job-manager-2' where table_id = ?", testTable1.Meta().ID)
+	// the heartbeat of the first job will fail, but the second one will still success
+	now = now.Add(time.Hour)
+	require.Error(t, m.UpdateHeartBeatForJob(context.Background(), se, now, m.RunningJobs()[0]))
+	require.NoError(t, m.UpdateHeartBeatForJob(context.Background(), se, now, m.RunningJobs()[1]))
+
+	now = now.Add(time.Hour)
+	m.UpdateHeartBeat(ctx, se, now)
+	tk.MustQuery("select table_id, current_job_owner_hb_time from mysql.tidb_ttl_table_status").Sort().Check(testkit.Rows(
+		fmt.Sprintf("%d %s", testTable1.Meta().ID, now.Add(-2*time.Hour).Format(time.DateTime)),
+		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.Format(time.DateTime))))
+}
+
+func TestIterationOfRunningJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	sessionFactory := sessionFactory(t, store)
+
+	tk := testkit.NewTestKit(t, store)
+	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
+
+	se := sessionFactory()
+	defer se.Close()
+	for tableID := int64(0); tableID < 100; tableID++ {
+		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+		m.InfoSchemaCache().Tables[testTable.ID] = testTable
+
+		jobID := uuid.NewString()
+		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+		require.NoError(t, err)
+		tk.MustQuery("SELECT current_job_id, current_job_owner_id FROM mysql.tidb_ttl_table_status WHERE table_id = ?", tableID).Check(testkit.Rows(fmt.Sprintf("%s %s", jobID, m.ID())))
+
+		// update the owner id
+		tk.MustExec("UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = ?", jobID)
+	}
+	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+
+	require.Len(t, m.RunningJobs(), 100)
+	m.CheckNotOwnJob()
+
+	// Now all the jobs should have been removed
+	require.Len(t, m.RunningJobs(), 0)
 }

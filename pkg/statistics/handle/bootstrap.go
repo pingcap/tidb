@@ -199,6 +199,12 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
+	}()
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
@@ -215,7 +221,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
+		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
+		if !ok {
+			// this table has been dropped. but stats meta still exists and wait for being deleted.
+			logutil.BgLogger().Warn("cannot find this table when to init stats", zap.Int64("tableID", table.PhysicalID))
+			continue
+		}
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -341,6 +352,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache uti
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 
@@ -458,6 +472,9 @@ func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Tas
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -706,6 +723,9 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)

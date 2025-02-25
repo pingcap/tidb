@@ -64,7 +64,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	flagChecksum            = "checksum"
+	FlagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -273,7 +273,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(flagChecksum, true, "Run checksum at end of task")
+	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -318,7 +318,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(FlagChecksum)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -505,7 +505,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -616,6 +616,11 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return cfg.normalizePDURLs()
+}
+
+// OverrideDefaultForBackup override common config for backup tasks
+func (cfg *Config) OverrideDefaultForBackup() {
+	cfg.Checksum = false
 }
 
 // NewMgr creates a new mgr at the given PD address.

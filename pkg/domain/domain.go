@@ -137,8 +137,10 @@ type Domain struct {
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
-	exit            chan struct{}
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool *sessionPool
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1613,6 +1615,13 @@ func (p *sessionPool) Put(resource pools.Resource) {
 	}
 }
 
+// Destroy destroys the session.
+func (p *sessionPool) Destroy(resource pools.Resource) {
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
+	resource.Close()
+}
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
@@ -2288,10 +2297,13 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
+	do.wg.Run(do.deltaUpdateTickerWorker, "deltaUpdateTickerWorker")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.updateStatsWorker() }, "updateStatsWorker")
+	do.wg.Run(func() { do.gcStatsWorker(owner) }, "gcStatsWorker")
 	do.wg.Run(func() {
 		do.handleDDLEvent()
 	}, "handleDDLEvent")
@@ -2382,7 +2394,7 @@ func (do *Domain) initStats() {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2409,9 +2421,36 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2448,7 +2487,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle) {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2456,7 +2495,6 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
 		statsHandle.FlushStats()
 		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
-		owner.Cancel()
 		ch <- struct{}{}
 	}()
 	select {
@@ -2469,24 +2507,14 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 	}
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
-	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
-	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
-	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
-	updateStatsHealthyTicker := time.NewTicker(20 * lease)
-	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
-		gcStatsTicker.Stop()
-		deltaUpdateTicker.Stop()
-		readMemTricker.Stop()
-		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -2495,31 +2523,13 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-do.exit:
-			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
+			do.updateStatsWorkerExitPreprocessing(statsHandle)
 			return
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
-			if err != nil {
-				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
-			}
-		case <-gcStatsTicker.C:
-			if !owner.IsOwner() {
-				continue
-			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
-			if err != nil {
-				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
-			}
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
 				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
-
-		case <-readMemTricker.C:
-			memory.ForceReadMemStats()
-		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
 		}
 	}
 }
@@ -2537,6 +2547,104 @@ func (do *Domain) handleDDLEvent() {
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) gcStatsWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+	logutil.BgLogger().Info("gcStatsWorker started.")
+	lease := do.statsLease
+	gcStatsTicker := time.NewTicker(100 * lease)
+	updateStatsHealthyTicker := time.NewTicker(20 * lease)
+	readMemTricker := time.NewTicker(memory.ReadMemInterval)
+	statsHandle := do.StatsHandle()
+	defer func() {
+		gcStatsTicker.Stop()
+		readMemTricker.Stop()
+		updateStatsHealthyTicker.Stop()
+		do.SetStatsUpdating(false)
+		logutil.BgLogger().Info("gcStatsWorker exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)
+
+	for {
+		select {
+		case <-do.exit:
+			do.gcStatsWorkerExitPreprocessing(owner)
+			return
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			if err != nil {
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
+			}
+		case <-readMemTricker.C:
+			memory.ForceReadMemStats()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+func (do *Domain) gcStatsWorkerExitPreprocessing(owner owner.Manager) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("gcStatsWorker ready to release owner")
+		owner.Cancel()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("gcStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (*Domain) deltaUpdateTickerWorkerExitPreprocessing(statsHandle *handle.Handle) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("deltaUpdateTicker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("deltaUpdateTicker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("deltaUpdateTicker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
+func (do *Domain) deltaUpdateTickerWorker() {
+	defer util.Recover(metrics.LabelDomain, "deltaUpdateTickerWorker", nil, false)
+	logutil.BgLogger().Info("deltaUpdateTickerWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
 		}
 	}

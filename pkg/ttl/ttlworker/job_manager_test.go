@@ -186,8 +186,22 @@ func (m *JobManager) TaskManager() *taskManager {
 }
 
 // UpdateHeartBeat is an exported version of updateHeartBeat for test
-func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
-	return m.updateHeartBeat(ctx, se, now)
+func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+func (m *JobManager) UpdateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	return m.updateHeartBeatForJob(ctx, se, now, job)
+}
+
+// SetLastReportDelayMetricsTime sets the lastReportDelayMetricsTime for test
+func (m *JobManager) SetLastReportDelayMetricsTime(t time.Time) {
+	m.lastReportDelayMetricsTime = t
+}
+
+// GetLastReportDelayMetricsTime returns the lastReportDelayMetricsTime for test
+func (m *JobManager) GetLastReportDelayMetricsTime() time.Time {
+	return m.lastReportDelayMetricsTime
 }
 
 // ReportMetrics is an exported version of reportMetrics
@@ -198,6 +212,16 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 // CheckFinishedJob is an exported version of checkFinishedJob
 func (m *JobManager) CheckFinishedJob(se session.Session) {
 	m.checkFinishedJob(se)
+}
+
+// ID exports the id of job manager for test
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
 }
 
 func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) error {

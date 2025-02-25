@@ -45,6 +45,7 @@ const (
 	LabelGCWorker   = "gcworker"
 	LabelAnalyze    = "analyze"
 	LabelWorkerPool = "worker-pool"
+	LabelStats      = "stats"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
