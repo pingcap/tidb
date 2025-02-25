@@ -1081,16 +1081,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	if addedRows > 1 {
+	if addedRows > 1 && rowCount < upperBound {
 		// Conservatively - use the larger of the left or right percent - since we are working with
 		// changes to the table since last Analyze - any out of range estimate is unreliable.
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
 		// and we will set rowCount to min of upperbound and added rows
 		totalPercent = min(0.5, max(leftPercent, rightPercent))
-		rowCount += totalPercent * addedRows
-		if rowCount < upperBound {
-			rowCount = min(upperBound, addedRows)
-		}
+		rowCount = max(totalPercent*addedRows, upperBound)
 	}
 
 	// Use modifyCount as a final bound
