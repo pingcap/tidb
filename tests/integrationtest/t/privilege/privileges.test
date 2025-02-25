@@ -947,3 +947,25 @@ with t_f as (
 
 disconnect u53490;
 connection default;
+
+
+# TestIssue59677
+create user u59677 identified by '123456';
+connect (u59677,localhost,u59677,123456,);
+-- error 1227
+alter user u59677 identified with 'native_password';
+-- error 1227
+alter user test password expire never;
+-- error 1227
+alter user test failed_login_attempts 10;
+-- error 1227
+alter user test comment 'some comment';
+-- error 1227
+alter user test attribute '{"foo": "bar"}';
+-- error 1227
+alter user test with max_user_connections 5;
+-- error 1227
+alter user test account unlock;
+alter user u59677 identified by 'abcde';
+disconnect u59677;
+connection default;
