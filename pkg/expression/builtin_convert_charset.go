@@ -377,7 +377,7 @@ func isLegacyCharset(chs string) bool {
 func formatInvalidChars(src []byte) string {
 	var sb strings.Builder
 	const maxBytesToShow = 5
-	for i := 0; i < len(src); i++ {
+	for i := range src {
 		if i > maxBytesToShow {
 			sb.WriteString("...")
 			break
