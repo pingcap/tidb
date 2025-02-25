@@ -16,6 +16,8 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,12 +38,12 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope, t.max_node_count, t.extra_params`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope, max_node_count, extra_params`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -55,26 +57,35 @@ var (
 	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = goerrors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
 	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound = goerrors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
-	ErrTaskAlreadyExists = errors.New("task already exists")
+	ErrTaskAlreadyExists = goerrors.New("task already exists")
 
 	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
-	ErrTaskStateNotAllow = errors.New("task state not allow to do the operation")
+	ErrTaskStateNotAllow = goerrors.New("task state not allow to do the operation")
 
 	// ErrTaskChanged is the error when task changed by other operation.
-	ErrTaskChanged = errors.New("task changed by other operation")
+	ErrTaskChanged = goerrors.New("task changed by other operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
-	ErrSubtaskNotFound = errors.New("subtask not found")
+	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
+
+// Manager is the interface for task manager.
+// those methods are used by application side, we expose them through interface
+// to make tests easier.
+type Manager interface {
+	GetCPUCountOfNode(ctx context.Context) (int, error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error
+}
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
@@ -202,10 +213,19 @@ func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string
 }
 
 // CreateTask adds a new task to task table.
-func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, targetScope string, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTask(
+	ctx context.Context,
+	key string,
+	tp proto.TaskType,
+	concurrency int,
+	targetScope string,
+	maxNodeCnt int,
+	extraParams proto.ExtraParams,
+	meta []byte,
+) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -219,6 +239,8 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	tp proto.TaskType,
 	concurrency int,
 	targetScope string,
+	maxNodeCount int,
+	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
 	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
@@ -228,10 +250,15 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if concurrency > cpuCount {
 		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
 	}
+	extraParamBytes, err := json.Marshal(extraParams)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?)`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope)
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?)`,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency,
+		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes))
 	if err != nil {
 		return 0, err
 	}

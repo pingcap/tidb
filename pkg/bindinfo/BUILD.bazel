@@ -52,7 +52,7 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
-    shard_count = 31,
+    shard_count = 32,
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -64,7 +64,6 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-        "//pkg/util/parser",
         "//pkg/util/stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
