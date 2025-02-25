@@ -9,10 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 46,
+    shard_count = 47,
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/executor/mppcoordmanager",
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/terror",

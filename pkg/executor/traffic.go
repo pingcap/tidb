@@ -45,11 +45,9 @@ import (
 // The keys for the mocked data that stored in context. They are only used for test.
 type tiproxyAddrKeyType struct{}
 type trafficPathKeyType struct{}
-type trafficPrivKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
 var trafficPathKey trafficPathKeyType
-var trafficPrivKey trafficPrivKeyType
 
 type trafficJob struct {
 	Instance  string `json:"-"` // not passed from TiProxy
@@ -145,7 +143,7 @@ func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return errors.Wrapf(err, "get tiproxy addresses failed")
 	}
 	// Cancel all traffic jobs by default.
-	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
 	args := make(map[string]string, 2)
 	if hasCapturePriv && !hasReplayPriv {
 		args["type"] = "capture"
@@ -182,7 +180,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 		return err
 	}
 	// Filter the jobs by privilege.
-	hasCapturePriv, hasReplayPriv := hasTrafficPriv(ctx, e.Ctx())
+	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
 	allJobs := make([]trafficJob, 0, len(resps))
 	for addr, resp := range resps {
 		var jobs []trafficJob
@@ -244,7 +242,7 @@ func request(ctx context.Context, addrs []string, readers []io.Reader, method, p
 		if err != nil {
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("path", path), zap.String("addr", addr),
 				zap.String("resp", resp), zap.Error(err))
-			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed", addr)
+			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed: %s", addr, resp)
 		}
 		resps[addr] = resp
 	}
@@ -395,18 +393,13 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	return readers, nil
 }
 
-func hasTrafficPriv(ctx context.Context, sctx sessionctx.Context) (capturePriv, replayPriv bool) {
+func hasTrafficPriv(sctx sessionctx.Context) (capturePriv, replayPriv bool) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
-		// in test
-		if privs := ctx.Value(trafficPrivKey); privs != nil {
-			array := privs.([]bool)
-			return array[0], array[1]
-		}
 		return true, true
 	}
 	roles := sctx.GetSessionVars().ActiveRoles
 	capturePriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
-	replayPriv = pm.RequestDynamicVerification(roles, "TRAFFIC_CAPTURE_ADMIN", false)
+	replayPriv = pm.RequestDynamicVerification(roles, "TRAFFIC_REPLAY_ADMIN", false)
 	return
 }

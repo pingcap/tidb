@@ -31,14 +31,17 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	tmock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,11 +160,13 @@ func TestTrafficError(t *testing.T) {
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "dial tcp")
 
 	// tiproxy responds with error
-	httpHandler := &mockHTTPHandler{t: t, httpOK: false}
+	httpHandler := &mockHTTPHandler{t: t, httpOK: false, resp: "mock error"}
 	server, port := runServer(t, httpHandler)
 	defer server.Close()
 	tempCtx = fillCtxWithTiProxyAddr(ctx, []int{port})
-	require.ErrorContains(t, exec.Next(tempCtx, nil), "500 Internal Server Error")
+	err := exec.Next(tempCtx, nil)
+	require.ErrorContains(t, err, "500 Internal Server Error")
+	require.ErrorContains(t, err, "mock error")
 }
 
 func TestCapturePath(t *testing.T) {
@@ -368,6 +373,8 @@ func TestTrafficPrivilege(t *testing.T) {
 	server, port := runServer(t, httpHandler)
 	defer server.Close()
 	ctx = fillCtxWithTiProxyAddr(ctx, []int{port})
+	mgr := &mockPrivManager{}
+	privilege.BindPrivilegeManager(suite.execBuilder.ctx, mgr)
 
 	cancelTests := []struct {
 		privs []bool
@@ -388,9 +395,10 @@ func TestTrafficPrivilege(t *testing.T) {
 	}
 	for _, test := range cancelTests {
 		httpHandler.reset()
-		tmpCtx := context.WithValue(ctx, trafficPrivKey, test.privs)
-		exec := suite.build(tmpCtx, "cancel traffic jobs")
-		require.NoError(t, exec.Next(tmpCtx, nil))
+		mgr.On("RequestDynamicVerification", []*auth.RoleIdentity{}, "TRAFFIC_CAPTURE_ADMIN", false).Return(test.privs[0]).Once()
+		mgr.On("RequestDynamicVerification", []*auth.RoleIdentity{}, "TRAFFIC_REPLAY_ADMIN", false).Return(test.privs[1]).Once()
+		exec := suite.build(ctx, "cancel traffic jobs")
+		require.NoError(t, exec.Next(ctx, nil))
 		require.Equal(t, test.form, httpHandler.getForm(), "privs %v", test.privs)
 	}
 
@@ -421,9 +429,10 @@ func TestTrafficPrivilege(t *testing.T) {
 	httpHandler.setResponse(marshaledJob)
 	fields := trafficJobFields()
 	for _, test := range showTests {
-		tmpCtx := context.WithValue(ctx, trafficPrivKey, test.privs)
-		exec := suite.build(tmpCtx, "show traffic jobs")
-		require.NoError(t, exec.Open(tmpCtx))
+		mgr.On("RequestDynamicVerification", []*auth.RoleIdentity{}, "TRAFFIC_CAPTURE_ADMIN", false).Return(test.privs[0]).Once()
+		mgr.On("RequestDynamicVerification", []*auth.RoleIdentity{}, "TRAFFIC_REPLAY_ADMIN", false).Return(test.privs[1]).Once()
+		exec := suite.build(ctx, "show traffic jobs")
+		require.NoError(t, exec.Open(ctx))
 		chk := chunk.New(fields, 2, 2)
 		jobs := make([]string, 0, 2)
 		require.NoError(t, exec.Next(ctx, chk))
@@ -522,15 +531,15 @@ func (handler *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	handler.form = r.PostForm
 	if handler.httpOK {
 		w.WriteHeader(http.StatusOK)
-		resp := handler.resp
-		if len(resp) == 0 && r.Method == http.MethodGet {
-			resp = "[]"
-		}
-		_, err := w.Write([]byte(resp))
-		require.NoError(handler.t, err)
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+	resp := handler.resp
+	if len(resp) == 0 && r.Method == http.MethodGet {
+		resp = "[]"
+	}
+	_, err := w.Write([]byte(resp))
+	require.NoError(handler.t, err)
 }
 
 func runServer(t *testing.T, handler http.Handler) (*http.Server, int) {
@@ -560,4 +569,13 @@ func trafficJobFields() []*types.FieldType {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeString),
 	}
+}
+
+type mockPrivManager struct {
+	tmock.Mock
+	privilege.Manager
+}
+
+func (m *mockPrivManager) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
+	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
