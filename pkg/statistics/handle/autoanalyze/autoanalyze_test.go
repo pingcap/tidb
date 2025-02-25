@@ -358,6 +358,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
 	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
@@ -430,6 +431,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable

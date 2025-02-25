@@ -458,7 +458,9 @@ const (
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
-		KEY (update_time)
+		KEY (update_time),
+		INDEX idx_schema_table_state (table_schema, table_name, state),
+		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
 	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
@@ -1192,8 +1194,12 @@ const (
 	// enable fast_create_table on default
 	version218 = 218
 
+	// version 219
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version219 = 219
+
 	// ...
-	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// [version220, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
@@ -1201,7 +1207,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version218
+var currentBootstrapVersion int64 = version219
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1375,6 +1381,7 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
+		upgradeToVer219,
 	}
 )
 
@@ -3271,6 +3278,24 @@ func upgradeToVer218(_ sessiontypes.Session, ver int64) {
 		return
 	}
 	// empty, just make lint happy.
+}
+
+const (
+	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
+	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
+	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
+	// simpler index directly for non-partitioned tables.
+	addAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
+	// addAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
+	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
+)
+
+func upgradeToVer219(s sessiontypes.Session, ver int64) {
+	if ver >= version219 {
+		return
+	}
+	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

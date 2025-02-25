@@ -10,7 +10,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/planner/util/coretestsdk",

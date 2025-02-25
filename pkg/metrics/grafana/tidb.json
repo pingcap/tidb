@@ -22581,7 +22581,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "avg(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
+              "expr": "max(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
               "interval": "",
               "legendFormat": "{{ name }}",
               "queryType": "randomWalk",

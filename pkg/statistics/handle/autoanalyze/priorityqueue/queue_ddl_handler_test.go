@@ -67,6 +67,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
@@ -174,6 +175,7 @@ func TestTruncateTable(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -287,6 +289,7 @@ func TestDropTable(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -825,11 +828,12 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 
 func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
+	h := do.StatsHandle()
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
+	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("set global tidb_partition_prune_mode='static'")
-	h := do.StatsHandle()
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(6,6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))

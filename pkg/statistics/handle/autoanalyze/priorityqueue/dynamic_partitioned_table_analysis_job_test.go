@@ -16,12 +16,14 @@ package priorityqueue_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -174,4 +176,51 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
+}
+
+func TestPerformanceOfValidateAndPrepare(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec("create database example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
+	require.NoError(t, err)
+	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
+		SchemaName:    "example_schema",
+		GlobalTableID: tableInfo.Meta().ID,
+		PartitionIDs: map[int64]struct{}{
+			113: {},
+			114: {},
+		},
+		Weight: 2,
+	}
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, "example_table", "p0")
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	valid, failReason := job.ValidateAndPrepare(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
+
+	// Insert some failed jobs.
+	// Just failed.
+	now := tk.MustQuery("select now()").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.GlobalTableName, "p0", now)
+
+	// Execute LastFailedDurationQueryForPartition directly to check the query plan.
+	tableSchema := job.SchemaName
+	tableName := job.GlobalTableName
+	partitionNames := []string{"p0", "p1"}
+
+	rows, _, err := util.ExecRows(sctx, "explain format='brief' "+priorityqueue.LastFailedDurationQueryForPartition, tableSchema, tableName, partitionNames)
+	require.NoError(t, err)
+	planRows := make([]string, 0, len(rows))
+	for _, row := range rows {
+		planRows = append(planRows, row.GetString(0))
+	}
+	plan := strings.Join(planRows, "\n")
+	require.Contains(t, plan, "IndexJoin")
+	require.Contains(t, plan, "IndexRangeScan")
 }
