@@ -20,6 +20,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"regexp"
 	"strconv"
@@ -1023,6 +1025,14 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 		workGroup.Go(func() error {
 			startKey := DBkey(int64(i * idBatch))
 			endKey := DBkey(int64((i + 1) * idBatch))
+			c := 0
+			defer func() {
+				logutil.Logger(ctx).Info("iterate all tables", zap.Int("count", c), zap.Int("concurrency", concurrency), zap.Int("idBatch", int(idBatch)), zap.Int("i", i))
+			}()
+			if i == 0 {
+				i = 0
+			}
+			j := i
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
 				// only handle table meta
 				tableKey := string(field)
@@ -1039,11 +1049,17 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 				if err != nil {
 					return errors.Trace(err)
 				}
+				if int(dbID) < j*idBatch || int(dbID) >= (j+1)*idBatch {
+					dbID = dbID
+					println("aaa")
+				}
 				tbInfo.DBID = dbID
 
 				mu.Lock()
+				logutil.BgLogger().Warn("put table info", zap.Int("dbID", int(dbID)), zap.Int64("tableID", tbInfo.ID), zap.Int("j", j), zap.Any("startKey", kv.Key(startKey)), zap.Any("decodekey", kv.Key(key)))
 				err = fn(tbInfo)
 				mu.Unlock()
+				c++
 				return errors.Trace(err)
 			})
 		})

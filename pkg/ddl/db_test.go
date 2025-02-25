@@ -1276,7 +1276,15 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("create table test.t1 (a int)")
+	//tk.MustExec("create table test.t1 (a int)")
+
+	for i := 0; i < 213; i++ {
+		tk.MustExec(fmt.Sprintf("create database test%d", i))
+		tk.MustExec(fmt.Sprintf("use test%d", i))
+		tk.MustExec("create table t1 (a int)")
+		tk.MustExec("create table t2 (a int)")
+		tk.MustExec("create table t3 (a int)")
+	}
 
 	tblInfos1 := make([]*model.TableInfo, 0)
 	tblInfos2 := make([]*model.TableInfo, 0)
@@ -1306,6 +1314,10 @@ func TestGetAllTableInfos(t *testing.T) {
 	slices.SortFunc(tblInfos2, func(i, j *model.TableInfo) int {
 		return int(i.ID - j.ID)
 	})
+
+	for _, tbl := range tblInfos2 {
+		println(fmt.Sprintf("table id: %d, db id: %d", tbl.ID, tbl.DBID))
+	}
 	require.Equal(t, len(tblInfos1), len(tblInfos2))
 	for i := range tblInfos1 {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
