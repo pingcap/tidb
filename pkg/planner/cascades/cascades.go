@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-var MaximumRuleLength uint
-
 // Optimizer is a basic cascades search framework portal, driven by Context.
 type Optimizer struct {
 	logic corebase.LogicalPlan
