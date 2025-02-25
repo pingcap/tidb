@@ -200,7 +200,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	if newSnapshotIsSet {
 		isStaleRead := name == variable.TiDBTxnReadTS
 		var ctxForReadTsValidator context.Context
-		if name == variable.TiDBSnapshot {
+		if !isStaleRead {
 			ctxForReadTsValidator = context.WithValue(ctx, oracles.ValidateReadTSForTidbSnapshot{}, struct{}{})
 		} else {
 			ctxForReadTsValidator = ctx
