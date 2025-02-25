@@ -19,12 +19,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelate_apply"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelateapply"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/join/eliminate_outer_join"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule/projection"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
+// SetType is the type of rule set.
 type SetType uint
 
 const (
@@ -51,13 +52,14 @@ type OperandRules struct {
 	setList []rule.Rule
 }
 
+// ListRules is a list of rules.
 type ListRules []rule.Rule
 
 // Filter mask out rules which is in mask uint64.
 func (l ListRules) Filter(mask *bitset.BitSet) ListRules {
 	res := make([]rule.Rule, 0, len(l))
 	for _, one := range l {
-		if !mask.Test(one.ID()) {
+		if mask.Test(one.ID()) {
 			res = append(res, one)
 		}
 	}
@@ -80,13 +82,13 @@ var OperandApplyRules = &OperandRules{OperandApplyRulesMap, OperandApplyRulesLis
 // OperandApplyRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
 var OperandApplyRulesMap = map[SetType][]rule.Rule{
 	XFSetDeCorrelateApply: {
-		decorrelate_apply.NewXFDeCorrelateSimpleApply(),
+		decorrelateapply.NewXFDeCorrelateSimpleApply(),
 	},
 }
 
 // OperandApplyRulesList is the rules rooted from an apply operand, organized as list.
 var OperandApplyRulesList = []rule.Rule{
-	decorrelate_apply.NewXFDeCorrelateSimpleApply(),
+	decorrelateapply.NewXFDeCorrelateSimpleApply(),
 }
 
 // OperandProjectionRules is the rules rooted from a projection operand.

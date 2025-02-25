@@ -255,5 +255,11 @@
       // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
       "explain format = 'brief' select * from t where a >= 999900 order by b limit 1"
     ]
+  },
+  {
+    "name": "TestIssue59563",
+    "cases": [
+      "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;"
+    ]
   }
 ]

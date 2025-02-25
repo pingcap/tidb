@@ -312,7 +312,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					}
 				}))
 			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
-				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func() { cancel() }))
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(*model.DDLReorgMeta) { cancel() }))
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
@@ -421,9 +421,9 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
-		scanOp.TuneWorkerPoolSize(8)
+		scanOp.TuneWorkerPoolSize(8, false)
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(8))
-		scanOp.TuneWorkerPoolSize(1)
+		scanOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(1))
 
 		cancel()
@@ -449,9 +449,9 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))
-		ingestOp.TuneWorkerPoolSize(8)
+		ingestOp.TuneWorkerPoolSize(8, false)
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(8))
-		ingestOp.TuneWorkerPoolSize(1)
+		ingestOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(1))
 
 		cancel()

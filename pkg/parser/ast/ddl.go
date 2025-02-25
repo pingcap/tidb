@@ -535,6 +535,12 @@ var (
 	}
 )
 
+// ColumnOptionList stores column options.
+type ColumnOptionList struct {
+	HasCollateOption bool
+	Options          []*ColumnOption
+}
+
 // ColumnOption is used for parsing column constraint info from SQL.
 type ColumnOption struct {
 	node

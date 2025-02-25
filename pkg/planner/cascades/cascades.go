@@ -66,8 +66,9 @@ func (c *Optimizer) GetMemo() *memo.Memo {
 
 // SetRules set a series of allowed rule ids.
 func (c *Optimizer) SetRules(ids []uint) {
+	ctx := c.ctx.(*Context)
 	for _, id := range ids {
-		c.ctx.(*Context).ruleMask.Set(id)
+		ctx.ruleMask.Set(id)
 	}
 }
 
@@ -92,7 +93,7 @@ func NewContext(pctx corebase.PlanContext) *Context {
 		// task pool management.
 		scheduler: task.NewSimpleTaskScheduler(),
 		// new rule mask.
-		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)),
+		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)).SetAll(),
 	}
 }
 

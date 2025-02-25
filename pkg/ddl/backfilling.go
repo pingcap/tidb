@@ -850,8 +850,8 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
-				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt), false)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", job.ID),
 					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
@@ -877,7 +877,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	}
 
 	err = pipe.Close()
-	failpoint.InjectCall("afterPipeLineClose")
+	failpoint.InjectCall("afterPipeLineClose", pipe)
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {

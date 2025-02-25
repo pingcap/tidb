@@ -9,7 +9,7 @@ go_library(
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/rule",
-        "//pkg/planner/cascades/rule/apply/decorrelate_apply",
+        "//pkg/planner/cascades/rule/apply/decorrelateapply",
         "//pkg/planner/cascades/rule/join/eliminate_outer_join",
         "//pkg/planner/cascades/rule/projection",
         "//pkg/planner/core/operator/logicalop",
