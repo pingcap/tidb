@@ -188,10 +188,15 @@ func PrintableASCII(b byte) bool {
 }
 
 // FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func FmtNonASCIIPrintableCharToHex(str string) string {
+func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int) string {
 	var b bytes.Buffer
-	b.Grow(len(str) * 2)
+	b.Grow(maxBytesToShow * 2)
 	for i := range len(str) {
+		if i >= maxBytesToShow {
+			b.WriteString("...")
+			break
+		}
+
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
 			continue

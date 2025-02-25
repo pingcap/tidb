@@ -17,14 +17,13 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"strings"
-	"unicode"
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -49,6 +48,8 @@ const InternalFuncToBinary = "to_binary"
 
 // InternalFuncFromBinary accepts a string and returns another string decode in a given charset.
 const InternalFuncFromBinary = "from_binary"
+
+const maxBytesToShow = 6
 
 type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
@@ -185,7 +186,7 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	valBytes := hack.Slice(val)
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := formatInvalidChars(valBytes)
+		strHex := util.FmtNonASCIIPrintableCharToHex(val, maxBytesToShow)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 		if b.cannotConvertStringAsWarning {
@@ -228,7 +229,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := formatInvalidChars(str)
+			strHex := util.FmtNonASCIIPrintableCharToHex(string(hack.String(str)), maxBytesToShow)
 			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 			if b.cannotConvertStringAsWarning {
@@ -372,24 +373,4 @@ func isLegacyCharset(chs string) bool {
 		return true
 	}
 	return false
-}
-
-func formatInvalidChars(src []byte) string {
-	var sb strings.Builder
-	const maxBytesToShow = 5
-	for i := range src {
-		if i > maxBytesToShow {
-			sb.WriteString("...")
-			break
-		}
-		// Let it compatible with MySQL
-		if src[i] > unicode.MaxASCII || src[i] < 0x20 {
-			sb.WriteString(fmt.Sprintf("\\x%02X", src[i]))
-		} else if src[i] == 0x7F {
-			continue
-		} else {
-			sb.Write([]byte{src[i]})
-		}
-	}
-	return sb.String()
 }
