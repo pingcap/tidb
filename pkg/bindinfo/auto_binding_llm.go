@@ -26,6 +26,7 @@ func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) (err error) {
 You are going to help me decide which hint should be used for a specified SQL.
 Be careful with the escape characters.
 Be careful that estRows might not be accurate.
+You can take at most 20 seconds to think of this.
 
 The SQL is "%v".
 
