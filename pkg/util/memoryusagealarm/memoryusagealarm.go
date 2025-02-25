@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -35,15 +36,59 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Handle is the handler for expensive query.
+// ConfigProvider provides memory usage alarm configuration values
+type ConfigProvider interface {
+	// GetMemoryUsageAlarmRatio returns the ratio of memory usage that triggers an alarm
+	GetMemoryUsageAlarmRatio() float64
+	// GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep
+	GetMemoryUsageAlarmKeepRecordNum() int64
+	// GetLogDir returns the directory for storing logs
+	GetLogDir() string
+	// GetComponentName returns the name of the component (e.g. "tidb-server" or "br")
+	GetComponentName() string
+}
+
+// TiDBConfigProvider implements ConfigProvider using TiDB's vardef variables
+type TiDBConfigProvider struct{}
+
+// GetMemoryUsageAlarmRatio returns the ratio of memory usage that triggers an alarm.
+// When memory usage exceeds this ratio of the total memory limit (or system memory if no limit),
+// the memory monitor will dump profiles and trigger OOM-related actions.
+func (*TiDBConfigProvider) GetMemoryUsageAlarmRatio() float64 {
+	return vardef.MemoryUsageAlarmRatio.Load()
+}
+
+// GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep.
+// When the number of records exceeds this limit, older records will be deleted.
+func (*TiDBConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
+	return vardef.MemoryUsageAlarmKeepRecordNum.Load()
+}
+
+// GetLogDir returns the directory for storing memory profiles and alarm records.
+func (*TiDBConfigProvider) GetLogDir() string {
+	logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	return logDir
+}
+
+// GetComponentName returns the name of the component for logging and metrics.
+// This helps identify which component triggered the memory alarm.
+func (*TiDBConfigProvider) GetComponentName() string {
+	return "tidb-server"
+}
+
+// Handle is the handler for memory usage alarm.
 type Handle struct {
-	exitCh chan struct{}
-	sm     atomic.Pointer[util.SessionManager]
+	exitCh         chan struct{}
+	sm             atomic.Pointer[util.SessionManager]
+	configProvider ConfigProvider
 }
 
 // NewMemoryUsageAlarmHandle builds a memory usage alarm handler.
-func NewMemoryUsageAlarmHandle(exitCh chan struct{}) *Handle {
-	return &Handle{exitCh: exitCh}
+func NewMemoryUsageAlarmHandle(exitCh chan struct{}, provider ConfigProvider) *Handle {
+	return &Handle{
+		exitCh:         exitCh,
+		configProvider: provider,
+	}
 }
 
 // SetSessionManager sets the SessionManager which is used to fetching the info
@@ -60,7 +105,9 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load()
-	record := &memoryUsageAlarm{}
+	record := &memoryUsageAlarm{
+		configProvider: eqh.configProvider,
+	}
 	for {
 		select {
 		case <-ticker.C:
@@ -83,14 +130,15 @@ type memoryUsageAlarm struct {
 	serverMemoryLimit             uint64
 	isServerMemoryLimitSet        bool
 	initialized                   bool
+	configProvider                ConfigProvider
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
 	if time.Since(record.lastUpdateVariableTime) < 60*time.Second {
 		return
 	}
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
+	record.memoryUsageAlarmRatio = record.configProvider.GetMemoryUsageAlarmRatio()
+	record.memoryUsageAlarmKeepRecordNum = record.configProvider.GetMemoryUsageAlarmKeepRecordNum()
 	record.serverMemoryLimit = memory.ServerMemoryLimit.Load()
 	if record.serverMemoryLimit != 0 {
 		record.isServerMemoryLimitSet = true
@@ -109,7 +157,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.lastCheckTime = time.Time{}
 	record.lastUpdateVariableTime = time.Time{}
 	record.updateVariable()
-	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	tidbLogDir := record.configProvider.GetLogDir()
 	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")
 	if record.err = disk.CheckAndCreateDir(record.baseRecordDir); record.err != nil {
 		return
@@ -201,25 +249,28 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
-	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
+	componentName := record.configProvider.GetComponentName()
+	fields = append(fields, zap.Bool(fmt.Sprintf("is %s_memory_limit set", componentName), record.isServerMemoryLimitSet))
 	if record.isServerMemoryLimitSet {
-		fields = append(fields, zap.Any("tidb_server_memory_limit", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+		fields = append(fields, zap.Any(fmt.Sprintf("%s_memory_limit", componentName), record.serverMemoryLimit))
+		fields = append(fields, zap.Any(fmt.Sprintf("%s memory usage", componentName), memUsage))
 	} else {
 		fields = append(fields, zap.Any("system memory total", record.serverMemoryLimit))
 		fields = append(fields, zap.Any("system memory usage", memUsage))
-		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
+		fields = append(fields, zap.Any(fmt.Sprintf("%s memory usage", componentName), instanceMemoryUsage))
 	}
 	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
 	fields = append(fields, zap.Any("record path", record.baseRecordDir))
-	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
+	logutil.BgLogger().Warn(fmt.Sprintf("%s has the risk of OOM because of %s. Running profiles will be recorded in record path", componentName, alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return
 	}
 	record.lastRecordDirName = append(record.lastRecordDirName, recordDir)
-	if record.err = record.recordSQL(sm, recordDir); record.err != nil {
-		return
+	if sm != nil {
+		if record.err = record.recordSQL(sm, recordDir); record.err != nil {
+			return
+		}
 	}
 	if record.err = record.recordProfile(recordDir); record.err != nil {
 		return
