@@ -6,9 +6,33 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) {
+	bindingSQLs := make([]string, 0, len(autoBindings))
+	for i, autoBinding := range autoBindings {
+		bindingSQLs = append(bindingSQLs, fmt.Sprintf("%d. %v", i, autoBinding.BindSQL))
+	}
+
+	promptPattern := `You are a TiDB expert and now you are going to help me decide which hint (or binding) should be used for the following SQL.
+The SQL is "%v".
+
+And here are these SQLs with hints:
+%v
+`
+	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingSQLs, "\n"))
+
+	resp, ok, err := CallLLM("", "https://api.deepseek.com/chat/completions", prompt)
+	if err != nil {
+		fmt.Println("err")
+		return
+	}
+	if ok && resp != "" {
+		fmt.Println("=======================================================")
+		fmt.Println(resp)
+		fmt.Println("=======================================================")
+	}
 }
 
 type ChatRequest struct {
