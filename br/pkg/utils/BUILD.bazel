@@ -107,7 +107,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/memory",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
