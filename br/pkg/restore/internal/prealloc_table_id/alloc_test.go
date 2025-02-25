@@ -43,16 +43,16 @@ func TestAllocator(t *testing.T) {
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     8,
-			msg:                   "ID:[6,8)",
+			msg:                   "ID:[7,8)",
 		},
 		{
 			tableIDs:              []int64{4, 6, 9, 2},
 			hasAllocatedTo:        1,
 			successfullyAllocated: []int64{2, 4, 6, 9},
 			shouldAllocatedTo:     10,
-			msg:                   "ID:[1,10)",
+			msg:                   "ID:[2,10)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 3, 4},
@@ -66,17 +66,17 @@ func TestAllocator(t *testing.T) {
 			hasAllocatedTo:        3,
 			successfullyAllocated: []int64{5, 6},
 			shouldAllocatedTo:     7,
-			msg:                   "ID:[3,7)",
+			msg:                   "ID:[4,7)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     13,
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[6,13)",
+			msg: "ID:[7,13)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
@@ -86,7 +86,7 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[9,14)",
+			msg: "ID:[10,14)",
 		},
 	}
 
