@@ -43,7 +43,7 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 	)`)
 
 	// Define test values for each column type
-	ageValues := []any{}{
+	ageValues := []any{
 		nil,         // NULL
 		-2147483648, // min int
 		2147483647,  // max int
@@ -56,7 +56,7 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 		40, // boundary 3
 	}
 
-	nameValues := []any{}{
+	nameValues := []any{
 		nil, // NULL
 		"",  // empty string
 		"l", // boundary-1
