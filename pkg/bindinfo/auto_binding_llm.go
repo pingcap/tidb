@@ -49,7 +49,11 @@ Here is an example of output JSON:
 		fmt.Println("err ", err)
 		return
 	}
-	if ok && resp != "" {
+	if !ok || resp == "" {
+		fmt.Println("=======================================================")
+		fmt.Println("NO RESP")
+		fmt.Println("=======================================================")
+	} else {
 		fmt.Println("=======================================================")
 		fmt.Println(resp)
 		fmt.Println("=======================================================")
@@ -57,7 +61,7 @@ Here is an example of output JSON:
 }
 
 func (h *globalBindingHandle) autoBindingPlanText(autoBinding *AutoBindingInfo) (string, error) {
-	var planText string
+	planText := "id\testRows\ttask\taccess object\toperator info\n"
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, "explain "+autoBinding.BindSQL)
 		if err != nil {
