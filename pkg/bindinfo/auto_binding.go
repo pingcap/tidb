@@ -125,6 +125,8 @@ func (h *globalBindingHandle) AutoBindingsForSQL(digest string) ([]*AutoBindingI
 }
 
 func (h *globalBindingHandle) recommendAutoBinding(autoBindings []*AutoBindingInfo) {
+	h.LLM(autoBindings)
+
 	// TODO: just for demo
 	for _, autoBinding := range autoBindings {
 		autoBinding.Recommend = "NO"

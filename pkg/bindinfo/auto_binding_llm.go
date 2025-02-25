@@ -23,6 +23,10 @@ And here are these SQLs with hints:
 `
 	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingSQLs, "\n"))
 
+	fmt.Println("--------------------- prompt ------------------------------")
+	fmt.Println(prompt)
+	fmt.Println("--------------------- prompt ------------------------------")
+
 	resp, ok, err := CallLLM("", "https://api.deepseek.com/chat/completions", prompt)
 	if err != nil {
 		fmt.Println("err")
