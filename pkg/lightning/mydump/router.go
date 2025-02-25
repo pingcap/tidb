@@ -15,7 +15,6 @@
 package mydump
 
 import (
-	"context"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -440,56 +439,4 @@ type RouteResult struct {
 	Key         string
 	Compression Compression
 	Type        SourceType
-}
-
-// ParseFormat will traverse all matching files based on the given path and pick arbitrary one file to detect the format.
-// If no files are matched, it will default to return the CSV format.
-func ParseFormat(ctx context.Context, path string) (string, error) {
-	format := TypeCSV
-	u, err := storage.ParseRawURL(path)
-	if err != nil {
-		return "", err
-	}
-	dir, filePattern := filepath.Split(u.Path)
-	u.Path = dir
-
-	b, err := storage.ParseBackendFromURL(u, nil)
-	if err != nil {
-		return "", err
-	}
-	store, err := storage.NewWithDefaultOpt(ctx, b)
-	if err != nil {
-		return "", err
-	}
-	err = store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
-		ok, err := filepath.Match(filePattern, path)
-		if err != nil {
-			return err
-		}
-		if ok {
-			format = detectFileType(path)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return format, nil
-}
-
-func detectFileType(path string) string {
-	switch t := strings.ToLower(filepath.Ext(path)); t {
-	case ".sql":
-		return TypeSQL
-	case ".csv":
-		return TypeCSV
-	case ".parquet":
-		return TypeParquet
-	case ".gz", ".gzip", ".zstd", ".zst", ".snappy":
-		// If the file is compressed, detect file type by removing the compression suffix and detect file type again.
-		return detectFileType(strings.TrimSuffix(path, filepath.Ext(path)))
-	default:
-		// If path do not contain file type, return TypeCSV as default.
-		return TypeCSV
-	}
 }

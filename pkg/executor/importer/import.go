@@ -385,12 +385,6 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
-	} else {
-		f, err := mydump.ParseFormat(ctx, plan.Path)
-		if err != nil {
-			return nil, err
-		}
-		format = f
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	// those are the default values for lightning CSV format too
@@ -512,7 +506,8 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
+		// if format is empty, will parse format in InitDataFiles()
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != "" {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
@@ -1075,7 +1070,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
-	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
@@ -1088,6 +1082,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
+		e.setFormat(fileNameKey)
+		sourceType := e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1117,6 +1113,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
+				// pick arbitrary one file to detect the format.
+				e.setFormat(remotePath)
+				sourceType := e.getSourceType()
 				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        remotePath,
@@ -1150,6 +1149,31 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 		return fileMeta.FileSize
 	}
 	return int64(compressRatio * float64(fileMeta.FileSize))
+}
+
+// set format of the validated file by its extension.
+func (e *LoadDataController) setFormat(path string) {
+	if e.Format == "" {
+		e.Format = parseFileType(path)
+	}
+}
+
+func parseFileType(path string) string {
+	path = strings.ToLower(path)
+	ext := filepath.Ext(path)
+	for ext == ".gz" || ext == ".gzip" || ext == ".zstd" || ext == ".zst" || ext == ".snappy" {
+		path = strings.TrimSuffix(path, ext)
+		ext = filepath.Ext(path)
+	}
+	switch ext {
+	case ".sql":
+		return mydump.TypeSQL
+	case ".parquet":
+		return mydump.TypeParquet
+	default:
+		// If path does not contain a recognized file type, return SourceTypeCSV as default.
+		return mydump.TypeCSV
+	}
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
