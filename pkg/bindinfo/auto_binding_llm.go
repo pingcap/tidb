@@ -38,7 +38,7 @@ IMPORTANT: Don't put anything else in the response.
 Here is an example of output JSON:
     {"best_number": 2, "reason": "This hint can utilize an index to filter unnecessary data"}
 `
-	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingSQLs, "\n"))
+	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingPlans, "\n"))
 
 	fmt.Println("--------------------- prompt ------------------------------")
 	fmt.Println(prompt)
