@@ -69,7 +69,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
 	if err != nil {
 		return nil, err
 	}

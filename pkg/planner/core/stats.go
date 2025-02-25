@@ -175,6 +175,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	path.CorrCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
@@ -406,7 +407,10 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, path.CorrCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	if path.CorrCountAfterAccess == 0 {
+		path.CorrCountAfterAccess = path.CountAfterAccess
+	}
 	return err
 }
 
