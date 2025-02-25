@@ -25,6 +25,7 @@ func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) {
 	promptPattern := `You are a TiDB expert.
 You are going to help me decide which hint should be used for a specified SQL.
 Be careful with the escape characters.
+Be careful that estRows might not be accurate.
 
 The SQL is "%v".
 
@@ -36,7 +37,7 @@ The reason should be concise, not more than 50 words.
 Please return a valid JSON object with the key "best_number" and "reason".
 IMPORTANT: Don't put anything else in the response.
 Here is an example of output JSON:
-    {"best_number": 2, "reason": "This hint can utilize an index to filter unnecessary data"}
+    {"best_number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}
 `
 	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingPlans, "\n"))
 
