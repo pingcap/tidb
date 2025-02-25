@@ -44,7 +44,8 @@ func newKVReader(
 	initFileOffset uint64,
 	bufSize int,
 ) (*kvReader, error) {
-	oneThird := bufSize / 3
+	// some test use very random buf size, might < 3
+	oneThird := max(bufSize/3, 1)
 	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
