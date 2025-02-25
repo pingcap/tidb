@@ -256,8 +256,8 @@ type PhysicalProperty struct {
 		TopK uint32
 	}
 
-	// IsLogicalPlanParentJoin indicates whether the parent of the logical plan is a join.
-	IsLogicalPlanParentJoin bool
+	// IsParentPhyscicalHashJoin indicates whether the parent of the current operator is a physical join.
+	IsParentPhyscicalHashJoin bool
 }
 
 // NewPhysicalProperty builds property from columns.
