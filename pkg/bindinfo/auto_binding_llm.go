@@ -33,7 +33,7 @@ Here are these hinted SQLs and their plans:
 %v
 
 Please tell me which one is the best, and the reason.
-The reason should be concise, not more than 50 words.
+The reason should be concise, not more than 200 words.
 Please return a valid JSON object with the key "number" and "reason".
 IMPORTANT: Don't put anything else in the response.
 Here is an example of output JSON:
