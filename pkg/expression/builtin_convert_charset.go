@@ -382,6 +382,7 @@ func formatInvalidChars(src []byte) string {
 			sb.WriteString("...")
 			break
 		}
+		// Let it compatible with MySQL
 		if src[i] > unicode.MaxASCII || src[i] < ' ' {
 			sb.WriteString(fmt.Sprintf("\\x%02X", src[i]))
 		} else if src[i] == 0x7F {
