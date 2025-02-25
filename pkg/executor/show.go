@@ -330,10 +330,16 @@ func (e *ShowExec) fetchBindingPlans() error {
 	for _, binding := range bindings {
 		// names = []string{"binding_digest", "statement", "binding_hint", "plan", "avg_latency", "exec_times", "avg_scan_rows",
 		// "avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
+
+		hintStr, err := binding.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
 		e.appendRow([]any{
 			binding.Binding.BindingDigest,
 			binding.Binding.OriginalSQL,
-			binding.Binding.BindSQL,
+			hintStr,
 			binding.Plan,
 			binding.AvgLatency,
 			float64(binding.ExecTimes),
