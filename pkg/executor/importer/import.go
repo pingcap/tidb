@@ -1171,7 +1171,7 @@ func parseFileType(path string) string {
 	case ".parquet":
 		return DataFormatParquet
 	default:
-		// If path does not contain a recognized file type, return SourceTypeCSV as default.
+		// ".csv"
 		return DataFormatCSV
 	}
 }
