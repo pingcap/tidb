@@ -451,6 +451,9 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
+			if ds, ok := p.(*logicalop.DataSource); ok && b.unfoldCastArray {
+				ds.EnableMVIndexScan = true
+			}
 			isTableName = true
 		default:
 			err = plannererrors.ErrUnsupportedType.GenWithStackByArgs(v)
@@ -3678,6 +3681,15 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	// TODO(joechenrh): change this after done
+	if true {
+		// if b.ctx.GetSessionVars().InRestrictedSQL {
+		b.unfoldCastArray = true
+		defer func() {
+			b.unfoldCastArray = false
+		}()
+	}
+
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4615,6 +4627,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
+		retType := col.FieldType.Clone()
+		if b.unfoldCastArray {
+			retType.SetArray(false)
+		}
+
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -4628,7 +4645,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  retType,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}

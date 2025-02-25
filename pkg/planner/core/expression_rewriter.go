@@ -234,6 +234,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.planCtx.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
+	rewriter.unfoldCastArray = b.unfoldCastArray
 	rewriter.preprocess = preprocess
 
 	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar)
@@ -349,6 +350,7 @@ type expressionRewriter struct {
 	asScalar bool
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
+	unfoldCastArray     bool
 	// sourceTable is only used to build simple expression without all columns from a single table
 	sourceTable *model.TableInfo
 
@@ -1498,10 +1500,36 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		//if v.Tp.IsArray() && !er.allowBuildCastArray {
-		//	er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
-		//	return retNode, false
-		//}
+		// Rewrite cast(col as UNSIGNED ARRAY) / cast(col->path as UNSIGNED ARRAY) as virtual(col)
+		// TODO(joechen): col here should be replaced as the corresponding virtual column,
+		// but how to we match the virtual column?
+		if v.Tp.IsArray() && er.unfoldCastArray {
+			childExpr := er.ctxStack[len(er.ctxStack)-1]
+			unfold := false
+			switch e := childExpr.(type) {
+			case *expression.Column:
+				unfold = true
+			case *expression.ScalarFunction:
+				if e.FuncName.O == ast.JSONExtract {
+					unfold = true
+				}
+			}
+
+			if unfold {
+				for i, name := range er.names {
+					if strings.Contains(name.ColName.L, "v$") { // <-- hard coded search
+						er.ctxStack[len(er.ctxStack)-1] = er.schema.Columns[i]
+						er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+						return originInNode, true
+					}
+				}
+			}
+		}
+
+		if v.Tp.IsArray() && !er.allowBuildCastArray {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return retNode, false
+		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
