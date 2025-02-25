@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -198,7 +199,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		isStaleRead := name == variable.TiDBTxnReadTS
-		err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx.GetStore(), newSnapshotTS, isStaleRead)
+		var ctxForReadTsValidator context.Context
+		if name == variable.TiDBSnapshot {
+			ctxForReadTsValidator = context.WithValue(ctx, oracles.ValidateReadTSForTidbSnapshot{}, struct{}{})
+		} else {
+			ctxForReadTsValidator = ctx
+		}
+		err = sessionctx.ValidateSnapshotReadTS(ctxForReadTsValidator, e.ctx.GetStore(), newSnapshotTS, isStaleRead)
 		if name != variable.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
