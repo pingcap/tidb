@@ -7,12 +7,19 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) {
-	bindingSQLs := make([]string, 0, len(autoBindings))
+	bindingPlans := make([]string, 0, len(autoBindings))
 	for i, autoBinding := range autoBindings {
-		bindingSQLs = append(bindingSQLs, fmt.Sprintf("%d. %v", i, autoBinding.BindSQL))
+		planText, err := h.autoBindingPlanText(autoBinding)
+		if err != nil {
+			fmt.Println("err ", err)
+			return
+		}
+		bindingPlans = append(bindingPlans, fmt.Sprintf("%d. %v\n%v\n", i, autoBinding.BindSQL, planText))
 	}
 
 	promptPattern := `You are a TiDB expert.
@@ -47,6 +54,34 @@ Here is an example of output JSON:
 		fmt.Println(resp)
 		fmt.Println("=======================================================")
 	}
+}
+
+func (h *globalBindingHandle) autoBindingPlanText(autoBinding *AutoBindingInfo) (string, error) {
+	var planText string
+	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, "explain "+autoBinding.BindSQL)
+		if err != nil {
+			return err
+		}
+		/*
+			+-----------------------+---------+-----------+---------------+--------------------------------+
+			| id                    | estRows | task      | access object | operator info                  |
+			+-----------------------+---------+-----------+---------------+--------------------------------+
+			| TableReader_5         | 5.00    | root      |               | data:TableFullScan_4           |
+			| └─TableFullScan_4     | 5.00    | cop[tikv] | table:t       | keep order:false, stats:pseudo |
+			+-----------------------+---------+-----------+---------------+--------------------------------+
+		*/
+		for _, row := range rows {
+			planText += fmt.Sprintf("%v\t%v\t%v\t%v\t%v\n",
+				row.GetString(0), row.GetString(1), row.GetString(2),
+				row.GetString(3), row.GetString(4))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return planText, nil
 }
 
 type ChatRequest struct {
