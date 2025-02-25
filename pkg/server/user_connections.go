@@ -25,6 +25,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// calculateConnectionLimit gets the limit of connection.
+// The user's attribute has a higher priority than global limit.
+// 0 represents no limit.
+func calculateConnectionLimit(globalLimit uint32, userLimit uint32) uint32 {
+	// if user limit is valid, return user limit directly. Or return global limit.
+	if userLimit > 0 {
+		return userLimit
+	}
+	return globalLimit
+}
+
 // increaseUserConnectionsCount increases the count of connections when user login the database.
 // Note: increaseUserConnectionsCount() is called when create connections only, and not in 'changeUser'(COM_CHANGE_USER).
 // In mysql, 'COM_CHANGE_USER' will only reset the session state (such as permissions, default database, etc.),
@@ -42,6 +53,7 @@ func (cc *clientConn) increaseUserConnectionsCount() error {
 	if err != nil {
 		return err
 	}
+	limit := calculateConnectionLimit(globaLimit, uint32(userLimit))
 
 	cc.server.userResLock.Lock()
 	defer cc.server.userResLock.Unlock()
@@ -57,8 +69,7 @@ func (cc *clientConn) increaseUserConnectionsCount() error {
 
 	// check the global variables `MAX_USER_CONNECTIONS` and the max_user_conections in mysql.user
 	// with current count of active connection.
-	if (userLimit > 0 && ur.connections >= int(userLimit)) ||
-		(globaLimit > 0 && ur.connections >= int(globaLimit)) {
+	if limit > 0 && ur.connections >= int(limit) {
 		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
 	}
 
@@ -104,29 +115,23 @@ func (cc *clientConn) checkUserConnectionCount(host string) error {
 	}
 
 	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
-	connections, err := pm.GetUserResources(authUser.Username, authUser.Hostname)
+	userLimit, err := pm.GetUserResources(authUser.Username, authUser.Hostname)
 	if err != nil {
 		return err
 	}
 
-	if connections == 0 && vardef.MaxUserConnectionsValue.Load() == 0 {
+	limit := calculateConnectionLimit(vardef.MaxUserConnectionsValue.Load(), uint32(userLimit))
+	if limit == 0 {
 		return nil
 	}
 
-	conns := int64(cc.getUserConnectionCount(authUser))
-	if (connections > 0 && conns >= connections) || (connections == 0 && conns >= int64(vardef.MaxUserConnectionsValue.Load())) {
-		var count uint32
-		if connections > 0 {
-			count = uint32(connections)
-		} else {
-			count = vardef.MaxUserConnectionsValue.Load()
-		}
+	conns := cc.getUserConnectionCount(authUser)
+	if conns >= int(limit) {
 		logutil.BgLogger().Error(("the maximum allowed connections exceeded"),
 			zap.String("user", authUser.LoginString()),
-			zap.Uint32("max-user-connections", count),
+			zap.Uint32("max-user-connections", limit),
 			zap.Error(servererr.ErrConCount))
 		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(authUser.LoginString())
 	}
-
 	return nil
 }
