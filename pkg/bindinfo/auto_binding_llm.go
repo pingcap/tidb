@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,7 +37,7 @@ Here are these hinted SQLs and their plans:
 Please tell me which one is the best, and the reason.
 The reason should be concise, not more than 200 words.
 Please return a valid JSON object with the key "number" and "reason".
-IMPORTANT: Don't put anything else in the response.
+IMPORTANT: Don't put anything else in the response and return the raw json data directly, remove "` + "```" + `json".
 Here is an example of output JSON:
     {"number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}
 `
@@ -46,7 +47,7 @@ Here is an example of output JSON:
 	fmt.Println(prompt)
 	fmt.Println("--------------------- prompt ------------------------------")
 
-	resp, ok, err := CallLLM("", "https://api.deepseek.com/chat/completions", prompt)
+	resp, ok, err := CallLLM(os.Getenv("LLM_KEY"), os.Getenv("LLM_URL"), prompt)
 	if err != nil {
 		fmt.Println("err ", err)
 		return
@@ -54,6 +55,10 @@ Here is an example of output JSON:
 	if !ok {
 		return errors.New("no response")
 	}
+
+	fmt.Println("=================== RESP BODY =========================")
+	fmt.Println(resp)
+	fmt.Println("=================== RESP BODY =========================")
 
 	r := new(LLMRecommendation)
 	err = json.Unmarshal([]byte(resp), r)
@@ -122,7 +127,7 @@ type ChatResponse struct {
 
 func CallLLM(apiKey, apiURL, msg string) (respMsg string, ok bool, err error) {
 	requestBody := ChatRequest{
-		Model: "deepseek-reasoner",
+		Model: "deepseek-chat",
 		Messages: []Message{
 			{
 				Role:    "user",
@@ -161,10 +166,6 @@ func CallLLM(apiKey, apiURL, msg string) (respMsg string, ok bool, err error) {
 		err = fmt.Errorf("API FAIL, status code: %d, resp: %v", resp.StatusCode, string(body))
 		return "", false, err
 	}
-
-	fmt.Println("=================== RESP BODY =========================")
-	fmt.Println(string(body))
-	fmt.Println("=================== RESP BODY =========================")
 
 	var response ChatResponse
 	if err = json.Unmarshal(body, &response); err != nil {
