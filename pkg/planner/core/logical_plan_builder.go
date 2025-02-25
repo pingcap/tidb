@@ -451,9 +451,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
-			if ds, ok := p.(*logicalop.DataSource); ok && b.unfoldCastArray {
-				ds.EnableMVIndexScan = true
-			}
 			isTableName = true
 		default:
 			err = plannererrors.ErrUnsupportedType.GenWithStackByArgs(v)
@@ -3681,14 +3678,13 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	// TODO(joechenrh): change this after done
-	if true {
-		// if b.ctx.GetSessionVars().InRestrictedSQL {
-		b.unfoldCastArray = true
-		defer func() {
-			b.unfoldCastArray = false
-		}()
-	}
+	// TODO(joechenrh): uncomment here after finish
+	// if b.ctx.GetSessionVars().InRestrictedSQL {
+	b.unfoldCastArray = true
+	defer func() {
+		b.unfoldCastArray = false
+	}()
+	// }
 
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4622,6 +4618,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
+		EnableMVIndexScan:   b.unfoldCastArray,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
