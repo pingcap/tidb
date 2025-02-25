@@ -21,7 +21,7 @@ Be careful with the escape characters.
 
 The SQL is "%v".
 
-Here are these hints:
+Here are these hinted SQLs and their plans:
 %v
 
 Please tell me which one is the best, and the reason.
