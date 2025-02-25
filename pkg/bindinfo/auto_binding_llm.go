@@ -15,11 +15,21 @@ func (h *globalBindingHandle) LLM(autoBindings []*AutoBindingInfo) {
 		bindingSQLs = append(bindingSQLs, fmt.Sprintf("%d. %v", i, autoBinding.BindSQL))
 	}
 
-	promptPattern := `You are a TiDB expert and now you are going to help me decide which hint (or binding) should be used for the following SQL.
+	promptPattern := `You are a TiDB expert.
+You are going to help me decide which hint should be used for a specified SQL.
+Be careful with the escape characters.
+
 The SQL is "%v".
 
-And here are these SQLs with hints:
+Here are these hints:
 %v
+
+Please tell me which one is the best, and the reason.
+The reason should be concise, not more than 50 words.
+Please return a valid JSON object with the key "best_number" and "reason".
+IMPORTANT: Don't put anything else in the response.
+Here is an example of output JSON:
+    {"best_number": 2, "reason": "This hint can utilize an index to filter unnecessary data"}
 `
 	prompt := fmt.Sprintf(promptPattern, autoBindings[0].OriginalSQL, strings.Join(bindingSQLs, "\n"))
 
@@ -29,7 +39,7 @@ And here are these SQLs with hints:
 
 	resp, ok, err := CallLLM("", "https://api.deepseek.com/chat/completions", prompt)
 	if err != nil {
-		fmt.Println("err")
+		fmt.Println("err ", err)
 		return
 	}
 	if ok && resp != "" {
