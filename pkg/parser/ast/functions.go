@@ -369,9 +369,11 @@ const (
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
 
 	// Sequence function.
-	NextVal         = "nextval"
-	LastVal         = "lastval"
-	SetVal          = "setval"
+	NextVal = "nextval"
+	LastVal = "lastval"
+	SetVal  = "setval"
+
+	// TiDB Query Attribute function
 	QueryAttrString = "mysql_query_attribute_string"
 )
 
