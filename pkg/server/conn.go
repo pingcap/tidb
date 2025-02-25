@@ -1713,54 +1713,55 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query.html
 // https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
 func (cc *clientConn) parseQueryAttributes(ctx context.Context, data []byte) (pos int, err error) {
-	if cc.capability&mysql.ClientQueryAttributes > 0 {
-		paraCount, _, np := util2.ParseLengthEncodedInt(data)
-		numParams := int(paraCount)
-		pos += np
-		_, _, np = util2.ParseLengthEncodedInt(data[pos:])
-		pos += np
-		ps := make([]param.BinaryParam, numParams)
-		names := make([]string, numParams)
-		if paraCount > 0 {
-			var (
-				nullBitmaps []byte
-				paramTypes  []byte
-			)
-			cc.initInputEncoder(ctx)
-			nullBitmapLen := (numParams + 7) >> 3
-			nullBitmaps = data[pos : pos+nullBitmapLen]
-			pos += nullBitmapLen
-			if data[pos] != 1 {
-				return 0, mysql.ErrMalformPacket
-			}
-
-			pos++
-			for i := 0; i < numParams; i++ {
-				paramTypes = append(paramTypes, data[pos:pos+2]...)
-				pos += 2
-				s, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
-				if e != nil {
-					return 0, mysql.ErrMalformPacket
-				}
-				names[i] = string(hack.String(s))
-				pos += p
-			}
-
-			boundParams := make([][]byte, numParams)
-			p := 0
-			if p, err = parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
-				return
-			}
-
-			pos += p
-			psWithName := make(map[string]param.BinaryParam, numParams)
-			for i := range names {
-				psWithName[names[i]] = ps[i]
-			}
-			cc.ctx.GetSessionVars().QueryAttributes = psWithName
-		}
+	if cc.capability&mysql.ClientQueryAttributes == 0 {
+		return
 	}
 
+	paraCount, _, np := util2.ParseLengthEncodedInt(data)
+	numParams := int(paraCount)
+	pos += np
+	_, _, np = util2.ParseLengthEncodedInt(data[pos:])
+	pos += np
+	ps := make([]param.BinaryParam, numParams)
+	names := make([]string, numParams)
+	if paraCount > 0 {
+		var (
+			nullBitmaps []byte
+			paramTypes  []byte
+		)
+		cc.initInputEncoder(ctx)
+		nullBitmapLen := (numParams + 7) >> 3
+		nullBitmaps = data[pos : pos+nullBitmapLen]
+		pos += nullBitmapLen
+		if data[pos] != 1 {
+			return 0, mysql.ErrMalformPacket
+		}
+
+		pos++
+		for i := 0; i < numParams; i++ {
+			paramTypes = append(paramTypes, data[pos:pos+2]...)
+			pos += 2
+			s, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
+			if e != nil {
+				return 0, mysql.ErrMalformPacket
+			}
+			names[i] = string(hack.String(s))
+			pos += p
+		}
+
+		boundParams := make([][]byte, numParams)
+		p := 0
+		if p, err = parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
+			return
+		}
+
+		pos += p
+		psWithName := make(map[string]param.BinaryParam, numParams)
+		for i := range names {
+			psWithName[names[i]] = ps[i]
+		}
+		cc.ctx.GetSessionVars().QueryAttributes = psWithName
+	}
 	return
 }
 
