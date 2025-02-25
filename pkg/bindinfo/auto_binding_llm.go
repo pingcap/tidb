@@ -34,7 +34,7 @@ Here are these hinted SQLs and their plans:
 
 Please tell me which one is the best, and the reason.
 The reason should be concise, not more than 50 words.
-Please return a valid JSON object with the key "best_number" and "reason".
+Please return a valid JSON object with the key "number" and "reason".
 IMPORTANT: Don't put anything else in the response.
 Here is an example of output JSON:
     {"number": 2, "reason": "xxxxxxxxxxxxxxxxxxx"}
@@ -50,14 +50,8 @@ Here is an example of output JSON:
 		fmt.Println("err ", err)
 		return
 	}
-	if !ok || resp == "" {
-		fmt.Println("=======================================================")
-		fmt.Println("NO RESP")
-		fmt.Println("=======================================================")
-	} else {
-		fmt.Println("=======================================================")
-		fmt.Println(resp)
-		fmt.Println("=======================================================")
+	if !ok {
+		return errors.New("no response")
 	}
 
 	r := new(LLMRecommendation)
@@ -164,6 +158,10 @@ func CallLLM(apiKey, apiURL, msg string) (respMsg string, ok bool, err error) {
 		err = fmt.Errorf("API FAIL, status code: %d, resp: %v", resp.StatusCode, string(body))
 		return "", false, err
 	}
+
+	fmt.Println("=================== RESP BODY =========================")
+	fmt.Println(string(body))
+	fmt.Println("=================== RESP BODY =========================")
 
 	var response ChatResponse
 	if err = json.Unmarshal(body, &response); err != nil {
