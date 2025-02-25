@@ -45,7 +45,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	return tk
 }
 
-func TestXXX(t *testing.T) {
+func TestAutoBinding(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
 	store := testkit.CreateMockStore(t)
@@ -61,6 +61,14 @@ func TestXXX(t *testing.T) {
 	tk.MustExec(`select a from t where a=1`)
 
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.RecordInactiveBindings(time.Time{})
+	err := bindHandle.AutoRecordBindings(time.Time{})
 	fmt.Println("????????? ", err)
+}
+
+func TestLLM(t *testing.T) {
+	respMsg, ok, err := bindinfo.CallLLM(
+		"",
+		"https://api.deepseek.com/chat/completions",
+		"introduce golang within 20 words")
+	fmt.Println("????????? ", respMsg, ok, err)
 }
