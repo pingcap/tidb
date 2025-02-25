@@ -1606,8 +1606,12 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
+		isTiFlashIndex := false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
+			if indexInfo.IsTiFlashLocalIndex() {
+				isTiFlashIndex = true
+			}
 			indexInfo.State = model.StateNone
 			// Set column index flag.
 			DropIndexColumnFlag(tblInfo, indexInfo)
@@ -1626,6 +1630,13 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		if isTiFlashIndex {
+			// Send sync schema notification to TiFlash.
+			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("run drop tiflash index but syncing schema failed", zap.Error(err))
+			}
 		}
 
 		// Finish this job.
