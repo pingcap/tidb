@@ -437,7 +437,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 
-	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.CSV.GZIP", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
+	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
 	for _, csvFile := range csvFiles {
 		c.Format = ""
 		c.Path = path.Join(tempDir, csvFile)
