@@ -25,7 +25,7 @@ import (
 var _ rule.Rule = &XFEliminateOuterJoinBelowAggSort{}
 
 // XFEliminateOuterJoinBelowAggSort eliminate an outer join below an Aggregation.
-// todo: this rule couldn't be removed once sort prop is integrated into base logical plan.
+// todo: this rule could be removed once sort prop is integrated into base logical plan.
 type XFEliminateOuterJoinBelowAggSort struct {
 	outerJoinEliminator
 	*rule.BaseRule
