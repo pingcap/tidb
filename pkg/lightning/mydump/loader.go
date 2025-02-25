@@ -146,6 +146,7 @@ type MDLoaderSetupConfig struct {
 	// If the value is <= 0, it means the number of data source files will be scanned as many as possible.
 	MaxScanFiles int
 
+	// ScanFileConcurrency specifes the concurrency of scaning source files.
 	ScanFileConcurrency int
 
 	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
@@ -177,7 +178,7 @@ func WithMaxScanFiles(maxScanFiles int) MDLoaderSetupOption {
 	}
 }
 
-// WithMaxScanFiles generates an option that set the concurrency to scan files when setting up a MDLoader.
+// WithScanFileConcurrency generates an option that set the concurrency to scan files when setting up a MDLoader.
 func WithScanFileConcurrency(concurrency int) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
 		if concurrency > 0 {

@@ -961,7 +961,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 	}, mdl.GetDatabases())
 }
 
-func TestMaxScanFilesOption(t *testing.T) {
+func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	memStore := storage.NewMemStorage()
@@ -992,6 +992,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(16),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
@@ -1005,6 +1006,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	maxScanFilesCount = 100
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(0),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
 	require.NotNil(t, mdl)
