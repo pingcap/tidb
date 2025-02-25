@@ -436,6 +436,34 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		gotPath = append(gotPath, f.Path)
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
+
+	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.CSV.GZIP", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
+	for _, csvFile := range csvFiles {
+		c.Format = ""
+		c.Path = path.Join(tempDir, csvFile)
+		err = os.WriteFile(c.Path, []byte{}, 0o644)
+		require.NoError(t, err)
+		require.NoError(t, c.InitDataFiles(ctx))
+		require.Equal(t, DataFormatCSV, c.Format)
+	}
+	sqlFiles := []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zst", "file2.sql.snappy"}
+	for _, sqlFile := range sqlFiles {
+		c.Format = ""
+		c.Path = path.Join(tempDir, sqlFile)
+		err = os.WriteFile(c.Path, []byte{}, 0o644)
+		require.NoError(t, err)
+		require.NoError(t, c.InitDataFiles(ctx))
+		require.Equal(t, DataFormatSQL, c.Format)
+	}
+	parquetFiles := []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy"}
+	for _, parquetFile := range parquetFiles {
+		c.Format = ""
+		c.Path = path.Join(tempDir, parquetFile)
+		err = os.WriteFile(c.Path, []byte{}, 0o644)
+		require.NoError(t, err)
+		require.NoError(t, c.InitDataFiles(ctx))
+		require.Equal(t, DataFormatParquet, c.Format)
+	}
 }
 
 func TestGetDataSourceType(t *testing.T) {

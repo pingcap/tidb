@@ -1167,12 +1167,12 @@ func parseFileType(path string) string {
 	}
 	switch ext {
 	case ".sql":
-		return mydump.TypeSQL
+		return DataFormatSQL
 	case ".parquet":
-		return mydump.TypeParquet
+		return DataFormatParquet
 	default:
 		// If path does not contain a recognized file type, return SourceTypeCSV as default.
-		return mydump.TypeCSV
+		return DataFormatCSV
 	}
 }
 
