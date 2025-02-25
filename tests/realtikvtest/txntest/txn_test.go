@@ -532,3 +532,19 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	tk2.MustExec("admin check table t2")
 	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 10", "2 11"))
 }
+
+func TestTxnScopeAndValidateReadTs(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{
+			"zone": "bj",
+		}
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key);")
+	time.Sleep(time.Second)
+	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
+}
