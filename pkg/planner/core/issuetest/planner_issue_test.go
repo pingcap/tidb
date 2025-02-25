@@ -265,3 +265,46 @@ FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 }
+
+func TestIssue55203(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE a (
+    id INT NOT NULL,
+    pk INT PRIMARY KEY,
+    col1 VARCHAR(255),
+    col2 VARCHAR(255),
+    col3 VARCHAR(255)
+);`)
+	tk.MustExec(`CREATE TABLE b (
+    id INT NOT NULL,
+    col4 VARCHAR(255),
+    col5 VARCHAR(255),
+    PRIMARY KEY (id)
+);`)
+	tk.MustExec("analyze table a all columns")
+	tk.MustExec("analyze table b all columns")
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+    a.pk,
+    a.col1,
+    COUNT(*)
+FROM
+    a
+JOIN
+    b
+ON
+    a.id = b.id
+GROUP BY
+    a.pk,
+    a.col1;`).Check(testkit.Rows())
+}
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));")
+	tk.MustExec("create table t2 (c1 int unique, c2 int);")
+	tk.MustQuery("explain format = 'brief' select a.c1, a.c2, a.c3, count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1, a.c2, a.c3;").Check(testkit.Rows())
+}

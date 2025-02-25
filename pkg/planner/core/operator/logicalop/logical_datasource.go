@@ -261,6 +261,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 			return
 		}
 	}
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	for _, index := range ds.Table.Meta().Indices {
 		if ds.IsForUpdateRead && changed {
 			latestIndex, ok := latestIndexes[index.ID]

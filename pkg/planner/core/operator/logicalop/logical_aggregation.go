@@ -682,6 +682,9 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 
 // BuildSelfKeyInfo builds the key information for the aggregation itself.
 func (la *LogicalAggregation) BuildSelfKeyInfo(selfSchema *expression.Schema) {
+	if !la.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
 		indices := selfSchema.ColumnsIndices(groupByCols)
