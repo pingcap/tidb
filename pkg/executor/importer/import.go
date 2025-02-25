@@ -1161,6 +1161,7 @@ func (e *LoadDataController) setFormat(path string) {
 func parseFileType(path string) string {
 	path = strings.ToLower(path)
 	ext := filepath.Ext(path)
+	// avoid duplicate compress extension
 	for ext == ".gz" || ext == ".gzip" || ext == ".zstd" || ext == ".zst" || ext == ".snappy" {
 		path = strings.TrimSuffix(path, ext)
 		ext = filepath.Ext(path)
