@@ -22,6 +22,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -260,4 +261,116 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 	require.Equal(t, 10, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(10000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
+}
+
+func TestTryDecodeEndKey(t *testing.T) {
+	encodedRowID := common.EncodeIntRowID(1)
+	e := &Engine{}
+
+	e.keyAdapter = common.DupDetectKeyAdapter{}
+	key := []byte("1234")
+	encodedKey0 := e.keyAdapter.Encode(nil, key, encodedRowID)
+	encodedKey1 := kv.Key(encodedKey0).Next()
+	encodedKey2 := make([]byte, len(encodedKey1))
+	copy(encodedKey2, encodedKey1)
+	encodedKey2[len(encodedKey2)-1] = 1
+	testcases := []struct {
+		encodedKey []byte
+		succeed    bool
+		result     []byte
+	}{
+		{encodedKey0, true, key},
+		{encodedKey1, true, kv.Key(key).Next()},
+		{encodedKey2, false, nil},
+	}
+	for _, tc := range testcases {
+		decoded, err := e.tryDecodeEndKey(tc.encodedKey)
+		if tc.succeed {
+			require.NoError(t, err)
+			require.Equal(t, tc.result, decoded)
+		} else {
+			require.Error(t, err)
+		}
+	}
+
+	e.keyAdapter = common.NoopKeyAdapter{}
+	encodedKey0 = e.keyAdapter.Encode(nil, key, encodedRowID)
+	encodedKey1 = kv.Key(encodedKey0).Next()
+	encodedKey2 = make([]byte, len(encodedKey1))
+	copy(encodedKey2, encodedKey1)
+	encodedKey2[len(encodedKey2)-1] = 1
+	testcases = []struct {
+		encodedKey []byte
+		succeed    bool
+		result     []byte
+	}{
+		{encodedKey0, true, encodedKey0},
+		{encodedKey1, true, encodedKey1},
+		{encodedKey2, true, encodedKey2},
+	}
+	for _, tc := range testcases {
+		decoded, err := e.tryDecodeEndKey(tc.encodedKey)
+		if tc.succeed {
+			require.NoError(t, err)
+			require.Equal(t, tc.result, decoded)
+		} else {
+			require.Error(t, err)
+		}
+	}
+}
+
+func TestGetRegionSplitKeys(t *testing.T) {
+	key1 := []byte("1234")
+	key2 := []byte("1235")
+	key3 := []byte("1236")
+	e := &Engine{}
+
+	e.keyAdapter = common.DupDetectKeyAdapter{}
+	encodedKey1 := e.keyAdapter.Encode(nil, key1, common.EncodeIntRowID(1))
+	encodedKey2 := e.keyAdapter.Encode(nil, key2, common.EncodeIntRowID(2))
+	encodedKey3 := e.keyAdapter.Encode(nil, key3, common.EncodeIntRowID(3))
+	encodedKey2Next := kv.Key(encodedKey2).Next()
+	encodedKey3Next := kv.Key(encodedKey3).Next()
+	testcases := []struct {
+		splitKeys    [][]byte
+		succeed      bool
+		expectedKeys [][]byte
+	}{
+		{
+			[][]byte{encodedKey1, encodedKey2, encodedKey3},
+			true,
+			[][]byte{key1, key2, key3},
+		},
+		{
+			[][]byte{encodedKey1, encodedKey2, encodedKey3Next},
+			true,
+			[][]byte{key1, key2, kv.Key(key3).Next()},
+		},
+		{
+			[][]byte{encodedKey1, encodedKey2Next, encodedKey3Next},
+			false,
+			nil,
+		},
+	}
+	for _, tc := range testcases {
+		e.splitKeys = tc.splitKeys
+		res, err := e.GetRegionSplitKeys()
+		if tc.succeed {
+			require.NoError(t, err)
+			require.Equal(t, len(tc.expectedKeys), len(res))
+			for i := range tc.expectedKeys {
+				require.Equal(t, res[i], tc.expectedKeys[i])
+			}
+		} else {
+			require.Error(t, err)
+		}
+	}
+
+	e.keyAdapter = common.NoopKeyAdapter{}
+	for _, tc := range testcases {
+		e.splitKeys = tc.splitKeys
+		res, err := e.GetRegionSplitKeys()
+		require.NoError(t, err)
+		require.Equal(t, len(tc.splitKeys), len(res))
+	}
 }
