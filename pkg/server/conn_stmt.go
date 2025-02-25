@@ -60,6 +60,7 @@ import (
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -180,7 +181,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		paramValues []byte
 	)
 	cc.initInputEncoder(ctx)
-	numParams := stmt.NumParams()
+	stmtNumParams := stmt.NumParams()
+	numParams := stmtNumParams
 	clientHasQueryAttr := cc.ctx.GetSessionVars().ClientCapability&mysql.ClientQueryAttributes > 0
 	if clientHasQueryAttr && (numParams > 0 || flag&mysql.ParameterCountAvailable > 0) {
 		paraCount, _, np := util2.ParseLengthEncodedInt(data[pos:])
@@ -195,20 +197,27 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 		nullBitmaps = data[pos : pos+nullBitmapLen]
 		pos += nullBitmapLen
+		var attributeNames []string
 
 		// new param bound flag
 		if data[pos] == 1 {
 			pos++
-			// For client that has query attribute ability, parameter's name will also be sent.
-			// However, it is useless for execute statement, so we ignore it here.
+			// For client that has query attribute ability, query attributes' name will also be sent.
 			if clientHasQueryAttr {
+				if numParams > stmtNumParams {
+					attributeNames = make([]string, 0, numParams-stmt.NumParams())
+				}
 				for i := 0; i < numParams; i++ {
 					paramTypes = append(paramTypes, data[pos:pos+2]...)
 					pos += 2
 					// parse names
-					_, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
+					pName, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
 					if e != nil {
 						return mysql.ErrMalformPacket
+					}
+					// Only the names of the parameters for query attributes will be sent.
+					if len(pName) > 0 {
+						attributeNames = append(attributeNames, string(hack.String(pName)))
 					}
 					pos += p
 				}
@@ -229,6 +238,17 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 
 		_, err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		if len(attributeNames) != 0 {
+			if len(attributeNames) != len(args)-stmtNumParams {
+				return mysql.ErrMalformPacket
+			}
+			psWithName := make(map[string]param.BinaryParam, numParams)
+			for i := range attributeNames {
+				psWithName[attributeNames[i]] = args[i+stmtNumParams]
+			}
+			cc.ctx.GetSessionVars().QueryAttributes = psWithName
+			args = args[:stmtNumParams]
+		}
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
