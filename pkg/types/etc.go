@@ -90,7 +90,7 @@ func IsTypeStoredAsInteger(tp byte) bool {
 		return true
 	case mysql.TypeYear:
 		return true
-	case mysql.TypeEnum:
+	case mysql.TypeEnum, mysql.TypeSet:
 		return true
 	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDuration:
 		return true

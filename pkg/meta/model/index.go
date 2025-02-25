@@ -16,6 +16,7 @@ package model
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
@@ -58,22 +59,51 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
-// ColumnarIndexType is the type of the columnar index.
-type ColumnarIndexType string
+type InvertedIndexInfo struct {
+	IsSigned bool  `json:"is_signed"`
+	TypeSize uint8 `json:"type_size"`
+}
 
-// ColumnarIndexType values.
-const (
-	ColumnarIndexTypeInvalid  ColumnarIndexType = ""
-	ColumnarIndexTypeInverted ColumnarIndexType = "inverted"
-)
+func FieldTypeToInvertedIndexInfo(tp types.FieldType) *InvertedIndexInfo {
+	var isSigned bool
+	var typeSize uint8
 
-type ColumnarIndexInfo struct {
-	// Tp is the type of the columnar index.
-	Tp ColumnarIndexType `json:"type"`
+	switch tp.GetType() {
+	case mysql.TypeTiny:
+		typeSize = 1
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeShort:
+		typeSize = 2
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeInt24, mysql.TypeLong:
+		typeSize = 4
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeLonglong:
+		typeSize = 8
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeYear:
+		typeSize = 2
+		isSigned = false
+	case mysql.TypeEnum:
+		typeSize = 2
+		isSigned = false
+	case mysql.TypeSet:
+		typeSize = 8
+		isSigned = false
+	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+		typeSize = 8
+		isSigned = false
+	case mysql.TypeDuration:
+		typeSize = 8
+		isSigned = true
+	default:
+		return nil
+	}
 
-	// Necessary information for columnar index.
-	// Since inverted index is the only columnar index type now, and it does not need any extra information,
-	// no field is defined here now.
+	return &InvertedIndexInfo{
+		IsSigned: isSigned,
+		TypeSize: typeSize,
+	}
 }
 
 // IndexInfo provides meta data describing a DB index.
@@ -94,7 +124,7 @@ type IndexInfo struct {
 	Global        bool               `json:"is_global"`      // Whether the index is global.
 	MVIndex       bool               `json:"mv_index"`       // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo   `json:"vector_index"`   // VectorInfo is the vector index information.
-	ColumnarInfo  *ColumnarIndexInfo `json:"columnar_index"` // ColumnarInfo is the columnar index information.
+	InvertedInfo  *InvertedIndexInfo `json:"inverted_index"` // InvertedInfo is the inverted index information.
 }
 
 // Hash64 implement HashEquals interface.
@@ -165,7 +195,7 @@ func (index *IndexInfo) IsPublic() bool {
 // IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
-	return index.VectorInfo != nil || index.ColumnarInfo != nil
+	return index.VectorInfo != nil || index.InvertedInfo != nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
@@ -208,8 +238,8 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 
 // IndexColumn provides index column info.
 type IndexColumn struct {
-	Name   ast.CIStr `json:"name"`   // Index name
-	Offset int       `json:"offset"` // Index offset
+	Name   ast.CIStr `json:"name"`   // Index column name
+	Offset int       `json:"offset"` // Index column offset in table
 	// Length of prefix when using column prefix
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing

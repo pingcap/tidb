@@ -530,19 +530,16 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 	return nil
 }
 
-func checkTiFlashIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
-	var hasVectorIndex, hasColumnarIndex bool
+func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
-			hasVectorIndex = true
-			break
-		}
-		if idx.ColumnarInfo != nil {
+		if idx.IsTiFlashLocalIndex() {
 			hasColumnarIndex = true
 			break
 		}
 	}
-	if !hasVectorIndex && !hasColumnarIndex {
+
+	if !hasColumnarIndex {
 		return nil
 	}
 	if store == nil {
@@ -558,11 +555,7 @@ func checkTiFlashIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, t
 			return errors.Trace(err)
 		}
 		if replicas == 0 {
-			if hasVectorIndex {
-				return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
-			} else {
-				return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
-			}
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -573,11 +566,7 @@ func checkTiFlashIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, t
 		}
 	}
 
-	if hasVectorIndex {
-		return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
-	} else {
-		return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
-	}
+	return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -608,7 +597,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CI
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkTiFlashIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
+	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1016,7 +1005,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 				case ast.ConstraintVector:
 					colName = getAnonymousIndexPrefix(TiFlashIndexTypeVector)
 				case ast.ConstraintColumnar:
-					colName = getAnonymousIndexPrefix(TiFlashIndexTypeColumnar)
+					colName = getAnonymousIndexPrefix(TiFlashIndexTypeInverted)
 				default:
 					colName = getAnonymousIndexPrefix(TiFlashIndexTypeInvalid)
 				}
@@ -1348,7 +1337,7 @@ func BuildTableInfo(
 			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
 			}
-			tiflashIndexType = TiFlashIndexTypeColumnar
+			tiflashIndexType = TiFlashIndexTypeInverted
 		}
 
 		// check constraint

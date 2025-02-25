@@ -3533,7 +3533,7 @@ func (e *executor) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident
 	tbInfo := tb.Meta()
 	if (newCache == 1 && tbInfo.AutoIDCache != 1) ||
 		(newCache != 1 && tbInfo.AutoIDCache == 1) {
-		return fmt.Errorf("Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different")
+		return fmt.Errorf("can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different")
 	}
 
 	job := &model.Job{
@@ -4505,8 +4505,8 @@ func getAnonymousIndexPrefix(tiflashIndexType TiFlashIndexType) string {
 	switch tiflashIndexType {
 	case TiFlashIndexTypeVector:
 		return "vector_index"
-	case TiFlashIndexTypeColumnar:
-		return "columnar_index"
+	case TiFlashIndexTypeInverted:
+		return "inverted_index"
 	default:
 		return "expression_index"
 	}
@@ -4709,23 +4709,6 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	return indexName, hiddenCols, nil
 }
 
-func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
-	}
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
-	}
-	if tblInfo.GetPartitionInfo() != nil {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported partition table")
-	}
-	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
-	}
-
-	return nil
-}
-
 func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4734,7 +4717,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -4797,8 +4780,8 @@ type TiFlashIndexType uint8
 const (
 	// TiFlashIndexTypeInvalid is the invalid index type.
 	TiFlashIndexTypeInvalid TiFlashIndexType = iota
-	// TiFlashIndexTypeColumnar is the columnar index type.
-	TiFlashIndexTypeColumnar
+	// TiFlashIndexTypeInverted is the columnar index type.
+	TiFlashIndexTypeInverted
 	// TiFlashIndexTypeVector is the vector index type.
 	TiFlashIndexTypeVector
 )
@@ -4833,7 +4816,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, TiFlashIndexTypeColumnar, ifNotExists)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, TiFlashIndexTypeInverted, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4844,7 +4827,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, TiFlashIndexTypeColumnar)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, TiFlashIndexTypeInverted)
 	if err != nil {
 		return errors.Trace(err)
 	}

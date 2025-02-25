@@ -107,7 +107,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if tiflashIndexType == TiFlashIndexTypeVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
-		if tiflashIndexType == TiFlashIndexTypeColumnar && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
+		if tiflashIndexType == TiFlashIndexTypeInverted && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
 			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support integer type, but this is type: %s", col.FieldType.String()))
 		}
 
@@ -357,12 +357,12 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
-	case TiFlashIndexTypeColumnar:
-		columnarInfo, err := buildColumnarInfoWithCheck(indexPartSpecifications, tblInfo)
+	case TiFlashIndexTypeInverted:
+		invertedInfo, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxInfo.ColumnarInfo = columnarInfo
+		idxInfo.InvertedInfo = invertedInfo
 	}
 
 	var err error
@@ -451,8 +451,8 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	}, exprStr, nil
 }
 
-func buildColumnarInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
-	tblInfo *model.TableInfo) (*model.ColumnarIndexInfo, error) {
+func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+	tblInfo *model.TableInfo) (*model.InvertedIndexInfo, error) {
 	if len(indexPartSpecifications) != 1 {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("only support one column")
 	}
@@ -468,13 +468,13 @@ func buildColumnarInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 
 	// check duplicated columnar index on the same column
 	for _, idx := range tblInfo.Indices {
-		if idx.ColumnarInfo == nil {
+		if idx.InvertedInfo == nil {
 			continue
 		}
 		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
 			continue
 		}
-		if idx.ColumnarInfo.Tp == model.ColumnarIndexTypeInverted {
+		if idx.Tp == ast.IndexTypeInverted {
 			return nil, dbterror.ErrDupKeyName.GenWithStack(fmt.Sprintf("inverted columnar index %s already exist on column %s", idx.Name, colInfo.Name))
 		}
 	}
@@ -483,9 +483,7 @@ func buildColumnarInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
 	idxPart.Length = types.UnspecifiedLength
 
-	return &model.ColumnarIndexInfo{
-		Tp: model.ColumnarIndexTypeInverted,
-	}, nil
+	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType), nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -781,14 +779,8 @@ func (w *worker) onCreateTiFlashIndex(jobCtx *jobContext, job *model.Job, isVect
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if isVector {
-		if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
-			return ver, errors.Trace(err)
-		}
-	} else {
-		if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-			return ver, errors.Trace(err)
-		}
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	args, err := model.GetModifyIndexArgs(job)
@@ -797,7 +789,7 @@ func (w *worker) onCreateTiFlashIndex(jobCtx *jobContext, job *model.Job, isVect
 		return ver, errors.Trace(err)
 	}
 	a := args.IndexArgs[0]
-	tiFlashIndexType := TiFlashIndexTypeColumnar
+	tiFlashIndexType := TiFlashIndexTypeInverted
 	if isVector {
 		a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
 		if err != nil {

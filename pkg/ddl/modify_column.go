@@ -1137,8 +1137,8 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		tiFlashIndexType := TiFlashIndexTypeInvalid
 		if indexInfo.VectorInfo != nil {
 			tiFlashIndexType = TiFlashIndexTypeVector
-		} else if indexInfo.ColumnarInfo != nil {
-			tiFlashIndexType = TiFlashIndexTypeColumnar
+		} else if indexInfo.InvertedInfo != nil {
+			tiFlashIndexType = TiFlashIndexTypeInverted
 		}
 		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, tiFlashIndexType)
 		if err != nil {

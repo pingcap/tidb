@@ -1346,7 +1346,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
-		"can't drop column b with Vector Key covered now")
+		"can't drop column b with TiFlash Local Index covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
 		"Unsupported multi schema change for add vector index")
 
@@ -1498,7 +1498,6 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
 	require.Equal(t, ast.IndexTypeInverted, indexes[0].Tp)
-	require.Equal(t, model.ColumnarIndexTypeInverted, indexes[0].ColumnarInfo.Tp)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
 	require.NoError(t, err)
@@ -1539,7 +1538,6 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	indexes1 := tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes1))
 	require.Equal(t, indexes[0].Tp, indexes1[0].Tp)
-	require.Equal(t, model.ColumnarIndexTypeInverted, indexes[0].ColumnarInfo.Tp)
 
 	// test drop a vector index
 	tk.MustExec("alter table t drop index colIdx;")
@@ -1562,7 +1560,6 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
 	require.Equal(t, ast.IndexTypeInverted, indexes[0].Tp)
-	require.Equal(t, model.ColumnarIndexTypeInverted, indexes[0].ColumnarInfo.Tp)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
@@ -1588,16 +1585,15 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	idx := tbl.Meta().Indices[0]
 	require.Equal(t, "b", idx.Name.O)
 	require.Equal(t, ast.IndexTypeInverted, idx.Tp)
-	require.Equal(t, model.ColumnarIndexTypeInverted, idx.ColumnarInfo.Tp)
 	tk.MustExec("alter table t add key a(a);")
 	tk.MustExec("alter table t add columnar index (a) USING INVERTED;")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 3, len(tbl.Meta().Indices))
 	require.Equal(t, "a", tbl.Meta().Indices[1].Name.O)
-	require.Equal(t, true, tbl.Meta().Indices[1].ColumnarInfo == nil)
+	require.Equal(t, true, tbl.Meta().Indices[1].InvertedInfo == nil)
 	require.Equal(t, "a_2", tbl.Meta().Indices[2].Name.O)
-	require.Equal(t, false, tbl.Meta().Indices[2].ColumnarInfo == nil)
+	require.Equal(t, false, tbl.Meta().Indices[2].InvertedInfo == nil)
 }
 
 func testAddTiFlashIndexRollback(prepareSQL []string, addIdxSQL string, tp model.ActionType, t *testing.T) {

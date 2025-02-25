@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -229,6 +230,14 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+	// FIXME: better algorithm
+	usedIndexes := make([]*model.IndexInfo, 0, len(physicalTableScan.Table.Indices))
+	for _, index := range physicalTableScan.Table.Indices {
+		if index.State == model.StatePublic && index.InvertedInfo != nil {
+			usedIndexes = append(usedIndexes, index)
+		}
+	}
+	physicalTableScan.UsedColumnarIndexs = usedIndexes
 	// When the table is small, there is no need to push down the conditions.
 	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return
