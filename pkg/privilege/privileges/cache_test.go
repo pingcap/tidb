@@ -315,13 +315,13 @@ func TestLoadRoleGraph(t *testing.T) {
 	p = privileges.NewMySQLPrivilege()
 	require.NoError(t, p.LoadRoleGraph(se.GetRestrictedSQLExecutor()))
 	graph := p.RoleGraph()
-	require.True(t, graph["root@%"].Find("r_2", "%"))
-	require.True(t, graph["root@%"].Find("r_4", "%"))
-	require.True(t, graph["user2@%"].Find("r_1", "%"))
-	require.True(t, graph["user1@%"].Find("r_3", "%"))
-	_, ok := graph["illedal"]
+	require.True(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_2", "%"))
+	require.True(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_4", "%"))
+	require.True(t, graph[auth.RoleIdentity{"user2", "%"}].Find("r_1", "%"))
+	require.True(t, graph[auth.RoleIdentity{"user1", "%"}].Find("r_3", "%"))
+	_, ok := graph[auth.RoleIdentity{Username: "illedal"}]
 	require.False(t, ok)
-	require.False(t, graph["root@%"].Find("r_1", "%"))
+	require.False(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_1", "%"))
 }
 
 func TestRoleGraphBFS(t *testing.T) {
