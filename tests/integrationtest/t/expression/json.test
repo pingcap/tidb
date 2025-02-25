@@ -565,3 +565,6 @@ select json_extract("{\"\\f\":\"\"}", "$");
 select json_extract('{"a":"b"}', '$[0]');
 select json_extract('{"a":"b"}', '$[last]');
 select json_set('{"a":"b"}', '$[last]', 1);
+
+# TestIssue59465
+SELECT JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3));
