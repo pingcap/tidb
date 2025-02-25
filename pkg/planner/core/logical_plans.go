@@ -863,6 +863,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)
@@ -1922,6 +1926,33 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
 	logicalSchemaProducer
+}
+
+// ExtractFD implement base.LogicalPlan.<22nd> interface.
+func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	childFDs := make([]*fd.FDSet, 0, len(p.children))
+	for _, child := range p.children {
+		childFD := child.ExtractFD()
+		childFDs = append(childFDs, childFD)
+	}
+	// check the output columns' not-null property.
+	res := &fd.FDSet{}
+	notNullCols := intset.NewFastIntSet()
+	for _, col := range p.Schema().Columns {
+		notNullCols.Insert(int(col.UniqueID))
+	}
+	for _, childFD := range childFDs {
+		notNullCols.IntersectionWith(childFD.NotNullCols)
+	}
+	res.MakeNotNull(notNullCols)
+	// check the equivalency between children.
+	equivs := fd.FindCommonEquivClasses(childFDs)
+	for _, equiv := range equivs {
+		res.AddEquivalenceUnion(equiv)
+	}
+	p.fdSet = res
+	return res
 }
 
 // LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.

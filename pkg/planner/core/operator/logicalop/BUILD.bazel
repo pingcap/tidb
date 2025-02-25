@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "logicalop",
+    srcs = [
+        "logical_projection.go",
+        "logical_union_all.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/mysql",
+        "//pkg/planner/cardinality",
+        "//pkg/planner/funcdep",
+        "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/util/intset",
+        "//pkg/util/plancodec",
+    ],
+)
