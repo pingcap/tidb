@@ -180,7 +180,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b < 32 || b > 127 {
+	// MySQL think 127(0x7f) is not printalbe.
+	if b < 32 || b >= 127 {
 		return false
 	}
 
@@ -188,7 +189,7 @@ func PrintableASCII(b byte) bool {
 }
 
 // FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int) string {
+func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDeleteCharater bool) string {
 	var b bytes.Buffer
 	b.Grow(maxBytesToShow * 2)
 	for i := range len(str) {
@@ -199,6 +200,12 @@ func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int) string {
 
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
+			continue
+		}
+
+		// In MySQL, 0x7f will not display in `Cannot convert string` error msg.
+		// But it will displayed in `duplicate entry` error msg.
+		if str[i] == 0x7f && !displayDeleteCharater {
 			continue
 		}
 

@@ -186,7 +186,7 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	valBytes := hack.Slice(val)
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := util.FmtNonASCIIPrintableCharToHex(val, maxBytesToShow)
+		strHex := util.FmtNonASCIIPrintableCharToHex(val, maxBytesToShow, false)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 		if b.cannotConvertStringAsWarning {
@@ -229,7 +229,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := util.FmtNonASCIIPrintableCharToHex(string(hack.String(str)), maxBytesToShow)
+			strHex := util.FmtNonASCIIPrintableCharToHex(string(hack.String(str)), maxBytesToShow, false)
 			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 			if b.cannotConvertStringAsWarning {

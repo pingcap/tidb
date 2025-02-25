@@ -776,7 +776,7 @@ func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, 
 			str = string(val)
 		}
 		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str))
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		valueStr = append(valueStr, str)
 	}
