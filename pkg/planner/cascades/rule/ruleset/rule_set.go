@@ -94,7 +94,7 @@ var OperandApplyRulesList = []rule.Rule{
 // OperandProjectionRules is the rules rooted from a projection operand.
 var OperandProjectionRules = &OperandRules{OperandProjectionRulesMap, OperandProjectionRulesList}
 
-// OperandProjectionRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
+// OperandProjectionRulesMap is the rules rooted from a projection operand, organized as map, key is sub-set type.
 var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 	XFSetProjectionUtil: {
 		projection.NewXFMergeAdjacentProjection(),
@@ -103,14 +103,14 @@ var OperandProjectionRulesMap = map[SetType][]rule.Rule{
 	},
 }
 
-// OperandProjectionRulesList is the rules rooted from an apply operand, organized as list.
+// OperandProjectionRulesList is the rules rooted from a projection operand, organized as list.
 var OperandProjectionRulesList = []rule.Rule{
 	projection.NewXFMergeAdjacentProjection(),
 	projection.NewXFEliminateProjection(),
 	eoj.NewXFEliminateOuterJoinBelowProjection(),
 }
 
-// OperandAggregationRules is the rules rooted from a aggregation operand.
+// OperandAggregationRules is the rules rooted from an aggregation operand.
 var OperandAggregationRules = &OperandRules{OperandAggregationRulesMap, OperandAggregationRulesList}
 
 // OperandAggregationRulesMap is the rules rooted from an apply operand, organized as map, key is sub-set type.
@@ -121,7 +121,7 @@ var OperandAggregationRulesMap = map[SetType][]rule.Rule{
 	},
 }
 
-// OperandAggregationRulesList is the rules rooted from an apply operand, organized as list.
+// OperandAggregationRulesList is the rules rooted from an aggregation operand, organized as list.
 var OperandAggregationRulesList = []rule.Rule{
 	eoj.NewXFEliminateOuterJoinBelowAgg(),
 	eoj.NewXFEliminateOuterJoinBelowAggSort(),
