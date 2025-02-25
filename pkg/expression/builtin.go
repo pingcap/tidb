@@ -996,7 +996,7 @@ var funcs = map[string]functionClass{
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
 
-	// TiDB Query
+	// TiDB Query Attribute function.
 	ast.QueryAttrString: &getQueryAttrFunctionClass{baseFunctionClass{ast.QueryAttrString, 1, 1}},
 }
 
