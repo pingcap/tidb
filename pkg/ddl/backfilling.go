@@ -559,12 +559,16 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				return errors.Errorf("get empty range at the beginning of ranges")
 			}
 		}
 		if i == len(ranges)-1 {
 			e := r.EndKey
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
+			} else if bytes.Compare(e, endKey) < 0 {
+				return errors.Errorf("get empty range at the end of ranges")
 			}
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {

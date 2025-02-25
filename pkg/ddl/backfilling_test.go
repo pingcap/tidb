@@ -418,7 +418,7 @@ func TestValidateAndFillRanges(t *testing.T) {
 		mkRange("c", "d"),
 		mkRange("d", "e"),
 	}
-	err := validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	err := validateAndFillRanges(ranges, []byte("b"), []byte("e"))
 	require.NoError(t, err)
 	require.EqualValues(t, []kv.KeyRange{
 		mkRange("b", "c"),
@@ -477,6 +477,22 @@ func TestValidateAndFillRanges(t *testing.T) {
 		mkRange("b", "c"),
 		mkRange("c", "d"),
 		mkRange("e", "f"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
+	}
+	err = validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.Error(t, err)
