@@ -67,7 +67,7 @@ type ChatResponse struct {
 
 func CallLLM(apiKey, apiURL, msg string) (respMsg string, ok bool, err error) {
 	requestBody := ChatRequest{
-		Model: "deepseek-chat",
+		Model: "deepseek-reasoner",
 		Messages: []Message{
 			{
 				Role:    "user",
