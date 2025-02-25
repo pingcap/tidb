@@ -740,6 +740,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.runningJobs.clear()
 		d.ddlCtx.setOwnerTS(time.Now().Unix())
 	})
 
@@ -769,9 +770,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.PollTiFlashRoutine)
 
 	ingest.InitGlobalLightningEnv()
-	d.ownerManager.SetRetireOwnerHook(func() {
-		d.runningJobs = newRunningJobs()
-	})
 
 	return nil
 }
