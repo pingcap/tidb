@@ -21,11 +21,8 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/membuf"
-=======
 	"github.com/pingcap/tidb/pkg/kv"
->>>>>>> 03f4a2e802e (external: fix decoding the last key in split keys (#59613))
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
