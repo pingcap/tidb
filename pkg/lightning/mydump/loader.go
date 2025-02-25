@@ -392,6 +392,7 @@ type ExtendColumnData struct {
 }
 
 // ParallelProcess is a helper function to parallel process files, used for both lightning and IMPORT INTO.
+// The order of the output slice is same as the input slice.
 func ParallelProcess[T any](
 	ctx context.Context,
 	files []RawFile,
