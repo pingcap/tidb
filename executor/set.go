@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"github.com/tikv/client-go/v2/oracle/oracles"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"go.uber.org/zap"
 )
 
