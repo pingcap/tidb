@@ -386,7 +386,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		}
 	}
 
-	s3CliConfigs := []*aws.Config{aws.NewConfig().WithLogLevel(aws.LogDebugWithRequestErrors)}
+	s3CliConfigs := []*aws.Config{}
 	// if role ARN and external ID are provided, try to get the credential using this way
 	if len(qs.RoleArn) > 0 {
 		creds := stscreds.NewCredentials(ses, qs.RoleArn, func(p *stscreds.AssumeRoleProvider) {
@@ -1011,12 +1011,6 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	}
 
 	r.pos += int64(n)
-	if err == io.EOF && r.pos != r.rangeInfo.End+1 {
-		log.L().Info("got unexpected EOF", zap.String("file", r.name),
-			zap.Int64("range-start", r.rangeInfo.Start),
-			zap.Int64("range-end", r.rangeInfo.End), zap.Int64("pos", r.pos),
-			zap.Int64("size", r.rangeInfo.Size))
-	}
 	return
 }
 

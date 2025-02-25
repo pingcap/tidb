@@ -618,7 +618,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = rc
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.totalSize-r.pos, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.endPos-r.pos, r.prefetchSize)
 	}
 
 	return realOffset, nil

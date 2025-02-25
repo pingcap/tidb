@@ -22,18 +22,17 @@ import (
 
 // see doc.go for more details.
 const (
-	TaskStatePending            TaskState = "pending"
-	TaskStateRunning            TaskState = "running"
-	TaskStateSucceed            TaskState = "succeed"
-	TaskStateFailed             TaskState = "failed"
-	TaskStateReverting          TaskState = "reverting"
-	TaskStateAwaitingResolution TaskState = "awaiting-resolution"
-	TaskStateReverted           TaskState = "reverted"
-	TaskStateCancelling         TaskState = "cancelling"
-	TaskStatePausing            TaskState = "pausing"
-	TaskStatePaused             TaskState = "paused"
-	TaskStateResuming           TaskState = "resuming"
-	TaskStateModifying          TaskState = "modifying"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
+	TaskStateModifying  TaskState = "modifying"
 )
 
 type (

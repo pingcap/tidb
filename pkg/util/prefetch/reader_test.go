@@ -76,6 +76,21 @@ func TestBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 }
 
+type unexpectedEOFReader struct {
+}
+
+func (u *unexpectedEOFReader) Read(_ []byte) (n int, err error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestConvertUnexpectedEOF(t *testing.T) {
+	r := NewReader(io.NopCloser(&unexpectedEOFReader{}), 10, 10)
+	buf := make([]byte, 10)
+	_, err := r.Read(buf)
+	// prefetch reader should not convert underlying io.ErrUnexpectedEOF to io.EOF
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
 func TestCloseBeforeDrainRead(t *testing.T) {
 	data := make([]byte, 1024)
 	source := bytes.NewReader(data)
