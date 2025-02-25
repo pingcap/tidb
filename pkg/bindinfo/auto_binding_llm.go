@@ -106,6 +106,7 @@ func (h *globalBindingHandle) autoBindingPlanText(autoBinding *AutoBindingInfo) 
 type ChatRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream"`
 }
 
 type Message struct {
@@ -128,6 +129,7 @@ func CallLLM(apiKey, apiURL, msg string) (respMsg string, ok bool, err error) {
 				Content: msg,
 			},
 		},
+		Stream: false,
 	}
 	reqBytes, err := json.Marshal(requestBody)
 	if err != nil {
