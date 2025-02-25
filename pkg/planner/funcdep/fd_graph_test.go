@@ -15,7 +15,6 @@
 package funcdep
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -364,11 +363,4 @@ func TestFindCommonEquivClasses(t *testing.T) {
 	// find common equivalence classes between fd1, fd2 and fd3.
 	res = FindCommonEquivClasses([]*FDSet{fd1, fd2, fd3})
 	require.Equal(t, 0, len(res))
-}
-
-func TestFindCommonEquivClasses1(t *testing.T) {
-	fd1 := &FDSet{}
-	fd1.AddStrictFunctionalDependency(intset.NewFastIntSet(1), intset.NewFastIntSet(1, 2, 3))
-	fd1.AddStrictFunctionalDependency(intset.NewFastIntSet(2), intset.NewFastIntSet(1, 2, 3))
-	fmt.Println(fd1)
 }
