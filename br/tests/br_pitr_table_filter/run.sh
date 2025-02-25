@@ -948,13 +948,13 @@ test_partition_exchange() {
 }
 
 echo "run all test cases"
-# test_basic_filter
-# test_with_full_backup_filter
-# test_table_rename
-# test_with_checkpoint
-# test_system_tables
-# test_foreign_keys
-# test_index_filter
+test_basic_filter
+test_with_full_backup_filter
+test_table_rename
+test_with_checkpoint
+test_system_tables
+test_foreign_keys
+test_index_filter
 test_partition_exchange
 
 echo "br pitr table filter all tests passed"
