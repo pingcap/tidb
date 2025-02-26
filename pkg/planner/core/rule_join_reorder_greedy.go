@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"fmt"
 	"math"
 	"slices"
 
@@ -46,9 +45,6 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
-	if !s.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	var err error
 	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
 	if err != nil {
@@ -98,9 +94,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
-	if !s.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
