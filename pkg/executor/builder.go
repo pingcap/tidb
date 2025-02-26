@@ -4191,7 +4191,6 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	if shouldRemapIndex {
 		topn := plans[len(plans)-1].(*plannercore.PhysicalTopN)
 		remapIndices(schemaForTopN, topn.ByItems, indexReq.OutputOffsets)
-
 	}
 
 	return indexReq, err

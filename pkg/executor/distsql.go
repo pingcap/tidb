@@ -727,7 +727,7 @@ func (e *IndexLookUpExecutor) getRetTps4PushedDownTopN() []*types.FieldType {
 // getRetTpsForPushedDownTopN is used to get the return types for pushed down TopN.
 func (e *IndexLookUpExecutor) getRetTpsForPushedDownTopN() []*types.FieldType {
 	columns := e.idxPlans[len(e.idxPlans)-1].Schema().Columns
-	tps := make([]*types.FieldType, len(e.byItems))
+	tps := make([]*types.FieldType, 0, len(e.byItems))
 	exprs := make([]expression.Expression, len(e.byItems))
 
 	// Extract expressions and their corresponding types from byItems.
@@ -784,7 +784,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		tps = e.getRetTps4PushedDownTopN()
 	} else {
 		tps = e.getRetTpsForIndexReader()
-
 	}
 
 	idxID := e.getIndexPlanRootID()
