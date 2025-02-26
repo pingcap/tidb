@@ -63,11 +63,11 @@ func GetSyncLoadConcurrencyByCPU() int {
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	is          infoschema.InfoSchema
+	StatsLoad   statstypes.StatsLoad
 	// This mutex is used to protect the statsCache when updating it.
 	// Because there are multiple workers updating the statsCache concurrently even for the same table.
 	// The lock is used to protect the statsCache when updating it.
-	mu        sync.Mutex
-	StatsLoad statstypes.StatsLoad
+	mu sync.Mutex
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
