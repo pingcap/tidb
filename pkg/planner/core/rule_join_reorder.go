@@ -517,7 +517,11 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+				funcName := ast.EQ
+				if edge.FuncName.L == ast.NullEQ {
+					funcName = ast.NullEQ
+				}
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 
 				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
 				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
@@ -611,6 +615,9 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
 func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan) base.LogicalPlan {
+	if !s.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
 	resultJoinGroup := make([]base.LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
 		resultJoinGroup = resultJoinGroup[:0]
