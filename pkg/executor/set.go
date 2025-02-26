@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -134,7 +135,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 
-	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
 		// something that's not going to happen.
@@ -164,11 +165,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return nil
 		})
 		showValStr := valStr
-		if name == variable.TiDBCloudStorageURI {
+		if name == vardef.TiDBCloudStorageURI {
 			showValStr = ast.RedactURL(showValStr)
 		}
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
-		if name == variable.TiDBServiceScope {
+		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			oldConfig := config.GetGlobalConfig()
 			if oldConfig.Instance.TiDBServiceScope != valStr {
@@ -191,27 +192,27 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	getSnapshotTSByName := func() uint64 {
-		if name == variable.TiDBSnapshot {
+		if name == vardef.TiDBSnapshot {
 			return sessionVars.SnapshotTS
-		} else if name == variable.TiDBTxnReadTS {
+		} else if name == vardef.TiDBTxnReadTS {
 			return sessionVars.TxnReadTS.PeakTxnReadTS()
 		}
 		return 0
 	}
 	oldSnapshotTS := getSnapshotTSByName()
 	fallbackOldSnapshotTS := func() {
-		if name == variable.TiDBSnapshot {
+		if name == vardef.TiDBSnapshot {
 			sessionVars.SnapshotTS = oldSnapshotTS
-		} else if name == variable.TiDBTxnReadTS {
+		} else if name == vardef.TiDBTxnReadTS {
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
 	if sessionVars.InTxn() {
-		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS {
+		if name == vardef.TxnIsolationOneShot ||
+			name == vardef.TiDBTxnReadTS {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
-		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
+		if name == vardef.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 	}
@@ -222,9 +223,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		isStaleRead := name == variable.TiDBTxnReadTS
+		isStaleRead := name == vardef.TiDBTxnReadTS
 		err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
-		if name != variable.TiDBTxnReadTS {
+		if name != vardef.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
@@ -268,32 +269,32 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 		}
 	}
 	if isSetName {
-		for _, v := range variable.SetNamesVariables {
+		for _, v := range vardef.SetNamesVariables {
 			if err = sessionVars.SetSystemVar(v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+		return errors.Trace(sessionVars.SetSystemVar(vardef.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
-	for _, v := range variable.SetCharsetVariables {
+	for _, v := range vardef.SetCharsetVariables {
 		if err = sessionVars.SetSystemVar(v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	csDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
+	csDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.CharsetDatabase)
 	if err != nil {
 		return err
 	}
-	coDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CollationDatabase)
+	coDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.CollationDatabase)
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDB)
+	err = sessionVars.SetSystemVar(vardef.CharacterSetConnection, csDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDB))
+	return errors.Trace(sessionVars.SetSystemVar(vardef.CollationConnection, coDB))
 }
 
 func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
@@ -324,7 +325,7 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
-	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
+	if name != vardef.TiDBSnapshot && name != vardef.TiDBTxnReadTS {
 		return nil
 	}
 	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)

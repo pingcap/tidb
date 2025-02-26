@@ -226,8 +226,6 @@ func cptKey(tableID int64, startRow int, cf string) string {
 }
 
 func TestSortAndValidateFileRanges(t *testing.T) {
-	updateCh := MockUpdateCh{}
-
 	d := restoreutils.DefaultCFName
 	w := restoreutils.WriteCFName
 	cases := []struct {
@@ -656,8 +654,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 	for i, cs := range cases {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
-		onProgress := func(i int64) { updateCh.IncBy(i) }
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))

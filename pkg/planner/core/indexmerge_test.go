@@ -114,7 +114,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.PossibleAccessPaths)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
 		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {

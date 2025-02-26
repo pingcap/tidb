@@ -17,7 +17,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/table",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

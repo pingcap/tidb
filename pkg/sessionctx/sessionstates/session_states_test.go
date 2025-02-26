@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
@@ -105,37 +105,37 @@ func TestSystemVars(t *testing.T) {
 		{
 			// normal variable
 			inSessionStates: true,
-			varName:         variable.TiDBMaxTiFlashThreads,
-			expectedValue:   strconv.Itoa(variable.DefTiFlashMaxThreads),
+			varName:         vardef.TiDBMaxTiFlashThreads,
+			expectedValue:   strconv.Itoa(vardef.DefTiFlashMaxThreads),
 		},
 		{
 			// hidden variable
 			inSessionStates: true,
-			varName:         variable.TiDBTxnReadTS,
+			varName:         vardef.TiDBTxnReadTS,
 			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
 			inSessionStates: false,
-			varName:         variable.DataDir,
+			varName:         vardef.DataDir,
 			expectedValue:   "/usr/local/mysql/data/",
 		},
 		{
 			// instance-scoped variable
 			inSessionStates: false,
-			varName:         variable.TiDBGeneralLog,
+			varName:         vardef.TiDBGeneralLog,
 			expectedValue:   "0",
 		},
 		{
 			// global-scoped variable
 			inSessionStates: false,
-			varName:         variable.TiDBAutoAnalyzeStartTime,
-			expectedValue:   variable.DefAutoAnalyzeStartTime,
+			varName:         vardef.TiDBAutoAnalyzeStartTime,
+			expectedValue:   vardef.DefAutoAnalyzeStartTime,
 		},
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBConfig,
+			varName:         vardef.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -152,25 +152,25 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			inSessionStates: false,
-			varName:         variable.Timestamp,
+			varName:         vardef.Timestamp,
 		},
 		{
 			stmts:           []string{"set timestamp=100"},
 			inSessionStates: true,
-			varName:         variable.Timestamp,
+			varName:         vardef.Timestamp,
 			expectedValue:   "100",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000"},
 			inSessionStates: true,
-			varName:         variable.RandSeed1,
+			varName:         vardef.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.028870999839968048",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000", "select rand()"},
 			inSessionStates: true,
-			varName:         variable.RandSeed1,
+			varName:         vardef.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.11641535266900002",
 		},
@@ -182,7 +182,7 @@ func TestSystemVars(t *testing.T) {
 				"set @@tidb_enforce_mpp=1",
 			},
 			inSessionStates: true,
-			varName:         variable.TiDBEnforceMPPExecution,
+			varName:         vardef.TiDBEnforceMPPExecution,
 			expectedValue:   "1",
 		},
 		{
@@ -193,7 +193,7 @@ func TestSystemVars(t *testing.T) {
 				"set @@tx_read_only=1",
 			},
 			inSessionStates: true,
-			varName:         variable.TxReadOnly,
+			varName:         vardef.TxReadOnly,
 			expectedValue:   "1",
 		},
 	}
@@ -268,21 +268,21 @@ func TestInvisibleVars(t *testing.T) {
 			// The value is changed and the user has the privilege.
 			hasPriv:       true,
 			stmt:          "set tidb_opt_write_row_id=true",
-			varName:       variable.TiDBOptWriteRowID,
+			varName:       vardef.TiDBOptWriteRowID,
 			expectedValue: "1",
 		},
 		{
 			// The value has a global scope.
 			hasPriv:       true,
 			stmt:          "set tidb_row_format_version=1",
-			varName:       variable.TiDBRowFormatVersion,
+			varName:       vardef.TiDBRowFormatVersion,
 			expectedValue: "1",
 		},
 		{
 			// The global value is changed, so the session value is still different with global.
 			hasPriv:       true,
 			stmt:          "set global tidb_row_format_version=1",
-			varName:       variable.TiDBRowFormatVersion,
+			varName:       vardef.TiDBRowFormatVersion,
 			cleanStmt:     "set global tidb_row_format_version=2",
 			expectedValue: "2",
 		},

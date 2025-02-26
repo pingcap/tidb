@@ -16,6 +16,7 @@ package util
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
@@ -40,6 +41,22 @@ func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 		*origin = *dst
 		origin.RetType, origin.InOperand = retType, inOperand
 	}
+}
+
+// IsColsAllFromOuterTable check whether the cols all from outer plan
+func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.FastIntSet) bool {
+	// There are two cases "return false" here:
+	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
+	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
+	if len(cols) == 0 {
+		return false
+	}
+	for _, col := range cols {
+		if !outerUniqueIDs.Has(int(col.UniqueID)) {
+			return false
+		}
+	}
+	return true
 }
 
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.

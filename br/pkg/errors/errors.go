@@ -40,6 +40,7 @@ var (
 	ErrEnvNotSpecified              = errors.Normalize("environment variable not found", errors.RFCCodeText("BR:Common:ErrEnvNotSpecified"))
 	ErrUnsupportedOperation         = errors.Normalize("the operation is not supported", errors.RFCCodeText("BR:Common:ErrUnsupportedOperation"))
 	ErrInvalidRange                 = errors.Normalize("invalid restore range", errors.RFCCodeText("BR:Common:ErrInvalidRange"))
+	ErrMigrationNotFound            = errors.Normalize("no migration found", errors.RFCCodeText("BR:Common:ErrMigrationNotFound"))
 	ErrMigrationVersionNotSupported = errors.Normalize("the migration version isn't supported", errors.RFCCodeText("BR:Common:ErrMigrationVersionNotSupported"))
 
 	ErrPDUpdateFailed         = errors.Normalize("failed to update PD", errors.RFCCodeText("BR:PD:ErrPDUpdateFailed"))

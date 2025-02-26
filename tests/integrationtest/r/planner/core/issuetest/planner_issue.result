@@ -763,3 +763,13 @@ KEY `idx_65` (`col_36`(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );
 1	col_1101	col_1102	col_1103	col_1104
+drop table if exists t;
+create table t (id int unique key, c int);
+insert into t values (1, 10);
+insert into t values (2, 20);
+insert into t values (3, 30);
+select _tidb_rowid from t where id in (1, 2, 3);
+_tidb_rowid
+1
+2
+3

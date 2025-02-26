@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -292,16 +292,16 @@ func TestGetMaxRunningTasksLimit(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	variable.TTLRunningTasks.Store(1)
+	vardef.TTLRunningTasks.Store(1)
 	require.Equal(t, 1, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(2)
+	vardef.TTLRunningTasks.Store(2)
 	require.Equal(t, 2, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(-1)
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
+	vardef.TTLRunningTasks.Store(-1)
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
 	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
 	s.GetRegionCache().SetRegionCacheStore(1, "", "", tikvrpc.TiKV, 1, nil)

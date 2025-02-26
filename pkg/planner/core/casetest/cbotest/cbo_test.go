@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/util"
@@ -178,6 +178,49 @@ func TestEstimation(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestIssue59563(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
+	testKit.MustExec("create database cardcore_issuing;")
+	testKit.MustExec("use cardcore_issuing;")
+	testKit.MustExec("CREATE TABLE `tbl_cardcore_transaction` (" +
+		" `ID` varchar(30) NOT NULL," +
+		" `period` varchar(6) DEFAULT NULL," +
+		" `account_number` varchar(19) DEFAULT NULL," +
+		" `transaction_status` varchar(3) DEFAULT NULL," +
+		" `entry_date` date DEFAULT NULL," +
+		" `value_date` date DEFAULT NULL," +
+		" `group_acount_number` varchar(19) DEFAULT NULL," +
+		" `payment_date` timestamp NULL DEFAULT NULL," +
+		" PRIMARY KEY (`ID`)," +
+		" KEY `tbl_cardcore_transaction_ix10` (`account_number`,`entry_date`,`value_date`)," +
+		" KEY `tbl_cardcore_transaction_ix17` (`period`,`group_acount_number`,`transaction_status`));")
+	require.NoError(t, loadTableStats("issue59563.json", dom))
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
 }
 
@@ -596,7 +639,7 @@ func TestIndexEqualUnknown(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	require.NoError(t, loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom))
 	var input []string

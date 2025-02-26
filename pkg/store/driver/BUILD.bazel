@@ -51,7 +51,6 @@ go_test(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/meta/model",
         "//pkg/session",
         "//pkg/store/copr",
         "//pkg/store/mockstore",

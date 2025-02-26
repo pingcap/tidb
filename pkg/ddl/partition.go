@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2562,7 +2562,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail1")
 				failpoint.Return(ver, err)
 			}
@@ -2596,7 +2596,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail2")
 				failpoint.Return(ver, err)
 			}
@@ -2617,7 +2617,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail3")
 				failpoint.Return(ver, err)
 			}
@@ -3312,7 +3312,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
 			// 1. partInfo only contains the AddingPartitions
 			// 2. ScatterTable control all new split region need waiting for scatter region finish at table level.
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, variable.ScatterTable)
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, vardef.ScatterTable)
 		}
 
 		if job.Type == model.ActionReorganizePartition {
@@ -3416,7 +3416,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		failpoint.Inject("reorgPartFail1", func(val failpoint.Value) {
 			// Failures will retry, then do rollback
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail1"))
 			}
 		})
@@ -3472,7 +3472,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		failpoint.Inject("reorgPartFail2", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail2"))
 			}
 		})
@@ -3507,7 +3507,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail3"))
 			}
 		})
@@ -3558,7 +3558,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
 			}
 		})
@@ -3610,7 +3610,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
 		})
@@ -3721,7 +3721,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, reorgTbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx, reorgTbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -3972,7 +3972,7 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 }
 
 func (w *worker) reorgPartitionDataAndIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) (err error) {
@@ -3987,7 +3987,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
+		err = w.updatePhysicalTableRow(jobCtx.stepCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4046,7 +4046,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
 		// Now build all the indexes in the new partitions.
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4110,7 +4110,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 	}
 	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4271,7 +4271,7 @@ func checkExchangePartitionRecordValidation(
 		return dbterror.ErrUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
 
-	if variable.EnableCheckConstraint.Load() {
+	if vardef.EnableCheckConstraint.Load() {
 		pcc, ok := ptbl.(CheckConstraintTable)
 		if !ok {
 			return errors.Errorf("exchange partition process assert table partition failed")
@@ -4296,7 +4296,7 @@ func checkExchangePartitionRecordValidation(
 	}
 
 	// Check partition table records.
-	if variable.EnableCheckConstraint.Load() {
+	if vardef.EnableCheckConstraint.Load() {
 		ncc, ok := ntbl.(CheckConstraintTable)
 		if !ok {
 			return errors.Errorf("exchange partition process assert table partition failed")

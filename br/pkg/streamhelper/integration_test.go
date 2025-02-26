@@ -317,7 +317,7 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	fifth, ok := <-ch
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
-	require.Error(t, fifth.Err, context.Canceled)
+	require.ErrorIs(t, fifth.Err, context.Canceled)
 	item, ok := <-ch
 	require.False(t, ok, "%v", item)
 }
@@ -349,7 +349,7 @@ func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
 
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventErr)
-	require.Error(t, third.Err, io.EOF)
+	require.ErrorIs(t, third.Err, io.EOF)
 	item, ok := <-ch
 	require.False(t, ok, "%#v", item)
 }

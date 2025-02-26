@@ -15,9 +15,9 @@
 package executor
 
 import (
-	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -196,6 +196,9 @@ func TestWorkerPool(t *testing.T) {
 		list = list[:0]
 		lock.Unlock()
 	}
+	sleep := func(ms int) {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
 
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
@@ -211,11 +214,11 @@ func TestWorkerPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})
@@ -237,11 +240,11 @@ func TestWorkerPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})
@@ -263,11 +266,11 @@ func TestWorkerPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})

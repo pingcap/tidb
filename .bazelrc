@@ -4,6 +4,7 @@ dump: --http_connector_attempts=2
 dump: --http_connector_retry_max_timeout=5s
 run:ci --color=yes
 
+build --http_timeout_scaling=0.1
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution

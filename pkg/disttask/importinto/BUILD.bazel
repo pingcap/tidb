@@ -40,6 +40,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
+        "//pkg/lightning/membuf",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
@@ -89,7 +90,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//br/pkg/storage",
         "//pkg/ddl",

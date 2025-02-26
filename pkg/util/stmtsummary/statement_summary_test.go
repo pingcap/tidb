@@ -151,14 +151,14 @@ func TestAddStatement(t *testing.T) {
 			},
 			resourceGroupName: stmtExecInfo1.ResourceGroupName,
 			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
-				UnpackedBytesSentKVTotal:          stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
-				UnpackedBytesReceivedKVTotal:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
-				UnpackedBytesSentKVCrossZone:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
-				UnpackedBytesReceivedKVCrossZone:  stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
-				UnpackedBytesSentMPPTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
-				UnpackedBytesReceivedMPPTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
-				UnpackedBytesSentMPPCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
-				UnpackedBytesReceivedMPPCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
+				UnpackedBytesSentTiKVTotal:            stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
+				UnpackedBytesReceivedTiKVTotal:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
+				UnpackedBytesSentTiKVCrossZone:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
+				UnpackedBytesReceivedTiKVCrossZone:    stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
+				UnpackedBytesSentTiFlashTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
+				UnpackedBytesReceivedTiFlashTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
+				UnpackedBytesSentTiFlashCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
+				UnpackedBytesReceivedTiFlashCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
 			},
 		},
 	}
@@ -251,7 +251,7 @@ func TestAddStatement(t *testing.T) {
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 		Succeed:   true,
 		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:     100,
 				UnpackedBytesReceivedKVTotal: 200,
@@ -327,7 +327,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo2.TiKVExecDetails)
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -408,7 +408,7 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
 		ResourceGroupName: "rg1",
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:      1,
 				UnpackedBytesReceivedKVTotal:  300,
@@ -459,7 +459,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo3.TiKVExecDetails)
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -722,7 +722,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
-		TiKVExecDetails: util.ExecDetails{
+		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:         10,
 				UnpackedBytesReceivedKVTotal:     1000,
@@ -1253,30 +1253,6 @@ func TestEnableSummaryParallel(t *testing.T) {
 
 	// Ensure that it's enabled at last.
 	require.True(t, ssMap.Enabled())
-}
-
-// Test GetMoreThanCntBindableStmt.
-func TestGetMoreThanCntBindableStmt(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-
-	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
-	stmtExecInfo1.NormalizedSQL = "insert ?"
-	stmtExecInfo1.StmtCtx.StmtType = "Insert"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts := ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	stmtExecInfo1.NormalizedSQL = "select ?"
-	stmtExecInfo1.Digest = "digest1"
-	stmtExecInfo1.StmtCtx.StmtType = "Select"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 1, len(stmts))
 }
 
 // Test `formatBackoffTypes`.

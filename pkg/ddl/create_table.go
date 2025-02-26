@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -313,6 +313,9 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	metaMut := jobCtx.metaMut
 	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
+	if err == nil && oldTableID > 0 {
+		err = infoschema.ErrTableExists
+	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -329,6 +332,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -870,8 +874,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > variable.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = variable.MaxShardRowIDBits
+			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
+				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
@@ -907,6 +911,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionEngineAttribute:
+			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -1322,7 +1328,7 @@ func BuildTableInfo(
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
-			if !variable.EnableCheckConstraint.Load() {
+			if !vardef.EnableCheckConstraint.Load() {
 				ctx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
@@ -1578,12 +1584,12 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(mode variable.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
+func ShouldBuildClusteredIndex(mode vardef.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == ast.PrimaryKeyTypeDefault {
 		switch mode {
-		case variable.ClusteredIndexDefModeOn:
+		case vardef.ClusteredIndexDefModeOn:
 			return true
-		case variable.ClusteredIndexDefModeIntOnly:
+		case vardef.ClusteredIndexDefModeIntOnly:
 			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
 		default:
 			return false

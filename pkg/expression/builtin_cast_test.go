@@ -1178,71 +1178,95 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 		realRes   float64
 		decRes    *types.MyDecimal
 		stringRes string
+		tp        *types.FieldType
 	}{
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123)}),
 			123, 123, types.NewDecFromInt(123), "123",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123.555)}),
 			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123.123)}),
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.123"))}),
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.555"))}),
 			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("123.123")}),
 			123, 123.123, types.NewDecFromStringForTest("123.123"), "123.123",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 			curTimeInt, float64(curTimeInt), types.NewDecFromInt(curTimeInt), curTimeString,
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{timeWithFspDatum}),
 			curDateInt*1000000 + 130000, curTimeWithFspReal, types.NewDecFromFloatForTest(curTimeWithFspReal), curTimeWithFspString,
+			nil,
 		},
 		{
 			durationColumn0,
 			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 			125959, 125959, types.NewDecFromFloatForTest(125959), "12:59:59",
+			nil,
 		},
 		{
 			durationColumn3,
 			chunk.MutRowFromDatums([]types.Datum{durationWithFspDatum}),
 			130000, 125959.555, types.NewDecFromFloatForTest(125959.555), "12:59:59.555",
+			nil,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeEnum), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(types.Enum{Name: "a", Value: 123})}),
 			123, 123, types.NewDecFromStringForTest("123"), "a",
+			nil,
 		},
 		{
 			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0x61, -1))},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}),
 			97, 97, types.NewDecFromInt(0x61), "a",
+			nil,
+		},
+		{
+			&Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewDatum(1.1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}),
+			1, 1.1, types.NewDecFromFloatForTest(1.1), "1.1",
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
 		},
 	}
 	for i, c := range cases {
 		// Test wrapping with CastAsInt.
-		intExpr := WrapWithCastAsInt(ctx, c.expr)
+		intExpr := WrapWithCastAsInt(ctx, c.expr, c.tp)
+		if c.tp != nil {
+			require.Equal(t, c.tp.GetFlag()&mysql.UnsignedFlag, intExpr.GetType(ctx).GetFlag()&mysql.UnsignedFlag)
+		} else {
+			require.Equal(t, c.expr.GetType(ctx).GetFlag()&mysql.UnsignedFlag, intExpr.GetType(ctx).GetFlag()&mysql.UnsignedFlag)
+		}
 		require.Equal(t, types.ETInt, intExpr.GetType(ctx).EvalType())
 		intRes, isNull, err := intExpr.EvalInt(ctx, c.row.ToRow())
 		require.NoErrorf(t, err, "cast[%v]: %#v", i, t)

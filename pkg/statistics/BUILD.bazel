@@ -35,6 +35,7 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/logutil",
@@ -82,7 +83,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

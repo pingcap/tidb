@@ -186,6 +186,7 @@ func splitCNF(conditions []expression.Expression) []expression.Expression {
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
+	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
 	return simplifiedPredicate
@@ -422,6 +423,51 @@ func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression
 	}
 
 	return finalResult
+}
+
+// removeRedundantORBranch recursively iterates over a list of predicates, try to find OR lists and remove redundant in
+// each OR list.
+// It modifies the input slice in place.
+func removeRedundantORBranch(sctx base.PlanContext, predicates []expression.Expression) {
+	for i, predicate := range predicates {
+		predicates[i] = recursiveRemoveRedundantORBranch(sctx, predicate)
+	}
+}
+
+func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+	_, tp := FindPredicateType(sctx, predicate)
+	if tp != orPredicate {
+		return predicate
+	}
+	orFunc := predicate.(*expression.ScalarFunction)
+	orList := expression.SplitDNFItems(orFunc)
+
+	dedupMap := make(map[string]struct{}, len(orList))
+	newORList := make([]expression.Expression, 0, len(orList))
+
+	for _, orItem := range orList {
+		_, tp := FindPredicateType(sctx, orItem)
+		// 1. If it's an AND predicate, we recursively call removeRedundantORBranch() on it.
+		if tp == andPredicate {
+			andFunc := orItem.(*expression.ScalarFunction)
+			andList := expression.SplitCNFItems(andFunc)
+			removeRedundantORBranch(sctx, andList)
+			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
+		} else {
+			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
+			hashCode := string(orItem.HashCode())
+			// 2-1. If it's not a duplicate, we need to keep this predicate.
+			if _, ok := dedupMap[hashCode]; !ok {
+				dedupMap[hashCode] = struct{}{}
+				newORList = append(newORList, orItem)
+			} else if expression.IsMutableEffectsExpr(orItem) {
+				// 2-2. If it's a duplicate, but it's nondeterministic or has side effects, we also need to keep it.
+				newORList = append(newORList, orItem)
+			}
+			// 2-3. Otherwise, we remove it.
+		}
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

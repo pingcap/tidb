@@ -458,7 +458,7 @@ func InsertColStats2KV(
 			continue
 		}
 
-		// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
 			`insert into mysql.stats_histograms
@@ -501,7 +501,7 @@ func InsertTableStats2KV(
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
-		"insert into mysql.stats_meta (version, table_id) values(%?, %?)",
+		"insert ignore into mysql.stats_meta (version, table_id) values(%?, %?)",
 		startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
@@ -509,7 +509,7 @@ func InsertTableStats2KV(
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values (%?, 0, %?, 0, %?)`,
 			physicalID, col.ID, startTS,
@@ -520,7 +520,7 @@ func InsertTableStats2KV(
 	for _, idx := range info.Indices {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values(%?, 1, %?, 0, %?)`,
 			physicalID, idx.ID, startTS,

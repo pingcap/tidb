@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -197,7 +197,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 		}()
 	}
 	if (testClusteredIndex & tp) > 0 {
-		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -642,15 +642,15 @@ func TestAddIndexWithPK(t *testing.T) {
 
 	tests := []struct {
 		name string
-		mode variable.ClusteredIndexDefMode
+		mode vardef.ClusteredIndexDefMode
 	}{
 		{
 			"ClusteredIndexDefModeIntOnly",
-			variable.ClusteredIndexDefModeIntOnly,
+			vardef.ClusteredIndexDefModeIntOnly,
 		},
 		{
 			"ClusteredIndexDefModeOn",
-			variable.ClusteredIndexDefModeOn,
+			vardef.ClusteredIndexDefModeOn,
 		},
 	}
 
@@ -1380,10 +1380,10 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(5)
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(5)
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		vardef.SetDDLErrorCountLimit(limit)
 	}()
 
 	// mock TiFlash replicas

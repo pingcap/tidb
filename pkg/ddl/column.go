@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -520,10 +520,11 @@ var TestReorgGoroutineRunning = make(chan struct{})
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) error {
+	ctx := jobCtx.stepCtx
 	failpoint.Inject("mockInfiniteReorgLogic", func() {
 		TestReorgGoroutineRunning <- struct{}{}
 		<-ctx.Done()
@@ -587,7 +588,7 @@ func (w *worker) updateCurrentElement(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -637,9 +638,9 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
-		orig := variable.EnableRowLevelChecksum.Load()
-		defer variable.EnableRowLevelChecksum.Store(orig)
-		variable.EnableRowLevelChecksum.Store(true)
+		orig := vardef.EnableRowLevelChecksum.Load()
+		defer vardef.EnableRowLevelChecksum.Store(orig)
+		vardef.EnableRowLevelChecksum.Store(true)
 	})
 	return &updateColumnWorker{
 		backfillCtx:    bCtx,
@@ -647,7 +648,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		newColInfo:     newCol,
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		checksumNeeded: variable.EnableRowLevelChecksum.Load(),
+		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
 	}, nil
 }
 

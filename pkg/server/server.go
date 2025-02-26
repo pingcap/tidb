@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -253,7 +252,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
-	setTxnScope()
 	setSystemTimeZoneVariable()
 
 	tlsConfig, autoReload, err := util.LoadTLSCertificates(
@@ -408,18 +406,6 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
-}
-
-func setTxnScope() {
-	variable.SetSysVar(variable.TiDBTxnScope, func() string {
-		if !variable.EnableLocalTxn.Load() {
-			return kv.GlobalTxnScope
-		}
-		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
-			return kv.GlobalTxnScope
-		}
-		return kv.LocalTxnScope
-	}())
 }
 
 // Export config-related metrics
@@ -1076,6 +1062,14 @@ func (s *Server) StoreInternalSession(se any) {
 	s.internalSessions[se] = struct{}{}
 	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
+}
+
+// ContainsInternalSession implements SessionManager interface.
+func (s *Server) ContainsInternalSession(se any) bool {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	_, ok := s.internalSessions[se]
+	return ok
 }
 
 // DeleteInternalSession implements SessionManager interface.

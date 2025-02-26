@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
@@ -227,7 +227,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		sql := retrySQL
 		if sql == "" {
-			limit := int(variable.TTLScanBatchSize.Load())
+			limit := int(vardef.TTLScanBatchSize.Load())
 			if sql, err = generator.NextSQL(lastResult, limit); err != nil {
 				return t.result(err)
 			}

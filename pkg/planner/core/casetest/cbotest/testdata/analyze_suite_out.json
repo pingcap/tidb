@@ -518,5 +518,21 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue59563",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;",
+        "Plan": [
+          "Sort_5 0.02 39632.47 root  cardcore_issuing.tbl_cardcore_transaction.transaction_status, cardcore_issuing.tbl_cardcore_transaction.account_number, cardcore_issuing.tbl_cardcore_transaction.entry_date, cardcore_issuing.tbl_cardcore_transaction.id",
+          "└─IndexLookUp_14 0.02 39612.26 root  ",
+          "  ├─IndexRangeScan_11(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
+          "  └─Selection_13(Probe) 0.02 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
+          "    └─TableRowIDScan_12 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]

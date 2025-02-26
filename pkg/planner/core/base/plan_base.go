@@ -240,12 +240,12 @@ type LogicalPlan interface {
 	PullUpConstantPredicates() []expression.Expression
 
 	// RecursiveDeriveStats derives statistic info between plans.
-	RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
+	RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, bool, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
 	// We need selfSchema, childSchema here because it makes this method can be used in
 	// cascades planner, where LogicalPlan might not record its children or schema.
-	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error)
 
 	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
 	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain
@@ -299,4 +299,8 @@ type LogicalPlan interface {
 
 	// GetPlanIDsHash set sub operator tree's ids hash64
 	GetPlanIDsHash() uint64
+
+	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
+	// For logicalPlan implementation, it just returns itself as well.
+	GetWrappedLogicalPlan() LogicalPlan
 }

@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -3506,6 +3507,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 
 func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
 	join, isJoin := p.(*logicalop.LogicalJoin)
+	resultList = make([]*ast.SelectField, 0, max(2, len(selectFields)))
 	for i, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
@@ -4095,7 +4097,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
 	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
 	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
-	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
 		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
@@ -4160,7 +4162,7 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
 	realtimeRowCount := statsTbl.RealtimeCount
-	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+	if ctx.GetSessionVars().GetOptObjective() == vardef.OptObjectiveDeterminate {
 		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 	}
 	if realtimeRowCount == 0 {
@@ -4594,6 +4596,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	countCnt := len(columns) + 1 // +1 for an extra handle column
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4604,16 +4607,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IndexHints:          b.TableHints().IndexHintList,
 		IndexMergeHints:     indexMergeHints,
 		PossibleAccessPaths: possiblePaths,
-		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		Columns:             make([]*model.ColumnInfo, 0, countCnt),
 		PartitionNames:      tn.PartitionNames,
-		TblCols:             make([]*expression.Column, 0, len(columns)),
+		TblCols:             make([]*expression.Column, 0, countCnt),
 		PreferPartitions:    make(map[int][]ast.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
-	names := make([]*types.FieldName, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
+	names := make([]*types.FieldName, 0, countCnt)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
@@ -5389,8 +5392,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Mark the columns in handle.
 	fixedPos := make(map[int]int, len(deletableCols))
-	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		col := colPosInfo.HandleCols.GetCol(i)
+	for col := range colPosInfo.HandleCols.IterColumns() {
 		fixedPos[col.Index-originalStart] = 0
 	}
 
@@ -5428,8 +5430,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Fix the column offset of handle columns.
 	newStart := originalStart - prePrunedCount
-	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		col := colPosInfo.HandleCols.GetCol(i)
+	for col := range colPosInfo.HandleCols.IterColumns() {
 		// If the row id the hidden extra row id, it can not be in deletableCols.
 		// It will be appended to the end of the row.
 		// So we use newStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
@@ -6106,8 +6107,8 @@ func (p *Delete) cleanTblID2HandleMap(
 		for i := len(cols) - 1; i >= 0; i-- {
 			hCols := cols[i]
 			var hasMatch bool
-			for j := 0; j < hCols.NumCols(); j++ {
-				if p.matchingDeletingTable(names, outputNames[hCols.GetCol(j).Index]) {
+			for col := range hCols.IterColumns() {
+				if p.matchingDeletingTable(names, outputNames[col.Index]) {
 					hasMatch = true
 					break
 				}

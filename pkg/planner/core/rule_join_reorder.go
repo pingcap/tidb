@@ -478,7 +478,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
 	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
-		_, err := node.RecursiveDeriveStats(nil)
+		_, _, err := node.RecursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -796,8 +796,7 @@ func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 	if t.TP == plancodec.TypeJoin || t.TP == plancodec.TypeDataSource {
 		return []*tracing.PlanTrace{t}
 	}
-	//nolint: prealloc
-	var r []*tracing.PlanTrace
+	r := make([]*tracing.PlanTrace, 0, 5)
 	for _, child := range t.Children {
 		r = append(r, findRoots(child)...)
 	}
