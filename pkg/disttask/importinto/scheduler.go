@@ -403,8 +403,9 @@ func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task
 
 // IsRetryableErr implements scheduler.Extension interface.
 func (*importScheduler) IsRetryableErr(error) bool {
-	// TODO: check whether the error is retryable.
-	return false
+	// TODO: check whether the error is retryable. currently, we retry all the time,
+	// same as add-index
+	return true
 }
 
 // GetNextStep implements scheduler.Extension interface.
