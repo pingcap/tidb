@@ -382,10 +382,12 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
-	// default format is empty, will parse format in InitDataFiles()
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
+	} else {
+		// without FORMAT 'xxx' clause, default to CSV
+		format = DataFormatCSV
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	// those are the default values for lightning CSV format too
@@ -507,8 +509,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		// allow format is empty, which will be parsed in InitDataFiles()
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != "" {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
@@ -1083,7 +1084,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		e.setFormat(fileNameKey)
+		e.Format = parseFileType(fileNameKey)
 		sourceType := e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
@@ -1115,7 +1116,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				// pick arbitrary one file to detect the format.
-				e.setFormat(remotePath)
+				e.Format = parseFileType(remotePath)
 				sourceType := e.getSourceType()
 				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				fileMeta := mydump.SourceFileMeta{
@@ -1152,13 +1153,7 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
-// set format of the validated file by its extension.
-func (e *LoadDataController) setFormat(path string) {
-	if e.Format == "" {
-		e.Format = parseFileType(path)
-	}
-}
-
+// parse format of the validated file by its extension.
 func parseFileType(path string) string {
 	path = strings.ToLower(path)
 	ext := filepath.Ext(path)
