@@ -13804,8 +13804,19 @@ ConnectionOptions:
 |	"WITH" ConnectionOptionList
 	{
 		$$ = $2
-		yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
+		needWarning := false
+		for _, option := range $2.([]*ast.ResourceOption) {
+			switch option.Type {
+			case ast.MaxUserConnections:
+				// do nothing.
+			default:
+				needWarning = true
+			}
+		}
+		if needWarning {
+			yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions but MAX_USER_CONNECTIONS now, they would be parsed but ignored."))
+			parser.lastErrorAsWarn()
+		}
 	}
 
 ConnectionOptionList:

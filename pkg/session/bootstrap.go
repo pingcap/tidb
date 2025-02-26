@@ -120,6 +120,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -1270,11 +1271,14 @@ const (
 	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
 	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
+
+	// version242 add Max_user_connections into mysql.user.
+	version244 = 244
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version243
+var currentBootstrapVersion int64 = version244
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1453,6 +1457,7 @@ var (
 		upgradeToVer241,
 		upgradeToVer242,
 		upgradeToVer243,
+		upgradeToVer244,
 	}
 )
 
@@ -3382,6 +3387,14 @@ func upgradeToVer243(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer244(s sessiontypes.Session, ver int64) {
+	if ver >= version244 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
