@@ -124,8 +124,10 @@ func TestRecoverFromEngineCp(t *testing.T) {
 			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
 					Chunk: mydump.Chunk{
-						Offset:    0,
-						EndOffset: 100,
+						Offset: 10,
+					},
+					Key: checkpoints.ChunkCheckpointKey{
+						Offset: 0,
 					},
 				},
 			},
