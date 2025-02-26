@@ -166,7 +166,7 @@ func (s *mockGCSSuite) TestSnappy() {
 		Content:     s.getCompressedData(mydump.CompressionSnappy, []byte("INSERT INTO `gzip`.`t` VALUES (1,'test1'),(2,'test2');")),
 	})
 
-	s.tk.MustQuery("truncate table snappy.t;")
+	s.tk.MustExec("truncate table snappy.t")
 	sql = fmt.Sprintf(`IMPORT INTO snappy.t FROM 'gs://snappy/t2.*?endpoint=%s'
 		WITH thread=1;`, gcsEndpoint)
 	s.tk.MustQuery(sql)
