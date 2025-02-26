@@ -1026,48 +1026,54 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 				if err != nil {
 					return err
 				}
-				value.ResourceGroup = strings.Clone(resourceGroup)
-			}
-			passwordLocking := PasswordLocking{}
-			if err := passwordLocking.ParseJSON(bj); err != nil {
-				return err
-			}
-			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
-			value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
-			value.FailedLoginCount = passwordLocking.FailedLoginCount
-			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
-			value.AutoAccountLocked = passwordLocking.AutoAccountLocked
-		case f.ColumnAsName.L == "password_expired":
-			if row.GetEnum(i).String() == "Y" {
-				value.PasswordExpired = true
-			}
-		case f.ColumnAsName.L == "password_last_changed":
-			t := row.GetTime(i)
-			gotime, err := t.GoTime(time.Local)
-			if err != nil {
-				return err
-			}
-			value.PasswordLastChanged = gotime
-		case f.ColumnAsName.L == "password_lifetime":
-			if row.IsNull(i) {
-				value.PasswordLifeTime = -1
-				continue
-			}
-			value.PasswordLifeTime = row.GetInt64(i)
-		case f.ColumnAsName.L == "max_user_connections":
-			value.MaxUserConnections = row.GetInt64(i)
-		case f.Column.GetType() == mysql.TypeEnum:
-			if row.GetEnum(i).String() != "Y" {
-				continue
-// >>>>>>> master
+				if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					resourceGroup, err := resourceGroup.Unquote()
+					if err != nil {
+						return err
+					}
+					value.ResourceGroup = strings.Clone(resourceGroup)
+				}
+				passwordLocking := PasswordLocking{}
+				if err := passwordLocking.ParseJSON(bj); err != nil {
+					return err
+				}
+				value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
+				value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
+				value.FailedLoginCount = passwordLocking.FailedLoginCount
+				value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
+				value.AutoAccountLocked = passwordLocking.AutoAccountLocked
+			case f.ColumnAsName.L == "password_expired":
+				if row.GetEnum(i).String() == "Y" {
+					value.PasswordExpired = true
+				}
+			case f.ColumnAsName.L == "password_last_changed":
+				t := row.GetTime(i)
+				gotime, err := t.GoTime(time.Local)
+				if err != nil {
+					return err
+				}
+				value.PasswordLastChanged = gotime
+			case f.ColumnAsName.L == "password_lifetime":
+				if row.IsNull(i) {
+					value.PasswordLifeTime = -1
+					continue
+				}
+				value.PasswordLifeTime = row.GetInt64(i)
+			case f.ColumnAsName.L == "max_user_connections":
+				value.MaxUserConnections = row.GetInt64(i)
+			case f.Column.GetType() == mysql.TypeEnum:
+				if row.GetEnum(i).String() != "Y" {
+					continue
+				}
+				priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+				if !ok {
+					return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
+				}
+				value.Privileges |= priv
+			default:
+				value.assignUserOrHost(row, i, f)
 			}
 		}
-		if userList != nil {
-			if _, ok := userList[value.User]; !ok {
-				return nil
-			}
-		}
-
 		old, ok := p.user.Get(itemUser{username: value.User})
 		if !ok {
 			old.username = value.User
