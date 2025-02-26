@@ -295,7 +295,6 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		binding_digest varchar(64),
 		original_sql TEXT NOT NULL,
 		bind_sql TEXT NOT NULL,
 		default_db TEXT NOT NULL,
@@ -3375,8 +3374,7 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	}
 	writeClusterID(s)
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
-	doReentrantDDL(s, `alter table mysql.bind_info add column binding_digest varchar(64) default null`, dbterror.ErrDupKeyName)
-	doReentrantDDL(s, `alter table mysql.bind_info add unique index binding_index (binding_digest)`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, `alter table mysql.bind_info add unique index plan_index (plan_digest)`, dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer243(s sessiontypes.Session, ver int64) {
