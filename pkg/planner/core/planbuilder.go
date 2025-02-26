@@ -787,11 +787,12 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Pla
 				Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 			}},
 		}
-	} else if v.SQLDigest != "" {
+	} else if v.SQLDigest != "" || v.PlanDigest != "" {
 		p = &SQLBindPlan{
 			SQLBindOp: OpSetBindingStatusByDigest,
 			Details: []*SQLBindOpDetail{{
-				SQLDigest: v.SQLDigest,
+				SQLDigest:  v.SQLDigest,
+				PlanDigest: v.PlanDigest,
 			}},
 		}
 	} else {
