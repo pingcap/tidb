@@ -167,7 +167,8 @@ package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
+    "github.com/pingcap/tidb/pkg/expression/aggregation"
+    "github.com/pingcap/tidb/pkg/planner/util"
 )
 `
 
