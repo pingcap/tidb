@@ -45,7 +45,7 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-load-parquet",
-			Name:       "p",
+			Name:       "p.parquet",
 		},
 		Content: parquetContent,
 	})
@@ -72,7 +72,7 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	))
 
 	s.tk.MustExec("TRUNCATE TABLE t;")
-	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p?endpoint=%s'
+	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p.parquet?endpoint=%s'
 		FORMAT 'parquet' WITH detached;`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
