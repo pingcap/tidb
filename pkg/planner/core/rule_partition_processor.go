@@ -1588,10 +1588,23 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
 			col, con = arg0, arg1
 		}
-	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == p.col.ID {
-		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
+	} else if arg1, ok := op.GetArgs()[1].(*expression.Column); ok && arg1.ID == p.col.ID {
+		if arg0, ok := op.GetArgs()[0].(*expression.Constant); ok {
 			ret.op = opposite(ret.op)
-			col, con = arg0, arg1
+			col, con = arg1, arg0
+		}
+	} else if sarg0, ok := op.GetArgs()[0].(*expression.ScalarFunction); ok && sarg0.FuncName.L == ast.Cast {
+		if arg0, ok := sarg0.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.col.ID {
+			if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
+				col, con = arg0, arg1
+			}
+		}
+	} else if sarg1, ok := op.GetArgs()[1].(*expression.ScalarFunction); ok && sarg1.FuncName.L == ast.Cast {
+		if arg1, ok := sarg1.GetArgs()[0].(*expression.Column); ok && arg1.ID == p.col.ID {
+			if arg0, ok := op.GetArgs()[0].(*expression.Constant); ok {
+				ret.op = opposite(ret.op)
+				col, con = arg1, arg0
+			}
 		}
 	}
 	if col == nil || con == nil {
@@ -1601,6 +1614,14 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
 	if p.partFn != nil {
+		// If arg0 or arg1 is ScalarFunction, just skip it.
+		// Maybe more complicated cases would be considered in the future.
+		_, ok1 := op.GetArgs()[0].(*expression.ScalarFunction)
+		_, ok2 := op.GetArgs()[1].(*expression.ScalarFunction)
+		if ok1 || ok2 {
+			return ret, false
+		}
+
 		// If the partition function is not monotone, only EQ condition can be pruning.
 		if p.monotonous == monotoneModeInvalid && ret.op != ast.EQ {
 			return ret, false
@@ -1621,7 +1642,32 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 		// If the partition expression is col, use constExpr.
 		constExpr = con
 	}
-	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	evalType := constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).EvalType()
+	var c int64
+	var isNull bool
+	var err error
+	switch evalType {
+	case types.ETInt:
+		c, isNull, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	case types.ETReal:
+		var f float64
+		f, isNull, err = constExpr.EvalReal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err == nil && !isNull {
+			c = int64(f)
+		}
+	case types.ETDecimal:
+		var d *types.MyDecimal
+		d, isNull, err = constExpr.EvalDecimal(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err == nil && !isNull {
+			f, err := d.ToFloat64()
+			if err != nil {
+				return ret, false
+			}
+			c = int64(f)
+		}
+	default:
+		return ret, false
+	}
 	if err == nil && !isNull {
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
@@ -2004,19 +2050,30 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx base.PlanContext, expr e
 
 	var col *expression.Column
 	var con *expression.Constant
-	var argCol0, argCol1 *expression.Column
-	var argCon0, argCon1 *expression.Constant
-	var okCol0, okCol1, okCon0, okCon1 bool
-	argCol0, okCol0 = op.GetArgs()[0].(*expression.Column)
-	argCol1, okCol1 = op.GetArgs()[1].(*expression.Column)
-	argCon0, okCon0 = op.GetArgs()[0].(*expression.Constant)
-	argCon1, okCon1 = op.GetArgs()[1].(*expression.Constant)
-	if okCol0 && okCon1 {
-		col, con = argCol0, argCon1
-	} else if okCol1 && okCon0 {
-		col, con = argCol1, argCon0
-		opName = opposite(opName)
-	} else {
+	if argCol0, okCol0 := op.GetArgs()[0].(*expression.Column); okCol0 {
+		if argCon1, okCon1 := op.GetArgs()[1].(*expression.Constant); okCon1 {
+			col, con = argCol0, argCon1
+		}
+	} else if argCol1, okCol1 := op.GetArgs()[1].(*expression.Column); okCol1 {
+		if argCon0, okCon0 := op.GetArgs()[0].(*expression.Constant); okCon0 {
+			col, con = argCol1, argCon0
+			opName = opposite(opName)
+		}
+	} else if sarg0, ok0 := op.GetArgs()[0].(*expression.ScalarFunction); ok0 && sarg0.FuncName.L == ast.Cast {
+		if argCol0, okCol0 := sarg0.GetArgs()[0].(*expression.Column); okCol0 {
+			if argCon1, okCon1 := op.GetArgs()[1].(*expression.Constant); okCon1 {
+				col, con = argCol0, argCon1
+			}
+		}
+	} else if sarg1, ok1 := op.GetArgs()[1].(*expression.ScalarFunction); ok1 && sarg1.FuncName.L == ast.Cast {
+		if argCol1, okCol1 := sarg1.GetArgs()[0].(*expression.Column); okCol1 {
+			if argCon0, okCon0 := op.GetArgs()[0].(*expression.Constant); okCon0 {
+				col, con = argCol1, argCon0
+				opName = opposite(opName)
+			}
+		}
+	}
+	if col == nil || con == nil {
 		return 0, len(p.lessThan), false
 	}
 	partCol := p.getPartCol(col.ID)

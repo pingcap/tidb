@@ -238,7 +238,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	}
 }
 
-func TestFDSet_ExtractFDForApply(t *testing.T) {
+func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -249,6 +249,8 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+	tk.MustExec("create table t1 (a int not null, b int, c int)")
+	tk.MustExec("create table t2 (e int not null, f int, g int)")
 
 	tests := []struct {
 		sql  string
@@ -307,6 +309,16 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.n)->Projection",
 			// p=1 is semi join's right condition which should **NOT** be conserved.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+		},
+		{
+			sql:  "select * from t1 union all select * from t2",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{}",
+		},
+		{
+			sql:  "select * from t1 where a=b union all select * from t2 where e=f",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{(9,10)==(9,10)}",
 		},
 	}
 

@@ -21,8 +21,30 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
+
+func writeSpilledPartitionNumStatsToString(buf *bytes.Buffer, partitionNum int, spilledPartitionNumPerRound []int) {
+	buf.WriteString("[")
+	fmt.Fprintf(buf, "%d/%d", spilledPartitionNumPerRound[0], partitionNum)
+	for i := 1; i < len(spilledPartitionNumPerRound); i++ {
+		fmt.Fprintf(buf, " %d/%d", spilledPartitionNumPerRound[i], spilledPartitionNumPerRound[i-1]*partitionNum)
+	}
+	buf.WriteString("]")
+}
+
+func writeBytesStatsToString(buf *bytes.Buffer, convertedBytes []int64) {
+	buf.WriteString("[")
+	for i, byte := range convertedBytes {
+		if i == 0 {
+			fmt.Fprintf(buf, "%.2f", util.ByteToGiB(float64(byte)))
+		} else {
+			fmt.Fprintf(buf, " %.2f", util.ByteToGiB(float64(byte)))
+		}
+	}
+	buf.WriteString("]")
+}
 
 type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
@@ -107,6 +129,16 @@ func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
+type spillStats struct {
+	round                            int
+	totalSpillBytesPerRound          []int64
+	spilledPartitionNumPerRound      []int
+	spillBuildRowTableBytesPerRound  []int64
+	spillBuildHashTableBytesPerRound []int64
+
+	partitionNum int
+}
+
 type hashJoinRuntimeStatsV2 struct {
 	concurrent     int
 	probeCollision int64
@@ -127,6 +159,8 @@ type hashJoinRuntimeStatsV2 struct {
 	maxBuildHashTableForCurrentRound int64
 	maxProbeForCurrentRound          int64
 	maxFetchAndProbeForCurrentRound  int64
+
+	spill spillStats
 }
 
 func setMaxValue(addr *int64, currentValue int64) {
@@ -200,6 +234,19 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.FormatInt(e.probeCollision, 10))
 		}
+		buf.WriteString("}")
+	}
+	if e.spill.round > 0 {
+		buf.WriteString(", spill:{round:")
+		buf.WriteString(strconv.Itoa(e.spill.round))
+		buf.WriteString(", spilled_partition_num_per_round:")
+		writeSpilledPartitionNumStatsToString(buf, e.spill.partitionNum, e.spill.spilledPartitionNumPerRound)
+		buf.WriteString(", total_spill_GiB_per_round:")
+		writeBytesStatsToString(buf, e.spill.totalSpillBytesPerRound)
+		buf.WriteString(", build_spill_row_table_GiB_per_round:")
+		writeBytesStatsToString(buf, e.spill.spillBuildRowTableBytesPerRound)
+		buf.WriteString(", build_spill_hash_table_per_round:")
+		writeBytesStatsToString(buf, e.spill.spillBuildHashTableBytesPerRound)
 		buf.WriteString("}")
 	}
 	return buf.String()

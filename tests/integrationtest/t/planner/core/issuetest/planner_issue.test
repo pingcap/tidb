@@ -542,3 +542,13 @@ insert into t values (1, 10);
 insert into t values (2, 20);
 insert into t values (3, 30);
 select _tidb_rowid from t where id in (1, 2, 3);
+
+# TestIssue59762
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int primary key, b int, index idx(b));
+insert into t values(1), (2), (123);
+insert into t1 values(2, 123), (123, 2);
+set tidb_opt_fix_control='44855:on';
+explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
