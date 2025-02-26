@@ -12,6 +12,37 @@ explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order 
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1;
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1;
 
+# TestPushTopNDownIndexLookUpReader
+set tidb_cost_model_version=2;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists tbl;
+create table tbl(a int, b int, c int, key idx_b_c(b,c));
+insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
+analyze table tbl all columns;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by c desc limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by _tidb_rowid desc limit 2,1;
+drop table if exists tbl_cluster_int;
+create table tbl_cluster_int(id int primary key clustered, a int, b int, c int, key idx_b_c(b,c));
+insert into tbl_cluster_int values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5);
+analyze table tbl_cluster_int all columns;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by c desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by id desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by b*c, c*10 limit 2,1;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by abs(c-b), pow(c,2) limit 2,1;
+drop table if exists tbl_cluster_comp;
+create table tbl_cluster_comp(a int, b int, c int, d int, primary key clustered(a, b), key idx_c_d(c,d));
+insert into tbl_cluster_comp values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5);
+analyze table tbl_cluster_comp all columns;
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where c > 1 order by d desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where d > 1 order by c*10 desc limit 2,1;
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where c > 1 and d > 1 order by c*d desc limit 2,1;
+
 # TestPushDownProjectionForTiKV
 set tidb_cost_model_version=2;
 drop table if exists t;

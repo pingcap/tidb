@@ -118,6 +118,69 @@ func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *Evaluator
 	return e
 }
 
+// NewEvaluatorSuiteTopN creates an EvaluatorSuite for Pusheddown TopN.
+func NewEvaluatorSuiteTopN(exprs []Expression, inputoffsets []uint32, handleIdxs []int) *EvaluatorSuite {
+	e := &EvaluatorSuite{}
+
+	if len(handleIdxs) > 0 {
+		if e.ColumnSwapHelper == nil {
+			e.ColumnSwapHelper = &chunk.ColumnSwapHelper{InputIdxToOutputIdxes: make(map[int][]int)}
+		}
+	}
+	// Map column index to its position in inputoffsets
+	inputIdxMap := make(map[int]int)
+	for idx, offset := range inputoffsets {
+		inputIdxMap[int(offset)] = idx
+	}
+
+	for i := 0; i < len(exprs); i++ {
+		if col, isCol := exprs[i].(*Column); isCol {
+			if e.ColumnSwapHelper == nil {
+				e.ColumnSwapHelper = &chunk.ColumnSwapHelper{InputIdxToOutputIdxes: make(map[int][]int)}
+			}
+			e.ColumnSwapHelper.InputIdxToOutputIdxes[col.Index] = append(e.ColumnSwapHelper.InputIdxToOutputIdxes[col.Index], i)
+			continue
+		}
+		if e.defaultEvaluator == nil {
+			e.defaultEvaluator = &defaultEvaluator{
+				outputIdxes: make([]int, 0, len(exprs)),
+				exprs:       make([]Expression, 0, len(exprs)),
+			}
+		}
+		e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, exprs[i])
+		e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
+	}
+
+	// Ensure the handle columns are included in the output
+	handlesInExprs := make(map[int]struct{})
+	for i := 0; i < len(exprs); i++ {
+		if col, isCol := exprs[i].(*Column); isCol {
+			for _, handleIdx := range handleIdxs {
+				if inputIdxMap[handleIdx] == col.Index {
+					handlesInExprs[handleIdx] = struct{}{}
+				}
+			}
+		}
+	}
+
+	appendIdx := 0
+	for _, handleIdx := range handleIdxs {
+		if _, exists := handlesInExprs[handleIdx]; !exists {
+			if inputIdx, exists := inputIdxMap[handleIdx]; exists {
+				if e.ColumnSwapHelper.InputIdxToOutputIdxes[inputIdx] == nil {
+					e.ColumnSwapHelper.InputIdxToOutputIdxes[inputIdx] = []int{len(exprs) + appendIdx}
+					appendIdx++
+				}
+			}
+		}
+	}
+
+	if e.defaultEvaluator != nil {
+		e.defaultEvaluator.vectorizable = Vectorizable(e.defaultEvaluator.exprs)
+	}
+	return e
+}
+
 // Vectorizable checks whether this EvaluatorSuite can use vectorizd execution mode.
 func (e *EvaluatorSuite) Vectorizable() bool {
 	return e.defaultEvaluator == nil || e.defaultEvaluator.vectorizable
