@@ -219,7 +219,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
 
-	// Test information_schema.columns copiability.
+	// Test information_schema.columns compatibility.
 	// See https://github.com/pingcap/tidb/issues/42030.
 	tk.MustExec("use test")
 	tk.MustExec("create table cc like information_schema.columns;")

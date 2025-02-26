@@ -379,7 +379,16 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetType(col.tp)
 	fieldType.SetCharset(mCharset)
 	fieldType.SetCollate(mCollation)
-	fieldType.SetFlen(col.size)
+	switch col.tp {
+	case mysql.TypeBlob:
+		fieldType.SetFlen(1 << 16)
+	case mysql.TypeMediumBlob:
+		fieldType.SetFlen(1 << 24)
+	case mysql.TypeLongBlob:
+		fieldType.SetFlen(1 << 32)
+	default:
+		fieldType.SetFlen(col.size)
+	}
 	fieldType.SetDecimal(col.decimal)
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
