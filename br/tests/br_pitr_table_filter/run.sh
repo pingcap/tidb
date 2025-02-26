@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eux
 DB="$TEST_NAME"
 CUR=$(cd `dirname $0`; pwd)
@@ -1191,6 +1197,173 @@ test_sequential_restore() {
     echo "sequential restore test passed"
 }
 
+test_log_compaction() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "start testing table filter with log compaction"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+
+    # Create tables for snapshot backup
+    echo "creating tables for snapshot backup..."
+    run_sql "CREATE TABLE $DB.compaction_snapshot (
+        id INT PRIMARY KEY,
+        value VARCHAR(50)
+    );"
+    
+    # Insert initial data
+    run_sql "INSERT INTO $DB.compaction_snapshot VALUES (1, 'initial data 1'), (2, 'initial data 2');"
+    
+    # Take full backup
+    run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+
+    # Create tables during log backup phase
+    echo "creating tables during log backup phase..."
+    run_sql "CREATE TABLE $DB.compaction_log (
+        id INT PRIMARY KEY,
+        value VARCHAR(50)
+    );"
+    
+    # Insert data into log-created table
+    run_sql "INSERT INTO $DB.compaction_log VALUES (1, 'log data 1'), (2, 'log data 2');"
+    
+    # Add more data to snapshot table
+    run_sql "INSERT INTO $DB.compaction_snapshot VALUES (3, 'more data 1'), (4, 'more data 2');"
+    
+    # Wait for log backup to catch up with all operations
+    current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+    
+    # Verify no SST files exist before compaction
+    pre_compaction_files=$(find "$TEST_DIR/$TASK_NAME/log" -name "*.sst" | wc -l)
+    if [ "$pre_compaction_files" -ne 0 ]; then
+        echo "Found $pre_compaction_files SST files before compaction, expected 0"
+        exit 1
+    fi
+    echo "Verified no SST files exist before compaction"
+    
+    # Step 1: Get the Base64 encoded storage URL
+    echo "Step 1: Encoding storage URL to Base64..."
+
+    # Run the base64ify command and capture its output, redirecting stderr to stdout
+    base64_output=$(run_br operator base64ify --storage "local://$TEST_DIR/$TASK_NAME/log" 2>&1)
+
+    # Extract only lines that look like Base64 (long string of base64 chars)
+    storage_base64=$(echo "$base64_output" | grep -o '[A-Za-z0-9+/]\{20,\}=\{0,2\}' | grep '^E' | head -1)
+
+    # Verify that we got a valid Base64 string
+    if [ -z "$storage_base64" ]; then
+        echo "Failed to extract Base64 encoded storage URL. Full output:"
+        echo "$base64_output"
+        exit 1
+    fi
+
+    echo "Extracted Base64 encoded storage URL: $storage_base64"
+    
+    # Get current timestamp and a timestamp from 1 hour ago for compaction range using Python
+    # This is more consistent across different operating systems
+    echo "Step 2: Generating timestamps using Python..."
+    one_hour_ago_ts=$(python3 -c "import time; print(int((time.time() - 3600) * 1000) << 18)")
+    
+    echo "Current timestamp: $current_ts"
+    echo "One hour ago timestamp: $one_hour_ago_ts"
+    
+    # Step 3: Perform actual log compaction using tikv-ctl
+    echo "Step 3: Performing log compaction using tikv-ctl..."
+    echo "Compacting logs from $one_hour_ago_ts to $current_ts"
+    
+    # Run tikv-ctl to perform compaction
+    tikv-ctl --log-level=info compact-log-backup --from "$one_hour_ago_ts" --until "$current_ts" -s "$storage_base64" -N 4
+
+    # Verify SST files exist after compaction
+    post_compaction_files=$(find "$TEST_DIR/$TASK_NAME/log" -name "*.sst" | wc -l)
+    if [ "$post_compaction_files" -eq 0 ]; then
+        echo "No SST files found after compaction, expected at least 1"
+        exit 1
+    fi
+    echo "Verified $post_compaction_files SST files exist after compaction"
+
+    # Add more data after compaction
+    run_sql "INSERT INTO $DB.compaction_snapshot VALUES (5, 'post-compaction data 1');"
+    run_sql "INSERT INTO $DB.compaction_log VALUES (3, 'post-compaction data 2');"
+    
+    # Wait for log backup to catch up again
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+    
+    # Stop log backup before starting restore operations
+    run_br log stop --task-name $TASK_NAME --pd $PD_ADDR
+    
+    run_sql "drop schema if exists $DB;"
+
+    echo "Test 1: Restore both tables with compacted logs"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.*"
+    
+    # Verify data after restore - should have all data including post-compaction
+    run_sql "SELECT COUNT(*) = 5 FROM $DB.compaction_snapshot" || {
+        echo "compaction_snapshot doesn't have expected row count after restore"
+        exit 1
+    }
+    
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.compaction_log" || {
+        echo "compaction_log doesn't have expected row count after restore"
+        exit 1
+    }
+    
+    # Verify specific values to ensure we have post-compaction data
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.compaction_snapshot WHERE id = 5" || {
+        echo "compaction_snapshot doesn't have expected post-compaction data"
+        exit 1
+    }
+    
+    run_sql "SELECT COUNT(*) = 1 FROM $DB.compaction_log WHERE id = 3" || {
+        echo "compaction_log doesn't have expected post-compaction data"
+        exit 1
+    }
+    
+    # Test 2: Restore only snapshot table with filter
+    run_sql "drop schema if exists $DB;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.compaction_snapshot"
+    
+    # Verify only snapshot table exists
+    verify_no_unexpected_tables 1 "$DB" || {
+        echo "Wrong number of tables restored with compaction_snapshot filter"
+        exit 1
+    }
+    
+    # Verify data is correct
+    run_sql "SELECT COUNT(*) = 5 FROM $DB.compaction_snapshot" || {
+        echo "compaction_snapshot doesn't have expected row count after filtered restore"
+        exit 1
+    }
+    
+    # Test 3: Restore only log table with filter
+    run_sql "drop schema if exists $DB;"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" \
+        -f "$DB.compaction_log"
+    
+    # Verify only log table exists
+    verify_no_unexpected_tables 1 "$DB" || {
+        echo "Wrong number of tables restored with compaction_log filter"
+        exit 1
+    }
+    
+    # Verify data is correct
+    run_sql "SELECT COUNT(*) = 3 FROM $DB.compaction_log" || {
+        echo "compaction_log doesn't have expected row count after filtered restore"
+        exit 1
+    }
+    
+    rm -rf "$TEST_DIR/$TASK_NAME"
+    
+    echo "log compaction with filter test passed"
+}
+
 echo "run all test cases"
 test_basic_filter
 test_with_full_backup_filter
@@ -1202,5 +1375,6 @@ test_index_filter
 test_partition_exchange
 test_table_truncation
 test_sequential_restore
+test_log_compaction
 
 echo "br pitr table filter all tests passed"
