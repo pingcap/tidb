@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -102,6 +102,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
+		if e.mppExec != nil {
+			// Ignore any errors during close process
+			_ = e.mppExec.Close()
+		}
 		return err
 	}
 	e.kvRanges = e.mppExec.KVRanges

@@ -97,12 +97,12 @@ gbk	28	1
 latin1	47	1
 utf8	83	1
 utf8	33	1
-utf8	192	1
-utf8mb4	255	1
+utf8	192	8
+utf8mb4	255	0
 utf8mb4	309	1
 utf8mb4	46	1
 utf8mb4	45	1
-utf8mb4	224	1
+utf8mb4	224	8
 select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
 COLLATION_NAME	CHARACTER_SET_NAME
 utf8mb4_bin	utf8mb4
@@ -115,20 +115,20 @@ latin1	Latin1	latin1_bin	1
 utf8	UTF-8 Unicode	utf8_bin	3
 utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
 show collation;
-Collation	Charset	Id	Default	Compiled	Sortlen
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
-utf8mb4_0900_bin	utf8mb4	309		Yes	1
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
+ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
+binary	binary	63	Yes	Yes	1	NO PAD
+gbk_bin	gbk	87		Yes	1	PAD SPACE
+gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
+latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
+utf8_general_ci	utf8	33		Yes	1	PAD SPACE
+utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 create database if not exists cd_test_utf8mb4_0900_bin;
 use cd_test_utf8mb4_0900_bin;
 create table t (id varchar(255) primary key clustered, a varchar(255) collate utf8mb4_0900_bin, b varchar(255) collate utf8mb4_bin, key idx(a, b));

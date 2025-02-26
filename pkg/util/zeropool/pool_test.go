@@ -46,12 +46,12 @@ func TestPool(t *testing.T) {
 	t.Run("is not racy", func(t *testing.T) {
 		pool := zeropool.New(func() []byte { return make([]byte, 1024) })
 
-		const iterations = 1e6
+		const iterations int = 1e6
 		const concurrency = math.MaxUint8
 		var counter atomic.Int64
 
 		do := make(chan struct{}, 1e6)
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			do <- struct{}{}
 		}
 		close(do)
@@ -59,7 +59,7 @@ func TestPool(t *testing.T) {
 		run := make(chan struct{})
 		done := sync.WaitGroup{}
 		done.Add(concurrency)
-		for i := 0; i < concurrency; i++ {
+		for i := range concurrency {
 			go func(worker int) {
 				<-run
 				for range do {
@@ -117,7 +117,7 @@ func BenchmarkZeropoolPool(b *testing.B) {
 	pool.Put(item)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		item := pool.Get()
 		pool.Put(item)
 	}
@@ -134,7 +134,7 @@ func BenchmarkSyncPoolValue(b *testing.B) {
 	pool.Put(item) //nolint:staticcheck // This allocates.
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		item := pool.Get().([]byte)
 		pool.Put(item) //nolint:staticcheck // This allocates.
 	}
@@ -152,7 +152,7 @@ func BenchmarkSyncPoolNewPointer(b *testing.B) {
 	pool.Put(item) //nolint:staticcheck // This allocates.
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		item := pool.Get().(*[]byte)
 		buf := *item
 		pool.Put(&buf) //nolint:staticcheck  // New pointer.
@@ -171,7 +171,7 @@ func BenchmarkSyncPoolPointer(b *testing.B) {
 	pool.Put(item)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		item := pool.Get().(*[]byte)
 		pool.Put(item)
 	}

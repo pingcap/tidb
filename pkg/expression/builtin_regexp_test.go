@@ -377,7 +377,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -426,7 +426,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -479,7 +479,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -524,7 +524,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -633,7 +633,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -681,7 +681,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -734,7 +734,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -781,7 +781,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -828,7 +828,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -967,7 +967,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1022,7 +1022,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1081,7 +1081,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1133,7 +1133,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}

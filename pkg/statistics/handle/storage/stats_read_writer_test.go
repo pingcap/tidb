@@ -15,9 +15,10 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -45,8 +46,8 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(
-		model.NewCIStr("test"), model.NewCIStr("t"),
+	tbl, err := is.TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -55,7 +56,7 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.Update(is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Reset one partition stats.

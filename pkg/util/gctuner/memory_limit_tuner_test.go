@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,7 @@ func (a *mockAllocator) freeAll() {
 }
 
 func TestGlobalMemoryTuner(t *testing.T) {
+	require.True(t, intest.InTest)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner"))
@@ -125,6 +127,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 }
 
 func TestIssue48741(t *testing.T) {
+	require.True(t, intest.InTest)
 	// Close GOGCTuner
 	gogcTuner := EnableGOGCTuner.Load()
 	EnableGOGCTuner.Store(false)

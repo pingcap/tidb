@@ -22,10 +22,11 @@ import (
 
 func runBackupCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.BackupConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+	if err := cfg.ParseFromFlags(command.Flags(), false); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
+	overrideDefaultBackupConfigIfNeeded(&cfg, command)
 
 	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
@@ -46,8 +47,13 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	// No need to cache the coproceesor result
-	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Need to be skipped when the cluster has TiDB type coprocessor tasks
+		conf.AdvertiseAddress = config.UnavailableIP
+
+		// No need to cache the coproceesor result
+		conf.TiKVClient.CoprCache.CapacityMB = 0
+	})
 
 	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
@@ -210,4 +216,11 @@ func newTxnBackupCommand() *cobra.Command {
 
 	task.DefineTxnBackupFlags(command)
 	return command
+}
+
+func overrideDefaultBackupConfigIfNeeded(config *task.BackupConfig, cmd *cobra.Command) {
+	// override only if flag not set by user
+	if !cmd.Flags().Changed(task.FlagChecksum) {
+		config.Checksum = false
+	}
 }

@@ -43,7 +43,7 @@ var (
 	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
-	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is set.
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(errno.ErrLockAcquireFailAndNoWaitSet)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
@@ -101,6 +101,11 @@ func ToTiDBErr(err error) error {
 		return kv.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
 	}
 
+	var keyTooLarge *tikverr.ErrKeyTooLarge
+	if stderrs.As(err, &keyTooLarge) {
+		return kv.ErrKeyTooLarge.GenWithStackByArgs(keyTooLarge.KeySize)
+	}
+
 	if stderrs.Is(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}
@@ -132,6 +137,9 @@ func ToTiDBErr(err error) error {
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
 		// connection id is unknown in client, which should be logged or filled by upper layers
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.RunawayQueryExceeded}) {
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("exceed tidb side")
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {

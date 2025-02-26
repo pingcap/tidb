@@ -59,7 +59,7 @@ func (b *builtinIlikeSig) tryToVecMemorize(ctx EvalContext, param *funcParam, es
 	}
 
 	pattern, err := b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
-		pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		pattern := collate.ConvertAndGetBinCollator(b.collation).Pattern()
 		pattern.Compile(param.getStringVal(0), byte(escape))
 		return pattern, nil
 	})
@@ -201,7 +201,7 @@ func (b *builtinIlikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 
 	pattern, ok := b.tryToVecMemorize(ctx, params[1], escape)
 	if !ok {
-		pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
 		return b.ilikeWithoutMemorization(pattern, params, rowNum, escape, result)
 	}
 

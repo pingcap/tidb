@@ -189,7 +189,7 @@ func (p *LockBasedCircularPool) InitExt(size uint32, fillCount uint32) {
 
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
-	for i = 0; i < fillCount; i++ {
+	for i = range fillCount {
 		p.slots[i] = i + 1
 	}
 	for ; i < p.cap; i++ {
@@ -270,7 +270,7 @@ func prepareConcurrencyTest(pool globalconn.IDPool, producers int, consumers int
 	if producers > 0 {
 		reqsPerProducer := (requests + producers - 1) / producers
 		wgProducer.Add(producers)
-		for p := 0; p < producers; p++ {
+		for p := range producers {
 			go func(p int) {
 				defer wgProducer.Done()
 				<-ready
@@ -287,7 +287,7 @@ func prepareConcurrencyTest(pool globalconn.IDPool, producers int, consumers int
 	wgConsumer = &sync.WaitGroup{}
 	if consumers > 0 {
 		wgConsumer.Add(consumers)
-		for c := 0; c < consumers; c++ {
+		for c := range consumers {
 			go func(c int) {
 				defer wgConsumer.Done()
 				<-ready
@@ -459,7 +459,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	for _, ta := range cases {
 		b.Run(fmt.Sprintf("LockBasedCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockBasedPool(poolSizeInBits, 0)
@@ -479,7 +479,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 
 		b.Run(fmt.Sprintf("LockFreeCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockFreePool(poolSizeInBits, 0, 0)

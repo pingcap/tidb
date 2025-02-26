@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
@@ -75,7 +76,8 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	stmt := stmts[0]
 	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
 	readTS, err = provider.GetStmtReadTS()
@@ -89,7 +91,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	require.NoError(t, provider.AdviseWarmup())
-	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
+	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
 	readTS, err = provider.GetStmtReadTS()
@@ -103,7 +105,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	provider = initializeOptimisticProvider(t, tk, true)
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
+	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
 	readTS, err = provider.GetStmtReadTS()
@@ -118,7 +120,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
+	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
 	readTS, err = provider.GetStmtReadTS()

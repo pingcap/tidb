@@ -164,11 +164,34 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 	if binop, ok := cond.(*expression.ScalarFunction); ok {
 		switch binop.FuncName.L {
 		// JSON functions
-		case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONObject, ast.JSONMerge, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove:
-			return true
-		case ast.JSONMemberOf, ast.JSONContainsPath, ast.JSONValid, ast.JSONArrayAppend, ast.JSONArrayInsert, ast.JSONMergePatch, ast.JSONMergePreserve, ast.JSONPretty:
-			return true
-		case ast.JSONStorageFree, ast.JSONStorageSize, ast.JSONDepth, ast.JSONKeys, ast.JSONLength, ast.JSONContains, ast.JSONSearch, ast.JSONOverlaps, ast.JSONQuote:
+		case ast.JSONArray,
+			ast.JSONArrayAppend,
+			ast.JSONArrayInsert,
+			ast.JSONContains,
+			ast.JSONContainsPath,
+			ast.JSONDepth,
+			ast.JSONExtract,
+			ast.JSONInsert,
+			ast.JSONKeys,
+			ast.JSONLength,
+			ast.JSONMemberOf,
+			ast.JSONMerge,
+			ast.JSONMergePatch,
+			ast.JSONMergePreserve,
+			ast.JSONObject,
+			ast.JSONOverlaps,
+			ast.JSONPretty,
+			ast.JSONQuote,
+			ast.JSONRemove,
+			ast.JSONReplace,
+			ast.JSONSchemaValid,
+			ast.JSONSearch,
+			ast.JSONSet,
+			ast.JSONStorageFree,
+			ast.JSONStorageSize,
+			ast.JSONType,
+			ast.JSONUnquote,
+			ast.JSONValid:
 			return true
 		// some time functions
 		case ast.AddDate, ast.AddTime, ast.ConvertTz, ast.DateLiteral, ast.DateAdd, ast.DateFormat, ast.FromUnixTime, ast.GetFormat, ast.UTCTimestamp:
@@ -194,7 +217,7 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
 	conditions := physicalSelection.Conditions
 	for i := len(conditions) - 1; i >= 0; i-- {
-		if expression.Contains(exprs, conditions[i]) {
+		if expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, conditions[i]) {
 			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}

@@ -541,6 +541,7 @@ const (
 	BinaryDefaultCollationID  = 63
 	UTF8MB4DefaultCollation   = "utf8mb4_bin"
 	DefaultCollationName      = UTF8MB4DefaultCollation
+	UTF8MB4GeneralCICollation = "utf8mb4_general_ci"
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
 	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range

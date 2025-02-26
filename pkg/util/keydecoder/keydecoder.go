@@ -15,12 +15,13 @@
 package keydecoder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -81,7 +82,7 @@ func DecodeKey(key []byte, is infoschema.InfoSchema) (DecodedKey, error) {
 	}
 	result.TableID = tableOrPartitionID
 
-	table, tableFound := is.TableByID(tableOrPartitionID)
+	table, tableFound := is.TableByID(context.Background(), tableOrPartitionID)
 
 	// The schema may have changed since when the key is get.
 	// Then we just omit the table name and show the table ID only.

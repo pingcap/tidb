@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "plannersession",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/plannersession",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/planner/planctx",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/util/intest",
+    ],
+)

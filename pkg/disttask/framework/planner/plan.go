@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
@@ -31,6 +32,7 @@ type PlanCtx struct {
 	TaskKey    string
 	TaskType   proto.TaskType
 	ThreadCnt  int
+	MaxNodeCnt int
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
@@ -38,6 +40,8 @@ type PlanCtx struct {
 	GlobalSort           bool
 	NextTaskStep         proto.Step
 	ExecuteNodesCnt      int
+
+	Store kv.StorageWithPD
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

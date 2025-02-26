@@ -14,7 +14,6 @@ go_library(
         "//pkg/parser/format",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "@com_github_cznic_mathutil//:mathutil",
     ],
 )
 

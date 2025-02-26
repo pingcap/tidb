@@ -16,7 +16,7 @@ package tableutil
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // TempTable is used to store transaction-specific or session-specific information for global / local temporary tables.

@@ -1592,7 +1592,7 @@ func TestAccessCommittedLocks(t *testing.T) {
 	v2 := []byte("v2")
 	MustPrewritePut(k2, k2, v2, 70, store)
 
-	// lock for ingore
+	// lock for ignore
 	k3 := []byte("t3")
 	v3 := []byte("v3")
 	MustPrewritePut(k3, k3, v3, 80, store)

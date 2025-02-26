@@ -30,7 +30,7 @@ func TestWaitGroupWrapperRun(t *testing.T) {
 	var expect int32 = 4
 	var val atomic.Int32
 	var wg WaitGroupWrapper
-	for i := int32(0); i < expect; i++ {
+	for range expect {
 		wg.Run(func() {
 			val.Inc()
 		})
@@ -40,7 +40,7 @@ func TestWaitGroupWrapperRun(t *testing.T) {
 
 	val.Store(0)
 	wg2 := NewWaitGroupEnhancedWrapper("", nil, false)
-	for i := int32(0); i < expect; i++ {
+	for i := range expect {
 		wg2.Run(func() {
 			val.Inc()
 		}, fmt.Sprintf("test_%v", i))
@@ -53,7 +53,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	var expect int32 = 2
 	var val atomic.Int32
 	var wg WaitGroupWrapper
-	for i := int32(0); i < expect; i++ {
+	for range expect {
 		wg.RunWithRecover(func() {
 			panic("test1")
 		}, func(r any) {
@@ -65,7 +65,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 
 	val.Store(0)
 	wg2 := NewWaitGroupEnhancedWrapper("", nil, false)
-	for i := int32(0); i < expect; i++ {
+	for i := range expect {
 		wg2.RunWithRecover(func() {
 			panic("test1")
 		}, func(r any) {

@@ -172,7 +172,7 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	require.False(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	require.False(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
 	input.AppendInt64(0, 233333)
 	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
@@ -183,8 +183,8 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.True(t, result.IsNull(0))
 
-	col0.GetType().AddFlag(mysql.UnsignedFlag)
-	require.True(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	col0.GetType(ctx).AddFlag(mysql.UnsignedFlag)
+	require.True(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
 	input.Reset()
 	input.AppendUint64(0, 233333)
 	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))

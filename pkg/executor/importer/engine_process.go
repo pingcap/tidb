@@ -30,7 +30,6 @@ func ProcessChunk(
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,
 	dataEngine, indexEngine *backend.OpenedEngine,
-	progress *Progress,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
 ) error {
@@ -44,9 +43,8 @@ func ProcessChunk(
 	hasAutoIncrementAutoID := common.TableHasAutoRowID(tableImporter.tableInfo.Core) &&
 		tableImporter.tableInfo.Core.AutoRandomBits == 0 && tableImporter.tableInfo.Core.ShardRowIDBits == 0 &&
 		tableImporter.tableInfo.Core.Partition == nil
-	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: hasAutoIncrementAutoID,
-	}
+	dataWriterCfg := &backend.LocalWriterConfig{}
+	dataWriterCfg.Local.IsKVSorted = hasAutoIncrementAutoID
 	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 	if err != nil {
 		return err
@@ -66,7 +64,7 @@ func ProcessChunk(
 		}
 	}()
 
-	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger, groupChecksum)
+	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, logger, groupChecksum)
 }
 
 // ProcessChunkWithWriter processes a chunk, and write kv pairs to dataWriter and indexWriter.
@@ -75,7 +73,6 @@ func ProcessChunkWithWriter(
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,
 	dataWriter, indexWriter backend.EngineWriter,
-	progress *Progress,
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
 ) error {
@@ -117,6 +114,5 @@ func ProcessChunkWithWriter(
 	if err != nil {
 		return err
 	}
-	progress.AddColSize(encoder.GetColumnSize())
 	return nil
 }

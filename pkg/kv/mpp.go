@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -40,7 +39,9 @@ const (
 
 	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
 	MppVersionV2
-	// MppVersionV3
+
+	// MppVersionV3 supports TiFlash version [v9.0, ~], support new serdes format of strings
+	MppVersionV3
 
 	mppVersionMax
 
@@ -237,55 +238,25 @@ type MPPBuildTasksRequest struct {
 	PartitionIDAndRanges []PartitionIDAndRanges
 }
 
-// ExchangeCompressionMode means the compress method used in exchange operator
-type ExchangeCompressionMode int
-
-const (
-	// ExchangeCompressionModeNONE indicates no compression
-	ExchangeCompressionModeNONE ExchangeCompressionMode = iota
-	// ExchangeCompressionModeFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
-	ExchangeCompressionModeFast
-	// ExchangeCompressionModeHC indicates high compression (HC) ratio mode
-	ExchangeCompressionModeHC
-	// ExchangeCompressionModeUnspecified indicates unspecified compress method, let TiDB choose one
-	ExchangeCompressionModeUnspecified
-
-	// RecommendedExchangeCompressionMode indicates recommended compression mode
-	RecommendedExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeFast
-
-	exchangeCompressionModeUnspecifiedName string = "UNSPECIFIED"
-)
-
-// Name returns the name of ExchangeCompressionMode
-func (t ExchangeCompressionMode) Name() string {
-	if t == ExchangeCompressionModeUnspecified {
-		return exchangeCompressionModeUnspecifiedName
+// ToString returns a string representation of MPPBuildTasksRequest. Used for CacheKey.
+func (req *MPPBuildTasksRequest) ToString() string {
+	sb := strings.Builder{}
+	if req.KeyRanges != nil { // Non-partiton
+		for i, keyRange := range req.KeyRanges {
+			sb.WriteString("range_id" + strconv.Itoa(i))
+			sb.WriteString(keyRange.StartKey.String())
+			sb.WriteString(keyRange.EndKey.String())
+		}
+		return sb.String()
 	}
-	return t.ToTipbCompressionMode().String()
-}
-
-// ToExchangeCompressionMode returns the ExchangeCompressionMode from name
-func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
-	name = strings.ToUpper(name)
-	if name == exchangeCompressionModeUnspecifiedName {
-		return ExchangeCompressionModeUnspecified, true
+	// Partition
+	for _, partitionIDAndRange := range req.PartitionIDAndRanges {
+		sb.WriteString("partition_id" + strconv.Itoa(int(partitionIDAndRange.ID)))
+		for i, keyRange := range partitionIDAndRange.KeyRanges {
+			sb.WriteString("range_id" + strconv.Itoa(i))
+			sb.WriteString(keyRange.StartKey.String())
+			sb.WriteString(keyRange.EndKey.String())
+		}
 	}
-	value, ok := tipb.CompressionMode_value[name]
-	if ok {
-		return ExchangeCompressionMode(value), true
-	}
-	return ExchangeCompressionModeNONE, false
-}
-
-// ToTipbCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
-func (t ExchangeCompressionMode) ToTipbCompressionMode() tipb.CompressionMode {
-	switch t {
-	case ExchangeCompressionModeNONE:
-		return tipb.CompressionMode_NONE
-	case ExchangeCompressionModeFast:
-		return tipb.CompressionMode_FAST
-	case ExchangeCompressionModeHC:
-		return tipb.CompressionMode_HIGH_COMPRESSION
-	}
-	return tipb.CompressionMode_NONE
+	return sb.String()
 }

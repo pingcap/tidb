@@ -17,12 +17,12 @@ package importinto
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 )
@@ -43,7 +43,7 @@ type TaskMeta struct {
 	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
-	ChunkMap map[int32][]Chunk
+	ChunkMap map[int32][]importer.Chunk
 }
 
 // ImportStepMeta is the meta of import step.
@@ -52,7 +52,7 @@ type TaskMeta struct {
 type ImportStepMeta struct {
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
-	Chunks   []Chunk
+	Chunks   []importer.Chunk
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
@@ -86,8 +86,9 @@ type WriteIngestStepMeta struct {
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
+	RangeJobKeys          [][]byte `json:"range-job-keys"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
-	RangeSplitSize        int64    `json:"range-split-size"`
+	TS                    uint64   `json:"ts"`
 
 	Result Result
 }
@@ -108,7 +109,6 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
-	Progress      *importer.Progress
 
 	mu       sync.Mutex
 	Checksum *verification.KVGroupChecksum
@@ -141,25 +141,20 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 // TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
 	Plan       importer.Plan
-	Chunk      Chunk
+	Chunk      importer.Chunk
 	SharedVars *SharedVars
+	panicked   *atomic.Bool
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "encodeAndSortOperator", "RecoverArgs", func() {
+		t.panicked.Store(true)
+	}, false
 }
 
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
-}
-
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
 }
 
 // Checksum records the checksum information.
@@ -173,5 +168,4 @@ type Checksum struct {
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
-	ColSizeMap   map[int64]int64
 }

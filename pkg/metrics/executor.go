@@ -39,6 +39,24 @@ var (
 
 	// MppCoordinatorLatency records latencies of mpp coordinator operations.
 	MppCoordinatorLatency *prometheus.HistogramVec
+
+	// AffectedRowsCounter records the number of affected rows.
+	AffectedRowsCounter *prometheus.CounterVec
+
+	// AffectedRowsCounterInsert records the number of insert affected rows.
+	AffectedRowsCounterInsert prometheus.Counter
+
+	// AffectedRowsCounterUpdate records the number of update affected rows.
+	AffectedRowsCounterUpdate prometheus.Counter
+
+	// AffectedRowsCounterDelete records the number of delete affected rows.
+	AffectedRowsCounterDelete prometheus.Counter
+
+	// AffectedRowsCounterReplace records the number of replace affected rows.
+	AffectedRowsCounterReplace prometheus.Counter
+
+	// NetworkTransmissionStats records the network transmission for queries
+	NetworkTransmissionStats *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -100,5 +118,26 @@ func InitExecutorMetrics() {
 			Name:      "mpp_coordinator_latency",
 			Help:      "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
+		}, []string{LblType})
+
+	AffectedRowsCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "affected_rows",
+			Help:      "Counters of server affected rows.",
+		}, []string{LblSQLType})
+
+	AffectedRowsCounterInsert = AffectedRowsCounter.WithLabelValues("Insert")
+	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
+	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
+	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+
+	NetworkTransmissionStats = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "network_transmission",
+			Help:      "Counter of network transmission bytes.",
 		}, []string{LblType})
 }

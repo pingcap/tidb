@@ -14,6 +14,9 @@
 
 package base
 
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
+
 // Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type Task interface {
@@ -32,3 +35,6 @@ type Task interface {
 	// MemoryUsage returns the memory usage of current task.
 	MemoryUsage() int64
 }
+
+// InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.
+var InvalidTask Task

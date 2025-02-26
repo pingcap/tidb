@@ -16,10 +16,13 @@ go_library(
 go_test(
     name = "cdcutil_test",
     timeout = "short",
-    srcs = ["cdc_test.go"],
+    srcs = [
+        "cdc_test.go",
+        "export_for_test.go",
+    ],
+    embed = [":cdcutil"],
     flaky = True,
     deps = [
-        ":cdcutil",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",

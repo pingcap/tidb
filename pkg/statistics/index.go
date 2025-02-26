@@ -15,10 +15,11 @@
 package statistics
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/twmb/murmur3"
@@ -26,15 +27,13 @@ import (
 
 // Index represents an index histogram.
 type Index struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.IndexInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag     int64
 	// PhysicalID is the physical table id,
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
@@ -48,10 +47,8 @@ func (idx *Index) Copy() *Index {
 	}
 	nc := &Index{
 		PhysicalID: idx.PhysicalID,
-		Flag:       idx.Flag,
 		StatsVer:   idx.StatsVer,
 	}
-	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if idx.CMSketch != nil {
 		nc.CMSketch = idx.CMSketch.Copy()
 	}
@@ -128,7 +125,7 @@ func (idx *Index) TotalRowCount() float64 {
 }
 
 // IndexStatsIsInvalid checks whether the index has valid stats or not.
-func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
+func IndexStatsIsInvalid(sctx planctx.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -144,12 +141,12 @@ func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistCo
 	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
 	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
-		HistogramNeededItems.Insert(model.TableItemID{
+		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 			TableID:          coll.PhysicalID,
 			ID:               cid,
 			IsIndex:          true,
 			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-		})
+		}, true)
 		// TODO: we can return true here. But need to fix some tests first.
 	}
 	if idxStats == nil {
@@ -194,7 +191,7 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 
 // QueryBytes is used to query the count of specified bytes.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (idx *Index) QueryBytes(sctx context.PlanContext, d []byte) (result uint64) {
+func (idx *Index) QueryBytes(sctx planctx.PlanContext, d []byte) (result uint64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {

@@ -36,7 +36,7 @@ import (
 func genString() string {
 	retStr := "西xi瓜gua"
 	factor := rand.Intn(5)
-	for i := 0; i < factor; i++ {
+	for range factor {
 		retStr += retStr
 	}
 
@@ -53,9 +53,9 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 	}
 
 	chks := make([]*Chunk, 0, numChk)
-	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
+	for chkIdx := range numChk {
 		chk := NewChunkWithCapacity(fields, numRow)
-		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
+		for rowIdx := range numRow {
 			data := int64(chkIdx*numRow + rowIdx)
 			chk.AppendString(0, genString())
 			chk.AppendNull(1)
@@ -91,8 +91,8 @@ func TestDataInDiskByRows(t *testing.T) {
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
-	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
-		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
+	for chkIdx := range numChk {
+		for rowIdx := range numRow {
 			row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 			assert.NoError(t, err)
 			assert.Equal(t, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields), row.GetDatumRow(fields))
@@ -108,7 +108,7 @@ func BenchmarkDataInDiskByRowsAdd(b *testing.B) {
 	defer l.Close()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		err := l.Add(chk)
 		if err != nil {
 			b.Fatal(err)
@@ -129,7 +129,7 @@ func BenchmarkDataInDiskByRowsGetRow(b *testing.B) {
 	}
 	rnd := rand.New(rand.NewSource(0))
 	ptrs := make([]RowPtr, 0, b.N)
-	for i := 0; i < min(b.N, 10000); i++ {
+	for range min(b.N, 10000) {
 		ptrs = append(ptrs, RowPtr{
 			ChkIdx: rnd.Uint32() % uint32(numChk),
 			RowIdx: rnd.Uint32() % uint32(numRow),
@@ -139,7 +139,7 @@ func BenchmarkDataInDiskByRowsGetRow(b *testing.B) {
 		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_, err := l.GetRow(ptrs[i])
 		if err != nil {
 			b.Fatal(err)
@@ -238,8 +238,8 @@ func testDataInDiskByRows(t *testing.T, concurrency int) {
 	}
 
 	var ptrs []RowPtr
-	for i := 0; i < numChk; i++ {
-		for j := 0; j < numRow; j++ {
+	for i := range numChk {
+		for j := range numRow {
 			ptrs = append(ptrs, RowPtr{
 				ChkIdx: uint32(i),
 				RowIdx: uint32(j),
@@ -256,7 +256,7 @@ func testDataInDiskByRows(t *testing.T, concurrency int) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(concurrency)
-	for con := 0; con < concurrency; con++ {
+	for range concurrency {
 		go func() {
 			for i, rowPtr := range ptrs {
 				row, err := lChecksum.GetRow(rowPtr)
@@ -280,7 +280,7 @@ func BenchmarkDataInDiskByRows_GetChunk(b *testing.B) {
 	}
 
 	b.StartTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		v := i % numChk
 		_, _ = l.GetChunk(v)
 	}
@@ -383,7 +383,7 @@ func TestDataInDiskByRowsWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing
 func testReaderWithCache(t *testing.T) {
 	testData := "0123456789"
 	buf := bytes.NewBuffer(nil)
-	for i := 0; i < 102; i++ {
+	for range 102 {
 		buf.WriteString(testData)
 	}
 	buf.WriteString("0123")

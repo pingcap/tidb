@@ -149,7 +149,7 @@ func TestTopSQLReporter(t *testing.T) {
 		})
 	}
 	checkSQLPlanMap := map[string]struct{}{}
-	for retry := 0; retry < 5; retry++ {
+	for range 5 {
 		server.WaitCollectCnt(recordsCnt, 1, time.Second*5)
 		records := server.GetLatestRecords()
 		for _, req := range records {
@@ -397,7 +397,7 @@ func mockExecuteSQL(sql, plan string) {
 func mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
-		for i := 0; i < 10e5; i++ {
+		for range int(10e5) {
 		}
 		if time.Since(start) > d {
 			return

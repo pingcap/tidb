@@ -19,7 +19,7 @@ import "reflect"
 // AnyOf returns true if any element in the slice matches the predict func.
 func AnyOf(s any, p func(int) bool) bool {
 	l := reflect.ValueOf(s).Len()
-	for i := 0; i < l; i++ {
+	for i := range l {
 		if p(i) {
 			return true
 		}

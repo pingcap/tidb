@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -46,7 +48,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
@@ -61,13 +63,13 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t"),
+				Name: ast.NewCIStr("t"),
 			},
 			DisableTiKVImportMode: true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]importinto.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -84,13 +86,13 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.ImportSchedulerExt{}
+	ext := importinto.NewImportSchedulerForTest(false)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -142,6 +144,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("met error")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -158,6 +161,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("cancelled by user")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -169,7 +173,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 func TestSchedulerExtGlobalSort(t *testing.T) {
 	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -180,7 +184,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
@@ -198,7 +202,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			Format: "csv",
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name:  model.NewCIStr("t"),
+				Name:  ast.NewCIStr("t"),
 				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,
@@ -207,7 +211,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap: map[int32][]importinto.Chunk{
+		ChunkMap: map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/1.csv"}},
 			2: {{Path: "gs://test-load/2.csv"}},
 		},
@@ -227,15 +231,13 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.ImportSchedulerExt{
-		GlobalSort: true,
-	}
+	ext := importinto.NewImportSchedulerForTest(true)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
@@ -290,7 +292,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to merge-sort stage
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -326,7 +328,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to write-and-ingest stage
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

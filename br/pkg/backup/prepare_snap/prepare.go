@@ -184,8 +184,6 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 func (p *Preparer) Finalize(ctx context.Context) error {
 	eg := new(errgroup.Group)
 	for id, cli := range p.clients {
-		cli := cli
-		id := id
 		eg.Go(func() error {
 			if err := cli.Finalize(ctx); err != nil {
 				return errors.Annotatef(err, "failed to finalize the prepare stream for %d", id)

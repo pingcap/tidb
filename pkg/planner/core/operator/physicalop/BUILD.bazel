@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "physicalop",
+    srcs = ["base_physical_plan.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/baseimpl",
+        "//pkg/planner/property",
+        "//pkg/planner/util/costusage",
+        "//pkg/planner/util/optimizetrace",
+        "//pkg/planner/util/utilfuncp",
+        "//pkg/util/execdetails",
+        "//pkg/util/size",
+        "//pkg/util/tracing",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
+    ],
+)

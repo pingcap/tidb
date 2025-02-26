@@ -46,8 +46,7 @@ const (
 	// Also note that the offline threshold in PD is 20s, see
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
 
-	// After talk to PD members 100s is not a safe number. set it to 600s
-	storeDisconnectionDuration = 600 * time.Second
+	storeDisconnectionDuration = 100 * time.Second
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -132,7 +131,10 @@ func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts .
 // Some versions of PD may not set the store state in the gRPC response.
 // We need to check it manually.
 func CheckStoreLiveness(s *metapb.Store) error {
-	if s.State != metapb.StoreState_Up {
+	// note: offline store is also considered as alive.
+	// because the real meaning of offline is "Going Offline".
+	// https://docs.pingcap.com/tidb/v7.5/tidb-scheduling#information-collection
+	if s.State != metapb.StoreState_Up && s.State != metapb.StoreState_Offline {
 		return errors.Annotatef(berrors.ErrKVStorage, "the store state isn't up, it is %s", s.State)
 	}
 	// If the field isn't present (the default value), skip this check.
@@ -213,4 +215,24 @@ func StartExitSingleListener(ctx context.Context) (context.Context, context.Canc
 		os.Exit(1)
 	}()
 	return cx, cancel
+}
+
+func Values[K comparable, V any](m map[K]V) []V {
+	values := make([]V, 0, len(m))
+	for _, v := range m {
+		values = append(values, v)
+	}
+	return values
+}
+
+func FlattenValues[K comparable, V any](m map[K][]V) []V {
+	total := 0
+	for _, v := range m {
+		total += len(v)
+	}
+	result := make([]V, 0, total)
+	for _, v := range m {
+		result = append(result, v...)
+	}
+	return result
 }

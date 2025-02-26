@@ -17,7 +17,7 @@ package common
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 )
 
 // IngestData describes a common interface that is needed by TiKV write +
@@ -73,8 +73,9 @@ type ForwardIter interface {
 	ReleaseBuf()
 }
 
-// DataAndRange is a pair of IngestData and Range.
-type DataAndRange struct {
-	Data  IngestData
-	Range Range
+// DataAndRanges is a pair of IngestData and list of Range. Each Range will
+// become a regionJob, and the regionJob will read data from Data field.
+type DataAndRanges struct {
+	Data         IngestData
+	SortedRanges []Range
 }

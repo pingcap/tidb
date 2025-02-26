@@ -1,0 +1,100 @@
+# TestNoopFunctions
+# issues 14448, 19383, 17734, 52432
+
+# variable changes in the test will not affect the plan cache
+set tidb_enable_non_prepared_plan_cache=0;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY);
+INSERT INTO t1 VALUES (1),(2),(3);
+
+SET @@tidb_enable_noop_functions='ON';
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+SELECT * FROM t1 LOCK IN SHARE MODE;
+# test the fast path for point-get queries
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+SELECT * FROM t1 GROUP BY a DESC;
+SELECT * FROM t1 GROUP BY a ASC;
+
+SET @@tidb_enable_noop_functions='WARN';
+--enable_warnings
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+SELECT * FROM t1 LOCK IN SHARE MODE;
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+SELECT * FROM t1 GROUP BY a DESC;
+SELECT * FROM t1 GROUP BY a ASC;
+--disable_warnings
+
+SET @@tidb_enable_noop_functions='OFF';
+--error 1235
+SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1;
+--error 1235
+SELECT * FROM t1 LOCK IN SHARE MODE;
+--error 1235
+SELECT * FROM t1 WHERE a=1 LOCK IN SHARE MODE;
+--error 1235
+SELECT * FROM t1 GROUP BY a DESC;
+--error 1235
+SELECT * FROM t1 GROUP BY a ASC;
+
+# After each of these statements execute, we need to reset the values
+# because otherwise tidb_enable_noop_functions can't be changed.
+
+SET @@tidb_enable_noop_functions='ON';
+
+START TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET tx_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET transaction_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET @@tidb_enable_noop_functions='WARN';
+
+--enable_warnings
+START TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET tx_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+SET transaction_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+--disable_warnings
+
+SET @@tidb_enable_noop_functions='OFF';
+
+--error 1235
+START TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+--error 1235
+SET TRANSACTION READ ONLY;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+--error 1235
+SET tx_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;
+
+--error 1235
+SET transaction_read_only = 1;
+SET tx_read_only = 0;
+SET transaction_read_only = 0;

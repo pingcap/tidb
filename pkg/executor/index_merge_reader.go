@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -127,7 +127,6 @@ type IndexMergeReaderExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
-	paging     bool
 
 	partialPlans        [][]base.PhysicalPlan
 	tblPlans            []base.PhysicalPlan
@@ -246,7 +245,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 		if e.isCorColInPartialAccess[i] {
 			switch x := plan[0].(type) {
 			case *plannercore.PhysicalIndexScan:
-				e.ranges[i], err = rebuildIndexRanges(e.Ctx(), x, x.IdxCols, x.IdxColLens)
+				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
 			case *plannercore.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
 			default:
@@ -429,6 +428,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					pushedLimit:        pushedIndexLimit,
 					singleIndexMerge:   singleIndexMerge,
 				}
+				if worker.stats != nil && worker.idxID != 0 {
+					worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
+				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
@@ -447,11 +449,19 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 					SetMemTracker(e.memTracker).
-					SetPaging(e.paging).
 					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
 					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
+				worker.batchSize = CalculateBatchSize(int(is.StatsCount()), e.MaxChunkSize(), worker.maxBatchSize)
+				if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+					// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+					// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
+					builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+					if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+						builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+					}
+				}
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
@@ -490,10 +500,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					results = append(results, result)
 					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 				}
-				worker.batchSize = min(e.MaxChunkSize(), worker.maxBatchSize)
 				if len(results) > 1 && len(e.byItems) != 0 {
 					// e.Schema() not the output schema for partialIndexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-					ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+					ssr := distsql.NewSortedSelectResults(e.Ctx().GetExprCtx().GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 					results = []distsql.SelectResult{ssr}
 				}
 				ctx1, cancel := context.WithCancel(ctx)
@@ -577,7 +586,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-						sctx:       e.Ctx(),
 						partitions: worker.prunedPartitions,
 					}
 				}
@@ -690,7 +698,6 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	// no ExtraPidColID here, because a clustered index couldn't be a global index.
 	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 	// There will be two needPartitionHandle != hasExtraCol situations.
@@ -952,7 +959,7 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 			defer close(ch)
 		}
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.String("worker", worker))
 			return
 		}
 
@@ -990,12 +997,12 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil {
 		for _, p := range e.partialPlans {
-			is, ok := p[0].(*plannercore.PhysicalIndexScan)
-			if !ok {
-				continue
+			switch p := p[0].(type) {
+			case *plannercore.PhysicalTableScan:
+				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
+			case *plannercore.PhysicalIndexScan:
+				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
 			}
-
-			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID(), is)
 		}
 	}
 	if e.finished == nil {
@@ -1079,7 +1086,7 @@ func (h *handleHeap) Pop() any {
 func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTableTask, memTracker *memory.Tracker) *handleHeap {
 	compareFuncs := make([]chunk.CompareFunc, 0, len(w.indexMerge.byItems))
 	for _, item := range w.indexMerge.byItems {
-		keyType := item.Expr.GetType()
+		keyType := item.Expr.GetType(w.indexMerge.Ctx().GetExprCtx().GetEvalCtx())
 		compareFuncs = append(compareFuncs, chunk.GetCompareFunc(keyType))
 	}
 
@@ -1851,16 +1858,17 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 }
 
 // needPartitionHandle indicates whether we need create a partitionHandle or not.
-// If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
+// If the schema from planner part contains ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
-	if len(outputOffsets) > 0 {
-		col := cols[outputOffsets[len(outputOffsets)-1]]
-		needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-		hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+	col := cols[outputOffsets[len(outputOffsets)-1]]
+
+	is := w.plan[0].(*plannercore.PhysicalIndexScan)
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0 || is.Index.Global
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 		// There will be two needPartitionHandle != hasExtraCol situations.
 		// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
@@ -1870,8 +1878,7 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 		}
 		return needPartitionHandle || (col.ID == model.ExtraPidColID), nil
 	}
-	return false, nil
-
+	return needPartitionHandle, nil
 }
 
 func (w *partialIndexWorker) fetchHandles(
@@ -1917,7 +1924,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 	var tps []*types.FieldType
 	if len(w.byItems) != 0 {
 		for _, item := range w.byItems {
-			tps = append(tps, item.Expr.GetType())
+			tps = append(tps, item.Expr.GetType(w.sc.GetExprCtx().GetEvalCtx()))
 		}
 	}
 	tps = append(tps, handleCols.GetFieldsTypes()...)
@@ -1955,7 +1962,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return nil, nil, err
 		}
 		if w.stats != nil && w.idxID != 0 {
-			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID, false).Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -2069,7 +2076,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r any) {
 	return func(r any) {
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.String("worker", worker))
 			return
 		}
 

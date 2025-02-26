@@ -699,7 +699,7 @@ select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsign
 -- error 1690
 select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);
 select 1 / '2007' div 1;
-set sql_mode=default
+set sql_mode=default;
 
 # TestFuncREPEAT
 DROP TABLE IF EXISTS table_string;
@@ -1578,3 +1578,63 @@ insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.2396154715
 select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
 select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
 drop table t, t2, t3;
+
+# Issue #52420
+SELECT MID('abc',2,1);
+SELECT MID('abc',2);
+
+# Issue #56451
+-- error 1064
+SELECT CURRENT_TIME(-1);
+-- error 1426
+SELECT CURRENT_TIME(2147483647);
+-- error 1064
+SELECT CURRENT_TIME(2147483648);
+-- error 1064
+SELECT CURRENT_TIMESTAMP(-1);
+-- error 1426
+SELECT CURRENT_TIMESTAMP(2147483647);
+-- error 1064
+SELECT CURRENT_TIMESTAMP(2147483648);
+-- error 1064
+SELECT CURTIME(-1);
+-- error 1426
+SELECT CURTIME(2147483647);
+-- error 1064
+SELECT CURTIME(2147483648);
+-- error 1064
+SELECT LOCALTIME(-1);
+-- error 1426
+SELECT LOCALTIME(2147483647);
+-- error 1064
+SELECT LOCALTIME(2147483648);
+-- error 1064
+SELECT LOCALTIMESTAMP(-1);
+-- error 1426
+SELECT LOCALTIMESTAMP(2147483647);
+-- error 1064
+SELECT LOCALTIMESTAMP(2147483648);
+-- error 1064
+SELECT NOW(-1);
+-- error 1426
+SELECT NOW(2147483647);
+-- error 1064
+SELECT NOW(2147483648);
+-- error 1064
+SELECT SYSDATE(-1);
+-- error 1426
+SELECT SYSDATE(2147483647);
+-- error 1064
+SELECT SYSDATE(2147483648);
+-- error 1064
+SELECT UTC_TIME(-1);
+-- error 1426
+SELECT UTC_TIME(2147483647);
+-- error 1064
+SELECT UTC_TIME(2147483648);
+-- error 1064
+SELECT UTC_TIMESTAMP(-1);
+-- error 1426
+SELECT UTC_TIMESTAMP(2147483647);
+-- error 1064
+SELECT UTC_TIMESTAMP(2147483648);

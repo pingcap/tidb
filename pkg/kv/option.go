@@ -114,6 +114,10 @@ const (
 	SizeLimits
 	// SessionID marks the connection id, for logging and tracing.
 	SessionID
+	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
+	BackgroundGoroutineLifecycleHooks
+	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
+	PrewriteEncounterLockPolicy
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
@@ -193,6 +197,8 @@ const (
 	InternalTxnStats = "stats"
 	// InternalTxnBindInfo is the type of bind info txn.
 	InternalTxnBindInfo = InternalTxnOthers
+	// InternalTxnWorkloadLearning is the type of workload-based learning txn.
+	InternalTxnWorkloadLearning = "WorkloadLearning"
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = InternalTxnOthers
 	// InternalTxnAdmin is the type of admin operations.
@@ -218,6 +224,8 @@ const (
 	InternalDistTask = "DistTask"
 	// InternalTimer is the type of internal timer
 	InternalTimer = "Timer"
+	// InternalDDLNotifier is the type of DDL notifier
+	InternalDDLNotifier = "DDLNotifier"
 )
 
 // The bitmap:
@@ -236,6 +244,8 @@ const (
 	LossyDDLColumnReorgSource = 1
 	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
+	// LightningPhysicalImportTxnSource the 17th bit is set as the txn source for Lightning physical import.
+	LightningPhysicalImportTxnSource = 1 << 16
 )
 
 // SetCDCWriteSource sets the TiCDC write source in the txnSource.

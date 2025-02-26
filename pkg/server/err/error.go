@@ -32,6 +32,8 @@ var (
 	ErrAccessDeniedNoPassword = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	// ErrConCount is returned when too many connections are established by the user.
 	ErrConCount = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	// ErrTooManyUserConnections is returned when too mang user connections are established.
+	ErrTooManyUserConnections = dbterror.ClassServer.NewStd(errno.ErrTooManyUserConnections)
 	// ErrSecureTransportRequired is returned when the user tries to connect without SSL.
 	ErrSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	// ErrMultiStatementDisabled is returned when the user tries to send multiple statements in one statement.
@@ -44,4 +46,6 @@ var (
 	ErrNetPacketTooLarge = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 	// ErrMustChangePassword is returned when the user must change the password.
 	ErrMustChangePassword = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
+	// ErrServerShutdown is returned when the server is shutting down.
+	ErrServerShutdown = dbterror.ClassServer.NewStd(errno.ErrServerShutdown)
 )

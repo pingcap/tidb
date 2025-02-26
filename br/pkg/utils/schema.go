@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -31,31 +32,33 @@ func EncloseDBAndTable(database, table string) string {
 }
 
 // IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
-func IsTemplateSysDB(dbname model.CIStr) bool {
+func IsTemplateSysDB(dbname ast.CIStr) bool {
 	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
 }
 
 // IsSysDB tests whether the database is system DB.
 // Currently, both `mysql` and `sys` are system DB.
-func IsSysDB(dbLowerName string) bool {
+func IsSysDB(dbName string) bool {
+	// just in case
+	dbLowerName := strings.ToLower(dbName)
 	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
 }
 
 // TemporaryDBName makes a 'private' database name.
-func TemporaryDBName(db string) model.CIStr {
-	return model.NewCIStr(temporaryDBNamePrefix + db)
+func TemporaryDBName(db string) ast.CIStr {
+	return ast.NewCIStr(temporaryDBNamePrefix + db)
 }
 
-// GetSysDBName get the original name of system DB
-func GetSysDBName(tempDB model.CIStr) (string, bool) {
-	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
-		return tempDB.O, false
+// StripTempDBPrefixIfNeeded get the original name of system DB
+func StripTempDBPrefixIfNeeded(tempDB string) (string, bool) {
+	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
+		return tempDB, false
 	}
-	return tempDB.O[len(temporaryDBNamePrefix):], true
+	return tempDB[len(temporaryDBNamePrefix):], true
 }
 
 // GetSysDBCIStrName get the CIStr name of system DB
-func GetSysDBCIStrName(tempDB model.CIStr) (model.CIStr, bool) {
+func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
 	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}

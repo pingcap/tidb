@@ -18,14 +18,16 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -168,7 +170,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
 }
@@ -176,7 +178,7 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 func TestGenIndexValueFromIndex(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -189,15 +191,14 @@ func TestGenIndexValueFromIndex(t *testing.T) {
 		SessionOptions: sessionOpts,
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
 		types.NewIntDatum(23),
 		types.NewStringDatum("4.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -281,4 +282,73 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, handle.IsInt())
 	require.Equal(t, commonHandle.Encoded(), handle.Encoded())
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/55313
+func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key a(a), key(b))")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	// use MDL to block drop index DDL in `StateWriteOnly`
+	tk.MustExec("set @@global.tidb_enable_metadata_lock='ON'")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t order by a asc").Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	ch := make(chan struct{})
+	go func() {
+		defer close(ch)
+		// run `DROP INDEX` in background, because a transaction is started,
+		// the DDL will hang in state `StateWriteOnly` until all transactions are committed or rollback.
+		tk3 := testkit.NewTestKit(t, store)
+		tk3.MustExec("use test")
+		tk3.MustExec("alter table t drop index a")
+	}()
+
+	defer func() {
+		// after test case, clear transactions and wait background goroutine exit.
+		tk.MustExec("rollback")
+		tk2.MustExec("rollback")
+		select {
+		case <-ch:
+		case <-time.After(time.Minute):
+			require.FailNow(t, "timeout")
+		}
+	}()
+
+	start := time.Now()
+	for {
+		time.Sleep(20 * time.Millisecond)
+		// wait the DDL state change to `StateWriteOnly`
+		tblInfo, err := do.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		if state := tblInfo.Indices[0].State; state != model.StatePublic {
+			require.Equal(t, model.StateWriteOnly, state)
+			break
+		}
+		if time.Since(start) > time.Minute {
+			require.FailNow(t, "timeout")
+		}
+	}
+
+	// tk2 is used to do some operations when DDL is in state `WriteOnly`.
+	// In this state, the dropping index is still written.
+	// We set `@@tidb_txn_assertion_level='STRICT'` to detect any inconsistency.
+	tk2.MustExec("set @@tidb_txn_assertion_level='STRICT'")
+	tk2.MustExec("begin pessimistic")
+	// insert new values.
+	tk2.MustExec("insert into t values(4, 4), (5, 5), (6, 6)")
+	// delete some rows: 1 in storage, 1 in memory buffer.
+	tk2.MustExec("delete from t where a in (1, 4)")
+	// update some rows: 1 in storage, 1 in memory buffer.
+	tk2.MustExec("update t set a = a + 10 where a in (2, 6)")
+	// should be tested in `StateWriteOnly` state.
+	tblInfo, err := tk2.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.StateWriteOnly, tblInfo.Indices[0].State)
+	// commit should success without any assertion fail.
+	tk2.MustExec("commit")
 }

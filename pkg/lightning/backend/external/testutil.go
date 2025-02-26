@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +54,8 @@ func testReadAndCompare(
 		math.MaxInt64,
 		4*1024*1024*1024,
 		math.MaxInt64,
+		math.MaxInt64,
+		math.MaxInt64,
 	)
 	require.NoError(t, err)
 
@@ -63,7 +65,7 @@ func testReadAndCompare(
 	kvIdx := 0
 
 	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
 		curEnd := dbkv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {

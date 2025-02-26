@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/tikv/client-go/v2/oracle"
@@ -85,7 +84,7 @@ func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServic
 	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
 
 	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
-	if lastSafePoint > sp.BackupTS-1 {
+	if lastSafePoint > sp.BackupTS-1 && sp.TTL > 0 {
 		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
 			zap.Uint64("lastSafePoint", lastSafePoint),
 			zap.Object("safePoint", sp),
@@ -142,14 +141,4 @@ func StartServiceSafePointKeeper(
 		}
 	}()
 	return nil
-}
-
-type FakePDClient struct {
-	pd.Client
-	Stores []*metapb.Store
-}
-
-// GetAllStores return fake stores.
-func (c FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, c.Stores...), nil
 }

@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -77,11 +77,11 @@ func newTableRestore(t *testing.T,
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbInfo.ID, db, ti.Core)
+		return m.CreateTableOrView(dbInfo.ID, ti.Core)
 	})
 	require.NoError(t, err)
 

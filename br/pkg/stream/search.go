@@ -16,15 +16,11 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	writeCFName   = "write"
-	defaultCFName = "default"
 )
 
 // Comparator is used for comparing the relationship of src and dst
@@ -198,9 +194,9 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	writeCFEntries := make(map[string]*StreamKVInfo, 64)
 
 	for entry := range entriesCh {
-		if entry.CFName == writeCFName {
+		if entry.CFName == consts.WriteCF {
 			writeCFEntries[entry.EncodedKey] = entry
-		} else if entry.CFName == defaultCFName {
+		} else if entry.CFName == consts.DefaultCF {
 			defaultCFEntries[entry.EncodedKey] = entry
 		}
 	}
@@ -246,7 +242,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 			return errors.Annotatef(err, "decode raw key error, file: %s", dataFile.Path)
 		}
 
-		if dataFile.Cf == writeCFName {
+		if dataFile.Cf == consts.WriteCF {
 			rawWriteCFValue := new(RawWriteCFValue)
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
 				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
@@ -267,7 +263,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 				ShortValue: valueStr,
 			}
 			ch <- kvInfo
-		} else if dataFile.Cf == defaultCFName {
+		} else if dataFile.Cf == consts.DefaultCF {
 			kvInfo := &StreamKVInfo{
 				CFName:     dataFile.Cf,
 				StartTs:    ts,

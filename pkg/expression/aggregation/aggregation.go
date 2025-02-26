@@ -79,11 +79,11 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression
 	case tipb.ExprType_Max:
 		aggF := newAggFunc(ast.AggFuncMax, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
-		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
+		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType(ctx.GetEvalCtx()).GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Min:
 		aggF := newAggFunc(ast.AggFuncMin, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
-		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
+		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType(ctx.GetEvalCtx()).GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_First:
 		aggF := newAggFunc(ast.AggFuncFirstRow, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
@@ -133,6 +133,23 @@ const (
 	Partial2Mode
 	DedupMode
 )
+
+// ToString show the agg mode.
+func (a AggFunctionMode) ToString() string {
+	switch a {
+	case CompleteMode:
+		return "complete"
+	case FinalMode:
+		return "final"
+	case Partial1Mode:
+		return "partial1"
+	case Partial2Mode:
+		return "partial2"
+	case DedupMode:
+		return "deduplicate"
+	}
+	return ""
+}
 
 type aggFunction struct {
 	*AggFuncDesc
@@ -215,17 +232,20 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 }
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
-func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
+	if !checkVectorAggPushDown(ctx, aggFunc) {
+		return false
+	}
 	ret := true
 	switch storeType {
 	case kv.TiFlash:
-		ret = CheckAggPushFlash(aggFunc)
+		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
 		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
@@ -236,10 +256,26 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	return ret
 }
 
+// checkVectorAggPushDown returns false if this aggregate function is not supported to push down.
+// - The aggregate function is not calculated over a Vector column (returns true)
+// - The aggregate function is calculated over a Vector column and the function is supported (returns true)
+// - The aggregate function is calculated over a Vector column and the function is not supported (returns false)
+func checkVectorAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
+	switch aggFunc.Name {
+	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
+		return true
+	default:
+		if aggFunc.Args[0].GetType(ctx).GetType() == mysql.TypeTiDBVectorFloat32 {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
-func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+func CheckAggPushFlash(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	for _, arg := range aggFunc.Args {
-		if arg.GetType().GetType() == mysql.TypeDuration {
+		if arg.GetType(ctx).GetType() == mysql.TypeDuration {
 			return false
 		}
 	}
@@ -248,7 +284,7 @@ func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 		return true
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
-		return aggFunc.Args[0].GetType().GetType() != mysql.TypeJSON
+		return aggFunc.Args[0].GetType(ctx).GetType() != mysql.TypeJSON
 	}
 	return false
 }

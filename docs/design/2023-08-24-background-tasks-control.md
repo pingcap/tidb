@@ -8,7 +8,7 @@
 
 Resource control is used to solve some problems of resource usage under data consolidation. We can currently control some normal query tasks by means of RU limiter and scheduling. But it's not an adaptation for some background or bulk import/export tasks very well.
 
-Due to the implementation restriction, resource control can't be applied for some tasks such as BR and TiDB Lightning. And for some long-running tasks such as DDL or background auto-analyze, it's also hard to control the resource usage becase it's not easy to select a proper RU settrings for these kind of jobs.
+Due to the implementation restriction, resource control can't be applied for some tasks such as BR and TiDB Lightning. And for some long-running tasks such as DDL or background auto-analyze, it's also hard to control the resource usage because it's not easy to select a proper RU settings for these kind of jobs.
 
 ## Design Goals
 
@@ -35,7 +35,7 @@ CREATE/ALTER RESOURCE GROUP rg1
     [ BACKGROUND = ( TASK_TYPES = "br,analyze" ) ];
 ```
 
-Currently, we only support set the task types that should be controlled in the background manner. We may extend this interface to include more setttings such as task priority in the future.
+Currently, we only support set the task types that should be controlled in the background manner. We may extend this interface to include more settings such as task priority in the future.
 
 If a resource group's background setting is not set, we automatically apply the `default` resource group's settings to this group.
 
@@ -55,7 +55,7 @@ In order to control the background tasks' resource usage, we plan to add an extr
 
 ![background-control.png](imgs/background-control.png)
 
-- Control the resource usage of all background tasks by the Resource Limiter: The rate limit is dynamically adjusted to the value via the formula TiKVTotalRUCapcity - sum(RUCostRateOfForgroundTasks), with a fine-grained adjusting duration, we can ensure the foreground tasks' RU is always enough(or near the system's maximum if the foreground requirement reaches the maximum quota), so the background tasks' impact on foreground tasks should be very low; on the other hand,  when the foreground resource consumption is low, the controller should increase the limit threshold, so background jobs can take advantage of the remaining resources.
+- Control the resource usage of all background tasks by the Resource Limiter: The rate limit is dynamically adjusted to the value via the formula TiKVTotalRUCapacity - sum(RUCostRateOfForegroundTasks), with a fine-grained adjusting duration, we can ensure the foreground tasks' RU is always enough(or near the system's maximum if the foreground requirement reaches the maximum quota), so the background tasks' impact on foreground tasks should be very low; on the other hand,  when the foreground resource consumption is low, the controller should increase the limit threshold, so background jobs can take advantage of the remaining resources.
 - The local resource manager will statics RU consumption of background jobs via the Resource Limiter: We will do statistics and report the resource consumption to the global resource manager. In the first stage, we only do statistics globally but control it locally.
 - Feedback mechanism: It's better to give feedback on how fast the limiter layer executes tasks on tikv to the upper layer like tidb, so that the upper layer task framework can adjust the number of tasks.
 
@@ -134,7 +134,7 @@ impl Future for LimitedFuture {
 
 In our implementation, we integrate this rate limiter in the following components so it can cover most use cases:
 
-- Coprocessor. All SQL read requests are handled via the coprocessor component, this can ensure all read reuqests are covered.
+- Coprocessor. All SQL read requests are handled via the coprocessor component, this can ensure all read requests are covered.
 - Txn Scheduler. The write requests in tikv are handled via multiple threadpools via a pipeline manner, to make things simple, we only apply the rate limiter in the first phase, that is, the txn scheduler worker pool. Though this is not ideal, the result is acceptable in our benchmark. We may enhance this mechanism in the future.
 - Backup. We apply the rate limiter in backup kv scan and sst upload procedure.
 - SST Service. Most sst relate operations are handled via the sst service. This ensure BR, TiDB Lightning and DDL(fast mode) can be controlled.

@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -49,13 +51,14 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	}
 
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
-	for _, dbName := range is.AllSchemaNames() {
-		for _, tbl := range is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
+
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}
-
+			dbName := v.DBName
 			logger := logutil.BgLogger().
 				With(zap.String("schema", dbName.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
@@ -71,7 +74,6 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 			}
 
 			for _, par := range tblInfo.Partition.Definitions {
-				par := par
 				ttlTable, err := isc.newTable(dbName, tblInfo, &par)
 				if err != nil {
 					logger.Warn("fail to build info schema cache",
@@ -90,7 +92,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	return nil
 }
 
-func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInfo,
+func (isc *InfoSchemaCache) newTable(schema ast.CIStr, tblInfo *model.TableInfo,
 	par *model.PartitionDefinition) (*PhysicalTable, error) {
 	id := tblInfo.ID
 	if par != nil {
@@ -104,7 +106,7 @@ func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInf
 		}
 	}
 
-	partitionName := model.NewCIStr("")
+	partitionName := ast.NewCIStr("")
 	if par != nil {
 		partitionName = par.Name
 	}

@@ -44,7 +44,7 @@ check_contains 'sum(id): 28'
 check_contains 'sum(k): 32'
 
 # Verify the log contains the expected messages at the last few lines
-tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
+tail -50 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
 check_contains '["tables failed to be imported"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
 check_contains '[-] [table=`error_summary`.`a`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 check_contains '[-] [table=`error_summary`.`c`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"

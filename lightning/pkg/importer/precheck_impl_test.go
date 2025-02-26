@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -641,7 +642,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	)
 	checkEtcdPut(
 		"/tidb/cdc/default/default/changefeed/info/test-1",
-		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"failed","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"finished","error":null,"creator-version":"v6.5.0-master-dirty"}`,
 	)
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test")
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
@@ -682,4 +683,50 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().True(result.Passed)
 	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
+}
+
+func (s *precheckImplSuite) TestPDTiDBFromSameCluster() {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	s.Require().NoError(err)
+	pdAddrGetter := func(ctx context.Context) []string {
+		return []string{"https://1.2.3.4:2379", "http://127.0.0.1:2379"}
+	}
+
+	// check wrong host and port
+	mock.ExpectQuery(`SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'`).
+		WillReturnRows(sqlmock.NewRows([]string{"STATUS_ADDRESS"}).
+			AddRow("1.2.3.4:2380").AddRow("10.20.30.40:2379"),
+		)
+
+	checker := NewPDTiDBFromSameClusterCheckItem(db, pdAddrGetter)
+	result, err := checker.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed)
+	s.Require().Equal(
+		"PD and TiDB in configuration are not from the same cluster, "+
+			"PD addresses read from PD are: [1.2.3.4:2379 127.0.0.1:2379], "+
+			"PD addresses read from TiDB are [1.2.3.4:2380 10.20.30.40:2379]",
+		result.Message)
+
+	// check partial match is enough
+	mock.ExpectQuery(`SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'`).
+		WillReturnRows(sqlmock.NewRows([]string{"STATUS_ADDRESS"}).
+			AddRow("1.2.3.4:2379"),
+		)
+	checker = NewPDTiDBFromSameClusterCheckItem(db, pdAddrGetter)
+	result, err = checker.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().True(result.Passed)
+
+	mock.ExpectQuery(`SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'`).
+		WillReturnRows(sqlmock.NewRows([]string{"STATUS_ADDRESS"}).
+			AddRow("2.3.4.5:2379").AddRow("3.4.5.6:2379").AddRow("1.2.3.4:2379"),
+		)
+	checker = NewPDTiDBFromSameClusterCheckItem(db, pdAddrGetter)
+	result, err = checker.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().True(result.Passed)
+
+	s.Require().NoError(mock.ExpectationsWereMet())
 }

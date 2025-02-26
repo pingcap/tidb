@@ -59,7 +59,7 @@ func main() {
 		}
 		for _, idxInfo := range table.tblInfo.Indices {
 			offset := idxInfo.Columns[0].Offset
-			if hist, ok := statsInfo.Indices[idxInfo.ID]; ok && len(hist.Buckets) > 0 {
+			if hist := statsInfo.GetIdx(idxInfo.ID); hist != nil && len(hist.Buckets) > 0 {
 				table.columns[offset].hist = &histogram{
 					Histogram: hist.Histogram,
 					index:     hist.Info,
@@ -67,7 +67,7 @@ func main() {
 			}
 		}
 		for i, colInfo := range table.tblInfo.Columns {
-			if hist, ok := statsInfo.Columns[colInfo.ID]; ok && table.columns[i].hist == nil && len(hist.Buckets) > 0 {
+			if hist := statsInfo.GetCol(colInfo.ID); hist != nil && table.columns[i].hist == nil && len(hist.Buckets) > 0 {
 				table.columns[i].hist = &histogram{
 					Histogram: hist.Histogram,
 				}

@@ -611,5 +611,34 @@
       "select * from t where b=1 and c='1' and d='1';",
       "select * from t where b in (1,2,3) and c in ('1');"
     ]
+  },
+  {
+    "name": "TestAlwaysTruePredicateWithSubquery",
+    "cases" : [
+      "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+    ]
+  },
+  {
+    "name": "TestExplainExpand",
+    "cases": [
+      "explain format = 'brief' select count(1) from t group by a, b with rollup; -- 1. simple agg",
+      "explain format = 'brief' select sum(c), count(1) from t group by a, b with rollup; -- 2. non-grouping set col c",
+      "explain format = 'brief' select count(a) from t group by a, b with rollup; -- 3. should keep the original col a",
+      "explain format = 'brief' select grouping(a) from t group by a, b with rollup; -- 4. contain grouping function ref to grouping set column a",
+      "explain format = 'brief' select grouping(a,b) from t group by a, b with rollup; -- 5. grouping function contains grouping set column a,c",
+      "explain format = 'brief' select a, grouping(b,a) from t group by a,b with rollup; -- 6. resolve normal column a to grouping set column a'",
+      "explain format = 'brief' select a+1, grouping(b) from t group by a+1, b with rollup; -- 7. resolve field list a+1 to grouping set column a+1",
+      "explain format = 'brief' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
+      "explain format = 'brief' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
+      "explain format = 'brief' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
+      "explain format = 'brief' SELECT year+2 as y, SUM(profit) AS profit, grouping(year+2) FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 11. grouping function validation",
+      "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
+      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
+      "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
+      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
+      "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
+    ]
   }
 ]

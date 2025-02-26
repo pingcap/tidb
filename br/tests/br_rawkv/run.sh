@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eux
 
 # restart service without tiflash
@@ -186,5 +192,3 @@ run_test ""
 
 # ingest "region error" to trigger fineGrainedBackup, only one region error.
 run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
-# all regions failed.
-run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=return(\"region error\")"

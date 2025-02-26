@@ -34,3 +34,499 @@ c0
 2
 3
 commit;
+create table t_tjov (
+c_irfjyds3 int ,
+c_mzh text not null ,
+c_k4duc4l int ,
+c_tutmh1 double ,
+c_qk text ,
+c_kq8lwb tinyint not null unique ,
+primary key(c_irfjyds3) CLUSTERED) pre_split_regions=2;
+update t_tjov set
+c_mzh = t_tjov.c_qk,
+c_k4duc4l = abs(
+cast(t_tjov.c_irfjyds3 as signed)),
+c_qk = t_tjov.c_qk
+where ((t_tjov.c_k4duc4l between round(
+cast(t_tjov.c_irfjyds3 as signed)) and t_tjov.c_k4duc4l))
+or ((t_tjov.c_mzh not like '_kjf2'));
+insert into t_tjov (c_irfjyds3, c_mzh, c_k4duc4l, c_tutmh1, c_qk, c_kq8lwb) values
+(-932054614, 'w37fcer', 153633688, 57.12, 'dlui', coalesce((NOT NOT(cast( (cast(74.85 as double) < cast(3076125 as signed)) as unsigned))), 40)),
+(-1265832264, '_ob', 694248426, 32766.4, 'jute', coalesce(0<>0, -79)),
+(1692830483, 'srvcmwp', 1682550193, 12.14, 'lbiakexz', coalesce(((NOT NOT(cast( (cast(-5614534075836329410 as signed) >= cast(cast(null as decimal) as decimal)) as unsigned))))
+or (((NOT NOT(cast( (cast(cast(null as char) as char) > cast(cast(null as char) as char)) as unsigned))))
+or ((1=1)
+and (('y0avd3' like 'bprds%%')))), 102)),
+(532891091, 'yre', -972462244, 49.4, 'mehsld7pb', coalesce((NOT NOT(cast( (cast(1659175363498062987 as signed) >= cast((NOT NOT(cast( (cast(53.10 as double) <> cast(cast(null as double) as double)) as unsigned))) as unsigned)) as unsigned))), 35));
+create index t_xs_idx_1 on t_tjov (c_irfjyds3, c_k4duc4l, c_tutmh1, c_kq8lwb);
+create table t_db8a (
+c_t9 int not null ,
+c_d double unique ,
+c_jr2kq78hqt tinyint not null unique ,
+c_yh_3 int ,
+primary key(c_yh_3) CLUSTERED) pre_split_regions=7;
+insert into t_db8a (c_t9, c_d, c_jr2kq78hqt, c_yh_3) values
+(580177243, 48.77, coalesce((NOT NOT(cast( (cast(null as decimal) = -3250316) as unsigned))), -2), -1034163307),
+(-885427247, 9223372036854775806.8, coalesce((586563100 not in (
+cast(cast(null as signed) as signed), cast(null as signed), 1650864735, 1618044220, -1403578365)), -119), 1512435574),
+(1090731830, 50.8, coalesce((NOT NOT(cast( (82.52 || cast(null as signed)) as unsigned))), -14), -252993503),
+(312093140, 2147483649.9, coalesce((-1838213491 between 1542236936 and 1889086007), -97), 2059252966);
+update t_tjov set
+c_irfjyds3 = case when (t_tjov.c_irfjyds3 between round(
+cast(t_tjov.c_k4duc4l as signed)) and cast(nullif(
+t_tjov.c_k4duc4l,
+t_tjov.c_irfjyds3
+) as signed)) then cast(nullif(
+t_tjov.c_k4duc4l,
+484721586
+) as signed) else t_tjov.c_irfjyds3 end
+,
+c_k4duc4l = t_tjov.c_k4duc4l,
+c_tutmh1 = t_tjov.c_tutmh1,
+c_qk = t_tjov.c_qk
+where (NOT NOT(cast( (cast(-10747 as signed) >= cast(cast( (cast(t_tjov.c_tutmh1 as double) * cast(0<>0 as unsigned)) as double) as double)) as unsigned)));
+insert into t_tjov
+select
+abs(
+cast(subq_0.c0 as signed)) as c0,
+'j2' as c1,
+abs(
+cast(subq_0.c0 as signed)) as c2,
+28.49 as c3,
+'omrwa' as c4,
+('ah' like 'm0u%k') as c5
+from
+(select
+is_ipv4(
+cast('_zf8qf4qva' as char)) as c0
+from
+t_db8a as ref_0
+where (((ref_0.c_d is NULL))
+or ((ref_0.c_yh_3 = (
+select
+271345048 as c0
+from
+t_db8a as ref_1
+where (EXISTS (
+select
+ref_2.c_jr2kq78hqt as c0,
+ref_2.c_d as c1,
+ref_1.c_yh_3 as c2
+from
+t_db8a as ref_2
+where 0<>0
+order by c0, c1, c2 desc
+limit 83))
+order by c0 desc
+limit 1))))
+or (0<>0)) as subq_0
+where ((subq_0.c0 is NULL))
+and ((NOT NOT(cast( (cast(9223372036854775807.6 as double) || cast(subq_0.c0 as signed)) as unsigned))));
+create index t_dcscox3_x_idx_1 on t_db8a (c_jr2kq78hqt);
+create table t_n (
+c_tf_us39fv int not null ,
+c_pf6z4p int ,
+c_v13rl double ,
+c_fr3uo int not null ,
+c_v double ,
+c_mm8jnf tinyint ,
+c__57bl_eu6 double ,
+primary key(c_fr3uo) CLUSTERED) pre_split_regions=4;
+delete from t_tjov
+where
+(NOT NOT(cast( (t_tjov.c_qk <> substring(
+cast(substring(
+cast(t_tjov.c_mzh as char),
+cast(t_tjov.c_irfjyds3 as signed),
+cast(abs(
+cast(t_tjov.c_irfjyds3 as signed)) as signed)) as char),
+cast(case when (NOT NOT(cast( (cast(t_tjov.c_k4duc4l as signed) XOR cast(t_tjov.c_tutmh1 as double)) as unsigned))) then cast(t_tjov.c_kq8lwb as signed) else cast(t_tjov.c_k4duc4l as signed) end
+as signed),
+cast((select c_jr2kq78hqt from t_db8a order by c_jr2kq78hqt limit 1 offset 2)
+as signed))) as unsigned)));
+insert into t_tjov (c_irfjyds3, c_mzh, c_k4duc4l, c_tutmh1, c_qk, c_kq8lwb) values
+(190638753, 'tasm', 1056083104, 99.13, 'dwu82uofj', coalesce((((cast(cast(null as signed) as signed) not in (
+cast(cast(null as signed) as signed))))
+and ((NOT NOT(cast( (cast(54.24 as double) < cast(cast(null as signed) as signed)) as unsigned)))))
+or ((0<>0)
+or ((NOT NOT(cast( (cast(-2837358340031519753 as signed) > cast(cast(null as decimal) as decimal)) as unsigned))))), -23)),
+(-209345204, 'r', -1251857596, 2147483649.6, 'h7', coalesce(((NOT NOT(cast( (cast(98.7 as double) <> cast(254.7 as double)) as unsigned))))
+and ((-16183390 not in (
+-2121949782, 1195710096, cast(null as signed)))), 84)),
+(219747276, 'rkd', cast(cast(null as signed) as signed), 52.100, 'hj26dzinn', coalesce((NOT NOT(cast( (cast(null as decimal) && cast(null as decimal)) as unsigned))), -77)),
+(336534805, 'im8f9c', -84222469, 32767.1, 'x61p6f90', coalesce((806574107 between -1449873070 and cast(null as signed)), 46));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(112390679, 1418345021, 76.70, -1191314671, 85.65, (NOT NOT(cast( (cast(4294967294.3 as double) || cast(2.64 as double)) as unsigned))), cast(null as double)),
+(722265176, 1467506038, 4294967294.5, -891772058, 84.76, (NOT NOT(cast( (cast(cast(null as char) as char) <> cast(cast(null as char) as char)) as unsigned))), cast(null as double)),
+(123668208, -680585440, 32767.9, 1054800957, 81.21, (NOT NOT(cast( ((NOT NOT(cast( (cast(83.65 as double) > cast(1=1 as unsigned)) as unsigned))) && 11.84) as unsigned))), cast(null as double)),
+(-1802080206, 1085070136, 77.68, -969300417, 92.17, (-1935693142 is not NULL), 21.5);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1848902104, 1294552399, 32767.9, 1135018897, 20.78, 1=1, 65535.2),
+(-541529106, -218416925, 65.37, 2136058070, cast(null as double), (NOT NOT(cast( (22308 >= 1466486665) as unsigned))), 126.0),
+(224595330, 1141952663, cast(null as double), 2079807215, 27.86, (-1342622966 between 1682242404 and -575575418), 32769.0),
+(1490886431, 1194092900, 38.63, -817657823, 4294967297.8, (NOT NOT(cast( (cast(-1492692245 as signed) || cast(-17070 as signed)) as unsigned))), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1959205612, cast(cast(null as signed) as signed), 18446744073709551614.8, -1232522545, 40.31, (NOT NOT(cast( (15.51 || -703391789) as unsigned))), 74.9),
+(-1657104660, -1088940385, 127.3, -1601191179, cast(null as double), (NOT NOT(cast( (cast(-8613730477530125431 as signed) != cast((NOT NOT(cast( (cast(cast(null as char) as char) = cast(cast(null as char) as char)) as unsigned))) as unsigned)) as unsigned))), 33.30),
+(1157817674, 1790829591, 127.5, -836814231, 18446744073709551616.9, (NOT NOT(cast( (cast(1=1 as unsigned) = cast(cast(null as double) as double)) as unsigned))), 27.89),
+(-1476540312, 1335915749, 73.9, 371657190, 87.26, (NOT NOT(cast( (cast(cast(null as signed) as signed) < cast(100.37 as double)) as unsigned))), 96.38);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1501397682, cast(cast(null as signed) as signed), 70.13, -1636783123, 9223372036854775809.8, 0<>0, 13.74),
+(524931015, 46980517, 4294967296.2, -966321169, 58.44, (1742823349 in (
+1295600076, 1177358812, 1239653717)), 4294967297.6),
+(-1253049478, -997622599, 2147483648.3, 316816526, cast(null as double), (146566304 between -2010488977 and -603615163), 4294967295.0),
+(-951699598, 1797233435, 43.52, 1001305632, 72.63, 0<>0, 11.23);
+insert into t_tjov (c_irfjyds3, c_mzh, c_k4duc4l, c_tutmh1, c_qk, c_kq8lwb) values
+(706311080, 'jk1xfmi', -332724902, 41.72, cast(null as char), coalesce((NOT NOT(cast( (cast(-1837821939 as signed) <> cast(cast(null as decimal) as decimal)) as unsigned))), 71)),
+(121748290, 'ux1', -1754931754, cast(null as double), 'pmz2m1wofz', coalesce((NOT NOT(cast( (cast('f' as char) <= cast(cast(null as char) as char)) as unsigned))), 10)),
+(-1824411284, 'qv40o', 265031365, 4294967296.1, 'tc1zj', coalesce((NOT NOT(cast( (cast(null as decimal) < 3084179) as unsigned))), 56)),
+(784077105, 'vt8gz39m_f', 976086031, 2147483648.3, 'cfygszhw19', coalesce(((NOT NOT(cast( (cast(621597153 as signed) < cast(cast(null as decimal) as decimal)) as unsigned))))
+and (0<>0), -116));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1657186756, -1943262988, 14.22, 1752671759, 9223372036854775806.1, (-951966731 between -570851320 and 293875873), 55.83),
+(1702807616, -1354393768, cast(null as double), -1891852624, 129.9, (0<>0)
+or ((cast(cast(null as signed) as signed) not in (
+cast(null as signed), 1680530723, -625157436, -1945095305, -2042337070))), 1.96),
+(1648323837, -1418887915, cast(null as double), -1090179229, 18446744073709551614.8, 1=1, 96.14),
+(-118753376, 513952801, 43.36, 45233259, 65.2, (cast(cast(null as signed) as signed) not in (
+cast(cast(null as signed) as signed), 1027482432, 1778975274, 1485416494)), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1964881785, -737997688, cast(null as double), -458669186, 69.91, ((NOT NOT(cast( (cast(-419738499 as signed) || cast(-926450890 as signed)) as unsigned))))
+or ((0<>0)
+and ((NOT NOT(cast( (cast(9223372036854775807.9 as double) || cast(1710020851 as signed)) as unsigned))))), 84.49),
+(-7216598, 1625616878, 100.85, -359244111, cast(null as double), 1=1, 84.7),
+(2141928022, 1516962202, 80.93, 457293938, 46.11, (-1817543858 not in (
+-399531202, 404645547)), 15.88),
+(278360302, cast(cast(null as signed) as signed), 87.2, 966828001, 56.66, 1=1, 4294967296.5);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-2127956293, -2123598908, 28.75, -1438902812, 2147483646.5, ((NOT NOT(cast( (4294967297.6 || 254.8) as unsigned))))
+and ((-1780407389 is not NULL)), 89.65),
+(1017031325, 1836402582, 18446744073709551616.3, -499024646, cast(null as double), (('_' like 'pl%fj52'))
+and (1=1), 69.85),
+(-330778188, -200250878, 61.39, 1668164734, 129.3, 1=1, 65537.7),
+(-774073358, -50414215, 33.11, 1883285447, 91.25, 1=1, 32767.2);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1901609213, -397181908, 65537.9, 1206280609, 95.28, 1=1, 33.88),
+(-329680759, 686879299, 31.94, 1240086422, 68.21, ('u4gd_3wrm1' not like 'j5mw_tg%'), cast(null as double)),
+(-830355043, 1105494945, 9223372036854775808.6, -96406182, 4.61, (0<>0)
+or (('a_wab' not like 'r_0g_zo7y')), 9223372036854775809.0),
+(1612591161, 1502804180, 50.7, -1838996452, 256.0, (-767840678 between 1718697067 and -1126133856), 9223372036854775807.4);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-536128527, 478467901, 90.67, 1319292384, 14.2, (NOT NOT(cast( (4294967297.5 <= 1639076078) as unsigned))), 18446744073709551614.4),
+(-1718668286, 1286809343, 256.5, -867569210, 9223372036854775808.6, ('l9z2yif' not like 'r%'), 9223372036854775809.0),
+(770418292, 1460242744, 49.63, 290800698, 85.91, ((-815201180 between 2069884989 and 729078369))
+or ((cast(cast(null as signed) as signed) in (
+cast(null as signed)))), 254.5),
+(1830023926, 1693578846, cast(null as double), 229007735, 81.56, ((-386926913 is NULL))
+or ((-1810166476 not in (
+-1508096653, 335322583))), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1777121846, -1686283305, 28.60, -1474706297, 256.7, (NOT NOT(cast( (cast(null as char) = cast(null as char)) as unsigned))), 4294967296.2),
+(375686697, cast(cast(null as signed) as signed), 28.56, 1964967686, 19.81, (900611573 between -1229701638 and cast(null as signed)), 4294967296.2),
+(1152784122, 406471045, 69.63, -1403845980, 70.22, (NOT NOT(cast( (cast(77.29 as double) != cast(18446744073709551616.8 as double)) as unsigned))), 69.7),
+(1868709479, -157543758, 31.56, -131659988, cast(null as double), ((1=1)
+or ((NOT NOT(cast( (cast(26.96 as double) = cast(-5758175 as signed)) as unsigned)))))
+and (('wlv2' not like 'b25h_0pfg%')), 24.49);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-96786893, -901765033, 93.56, -951591253, 82.86, ((1711066375 is not NULL))
+or ((NOT NOT(cast( (cast(null as double) != -382453) as unsigned)))), 4294967297.7),
+(1807932979, 87189742, 65536.4, -237765504, 88.75, 1=1, 58.43),
+(712617285, -665142399, 11.40, -1647795301, 2147483649.2, ('bfskte4' not like '%hm2hnj'), 33.52),
+(1722139040, -943742783, 254.0, -2092333256, 93.42, (-79948555 in (
+1399937108, -189701760, 548532656)), 13.14);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-73721387, -811951597, 97.79, 1253657601, 18446744073709551614.4, (NOT NOT(cast( (cast((NOT NOT(cast( (cast(cast(null as char) as char) >= cast('ur9p592iv' as char)) as unsigned))) as unsigned) || cast(cast(null as decimal) as decimal)) as unsigned))), 38.48),
+(-566163645, cast(cast(null as signed) as signed), 85.4, -549341830, 83.30, (-2028736036 not in (
+-1774928833, 1328799732, -2007387853)), 9223372036854775808.5),
+(-423269318, 1419057699, 35.44, 1365255175, cast(null as double), (NOT NOT(cast( (-30674 <> 24.42) as unsigned))), 66.75),
+(889363542, 252471764, 65.88, -1456313590, 46.74, (NOT NOT(cast( (cast(73.87 as double) XOR cast(cast(null as decimal) as decimal)) as unsigned))), 64.38);
+update t_tjov set
+c_qk = t_tjov.c_qk
+where (NOT NOT(cast( (cast(2639729924291429211 as signed) XOR cast(t_tjov.c_tutmh1 as double)) as unsigned)));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(202050913, -726605015, 255.2, 1804529354, 89.92, (109864579 in (
+1699504108, 1823301414, 1666614637, cast(null as signed))), 39.44),
+(-233439116, 534148198, 126.9, 1454711700, 12.22, ('xzkp3boqk' not like '_'), 12.36),
+(940266790, 1041195633, 82.85, 1244674471, 44.61, (-735725205 between 1451527715 and -467319386), 7.68),
+(-185738503, 592638241, 22.58, 1567818850, 72.41, (NOT NOT(cast( (cast(cast(null as signed) as signed) <> cast(cast(null as decimal) as decimal)) as unsigned))), 4294967295.2);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1803191281, -144227139, 87.97, 957352707, 47.95, (1137303059 between 1933664261 and -1804384725), 2147483649.2),
+(-775849790, -352812303, 4294967296.2, 225223865, 2147483648.100000, (0<>0)
+and ((NOT NOT(cast( (cast(-4821602350037004045 as signed) <=> cast(cast(null as signed) as signed)) as unsigned)))), 10.86),
+(1906971144, 988170817, 32769.1, -1032676254, 40.41, 1=1, cast(null as double)),
+(2003344282, cast(cast(null as signed) as signed), cast(null as double), 193873491, 2.76, (NOT NOT(cast( (cast(-6473404898816589857 as signed) <=> cast(4294967295.8 as double)) as unsigned))), 97.42);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1692803691, -458349128, 65.91, 1856171892, cast(null as double), ('g' not like '_5jh'), 47.25),
+(775074025, 1861696041, 63.92, 1649823346, 2147483647.5, ((NOT NOT(cast( (cast('z' as char) <= cast(cast(null as char) as char)) as unsigned))))
+or ((NOT NOT(cast( (cast(cast(null as char) as char) <=> cast('w' as char)) as unsigned)))), 13.87),
+(-573294454, 1941065015, 18446744073709551614.3, -103631690, 4294967294.5, ((-1573376596 in (
+755343497, 173859321, 1174973060, 2105143454)))
+or ((-1369457710 is NULL)), 53.1),
+(1766281922, 545687435, 41.35, 315120407, 32768.4, (-736503640 is NULL), 79.6);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1307584847, 1924839372, 16.40, 584632197, 33.78, (-806624327 between -1988787273 and -1632394547), 42.75),
+(-241357849, -1081529769, 18446744073709551614.2, -1874010932, cast(null as double), (NOT NOT(cast( (cast(cast(null as signed) as signed) <= cast(1941439660 as signed)) as unsigned))), cast(null as double)),
+(-478046437, -1692389519, cast(null as double), -815358404, 96.74, 0<>0, 65534.4),
+(-1420504095, 1668081802, 13.5, 1240609196, 2147483648.9, (719070679 between 1756710448 and 1552046174), 1.87);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1138029400, 1592536149, 128.3, -684187603, 255.6, (NOT NOT(cast( (cast('kwtgp0783' as char) = cast(cast(null as char) as char)) as unsigned))), 91.100),
+(118700020, cast(cast(null as signed) as signed), 10.72, -904194428, cast(null as double), ((NOT NOT(cast( (cast(-5367067 as signed) = cast(30.70 as double)) as unsigned))))
+and ((1=1)
+and (((NOT NOT(cast( (cast(cast(null as char) as char) > cast(cast(null as char) as char)) as unsigned))))
+and ((81621497 is not NULL)))), 4294967296.8),
+(1512307580, cast(null as signed), 65537.1, 878459201, 9223372036854775807.4, (NOT NOT(cast( (cast(null as char) = cast(null as char)) as unsigned))), 257.6),
+(1487518285, 929907204, 65537.0, 400194872, 4294967295.9, (cast(cast(null as signed) as signed) is NULL), 9223372036854775806.8);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-803817803, 1203423501, 4294967296.9, -814946591, 22.32, (NOT NOT(cast( (cast(cast(null as char) as char) = cast(cast(null as char) as char)) as unsigned))), 13.98),
+(2058525552, 362533945, 84.57, 716979833, 15.72, (NOT NOT(cast( (cast('s' as char) = cast('l79m' as char)) as unsigned))), 86.54),
+(-1031056066, 1554678457, 4.66, -1733696013, 35.77, (NOT NOT(cast( (cast(-555361694 as signed) > cast(-1180219339 as signed)) as unsigned))), cast(null as double)),
+(108401268, 1018082273, 46.6, 2125596133, cast(null as double), (NOT NOT(cast( (cast(cast(null as double) as double) XOR cast(-3181196 as signed)) as unsigned))), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1485273469, 137539087, 62.75, 2143902306, 50.23, (-1447358059 in (
+1624080830, 1570987436, 1496364306, 1146812569, 994561233)), 4294967296.3),
+(1471438314, 2015543479, 128.3, -1924337586, cast(null as double), 1=1, 59.85),
+(912405565, -314069948, 2147483647.0, 2124191551, 32769.3, (950173842 is NULL), 71.19),
+(-1949635883, 1151445603, 16.20, -1626375301, 44.88, (((NOT NOT(cast( (cast(cast(null as char) as char) < cast(cast(null as char) as char)) as unsigned))))
+or ((NOT NOT(cast( (cast(null as char) <> cast(null as char)) as unsigned)))))
+or ((622370639 between -356532824 and -1414517943)), 4294967296.3);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1190786766, 1632696882, cast(null as double), 1549903945, 9223372036854775809.8, (251471579 is not NULL), 21.57),
+(-1407687295, 75720546, 2147483649.0, 1235746135, 54.23, (NOT NOT(cast( (cast(92.69 as double) <= cast(8.50 as double)) as unsigned))), 18446744073709551615.2),
+(1003089517, -885341919, 39.44, -2117966830, 4294967294.1, (NOT NOT(cast( (cast(-6455799514409731514 as signed) <= cast(cast(null as double) as double)) as unsigned))), cast(null as double)),
+(-1547030672, -980542284, 2147483648.5, 1067473087, 89.29, (-2107436461 is not NULL), 18.84);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-431005934, 968475532, 129.9, -485389668, 48.41, 0<>0, 2147483647.9),
+(423089018, 1494781064, cast(null as double), -200859684, cast(null as double), (1745328374 is not NULL), cast(null as double)),
+(-2024241046, -464180571, 50.20, 409892419, 52.43, (cast(cast(null as signed) as signed) not in (
+57862433, -2005897203, 1291492411)), 40.51),
+(798899278, 1498585125, 129.0, 749554956, 65536.1, (616145844 not in (
+-845336641, 2078985180)), 93.56);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(992287662, 1059794604, 80.76, 1857204820, 67.8, 0<>0, 257.6),
+(-251617407, 727141066, 17.57, -1377655526, 4294967296.3, (NOT NOT(cast( (cast(1=1 as unsigned) >= cast(562416848 as signed)) as unsigned))), cast(null as double)),
+(508687428, -403797095, 18446744073709551614.6, -1788324927, 257.3, (NOT NOT(cast( (cast((-1351018205 between -1433002086 and -339025014) as unsigned) >= cast(cast(null as decimal) as decimal)) as unsigned))), 82.33),
+(646685, cast(cast(null as signed) as signed), 92.73, 1582712324, 64.1, 0<>0, 86.8);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(926041444, 754454753, 57.65, -1540605176, cast(null as double), (NOT NOT(cast( (cast(cast(null as decimal) as decimal) && cast(-8727486372912603787 as signed)) as unsigned))), cast(null as double)),
+(-671501037, -1518858944, 4294967296.5, -479179165, 256.1, (((2063836087 not in (
+2024517269, 841463459)))
+and (0<>0))
+or (0<>0), cast(null as double)),
+(-1958925741, 467095960, 77.85, 1554370390, 257.6, (-745989458 is NULL), 54.43),
+(-1618290422, -161237102, 76.73, 538730362, 49.69, (NOT NOT(cast( (cast(-26949 as signed) <= cast(-19746 as signed)) as unsigned))), 18446744073709551615.7);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1151099406, -1192802738, 4294967296.5, 1603456503, 60.29, (NOT NOT(cast( (cast(cast(null as signed) as signed) > cast(cast(null as double) as double)) as unsigned))), 65535.0),
+(-214371658, 742855726, 61.16, 747648303, 13.91, (NOT NOT(cast( (cast(17532 as signed) XOR cast(-4832242 as signed)) as unsigned))), cast(null as double)),
+(-1994399201, -2006592478, 39.70, -1065439627, 49.87, (1=1)
+or ((NOT NOT(cast( (cast(2380367 as signed) <> cast(573778432 as signed)) as unsigned)))), 23.15),
+(1747320149, -349629478, 19.100, -1058995736, cast(null as double), (NOT NOT(cast( (cast('_706' as char) = cast(cast(null as char) as char)) as unsigned))), 9223372036854775808.3);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1918313801, -2089704247, 2147483648.7, 255098326, 95.19, 1=1, 87.28),
+(1203077974, 2046007501, 99.34, 1943659813, 20.83, (NOT NOT(cast( (cast(cast(null as decimal) as decimal) >= cast(1599692914260222229 as signed)) as unsigned))), 32767.4),
+(-1485389576, 970803212, 73.3, -14238819, 83.23, (2108803326 in (
+1895013965, 1748692117, -97375564, -723055050)), 69.18),
+(-1382241502, -1820760164, 14.66, 1317534679, cast(null as double), (cast(cast(null as signed) as signed) in (
+1812842111, -869421286, -1502455336)), 9223372036854775809.5);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-184111223, 1821291922, cast(null as double), 1599748876, 18446744073709551617.9, 1=1, cast(null as double)),
+(2074338509, 1925280049, 64.52, -1219834653, 85.26, (NOT NOT(cast( (cast(null as char) > 'fz44w') as unsigned))), 69.28),
+(1870612334, 859376178, 78.3, 153528607, 53.92, (NOT NOT(cast( (cast(2646109 as signed) || cast(-2933195 as signed)) as unsigned))), 128.6),
+(-1937972700, 989311399, 257.9, 484447030, 39.39, (cast(null as signed) between 784397685 and -231307066), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1360259572, -1193211314, cast(null as double), 306282491, 18446744073709551614.5, (0<>0)
+or (((NOT NOT(cast( (cast(1934455581 as signed) <> cast(cast(null as decimal) as decimal)) as unsigned))))
+or (((210206656 in (
+1341478870, -1355349433, 855730336, -958106715, 1768692034)))
+and ((NOT NOT(cast( (cast(cast(null as char) as char) < cast('xljv5m' as char)) as unsigned)))))), 257.8),
+(1388420306, 1997451829, 71.33, 305958992, 65.37, (1019910313 is not NULL), 77.26),
+(1921097515, 213099308, 15.70, -68578669, 18446744073709551615.8, (NOT NOT(cast( (cast(-10849 as signed) > cast(79.83 as double)) as unsigned))), 2147483648.8),
+(-311822909, -1915402390, 15.82, 602552786, 126.0, 0<>0, cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1912362299, 1539217190, 257.7, 1377596346, 257.6, (1272584007 is not NULL), 65535.0),
+(-231266252, -1384233676, 94.41, -171911705, 2147483646.3, (NOT NOT(cast( (cast('c6ppl' as char) <> cast('x6m7oe' as char)) as unsigned))), 18446744073709551617.3),
+(2040343667, 1814736751, 2147483649.4, 429804432, 40.27, 1=1, 65537.6),
+(-1614590979, -1091616644, 47.7, 1519983939, 13.95, (1354396355 between -173345040 and -1046479757), 257.5);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(227428089, -963365259, 9223372036854775807.4, -1573070160, 29.94, 0<>0, 56.26),
+(154206117, -964074657, 1.45, -1164301348, 2147483648.6, 0<>0, 55.31),
+(-938881422, 894674592, 2147483646.8, 1786063491, 32768.5, (-2021384728 is not NULL), 257.2),
+(88248029, -1381239637, 64.95, 80796726, 18446744073709551616.0, ((cast(null as char) not like '_jdy%lu'))
+or (1=1), 32.70);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(12928834, 764622174, 5.62, 1829244914, 257.6, (NOT NOT(cast( (cast(-10034 as signed) = cast(96.80 as double)) as unsigned))), 2147483649.5),
+(1281945509, -1125929854, 2.51, 1435017323, cast(null as double), 0<>0, 2147483646.7),
+(-1487950767, -1292299233, 53.51, -1663229572, 9.35, (517192622 not in (
+-1296905114, 648632902, 667921084, 552236416, -770371962)), cast(null as double)),
+(1397966469, 2108407994, 255.6, -713119010, 32766.7, (NOT NOT(cast( (cast((785564098 between cast(cast(null as signed) as signed) and 957643081) as unsigned) <> cast(0<>0 as unsigned)) as unsigned))), 83.10);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1718799977, 2039618993, 24.52, 1826405959, 18446744073709551615.7, (NOT NOT(cast( (cast(8691659948650356945 as signed) = cast(279903385 as signed)) as unsigned))), 75.90),
+(160545244, cast(cast(null as signed) as signed), 98.48, -477173245, 32.7, ('g2cx0m4' like 'c5%7'), 58.95),
+(871368593, 90338238, 65.91, -1704037569, 2147483647.3, 0<>0, 89.93),
+(-1742670408, -976096734, 5.43, 1363396633, cast(null as double), (NOT NOT(cast( (cast(cast(null as char) as char) <=> cast(cast(null as char) as char)) as unsigned))), 18446744073709551616.8);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1443324965, -189346859, 5.59, 220348359, 78.83, (NOT NOT(cast( (-809604812 <=> -1034915368) as unsigned))), 27.51),
+(44279714, -299969275, cast(null as double), -223322456, 71.31, (-749252651 is NULL), 30.96),
+(195102797, -991940610, 21.58, 1877463950, 65534.6, (cast(null as signed) between -1174842201 and 543317174), 24.70),
+(124415710, -864531240, 18446744073709551615.1, -1028661742, 4294967295.9, (NOT NOT(cast( (cast(cast(null as signed) as signed) && cast(1687754935 as signed)) as unsigned))), 33.78);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1718449061, -1190306201, 10.81, -1377922257, 34.100, (NOT NOT(cast( (cast(cast(null as double) as double) || cast(-1456734899910041136 as signed)) as unsigned))), 62.78),
+(-1844942092, 1015472427, 34.76, 811648467, 52.17, ('v' not like 's%'), 58.33),
+(630716357, 1661169794, 2147483646.8, 666979662, 21.4, ('s6jbue' like 'x8%h'), 257.1),
+(-1326097991, 990110829, cast(null as double), 1960737437, cast(null as double), 0<>0, 36.57);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(123643811, cast(cast(null as signed) as signed), 65.79, -1515896132, 26.16, (NOT NOT(cast( (cast(95.88 as double) != cast(-8160878 as signed)) as unsigned))), 255.0),
+(-122799308, 867292784, 43.60, 403697588, 47.31, (NOT NOT(cast( (cast((-1590896948 not in (
+-266988998, 1722291799, 1322781646, 483821136)) as unsigned) <= cast(65535.9 as double)) as unsigned))), 9223372036854775806.1),
+(1911753212, 1858679439, cast(null as double), 349892938, 49.72, ((1807401979 is not NULL))
+and (1=1), 4294967297.9),
+(-799718023, 1151350996, cast(null as double), -566130061, cast(null as double), (-721310308 between -1387950267 and -1160102077), 65.47);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-764899021, 1091828652, 65536.9, -1586455862, 81.86, (NOT NOT(cast( (cast((NOT NOT(cast( (cast(-3150499 as signed) <=> cast(-394351557 as signed)) as unsigned))) as unsigned) || cast(256.3 as double)) as unsigned))), 50.34),
+(-1293220127, -1234577591, 73.31, -1677016656, 73.3, (NOT NOT(cast( (cast(null as decimal) > -1789669491678009127) as unsigned))), 95.4),
+(-331901868, -373377677, 2147483649.4, -743975899, 256.3, (NOT NOT(cast( (cast((NOT NOT(cast( (cast((NOT NOT(cast( (cast(cast(null as signed) as signed) <=> cast(0<>0 as unsigned)) as unsigned))) as unsigned) != cast(33.94 as double)) as unsigned))) as unsigned) <=> cast(29.94 as double)) as unsigned))), 62.28),
+(-67671879, cast(null as signed), 2147483648.8, -1562897951, 82.9, ('y35fdxzwe' not like 'vo5v5_c6y'), 89.54);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1942921419, 1903526740, 127.0, -645732449, 2147483648.100000, (NOT NOT(cast( (2783581 = 1395540343) as unsigned))), 54.63),
+(109043109, -1191419029, 3.97, 1616351368, 254.2, (NOT NOT(cast( (cast(-3035743648056475883 as signed) > cast(85.75 as double)) as unsigned))), 97.38),
+(-1302914361, 1678405890, 32767.8, 650365517, 44.1, (NOT NOT(cast( (cast(7576859 as signed) != cast(cast(null as double) as double)) as unsigned))), 32.84),
+(384048774, 658253263, 9223372036854775809.6, 452481433, 18446744073709551615.2, (1525759257 between -1220071225 and 612122169), 32769.9);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-2009585616, 1832837680, 4294967297.5, 1317012644, 257.1, ((1=1)
+and ((NOT NOT(cast( (cast(-4226 as signed) <= cast(1549047655 as signed)) as unsigned)))))
+or (0<>0), 74.5),
+(-1598162774, -435385558, 64.7, -261911833, 78.57, (-485999493 is NULL), 9223372036854775806.4),
+(26199260, -504486874, 65534.8, -2009904172, cast(null as double), (-950469723 is NULL), cast(null as double)),
+(-1077157880, -1293002688, 32768.1, -1289304617, 65537.5, (941803969 is not NULL), 70.70);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(121261295, 1096610403, 53.9, 1866267938, 13.98, (-145490517 between 1380150985 and -623945704), 254.8),
+(635322050, -451877649, 9223372036854775807.4, -901709050, 93.92, ((NOT NOT(cast( (cast(647081267 as signed) > cast(6020731258952772445 as signed)) as unsigned))))
+and (0<>0), 9223372036854775806.8),
+(-1540855777, cast(cast(null as signed) as signed), 4294967295.0, 2089549971, 4.27, (NOT NOT(cast( (cast(cast(null as char) as char) != cast('dm1v9kk3' as char)) as unsigned))), 4294967297.9),
+(1746881744, 2098885378, 65.44, 657390556, 18446744073709551615.9, (574017262 not in (
+-611172942, 570085205, 1261699169, 359083418, 1975631810)), cast(null as double));
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1575399441, cast(cast(null as signed) as signed), 63.88, -1668644664, 4294967296.9, (NOT NOT(cast( (cast(null as char) = 'mbcowijswu') as unsigned))), 4294967294.8),
+(1934799426, 621753174, 60.78, -1536499200, 100.62, ((-1474140624 between cast(null as signed) and 1781836510))
+and ((782897875 is NULL)), 65535.5),
+(-1648514586, -491983480, 31.13, 1269837708, 21.34, 0<>0, 1.18),
+(-400813924, -101697773, 86.70, 1078411031, 93.21, (NOT NOT(cast( (97916628641457097 > cast(null as signed)) as unsigned))), 5.31);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1060429117, 545828902, cast(null as double), -577565958, 90.19, (0<>0)
+or ((NOT NOT(cast( (cast(cast(null as decimal) as decimal) <> cast(18.45 as double)) as unsigned)))), 4294967294.6),
+(84752722, 437374131, 52.74, -213111549, 2147483648.100000, (NOT NOT(cast( (cast((NOT NOT(cast( (cast(cast(null as char) as char) = cast(cast(null as char) as char)) as unsigned))) as unsigned) <=> cast(cast(null as decimal) as decimal)) as unsigned))), 75.63),
+(1862049279, 529130544, cast(null as double), -1478082073, 14.17, ('x' not like '_s'), 45.56),
+(89754754, -2088687627, 20.52, 754635346, 2147483647.0, (-1527660898 in (
+-1321475518, 913437396, 561689209, cast(cast(null as signed) as signed), -758111435)), 65536.2);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1443936095, -1108581874, 51.47, -1030187893, cast(null as double), (1827286981 between cast(cast(null as signed) as signed) and cast(cast(null as signed) as signed)), 4294967297.6),
+(-1640232650, 989305695, 22.35, 1342094910, 4294967296.1, 0<>0, 24.16),
+(-806337317, 464874669, 60.34, 1216153528, cast(null as double), 1=1, 127.5),
+(1903673312, -696878308, 53.95, -1798150767, 128.8, 1=1, 97.96);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(743630552, cast(cast(null as signed) as signed), 41.57, 1562519081, 39.43, (NOT NOT(cast( (cast(cast(null as signed) as signed) <> cast(cast(null as double) as double)) as unsigned))), 9223372036854775807.5),
+(-1639782322, 788796564, cast(null as double), 1313648896, 18446744073709551615.9, 1=1, cast(null as double)),
+(-2091932532, -887734411, 32768.5, 1470788629, 61.81, (NOT NOT(cast( (-4220384 <=> 93.10) as unsigned))), 34.49),
+(527627838, 1431752816, 97.24, -488642566, 32769.9, (NOT NOT(cast( (cast((NOT NOT(cast( (cast(52.69 as double) <> cast(-7197142 as signed)) as unsigned))) as unsigned) < cast((-1850976467 is not NULL) as unsigned)) as unsigned))), 41.18);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(888496908, 23082498, 100.51, -368021933, 2147483648.100000, ((NOT NOT(cast( (cast(null as char) != cast(null as char)) as unsigned))))
+or ((NOT NOT(cast( (cast(50.2 as double) XOR cast(0<>0 as unsigned)) as unsigned)))), 83.25),
+(685334825, 1888311361, 60.31, -1486005305, 75.7, 1=1, 61.53),
+(70790283, 1485235718, 34.38, 863162657, 85.94, ('u4' like 'htgt_jm_u'), 18446744073709551617.3),
+(461406346, -209958457, 13.1, -1660657339, cast(null as double), (((1958955125 between 1655276802 and -917698760))
+or ((0<>0)
+and (1=1)))
+and (1=1), 126.9);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-74144591, -1333057672, 99.57, 2079966560, 18446744073709551615.6, 0<>0, 8.76),
+(1605888148, 1006868149, 49.70, 1987277091, cast(null as double), ('ewf00dg6' like '%d'), 65.81),
+(-180138602, -1084470684, 257.4, 522780636, 13.49, 0<>0, 37.15),
+(464769937, -1065569253, 72.33, -1341213089, 32768.1, (532537575 is not NULL), 255.6);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-2093842006, 1855524268, 65535.9, 607165498, cast(null as double), 0<>0, 93.69),
+(878984644, 356586414, 59.81, 330243850, 4294967297.0, (-997393251 between cast(cast(null as signed) as signed) and 915327063), cast(null as double)),
+(591887315, -1305442840, cast(null as double), 1318319911, 59.92, (((((1493426241 is not NULL))
+and (((1816286068 between cast(cast(null as signed) as signed) and -618199640))
+and ((-1036501641 in (
+1398045688, -285769670, 1920125500, -1617424284, 130008360)))))
+and ((NOT NOT(cast( (cast(89.85 as double) <= cast(-20980 as signed)) as unsigned)))))
+and ((NOT NOT(cast( (cast(422821929 as signed) && cast(cast(null as decimal) as decimal)) as unsigned)))))
+or (1=1), 3.50),
+(-743324976, 1266511235, cast(null as double), -1795544518, 38.9, (NOT NOT(cast( (cast(null as double) > 4294967297.4) as unsigned))), 5.4);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(479084359, -304549960, 28.25, 2006643080, 29.35, (1=1)
+or ((NOT NOT(cast( (cast(cast(null as double) as double) XOR cast(27.88 as double)) as unsigned)))), 64.6),
+(2084750468, -417546511, 2147483648.6, -1687519456, 28.10, (NOT NOT(cast( (cast(-1863657748 as signed) && cast(85.54 as double)) as unsigned))), 257.4),
+(742082846, cast(null as signed), 2147483648.8, 1678768507, 20.8, (('bobl9q' like 'r%ft'))
+or ((NOT NOT(cast( (cast(3.90 as double) XOR cast(0<>0 as unsigned)) as unsigned)))), 18446744073709551617.7),
+(876359199, 1219450090, 32766.6, 1903725608, 4294967295.0, (1989669317 in (
+-1985272252)), 54.79);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1945403146, 1931546049, 44.16, 592372966, 29.95, 1=1, 127.0),
+(938089746, cast(cast(null as signed) as signed), 65536.5, -232793978, 26.18, ('y4obshc3lg' like 'gkmq_47%_e'), cast(null as double)),
+(529280007, 1240477841, 59.87, 1469314204, 93.44, (-946260498 between 688936592 and -1861828223), 18446744073709551615.3),
+(-1863067392, -459618666, cast(null as double), -875893935, 53.7, (-202830405 in (
+371439569, cast(null as signed), 1191836680, cast(cast(null as signed) as signed))), 53.47);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(196222497, -1434771425, cast(null as double), 477650882, 18446744073709551615.2, 0<>0, 49.26),
+(-1967706463, -1725993508, 10.29, -1421995071, cast(null as double), (NOT NOT(cast( (cast(21.53 as double) <= cast(cast(null as decimal) as decimal)) as unsigned))), 70.19),
+(320910438, -960540616, cast(null as double), 423269172, 2147483649.6, 0<>0, 72.22),
+(792012220, 274535206, 32767.6, -1821582304, 127.3, (NOT NOT(cast( (cast(-8696166282483600167 as signed) > cast(5435876 as signed)) as unsigned))), 9.100);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-182915937, -1271071898, 45.61, 29161648, 32768.5, 0<>0, 4294967296.3),
+(1098651005, 1384289945, cast(null as double), -1974965488, 38.92, (NOT NOT(cast( (cast(-8364 as signed) > cast(6272383290166472133 as signed)) as unsigned))), 2147483646.0),
+(-956265760, 698381127, 65.34, -1812305473, 16.12, ((NOT NOT(cast( (cast(2.12 as double) = cast(-2028715724 as signed)) as unsigned))))
+or (((-221996409 is NULL))
+and ((-1513528484 between -1938521186 and -1973584618))), 58.50),
+(42311240, 826110128, 40.69, -1558559007, 36.33, 0<>0, 32769.8);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-35968772, 977741241, 78.93, -1003087598, 32766.3, ((NOT NOT(cast( (cast(1481793016 as signed) = cast(cast(null as signed) as signed)) as unsigned))))
+and (0<>0), 20.52),
+(2054604066, 243313996, 4294967294.2, -1144215732, 87.46, (NOT NOT(cast( ((NOT NOT(cast( (cast(-8905 as signed) <> cast(3.90 as double)) as unsigned))) = 37.32) as unsigned))), 78.62),
+(-285314380, 1846619768, 18446744073709551616.9, -711086531, 22.39, (cast(cast(null as signed) as signed) not in (
+122723593, -2101149290)), 129.8),
+(-717648412, 1049674738, 9223372036854775809.8, 832839033, 9223372036854775809.0, (NOT NOT(cast( (cast(16164 as signed) <= cast(-876221 as signed)) as unsigned))), 2.44);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(249867644, 346336457, 17.74, 1601126266, 65537.9, (413595258 between cast(cast(null as signed) as signed) and -57605527), 127.8),
+(-1571498583, -1458187285, 2147483648.100000, -394837749, 128.0, (NOT NOT(cast( (cast(55.70 as double) > cast(2072765100 as signed)) as unsigned))), 4294967296.6),
+(71628432, 142545861, 13.82, 1506011334, cast(null as double), (-892550198 between 276592104 and 1156255734), 254.3),
+(240843707, -360043520, cast(null as double), 1968304357, cast(null as double), ('edq' like 'mw%%ol'), 32768.8);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-243945718, 1767893978, 9223372036854775809.0, -627704665, 12.34, (NOT NOT(cast( (cast(null as char) <> cast(null as char)) as unsigned))), 61.80),
+(54329340, 1577882927, 2147483647.6, -1495556917, 47.68, (cast(cast(null as signed) as signed) is not NULL), 59.78),
+(-1783036065, 1868972559, 40.17, 1494835395, 96.87, 1=1, 66.52),
+(-596050074, -705004751, 52.5, -1935846394, 65.12, (NOT NOT(cast( (cast((1819678558 is NULL) as unsigned) > cast(-298244956 as signed)) as unsigned))), 255.6);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(1577371525, cast(cast(null as signed) as signed), 255.0, 960164502, 2.57, ('wq9riws7l' like 'm_s'), 32766.4),
+(-42826628, -934039402, 256.2, -1649513064, 50.32, (NOT NOT(cast( (cast(15997 as signed) <> cast(-345223499 as signed)) as unsigned))), 36.22),
+(-1075109788, -1998961962, 29.98, 858739815, 129.2, (NOT NOT(cast( (cast(cast(null as char) as char) <> cast(cast(null as char) as char)) as unsigned))), 7.2),
+(-175574897, -985496502, 69.70, 2040676550, 22.30, (NOT NOT(cast( (cast(-5096 as signed) XOR cast(('yp' like 'wx%1f') as unsigned)) as unsigned))), 9223372036854775809.0);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-1298173087, 1415054985, 70.18, -2127708504, 94.19, (NOT NOT(cast( (cast((NOT NOT(cast( ('mke' >= 'y9to9c2cqd') as unsigned))) as unsigned) < cast(1174522026688787663 as signed)) as unsigned))), 35.71),
+(-432424485, -1947648254, cast(null as double), -1823955140, 67.99, (NOT NOT(cast( (cast(null as decimal) >= cast(null as signed)) as unsigned))), 5.22),
+(-1411924254, 692974813, 65535.8, -984482506, 99.10, (NOT NOT(cast( (cast(null as double) != 37.28) as unsigned))), 3.24),
+(-1450966821, 2091868372, cast(null as double), 2142289159, 26.1, 0<>0, 61.35);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(-890528460, -1565840720, 93.80, -391928446, 85.73, (((NOT NOT(cast( (cast(null as decimal) && (-2127363055 in (
+cast(null as signed), -1501501564, -447727069, 1161382083, -1615213659))) as unsigned))))
+and ((1=1)
+or ((((-851853576 between -1418918613 and 611181520))
+or ((NOT NOT(cast( (cast(-2258617656466027229 as signed) <> cast(-729424338 as signed)) as unsigned)))))
+and ((NOT NOT(cast( (cast(78.94 as double) < cast(41.52 as double)) as unsigned)))))))
+or ((-756624972 is NULL)), 256.9),
+(-1867285767, 2017325251, 93.16, -1548137915, 70.82, (NOT NOT(cast( (cast(4960443 as signed) > cast(671100674 as signed)) as unsigned))), 4294967295.5),
+(1391557702, 1091143433, cast(null as double), 13816712, 29.95, (NOT NOT(cast( (cast(4066130327850566114 as signed) <> cast((1359107673 is not NULL) as unsigned)) as unsigned))), cast(null as double)),
+(-521120810, 165548064, 9223372036854775808.4, -1893812499, 64.40, ('e' not like 'pik3_%'), 73.62);
+insert into t_n (c_tf_us39fv, c_pf6z4p, c_v13rl, c_fr3uo, c_v, c_mm8jnf, c__57bl_eu6) values
+(994077164, 1992568986, 84.25, 1255701141, 30.74, (1365814190 between 2000294788 and -1527327952), 39.30),
+(468544671, 323039590, 74.83, -679847300, cast(null as double), (NOT NOT(cast( (cast('h' as char) <=> cast(cast(null as char) as char)) as unsigned))), 78.82),
+(-969092588, -1447308137, 64.4, -910801889, cast(null as double), 0<>0, 2147483647.9),
+(1922500440, -854043365, 97.30, -192800580, 254.5, 1=1, 44.93);
+select 1 from t_tjov where ( select t_tjov.c_tutmh1 as c0 from ( select nth_value(t_n.c_tf_us39fv, 1) over (partition by t_db8a.c_jr2kq78hqt order by t_n.c_mm8jnf) as c5 from t_db8a join t_n ) as tbl limit 1 );
+1
+1
+1
+1
+1
+1
+1
+1

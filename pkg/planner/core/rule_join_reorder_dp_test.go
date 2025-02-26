@@ -21,38 +21,39 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
 type mockLogicalJoin struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
-	JoinType        JoinType
+	JoinType        logicalop.JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
-	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
+	mj.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
 	return &mj
 }
 
 // RecursiveDeriveStats implements LogicalPlan interface.
-func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, bool, error) {
 	if mj.StatsInfo() == nil {
 		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
+		return mj.statsMap[mj.involvedNodeSet], true, nil
 	}
-	return mj.statsMap[mj.involvedNodeSet], nil
+	return mj.statsMap[mj.involvedNodeSet], false, nil
 }
 
-func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
-	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
+func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
+	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
-		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
+		retJoin.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 		retJoin.statsMap = statsMap
 		if mj, ok := lChild.(*mockLogicalJoin); ok {
 			retJoin.involvedNodeSet = mj.involvedNodeSet
@@ -136,11 +137,11 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 }
 
 func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
-	ds := DataSource{}.Init(ctx, 0)
-	tan := model.NewCIStr(name)
+	ds := logicalop.DataSource{}.Init(ctx, 0)
+	tan := ast.NewCIStr(name)
 	ds.TableAsName = &tan
-	ds.schema = expression.NewSchema()
-	ds.schema.Append(&expression.Column{
+	ds.SetSchema(expression.NewSchema())
+	ds.Schema().Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
@@ -153,8 +154,8 @@ func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPla
 func planToString(plan base.LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
-		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.children[0]), planToString(x.children[1]))
-	case *DataSource:
+		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.Children()[0]), planToString(x.Children()[1]))
+	case *logicalop.DataSource:
 		return x.TableAsName.L
 	}
 	return ""

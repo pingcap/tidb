@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,7 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
@@ -155,7 +156,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -219,7 +220,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 
@@ -242,8 +243,8 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	// DeleteTiFlashPlacementRule
-	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	// DeleteTiFlashPlacementRules
+	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(rules))
@@ -258,12 +259,12 @@ func TestTiFlashManager(t *testing.T) {
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
 		{
 			ID:       2,
-			Name:     model.NewCIStr("p1"),
+			Name:     ast.NewCIStr("p1"),
 			LessThan: []string{},
 		},
 		{
 			ID:       3,
-			Name:     model.NewCIStr("p2"),
+			Name:     ast.NewCIStr("p2"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{}, 100)

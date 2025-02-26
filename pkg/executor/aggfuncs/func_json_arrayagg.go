@@ -69,7 +69,7 @@ func (e *jsonArrayagg) UpdatePartialResult(ctx AggFuncUpdateContext, rowsInGroup
 			return 0, errors.Trace(err)
 		}
 
-		realItem, err := getRealJSONValue(item, e.args[0].GetType())
+		realItem, err := getRealJSONValue(item, e.args[0].GetType(ctx))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

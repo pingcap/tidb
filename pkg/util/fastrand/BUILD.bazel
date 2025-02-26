@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "random.go",
         "runtime.go",
-        "runtime_1.22.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/fastrand",
     visibility = ["//visibility:public"],

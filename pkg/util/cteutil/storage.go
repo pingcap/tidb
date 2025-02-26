@@ -88,6 +88,9 @@ type Storage interface {
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
 	ActionSpill() *chunk.SpillDiskAction
+
+	GetMemBytes() int64
+	GetDiskBytes() int64
 }
 
 // StorageRC implements Storage interface using RowContainer.
@@ -267,4 +270,14 @@ func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 
 func (s *StorageRC) valid() bool {
 	return s.refCnt > 0 && s.rc != nil
+}
+
+// GetMemBytes returns memory bytes used by row container.
+func (s *StorageRC) GetMemBytes() int64 {
+	return s.rc.GetMemTracker().BytesConsumed()
+}
+
+// GetDiskBytes returns disk bytes used by row container.
+func (s *StorageRC) GetDiskBytes() int64 {
+	return s.rc.GetDiskTracker().BytesConsumed()
 }

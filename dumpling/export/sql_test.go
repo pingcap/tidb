@@ -1618,8 +1618,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}()
 
 	tidbConf := dbconfig.NewConfig()
-	stores := []string{"unistore", "mocktikv", "tikv"}
-	for _, store := range stores {
+	for _, store := range dbconfig.StoreTypeList() {
 		tidbConf.Store = store
 		tidbConfBytes, err := json.Marshal(tidbConf)
 		require.NoError(t, err)
@@ -1627,7 +1626,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 			sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
 		hasTiKV, err := CheckTiDBWithTiKV(db)
 		require.NoError(t, err)
-		if store == "tikv" {
+		if store == dbconfig.StoreTypeTiKV {
 			require.True(t, hasTiKV)
 		} else {
 			require.False(t, hasTiKV)
@@ -1816,7 +1815,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("1"))
 
-	exists, err := CheckIfSeqExists(conn)
+	exists, err := checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, true, exists)
 
@@ -1824,7 +1823,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("0"))
 
-	exists, err = CheckIfSeqExists(conn)
+	exists, err = checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, false, exists)
 }

@@ -4,8 +4,9 @@ go_library(
     name = "intest",
     srcs = [
         "assert.go",  #keep
-        "common.go",
-        "intest.go",  #keep
+        "in_unittest.go",  #keep
+        "no_assert.go",
+        "not_in_unittest.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/intest",
     visibility = ["//visibility:public"],

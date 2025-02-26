@@ -41,7 +41,7 @@ const (
 	LitErrExceedConcurrency string = "the concurrency is greater than ingest limit"
 	LitErrCloseWriterErr    string = "close writer error"
 	LitErrReadSortPath      string = "cannot read sort path"
-	LitErrCleanSortPath     string = "cannot cleanup sort path"
+	LitErrCleanSortPath     string = "clean up temp dir failed"
 	LitErrResetEngineFail   string = "reset engine failed"
 	LitWarnEnvInitFail      string = "initialize environment failed"
 	LitWarnConfigError      string = "build config for backend failed"
@@ -50,7 +50,6 @@ const (
 	LitInfoCreateBackend    string = "create one backend for an DDL job"
 	LitInfoCloseBackend     string = "close one backend for DDL job"
 	LitInfoOpenEngine       string = "open an engine for index reorg task"
-	LitInfoAddWriter        string = "reuse engine and add a writer for index reorg task"
 	LitInfoCreateWrite      string = "create one local writer for index reorg task"
 	LitInfoCloseEngine      string = "flush all writer and get closed engine"
 	LitInfoRemoteDupCheck   string = "start remote duplicate checking"
@@ -67,8 +66,18 @@ func genBackendAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int
 	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }
 
-func genEngineAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID, idxID int64) error {
-	logutil.Logger(ctx).Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
+func genEngineAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int64, idxIDs []int64) error {
+	logutil.Logger(ctx).Warn(LitErrAllocMemFail,
+		zap.Int64("job ID", jobID),
+		zap.Int64s("index IDs", idxIDs),
+		zap.Int64("current memory usage", memRoot.CurrentUsage()),
+		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
+}
+
+func genWriterAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int64, idxID int64) error {
+	logutil.Logger(ctx).Warn(LitErrAllocMemFail,
+		zap.Int64("job ID", jobID),
 		zap.Int64("index ID", idxID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))

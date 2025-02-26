@@ -34,7 +34,7 @@ create table t2(a int not null, b int not null, key a(a));
 set @@tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2);
 id	estRows	task	access object	operator info
-IndexJoin	8000.00	root		semi join, inner:IndexReader, outer key:index_join.t1.a, inner key:index_join.t2.a, equal cond:eq(index_join.t1.a, index_join.t2.a)
+IndexJoin	8000.00	root		semi join, inner:IndexReader, left side:TableReader, outer key:index_join.t1.a, inner key:index_join.t2.a, equal cond:eq(index_join.t1.a, index_join.t2.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexReader(Probe)	12500.00	root		index:IndexRangeScan

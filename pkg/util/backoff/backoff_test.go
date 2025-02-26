@@ -23,16 +23,16 @@ import (
 
 func TestExponential(t *testing.T) {
 	backoffer := NewExponential(1, 1, 1)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
 	}
 	backoffer = NewExponential(1, 1, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, time.Duration(1), backoffer.Backoff(i))
 	}
 	backoffer = NewExponential(1, 2, 10)
 	res := []time.Duration{1, 2, 4, 8, 10, 10, 10, 10, 10, 10}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i], backoffer.Backoff(i))
 	}
 }

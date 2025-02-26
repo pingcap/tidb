@@ -409,27 +409,27 @@ func (pb *profileBuilder) GetMaxNodeValue(root *metricNode) (float64, error) {
 	if err != nil {
 		return 0.0, err
 	}
-	max := value.getValue(pb.valueTP)
+	maxv := value.getValue(pb.valueTP)
 	for _, v := range n.labelValue {
-		if v.getValue(pb.valueTP) > max {
-			max = v.getValue(pb.valueTP)
+		if v.getValue(pb.valueTP) > maxv {
+			maxv = v.getValue(pb.valueTP)
 		}
 	}
 	for _, child := range n.children {
 		childMax, err := pb.GetMaxNodeValue(child)
 		if err != nil {
-			return max, err
+			return maxv, err
 		}
-		if childMax > max {
-			max = childMax
+		if childMax > maxv {
+			maxv = childMax
 		}
 		for _, v := range n.labelValue {
-			if v.getValue(pb.valueTP) > max {
-				max = v.getValue(pb.valueTP)
+			if v.getValue(pb.valueTP) > maxv {
+				maxv = v.getValue(pb.valueTP)
 			}
 		}
 	}
-	return max, nil
+	return maxv, nil
 }
 
 func (pb *profileBuilder) traversal(n *metricNode) error {

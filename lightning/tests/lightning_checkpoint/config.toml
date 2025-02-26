@@ -4,6 +4,7 @@ table-concurrency = 1
 
 [tikv-importer]
 backend = "local"
+parallel-import = true
 
 [checkpoint]
 enable = true

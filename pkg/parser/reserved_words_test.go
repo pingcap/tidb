@@ -70,7 +70,7 @@ func TestCompareReservedWordsWithMySQL(t *testing.T) {
 			"TABLESAMPLE",      // Only in TiDB
 			"ARRAY",            // added in 8.0.17 (reserved); became nonreserved in 8.0.19
 			"ILIKE",            // Only in TiDB
-			"TiDB_CURRENT_TSO", // Only in TiDB
+			"TIDB_CURRENT_TSO", // Only in TiDB
 			"UNTIL":            // Present in both, reserved only in TiDB
 			// special cases: we do reserve these words but MySQL didn't,
 			// and unreservering it causes legit parser conflict.

@@ -15,31 +15,28 @@
 package ddl
 
 import (
-	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onTTLInfoRemove(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo.TTLInfo = nil
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -47,18 +44,16 @@ func onTTLInfoRemove(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	return ver, nil
 }
 
-func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
-	var ttlInfo *model.TTLInfo
-	var ttlInfoEnable *bool
-	var ttlInfoJobInterval *string
-
-	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable, &ttlInfoJobInterval); err != nil {
+	args, err := model.GetAlterTTLInfoArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfo, args.TTLEnable, args.TTLCronJobSchedule
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -88,7 +83,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 		tblInfo.TTLInfo.JobInterval = *ttlInfoJobInterval
 	}
 
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -96,32 +91,35 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	return ver, nil
 }
 
-func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
-	if err := checkTTLIntervalExpr(ctx.GetExprCtx(), tblInfo.TTLInfo); err != nil {
+// checkTTLInfoValid checks the TTL settings for a table.
+// The argument `isForForeignKeyCheck` is used to check the table should not be referenced by foreign key.
+// If `isForForeignKeyCheck` is `nil`, it will skip the foreign key check.
+func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrTempTableNotAllowedWithTTL
+	}
+
+	if err := checkTTLIntervalExpr(tblInfo.TTLInfo); err != nil {
 		return err
 	}
 
-	if err := checkTTLTableSuitable(ctx, schema, tblInfo); err != nil {
+	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
 		return err
+	}
+
+	if foreignKeyCheckIs != nil {
+		// checks even when the foreign key check is not enabled, to keep safe
+		if referredFK := checkTableHasForeignKeyReferred(foreignKeyCheckIs, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
+			return dbterror.ErrUnsupportedTTLReferencedByFK
+		}
 	}
 
 	return checkTTLInfoColumnType(tblInfo)
 }
 
-func checkTTLIntervalExpr(ctx expression.BuildContext, ttlInfo *model.TTLInfo) error {
-	// FIXME: use a better way to validate the interval expression in ttl
-	var nowAddIntervalExpr ast.ExprNode
-
-	unit := ast.TimeUnitType(ttlInfo.IntervalTimeUnit)
-	expr := fmt.Sprintf("select NOW() + INTERVAL %s %s", ttlInfo.IntervalExprStr, unit.String())
-	stmts, _, err := parser.New().ParseSQL(expr)
-	if err != nil {
-		// FIXME: the error information can be wrong, as it could indicate an unknown position to user.
-		return errors.Trace(err)
-	}
-	nowAddIntervalExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	_, err = expression.EvalSimpleAst(ctx, nowAddIntervalExpr)
-	return err
+func checkTTLIntervalExpr(ttlInfo *model.TTLInfo) error {
+	_, err := cache.EvalExpireTime(time.Now(), ttlInfo.IntervalExprStr, ast.TimeUnitType(ttlInfo.IntervalTimeUnit))
+	return errors.Trace(err)
 }
 
 func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
@@ -131,26 +129,6 @@ func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
 	}
 	if !types.IsTypeTime(colInfo.FieldType.GetType()) {
 		return dbterror.ErrUnsupportedColumnInTTLConfig.GenWithStackByArgs(tblInfo.TTLInfo.ColumnName.O)
-	}
-
-	return nil
-}
-
-// checkTTLTableSuitable returns whether this table is suitable to be a TTL table
-// A temporary table or a parent table referenced by a foreign key cannot be TTL table
-func checkTTLTableSuitable(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrTempTableNotAllowedWithTTL
-	}
-
-	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
-		return err
-	}
-
-	// checks even when the foreign key check is not enabled, to keep safe
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
-		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}
 
 	return nil
@@ -213,7 +191,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      "1h",
+				JobInterval:      model.DefaultTTLJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue

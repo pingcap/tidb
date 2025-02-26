@@ -17,7 +17,7 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -25,11 +25,11 @@ import (
 // Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build
 // some special expressions like subquery, window function, etc.
 // If you only want to evaluate simple expressions, use `expression.EvalSimpleAst` instead.
-var EvalAstExprWithPlanCtx func(ctx context.PlanContext, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExprWithPlanCtx func(ctx planctx.PlanContext, expr ast.ExprNode) (types.Datum, error)
 
 // RewriteAstExprWithPlanCtx rewrites ast expression directly.
 // Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build
 // some special expressions like subquery, window function, etc.
 // If you only want to build simple expressions, use `expression.BuildSimpleExpr` instead.
-var RewriteAstExprWithPlanCtx func(ctx context.PlanContext, expr ast.ExprNode,
+var RewriteAstExprWithPlanCtx func(ctx planctx.PlanContext, expr ast.ExprNode,
 	schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error)

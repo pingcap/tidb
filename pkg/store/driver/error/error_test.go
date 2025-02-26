@@ -15,6 +15,7 @@
 package error //nolint: predeclared
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -50,5 +51,18 @@ func TestConvertError(t *testing.T) {
 	for _, f := range wrapFuncs {
 		tidbErr := ToTiDBErr(f(e))
 		assert.True(t, errors.ErrorEqual(tidbErr, terror.ErrResultUndetermined))
+	}
+}
+
+func TestMemBufferOversizeError(t *testing.T) {
+	err2str := map[error]string{
+		&tikverr.ErrTxnTooLarge{Size: 100}:                   "Transaction is too large, size: 100",
+		&tikverr.ErrEntryTooLarge{Limit: 10, Size: 20}:       "entry too large, the max entry size is 10, the size of data is 20",
+		&tikverr.ErrKeyTooLarge{KeySize: math.MaxUint16 + 1}: "key is too large, the size of given key is 65536",
+	}
+	for err, errString := range err2str {
+		tidbErr := ToTiDBErr(err)
+		assert.NotNil(t, tidbErr)
+		assert.Contains(t, tidbErr.Error(), errString)
 	}
 }

@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "instanceplancache_test",
+    timeout = "long",
+    srcs = [
+        "builtin_func_test.go",
+        "concurrency_test.go",
+        "concurrency_tpcc_test.go",
+        "dml_test.go",
+        "main_test.go",
+        "others_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 42,
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/auth",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "ast",
     srcs = [
-        "advisor.go",
         "ast.go",
         "base.go",
         "ddl.go",
@@ -12,6 +11,7 @@ go_library(
         "flag.go",
         "functions.go",
         "misc.go",
+        "model.go",
         "procedure.go",
         "stats.go",
         "util.go",
@@ -22,7 +22,6 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
@@ -45,6 +44,7 @@ go_test(
         "format_test.go",
         "functions_test.go",
         "misc_test.go",
+        "model_test.go",
         "procedure_test.go",
         "util_test.go",
     ],
@@ -53,13 +53,10 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/parser",
-        "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/test_driver",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )

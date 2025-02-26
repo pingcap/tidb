@@ -15,8 +15,8 @@ func FuzzMerge(f *testing.F) {
 	baseKeyB := tablecodec.EncodeIndexSeekKey(42, 1, nil)
 	f.Add([]byte(baseKeyA), []byte(baseKeyB))
 	f.Fuzz(func(t *testing.T, a, b []byte) {
-		left := rtree.Range{StartKey: a, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}
-		right := rtree.Range{StartKey: b, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}
+		left := rtree.RangeStats{Range: rtree.Range{StartKey: a, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}}
+		right := rtree.RangeStats{Range: rtree.Range{StartKey: b, Files: []*backup.File{{TotalKvs: 1, TotalBytes: 1}}}}
 		rtree.NeedsMerge(&left, &right, 42, 42)
 	})
 }

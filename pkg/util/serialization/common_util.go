@@ -48,4 +48,5 @@ const (
 	Float64Len           = int64(unsafe.Sizeof(float64(0)))
 	TimeLen              = int64(unsafe.Sizeof(types.Time{}))
 	TimeDurationLen      = int64(unsafe.Sizeof(time.Duration(0)))
+	UnsafePointerLen     = int64(unsafe.Sizeof(unsafe.Pointer(nil)))
 )

@@ -9,7 +9,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/version/build",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/util/dbutil",
         "//pkg/util/engine",
         "@com_github_coreos_go_semver//semver",
@@ -17,6 +17,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -30,11 +31,12 @@ go_test(
     shard_count = 10,
     deps = [
         "//br/pkg/version/build",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
     ],
 )

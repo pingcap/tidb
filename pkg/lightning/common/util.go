@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,9 +37,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -141,6 +142,11 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// The actual number of alive connections is controlled by the region concurrency
+	// The setting is required to avoid frequent connection creation and close
+	if db != nil {
+		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	}
 	return db, nil
 }
@@ -522,7 +528,7 @@ loop:
 			continue
 		}
 		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
+		// Because auto column must be defined as a key.
 		for _, idxCol := range idxInfo.Columns {
 			flag := cols[idxCol.Offset].GetFlag()
 			if tmysql.HasAutoIncrementFlag(flag) {
@@ -620,7 +626,7 @@ func IsDupKeyError(err error) bool {
 
 // GetBackoffWeightFromDB gets the backoff weight from database.
 func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
-	val, err := getSessionVariable(ctx, db, variable.TiDBBackOffWeight)
+	val, err := getSessionVariable(ctx, db, vardef.TiDBBackOffWeight)
 	if err != nil {
 		return 0, err
 	}
@@ -629,7 +635,7 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
-	return getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
+	return getSessionVariable(ctx, db, vardef.TiDBExplicitRequestSourceType)
 }
 
 // copy from dbutil to avoid import cycle
@@ -695,4 +701,10 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// IsAccessDeniedNeedConfigPrivilegeError checks if err is generated from a query to TiDB which failed due to missing CONFIG privilege.
+func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
+	e, ok := err.(*mysql.MySQLError)
+	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
 }

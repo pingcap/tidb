@@ -20,10 +20,14 @@ import (
 )
 
 // MemRoot is used to track the memory usage for the lightning backfill process.
+// TODO(lance6716): change API to prevent TOCTOU.
 type MemRoot interface {
 	Consume(size int64)
 	Release(size int64)
 	CheckConsume(size int64) bool
+	// ConsumeWithTag consumes memory with a tag. The main difference between
+	// ConsumeWithTag and Consume is that if the memory is updated afterward, caller
+	// can use ReleaseWithTag then ConsumeWithTag to update the memory usage.
 	ConsumeWithTag(tag string, size int64)
 	ReleaseWithTag(tag string)
 
@@ -35,36 +39,34 @@ type MemRoot interface {
 }
 
 var (
-	// StructSizeBackendCtx is the size of litBackendCtx.
-	StructSizeBackendCtx int64
-	// StructSizeEngineInfo is the size of engineInfo.
-	StructSizeEngineInfo int64
-	// StructSizeWriterCtx is the size of writerContext.
-	StructSizeWriterCtx int64
+	// structSizeBackendCtx is the size of litBackendCtx.
+	structSizeBackendCtx int64
+	// structSizeEngineInfo is the size of engineInfo.
+	structSizeEngineInfo int64
+	// structSizeWriterCtx is the size of writerContext.
+	structSizeWriterCtx int64
 )
 
 func init() {
-	StructSizeBackendCtx = int64(unsafe.Sizeof(litBackendCtx{}))
-	StructSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
-	StructSizeWriterCtx = int64(unsafe.Sizeof(writerContext{}))
+	structSizeBackendCtx = int64(unsafe.Sizeof(litBackendCtx{}))
+	structSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
+	structSizeWriterCtx = int64(unsafe.Sizeof(writerContext{}))
 }
 
 // memRootImpl is an implementation of MemRoot.
 type memRootImpl struct {
-	maxLimit      int64
-	currUsage     int64
-	structSize    map[string]int64
-	backendCtxMgr *litBackendCtxMgr
-	mu            sync.RWMutex
+	maxLimit   int64
+	currUsage  int64
+	structSize map[string]int64
+	mu         sync.RWMutex
 }
 
 // NewMemRootImpl creates a new memRootImpl.
-func NewMemRootImpl(maxQuota int64, bcCtxMgr *litBackendCtxMgr) *memRootImpl {
+func NewMemRootImpl(maxQuota int64) *memRootImpl {
 	return &memRootImpl{
-		maxLimit:      maxQuota,
-		currUsage:     0,
-		structSize:    make(map[string]int64, 10),
-		backendCtxMgr: bcCtxMgr,
+		maxLimit:   maxQuota,
+		currUsage:  0,
+		structSize: make(map[string]int64, 10),
 	}
 }
 
@@ -138,6 +140,6 @@ func (m *memRootImpl) ReleaseWithTag(tag string) {
 }
 
 // RefreshConsumption implements MemRoot.
-func (m *memRootImpl) RefreshConsumption() {
-	m.backendCtxMgr.UpdateMemoryUsage()
+func (*memRootImpl) RefreshConsumption() {
+	// TODO(tagnenta): find a better solution that don't rely on backendCtxMgr.
 }

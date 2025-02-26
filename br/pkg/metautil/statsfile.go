@@ -26,10 +26,11 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
@@ -201,7 +202,7 @@ func downloadStats(
 					return errors.Trace(err)
 				}
 
-				decryptContent, err := Decrypt(content, cipher, statsFile.CipherIv)
+				decryptContent, err := utils.Decrypt(content, cipher, statsFile.CipherIv)
 				if err != nil {
 					return errors.Trace(err)
 				}
