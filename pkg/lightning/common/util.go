@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -631,6 +632,14 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(val)
+}
+
+func GetPDEnableFollowerHandleRegion(ctx context.Context, db *sql.DB) (bool, error) {
+	val, err := getSessionVariable(ctx, db, vardef.PDEnableFollowerHandleRegion)
+	if err != nil {
+		return false, err
+	}
+	return variable.TiDBOptOn(val), nil
 }
 
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.

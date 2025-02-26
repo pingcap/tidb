@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -211,6 +213,20 @@ func NewMgr(
 	tikvStorage, ok := storage.(tikv.Storage)
 	if !ok {
 		return nil, berrors.ErrKVNotTiKV
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	enableFollowerHandleRegion, err := se.GetGlobalVariable(vardef.PDEnableFollowerHandleRegion)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	var dom *domain.Domain

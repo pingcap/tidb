@@ -782,3 +782,11 @@ func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Versi
 
 	return parseVersion(ver), nil
 }
+
+func (p *PdController) SetFollowerHandle(val bool) error {
+	err := p.pdClient.UpdateOption(opt.EnableFollowerHandle, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
