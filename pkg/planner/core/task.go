@@ -1248,7 +1248,6 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 				t = copTask.ConvertToRootTask(p.SCtx())
 				sunk = p.sinkIntoIndexLookUp(t)
 			}
-
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
