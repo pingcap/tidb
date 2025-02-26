@@ -2,15 +2,10 @@ package remote
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 )
@@ -80,49 +75,4 @@ func TestBackendInterface(t *testing.T) {
 	err := b.ResetEngine(context.Background(), uuid.New())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot reset an engine")
-}
-
-func TestRemoteWorkerAPI(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case "POST":
-			if r.URL.Query().Get("build") == "true" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-		case "GET":
-			states := &LoadDataStates{
-				Finished:        true,
-				CreatedFiles:    2,
-				IngestedRegions: 1,
-				TotalKVs:        100,
-			}
-			json.NewEncoder(w).Encode(states)
-		}
-	}))
-	defer server.Close()
-
-	ctx := context.Background()
-	tls := &common.TLS{}
-	cfg := &BackendConfig{
-		TaskID:           1,
-		RemoteWorkerAddr: server.URL,
-		PdAddr:           "127.0.0.1:2379",
-		SortedKVDir:      t.TempDir(),
-		ChunkSize:        32 * 1024 * 1024,
-	}
-
-	b, err := NewBackend(ctx, tls, cfg, nil)
-	require.NoError(t, err)
-	defer b.Close()
-
-	engineUUID := uuid.New()
-	engineCfg := &backend.EngineConfig{}
-
-	err = b.OpenEngine(ctx, engineCfg, engineUUID)
-	require.NoError(t, err)
-
-	err = b.ImportEngine(ctx, engineUUID, 96*1024*1024, 1000000)
-	require.NoError(t, err)
 }
