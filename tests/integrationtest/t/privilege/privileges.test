@@ -948,6 +948,14 @@ with t_f as (
 disconnect u53490;
 connection default;
 
+# TestIssue59552
+drop user if exists u1;
+create user u1;
+create role 'aa@bb';
+grant 'aa@bb' to u1;
+show grants for u1;
+drop user u1;
+drop role 'aa@bb';
 
 # TestIssue59677
 create user u59677 identified by '123456';
