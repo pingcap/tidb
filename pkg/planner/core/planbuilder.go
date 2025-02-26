@@ -296,8 +296,6 @@ type PlanBuilder struct {
 
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
-	// unfoldCastArray indicated we want to unfold cast(... as ... array). It's only used in restricted SQL (admin check table).
-	unfoldCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
 }

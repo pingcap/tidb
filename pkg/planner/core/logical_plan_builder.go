@@ -3677,14 +3677,31 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 	return b.tableHintInfo[len(b.tableHintInfo)-1]
 }
 
+type unfoldOption struct{}
+
+var unfoldOptionKey unfoldOption
+
+// WithUnfoldOption controls the rewriter unfold operation.
+// If it's true, it indicated we want to unfold cast(... as ... array).
+// NOTE!!! It should only be used in restricted SQL (admin check table).
+func WithUnfoldOption(ctx context.Context, unfold bool) context.Context {
+	return context.WithValue(ctx, unfoldOptionKey, unfold)
+}
+
+func GetUnfoldValue(ctx context.Context) bool {
+	unfold := false
+	if opt := ctx.Value(unfoldOptionKey); opt != nil {
+		unfold = opt.(bool)
+	}
+	return unfold
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	// TODO(joechenrh): uncomment here after finish
-	// if b.ctx.GetSessionVars().InRestrictedSQL {
-	b.unfoldCastArray = true
-	defer func() {
-		b.unfoldCastArray = false
-	}()
-	// }
+	// TODO(joechenrh): move this into admin check table function
+	// Otherwise, we can only execute SQL like:
+	// CREATE TABLE t1(a INT, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))));
+	// select CAST(j->'$.path' AS UNSIGNED ARRAY) from t1 use index(mvi);
+	ctx = WithUnfoldOption(ctx, true)
 
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4602,6 +4619,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	unfold := GetUnfoldValue(ctx)
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4618,14 +4636,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
-		EnableMVIndexScan:   b.unfoldCastArray,
+		EnableMVIndexScan:   unfold,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
 		retType := col.FieldType.Clone()
-		if b.unfoldCastArray {
+		if unfold {
 			retType.SetArray(false)
 		}
 
