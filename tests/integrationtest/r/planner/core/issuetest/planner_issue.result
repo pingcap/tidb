@@ -681,6 +681,7 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection_12	10000.00	root		1->Column#19
 └─HashJoin_13	10000.00	root		inner join, equal:[eq(planner__core__issuetest__planner_issue.tceb7972c.col_19, Column#20)]
   ├─Projection_19(Build)	10000.00	root		cast(planner__core__issuetest__planner_issue.t61a85298.col_71, double BINARY)->Column#20
@@ -691,3 +692,88 @@ Projection_12	10000.00	root		1->Column#19
       └─Selection_17	8000.00	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), planner__core__issuetest__planner_issue.tceb7972c.col_17), not(istrue_with_null(json_contains(planner__core__issuetest__planner_issue.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
         └─TableFullScan_16	10000.00	cop[tikv]	table:tceb7972c	keep order:false, stats:pseudo
 set @@tidb_enable_global_index=0;
+=======
+Projection_11	6.00	root		1->Column#18
+└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
+  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+    └─TableReader_19	10000.00	root		data:TableFullScan_18
+      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 int);
+CREATE TABLE t1(c0 int);
+SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
+c0	c0
+drop table if exists t1, t2, t3, t4;
+CREATE TABLE t1 (a int, b int, c int);
+CREATE TABLE t2 (a int, b int, c int);
+CREATE TABLE t3 (a int, b int, c int);
+CREATE TABLE t4 (a int, b int, c int);
+INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);
+INSERT INTO t2 VALUES (3,3,0), (4,2,0), (5,3,0);
+INSERT INTO t3 VALUES (1,2,0), (2,2,0);
+INSERT INTO t4 VALUES (3,2,0), (4,2,0);
+CREATE INDEX idx_b ON t2(b);
+SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b
+FROM (t3,t4)
+LEFT JOIN
+(t1,t2)
+ON t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;
+a	b	a	b	a	b
+NULL	NULL	2	2	3	2
+NULL	NULL	2	2	4	2
+4	2	1	2	3	2
+4	2	1	2	3	2
+4	2	1	2	3	2
+4	2	1	2	4	2
+4	2	1	2	4	2
+4	2	1	2	4	2
+show warnings;
+Level	Code	Message
+drop table if exists t1, t2, t3, t4;
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+c0
+drop table if exists tl6e913fb9;
+CREATE TABLE `tl6e913fb9` (
+`col_36` varchar(175) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'asMF',
+KEY `idx_35_5` (`col_36`(1)),
+PRIMARY KEY (`col_36`) /*T![clustered_index] NONCLUSTERED */,
+KEY `idx_65` (`col_36`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );
+1	col_1101	col_1102	col_1103	col_1104
+drop table if exists t;
+create table t (id int unique key, c int);
+insert into t values (1, 10);
+insert into t values (2, 20);
+insert into t values (3, 30);
+select _tidb_rowid from t where id in (1, 2, 3);
+_tidb_rowid
+1
+2
+3
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int primary key, b int, index idx(b));
+insert into t values(1), (2), (123);
+insert into t1 values(2, 123), (123, 2);
+set tidb_opt_fix_control='44855:on';
+explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+id	estRows	task	access object	operator info
+Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
+└─IndexJoin_12	12.50	root		inner join, inner:IndexReader_11, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
+  ├─TableReader_20(Build)	9990.00	root		data:Selection_19
+  │ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.a))
+  │   └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader_11(Probe)	12.50	root		index:IndexRangeScan_10
+    └─IndexRangeScan_10	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
+select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+a	a	b
+2	2	123
+>>>>>>> f66e8b1e796 (planner: fix the possible panic when fixcontrol#44855 enabled (#59763))
