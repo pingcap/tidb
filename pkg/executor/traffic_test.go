@@ -191,7 +191,8 @@ func TestCapturePath(t *testing.T) {
 	ctx := context.TODO()
 	tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
 	suite := newTrafficTestSuite(t, 10)
-	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true' duration='1s'")
+	prefix, suffix := "s3://bucket/tmp", "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true"
+	exec := suite.build(ctx, fmt.Sprintf("traffic capture to '%s?%s' duration='1s'", prefix, suffix))
 	require.NoError(t, exec.Next(tempCtx, nil))
 
 	paths := make([]string, 0, tiproxyNum)
@@ -199,8 +200,9 @@ func TestCapturePath(t *testing.T) {
 	for i := 0; i < tiproxyNum; i++ {
 		httpHandler := handlers[i]
 		output := httpHandler.getForm().Get("output")
-		require.True(t, strings.HasPrefix(output, "s3://bucket/tmp/"), output)
-		paths = append(paths, output[len("s3://bucket/tmp/"):])
+		require.True(t, strings.HasPrefix(output, prefix), output)
+		require.True(t, strings.HasSuffix(output, suffix), output)
+		paths = append(paths, output[len(prefix)+1:len(output)-len(suffix)-1])
 		expectedPaths = append(expectedPaths, fmt.Sprintf("tiproxy-%d", i))
 	}
 	sort.Strings(paths)
