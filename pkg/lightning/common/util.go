@@ -634,6 +634,7 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
+// GetPDEnableFollowerHandleRegion gets the pd_enable_follower_handle_region from database.
 func GetPDEnableFollowerHandleRegion(ctx context.Context, db *sql.DB) (bool, error) {
 	val, err := getSessionVariable(ctx, db, vardef.PDEnableFollowerHandleRegion)
 	if err != nil {
