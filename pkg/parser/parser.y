@@ -14344,6 +14344,15 @@ SetBindingStmt:
 
 		$$ = x
 	}
+|	"SET" "BINDING" BindingStatusType "FOR" "PLAN" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			PlanDigest:        $7,
+		}
+
+		$$ = x
+	}
 
 RecommendIndexStmt:
 	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt

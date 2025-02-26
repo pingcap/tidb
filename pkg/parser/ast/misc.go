@@ -2314,6 +2314,7 @@ type SetBindingStmt struct {
 	OriginNode        StmtNode
 	HintedNode        StmtNode
 	SQLDigest         string
+	PlanDigest        string
 }
 
 func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
