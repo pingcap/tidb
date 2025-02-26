@@ -220,7 +220,7 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 
-	enableFollowerHandleRegion, err := se.GetGlobalVariable(vardef.PDEnableFollowerHandleRegion)
+	enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
