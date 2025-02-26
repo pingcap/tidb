@@ -1606,7 +1606,12 @@ func TestInitStatsLite(t *testing.T) {
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
-
+	for _, col := range statsTbl1.Columns {
+		require.Equal(t, int64(statistics.Version2), col.StatsVer)
+	}
+	for _, idx := range statsTbl1.Indices {
+		require.Equal(t, int64(statistics.Version2), idx.StatsVer)
+	}
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
