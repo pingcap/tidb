@@ -506,8 +506,8 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 	joinType = &joinTypeWithExtMsg{JoinType: logicalop.InnerJoin}
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
-		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
+		lCol := edge.GetArgs()[0].(*expression.Column)
 		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
 			joinType = s.joinTypes[idx]
 			usedEdges = append(usedEdges, edge)
