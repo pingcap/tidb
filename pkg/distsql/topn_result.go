@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// **Constructs a streaming `topnSelectResults`**
+// NewTopnSelectResults creates a new TopnSelectResults.
 func NewTopnSelectResults(
 	ectx expression.EvalContext,
 	selectResult []SelectResult,
@@ -160,7 +160,7 @@ func (tsr *topnSelectResults) initChunks(ectx expression.EvalContext, maxChunkSi
 // Builds field types for ORDER BY expressions.
 func (tsr *topnSelectResults) buildFieldTypes(ectx expression.EvalContext) []*types.FieldType {
 	// Get field types for ORDER BY expressions
-	orderByFieldTypes := make([]*types.FieldType, len(tsr.byItems))
+	orderByFieldTypes := make([]*types.FieldType, 0, len(tsr.byItems))
 	for i, item := range tsr.byItems {
 		orderByFieldTypes[i] = item.Expr.GetType(ectx)
 	}
@@ -252,7 +252,10 @@ func (tsr *topnSelectResults) loadChunksUntilTotalLimit(ctx context.Context) err
 			}
 		}
 	}
-	tsr.heap.initPtrs()
+	err := tsr.heap.initPtrs()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -328,7 +331,7 @@ func processPanicAndLog(errOutputChan chan<- rowWithError, r any) {
 	logutil.BgLogger().Error("executor panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-// Gets the recover error.
+// GetRecoverError returns the error recovered from a panic.
 func GetRecoverError(r any) error {
 	if err, ok := r.(error); ok {
 		return errors.Trace(err)
@@ -429,7 +432,7 @@ func (h *topNChunkHeap) doCompaction(tsr *topnSelectResults) error {
 	newRowChunks := chunk.NewList(
 		tsr.buildFieldTypes(tsr.evalCtx),
 		capacity,
-		int(tsr.count+tsr.offset),
+		tsr.count+tsr.offset,
 	)
 	newRowPtrs := make([]chunk.RowPtr, 0, len(h.rowPtrs))
 
