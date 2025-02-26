@@ -1241,6 +1241,8 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 				}
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
+			// Sink the task into index look up reader and convert to root task.
+			// This optimization can be disabled if needed.
 			fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix57941, true)
 			if fixValue {
 				t = copTask.ConvertToRootTask(p.SCtx())

@@ -456,7 +456,7 @@ type PushedDownLimit struct {
 	Count  uint64
 }
 
-// pushedDownTopN is the TopN operator pushed down into PhysicalIndexLookUpReader.
+// PushedDownTopN is the TopN operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownTopN struct {
 	Offset uint64
 	Count  uint64
@@ -1000,6 +1000,7 @@ type PhysicalTableScan struct {
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 }
 
+// GetTblCols returns the table columns.
 func (ts *PhysicalTableScan) GetTblCols() []*expression.Column {
 	return ts.tblCols
 }
