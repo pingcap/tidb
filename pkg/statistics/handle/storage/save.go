@@ -92,12 +92,12 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -534,4 +534,11 @@ func InsertTableStats2KV(
 		}
 	}
 	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }
