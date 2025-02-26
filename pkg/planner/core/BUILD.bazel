@@ -189,7 +189,6 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/sqlexec",
-        "//pkg/util/stmtsummary",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
         "//pkg/util/texttree",

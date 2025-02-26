@@ -2493,7 +2493,7 @@ func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error)
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if IsClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
+	if IsClusterTableByName(util.InformationSchemaName.L, meta.Name.L) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

@@ -1208,6 +1208,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		}
 	}
 
+	// wrap the new value `v` into an array explicitly, in case that the `v` is an array itself.
+	// For example, `JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))` should return `[1, [2, 3]]`
+	v = types.CreateBinaryJSON([]any{v})
+
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
 	res, err = res.Modify([]types.JSONPathExpression{pathExpr}, []types.BinaryJSON{obj}, types.JSONModifySet)
 	return res, false, err

@@ -240,6 +240,8 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// Check tidb_ttl_table_status table
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+	// Check mysql.tidb_workload_values table
+	MustExec(t, se, "SELECT * from mysql.tidb_workload_values")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
@@ -2053,8 +2055,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	bindings := showBindings(seV174)
 	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
 	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )"}, bindings)
 
 	// upgrade to ver175
 	dom.Close()

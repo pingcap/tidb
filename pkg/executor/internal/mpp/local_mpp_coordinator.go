@@ -807,8 +807,10 @@ func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
-	c.cancelFunc()
-	<-c.wgDoneChan
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+		<-c.wgDoneChan
+	}
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {

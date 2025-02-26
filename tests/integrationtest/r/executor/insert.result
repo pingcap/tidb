@@ -715,6 +715,11 @@ create table t1 (a bit primary key) engine=innodb;
 insert into t1 values (b'0');
 insert into t1 values (b'0');
 Error 1062 (23000): Duplicate entry '\x00' for key 't1.PRIMARY'
+drop table t1;
+create table t1(a binary(2) primary key);
+insert into t1 values (0x7e7f);
+insert into t1 values (0x7e7f);
+Error 1062 (23000): Duplicate entry '~\x7F' for key 't1.PRIMARY'
 drop table if exists t;
 create table t(c numeric primary key);
 insert ignore into t values(null);

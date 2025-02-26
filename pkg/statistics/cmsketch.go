@@ -609,6 +609,19 @@ func (c *TopN) Copy() *TopN {
 	}
 }
 
+// MinCount returns the minimum count in the TopN.
+func (c *TopN) MinCount() uint64 {
+	if c == nil || len(c.TopN) == 0 {
+		return 0
+	}
+	// Initialize to the first value in TopN
+	minCount := c.TopN[0].Count
+	for _, t := range c.TopN {
+		minCount = min(minCount, t.Count)
+	}
+	return minCount
+}
+
 // TopNMeta stores the unit of the TopN.
 type TopNMeta struct {
 	Encoded []byte
