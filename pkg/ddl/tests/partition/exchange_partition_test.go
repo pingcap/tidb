@@ -107,7 +107,6 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 	// Test each partition
 	partitionNames := []string{"p0", "p1", "p2", "p3", "p4"}
 	for i, p := range partitionNames {
-
 		// Exchange partition out
 		tk.MustExec(fmt.Sprintf("ALTER TABLE t1 EXCHANGE PARTITION %s WITH TABLE t2", p))
 
