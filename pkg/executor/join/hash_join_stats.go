@@ -145,22 +145,25 @@ type hashJoinRuntimeStatsV2 struct {
 
 	fetchAndBuildHashTable int64
 
-	partitionData  int64
-	buildHashTable int64
-	probe          int64
-	fetchAndProbe  int64
+	partitionData       int64
+	buildHashTable      int64
+	probe               int64
+	fetchAndProbe       int64
+	workerFetchAndProbe int64
 
-	maxPartitionData  int64
-	maxBuildHashTable int64
-	maxProbe          int64
-	maxFetchAndProbe  int64
+	maxPartitionData       int64
+	maxBuildHashTable      int64
+	maxProbe               int64
+	maxWorkerFetchAndProbe int64
 
-	maxPartitionDataForCurrentRound  int64
-	maxBuildHashTableForCurrentRound int64
-	maxProbeForCurrentRound          int64
-	maxFetchAndProbeForCurrentRound  int64
+	maxPartitionDataForCurrentRound       int64
+	maxBuildHashTableForCurrentRound      int64
+	maxProbeForCurrentRound               int64
+	maxWorkerFetchAndProbeForCurrentRound int64
 
 	spill spillStats
+
+	isHashJoinGA bool
 }
 
 func setMaxValue(addr *int64, currentValue int64) {
@@ -182,25 +185,26 @@ func (e *hashJoinRuntimeStatsV2) reset() {
 	e.buildHashTable = 0
 	e.probe = 0
 	e.fetchAndProbe = 0
+	e.workerFetchAndProbe = 0
 	e.maxPartitionData = 0
 	e.maxBuildHashTable = 0
 	e.maxProbe = 0
-	e.maxFetchAndProbe = 0
+	e.maxWorkerFetchAndProbe = 0
 	e.maxPartitionDataForCurrentRound = 0
 	e.maxBuildHashTableForCurrentRound = 0
 	e.maxProbeForCurrentRound = 0
-	e.maxFetchAndProbeForCurrentRound = 0
+	e.maxWorkerFetchAndProbeForCurrentRound = 0
 }
 
 func (e *hashJoinRuntimeStatsV2) resetCurrentRound() {
 	e.maxPartitionData += e.maxPartitionDataForCurrentRound
 	e.maxBuildHashTable += e.maxBuildHashTableForCurrentRound
 	e.maxProbe += e.maxProbeForCurrentRound
-	e.maxFetchAndProbe += e.maxFetchAndProbeForCurrentRound
+	e.maxWorkerFetchAndProbe += e.maxWorkerFetchAndProbeForCurrentRound
 	e.maxPartitionDataForCurrentRound = 0
 	e.maxBuildHashTableForCurrentRound = 0
 	e.maxProbeForCurrentRound = 0
-	e.maxFetchAndProbeForCurrentRound = 0
+	e.maxWorkerFetchAndProbeForCurrentRound = 0
 }
 
 // Tp implements the RuntimeStats interface.
@@ -211,25 +215,60 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
-		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.maxBuildHashTable - e.maxPartitionData)))
-		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable + e.maxPartitionData)))
-		buf.WriteString("}")
+		if e.isHashJoinGA {
+			buf.WriteString("build_hash_table:{concurrency:")
+			buf.WriteString(strconv.Itoa(e.concurrent))
+			buf.WriteString(", time:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
+			buf.WriteString(", fetch:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.maxBuildHashTable - e.maxPartitionData)))
+			buf.WriteString(", max_partition:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
+			buf.WriteString(", total_partition:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
+			buf.WriteString(", max_build:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
+			buf.WriteString(", total_build:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
+			buf.WriteString("}")
+		} else {
+			buf.WriteString("build_hash_table:{total:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
+			buf.WriteString(", fetch:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.maxBuildHashTable - e.maxPartitionData)))
+			buf.WriteString(", build:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable + e.maxPartitionData)))
+			buf.WriteString("}")
+		}
 	}
+
 	if e.probe > 0 {
 		buf.WriteString(", probe:{concurrency:")
 		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
-		buf.WriteString(", max:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
-		buf.WriteString(", probe:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxProbe)))
-		buf.WriteString(", fetch and wait:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.maxProbe)))
+		if e.isHashJoinGA {
+			buf.WriteString(", time:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
+			buf.WriteString(", fetch_and_wait:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.maxProbe)))
+			buf.WriteString(", max_worker_time:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxWorkerFetchAndProbe)))
+			buf.WriteString(", total_worker_time:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.workerFetchAndProbe)))
+			buf.WriteString(", max_probe:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxProbe)))
+			buf.WriteString(", total_probe:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
+		} else {
+			buf.WriteString(", total:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
+			buf.WriteString(", max:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxWorkerFetchAndProbe))))
+			buf.WriteString(", probe:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxProbe)))
+			buf.WriteString(", fetch_and_wait:")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.maxProbe)))
+		}
+
 		if e.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.FormatInt(e.probeCollision, 10))
@@ -254,21 +293,21 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 
 func (e *hashJoinRuntimeStatsV2) Clone() execdetails.RuntimeStats {
 	return &hashJoinRuntimeStatsV2{
-		concurrent:                       e.concurrent,
-		probeCollision:                   e.probeCollision,
-		fetchAndBuildHashTable:           e.fetchAndBuildHashTable,
-		partitionData:                    e.partitionData,
-		buildHashTable:                   e.buildHashTable,
-		probe:                            e.probe,
-		fetchAndProbe:                    e.fetchAndProbe,
-		maxPartitionData:                 e.maxPartitionData,
-		maxBuildHashTable:                e.maxBuildHashTable,
-		maxProbe:                         e.maxProbe,
-		maxFetchAndProbe:                 e.maxFetchAndProbe,
-		maxPartitionDataForCurrentRound:  e.maxPartitionDataForCurrentRound,
-		maxBuildHashTableForCurrentRound: e.maxBuildHashTableForCurrentRound,
-		maxProbeForCurrentRound:          e.maxProbeForCurrentRound,
-		maxFetchAndProbeForCurrentRound:  e.maxFetchAndProbeForCurrentRound,
+		concurrent:                            e.concurrent,
+		probeCollision:                        e.probeCollision,
+		fetchAndBuildHashTable:                e.fetchAndBuildHashTable,
+		partitionData:                         e.partitionData,
+		buildHashTable:                        e.buildHashTable,
+		probe:                                 e.probe,
+		fetchAndProbe:                         e.fetchAndProbe,
+		maxPartitionData:                      e.maxPartitionData,
+		maxBuildHashTable:                     e.maxBuildHashTable,
+		maxProbe:                              e.maxProbe,
+		maxWorkerFetchAndProbe:                e.maxWorkerFetchAndProbe,
+		maxPartitionDataForCurrentRound:       e.maxPartitionDataForCurrentRound,
+		maxBuildHashTableForCurrentRound:      e.maxBuildHashTableForCurrentRound,
+		maxProbeForCurrentRound:               e.maxProbeForCurrentRound,
+		maxWorkerFetchAndProbeForCurrentRound: e.maxWorkerFetchAndProbeForCurrentRound,
 	}
 }
 
@@ -289,7 +328,7 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 	e.probeCollision += tmp.probeCollision
 	e.fetchAndProbe += tmp.fetchAndProbe
 	e.probe += tmp.probe
-	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
-		e.maxFetchAndProbe = tmp.maxFetchAndProbe
+	if e.maxWorkerFetchAndProbe < tmp.maxWorkerFetchAndProbe {
+		e.maxWorkerFetchAndProbe = tmp.maxWorkerFetchAndProbe
 	}
 }
