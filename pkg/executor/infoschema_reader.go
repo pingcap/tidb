@@ -1219,6 +1219,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
+			nil,                     // SRS_ID
 		)
 		e.rows = append(e.rows, record)
 	}
