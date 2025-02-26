@@ -4270,6 +4270,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		e.handleCols = v.CommonHandleCols
 		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
 	}
+
 	if v.PushedTopN != nil && len(e.handleCols) == 0 {
 		e.handleCols = append(e.handleCols, is.Schema().Columns[len(is.Index.Columns)])
 		if e.handleCols[0].ID == -1 {
@@ -4278,6 +4279,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 			e.handleIdx = append(e.handleIdx, 0)
 		}
 	}
+
 	if v.PushedTopN != nil {
 		// Add handle column only if none exists
 		if len(e.handleCols) == 0 {
@@ -4307,6 +4309,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		e.dummy = true
 	}
+
 	return e, nil
 }
 
