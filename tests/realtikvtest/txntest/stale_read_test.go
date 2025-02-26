@@ -1604,6 +1604,17 @@ func TestStaleReadAllCombinations(t *testing.T) {
 			},
 			expect: []string{"1 10"},
 		},
+		{
+			name: "tidb_snapshot",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_snapshot=''")
+			},
+			expect: []string{"1 10"},
+		},
 	}
 
 	labelSettings := []struct {
@@ -1618,6 +1629,26 @@ func TestStaleReadAllCombinations(t *testing.T) {
 			name: "with DC label",
 			labels: map[string]string{
 				placement.DCLabelKey: "bj",
+			},
+		},
+		{
+			name: "with Zone label",
+			labels: map[string]string{
+				"dc": "dc1",
+			},
+		},
+		{
+			name: "with Rack label",
+			labels: map[string]string{
+				"rack": "rack1",
+			},
+		},
+		{
+			name: "with multiple labels",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+				"dc":                 "dc1",
+				"rack":               "rack1",
 			},
 		},
 	}
