@@ -376,6 +376,7 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 		}
 	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
+	cloned.PushedTopN = op.PushedTopN.Clone()
 	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	return cloned, true

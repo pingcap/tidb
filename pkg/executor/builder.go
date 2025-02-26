@@ -4038,7 +4038,11 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	return ret
 }
 
-func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, val table.Table, err error) {
+func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan, needRowid bool) (dagReq *tipb.DAGRequest, val table.Table, err error) {
+	ts := plans[0].(*plannercore.PhysicalTableScan)
+	if needRowid && ts.Columns[len(ts.Columns)-1].ID != -1 {
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+	}
 	tableReq, err := builder.ConstructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, nil, err
@@ -4046,7 +4050,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	for i := 0; i < schemaLen; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
-	ts := plans[0].(*plannercore.PhysicalTableScan)
+
 	tbl, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -4056,10 +4060,69 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	return tableReq, tbl, err
 }
 
+// extractColumnsFromExpr recursively extracts all columns from an expression
+// and adds their indices to OutputOffsets if not already present
+func extractColumnsFromExpr(expr expression.Expression, schema *expression.Schema, outputOffsets *[]uint32) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		// Found a column, add its index to outputOffsets if not already present
+		for i, schemaColumn := range schema.Columns {
+			if schemaColumn.ID == x.ID {
+				if !contains(*outputOffsets, uint32(i)) {
+					*outputOffsets = append(*outputOffsets, uint32(i))
+				}
+				break
+			}
+		}
+	case *expression.ScalarFunction:
+		// Recursively process all arguments of the function
+		for _, arg := range x.GetArgs() {
+			extractColumnsFromExpr(arg, schema, outputOffsets)
+		}
+	}
+	// Other expression types (constants, etc.) don't contain columns, so ignore them
+}
+
+// remapIndices updates column indices in schema and expressions based on the output offsets mapping
+func remapIndices(schema *expression.Schema, byItems []*plannerutil.ByItems, outputOffsets []uint32) {
+	// Create mapping from original index to new index
+	indexMap := make(map[uint32]uint32)
+	for newIndex, oldIndex := range outputOffsets {
+		indexMap[oldIndex] = uint32(newIndex)
+	}
+
+	// Update column indices in schema
+	for _, col := range schema.Columns {
+		if newIndex, ok := indexMap[uint32(col.Index)]; ok {
+			col.Index = int(newIndex)
+		}
+	}
+
+	// Update column indices in expressions using the recursive function
+	for _, item := range byItems {
+		updateExpressionIndices(item.Expr, indexMap)
+	}
+}
+
+// updateExpressionIndices recursively updates column indices in an expression
+func updateExpressionIndices(expr expression.Expression, indexMap map[uint32]uint32) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		if newIndex, ok := indexMap[uint32(x.Index)]; ok {
+			x.Index = int(newIndex)
+		}
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			updateExpressionIndices(arg, indexMap)
+		}
+	}
+	// Other expression types don't contain column indices, so ignore them
+}
+
 // buildIndexReq is designed to create a DAG for index request.
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for partition tables.
-func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan, pushedTopN *plannercore.PushedDownTopN) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -4067,7 +4130,13 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 
 	indexReq.OutputOffsets = []uint32{}
 	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-	if len(idxScan.ByItems) != 0 {
+
+	// Determine whether to apply the index remapping logic
+	shouldRemapIndex := false
+	var schemaForTopN *expression.Schema
+
+	// Handle sorting columns: either regular sort or TopN sort (mutually exclusive)
+	if len(idxScan.ByItems) != 0 && pushedTopN == nil {
 		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
@@ -4086,16 +4155,44 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 				return nil, errors.Errorf("Not found order by related columns in indexScan.schema")
 			}
 		}
+	} else if pushedTopN != nil {
+		shouldRemapIndex = true
+		topn := plans[len(plans)-1].(*plannercore.PhysicalTopN)
+		schemaForTopN = topn.Schema()
+
+		// Add TopN sorting columns to output
+		for _, item := range topn.ByItems {
+			extractColumnsFromExpr(item.Expr, schemaForTopN, &indexReq.OutputOffsets)
+		}
 	}
 
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+	// Add handle columns
+	if !shouldRemapIndex {
+		for i := 0; i < handleLen; i++ {
+			indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+		}
+	} else {
+		// Only add handle columns that haven't been added yet
+		for i := 0; i < handleLen; i++ {
+			if !contains(indexReq.OutputOffsets, uint32(len(columns)+i)) {
+				indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+			}
+		}
 	}
 
+	// If extra output column is needed (partition ID), add it to output offsets
 	if idxScan.NeedExtraOutputCol() {
-		// need add one more column for pid or physical table id
+		// Add one more column for partition ID or physical table ID
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
 	}
+
+	// If index remapping is needed, create mapping and update column indices
+	if shouldRemapIndex {
+		topn := plans[len(plans)-1].(*plannercore.PhysicalTopN)
+		remapIndices(schemaForTopN, topn.ByItems, indexReq.OutputOffsets)
+
+	}
+
 	return indexReq, err
 }
 
@@ -4107,7 +4204,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.PushedTopN)
 	if err != nil {
 		return nil, err
 	}
@@ -4115,7 +4212,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if v.Paging {
 		indexPaging = true
 	}
-	tableReq, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	needRowid := false
+	if v.PushedTopN != nil && is.Schema().Columns[len(is.Index.Columns)].ID == -1 {
+		needRowid = true
+	}
+	tableReq, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans, needRowid)
 	if err != nil {
 		return nil, err
 	}
@@ -4153,6 +4254,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:                   v.IndexPlans,
 		tblPlans:                   v.TablePlans,
 		PushedLimit:                v.PushedLimit,
+		PushedTopN:                 v.PushedTopN,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
 	}
@@ -4166,6 +4268,39 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		}
 		e.handleCols = v.CommonHandleCols
 		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
+	}
+	if v.PushedTopN != nil && len(e.handleCols) == 0 {
+		e.handleCols = append(e.handleCols, is.Schema().Columns[len(is.Index.Columns)])
+		if e.handleCols[0].ID == -1 {
+			e.handleIdx = append(e.handleIdx, len(ts.Columns)-1)
+		} else {
+			e.handleIdx = append(e.handleIdx, 0)
+		}
+	}
+	if v.PushedTopN != nil {
+		// Add handle column only if none exists
+		if len(e.handleCols) == 0 {
+			handleCol := is.Schema().Columns[len(is.Index.Columns)]
+			e.handleCols = append(e.handleCols, handleCol)
+			// Set handle index based on handle column type
+			if handleCol.ID == -1 {
+				e.handleIdx = append(e.handleIdx, len(ts.Columns)-1)
+			} else {
+				e.handleIdx = append(e.handleIdx, 0)
+			}
+		}
+		// Set handleInIndexIdx for all handle columns
+		for i := 0; i < len(e.handleCols); i++ {
+			e.handleInIndexIdx = append(e.handleInIndexIdx, len(is.Index.Columns)+i)
+		}
+		// Safely get the topn plan
+		topn, ok := v.IndexPlans[len(v.IndexPlans)-1].(*plannercore.PhysicalTopN)
+		if !ok {
+			return nil, errors.Errorf("unexpected plan for PushedTopN: %T", v.IndexPlans[len(v.IndexPlans)-1])
+		}
+
+		e.keepOrder = true
+		e.byItems = topn.ByItems
 	}
 	return e, nil
 }
@@ -4245,7 +4380,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		var err error
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i], nil)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 			if is.Index.Global {
@@ -4253,7 +4388,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 			}
 		} else {
 			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
-			tempReq, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
+			tempReq, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i], false)
 			descs = append(descs, ts.Desc)
 			indexes = append(indexes, nil)
 		}
@@ -4267,7 +4402,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
 		partialDataSizes = append(partialDataSizes, v.GetPartialReaderNetDataSize(v.PartialPlans[i][0]))
 	}
-	tableReq, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	tableReq, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans, false)
 	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
 	if err != nil {
 		return nil, err
@@ -5807,4 +5942,14 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 func (b *executorBuilder) buildWorkloadRepoCreate(_ *plannercore.WorkloadRepoCreate) exec.Executor {
 	base := exec.NewBaseExecutor(b.ctx, nil, 0)
 	return &WorkloadRepoCreateExec{base}
+}
+
+// contains checks if a slice contains a specific uint32 value.
+func contains(slice []uint32, item uint32) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }

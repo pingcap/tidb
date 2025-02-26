@@ -2333,3 +2333,47 @@ func TestIssue58829(t *testing.T) {
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
+
+func TestPushTopNDownIndexLookUpReaderWithClusteredIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test with non-clustered integer primary key table
+	tk.MustExec("drop table if exists tbl_non_cluster")
+	tk.MustExec("set @@tidb_enable_clustered_index=OFF")
+	tk.MustExec("create table tbl_non_cluster(id int primary key, a int, b int, c int, key idx_b_c(b,c))")
+	tk.MustExec("insert into tbl_non_cluster values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5)")
+
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by c desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by id desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by b*c, c*10 limit 2,1").Check(testkit.Rows("4 4 4 4"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by abs(b-c), b*c*10 limit 2,1").Check(testkit.Rows("4 4 4 4"))
+
+	// Test with integer primary key clustered index
+	tk.MustExec("set @@tidb_enable_clustered_index=ON")
+	tk.MustExec("drop table if exists tbl_cluster_int")
+	tk.MustExec("create table tbl_cluster_int(id int primary key clustered, a int, b int, c int, key idx_b_c(b,c))")
+	tk.MustExec("insert into tbl_cluster_int values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5)")
+
+	tk.MustQuery("select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by c desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_int use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_int use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by id desc limit 2,1").Check(testkit.Rows("3 3 3 3"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by b*c, c*10 limit 2,1").Check(testkit.Rows("4 4 4 4"))
+	tk.MustQuery("select * from tbl_non_cluster use index(idx_b_c) where b > 1 order by abs(b-c), b*c*10 limit 2,1").Check(testkit.Rows("4 4 4 4"))
+
+	// Test with composite primary key clustered index
+	tk.MustExec("drop table if exists tbl_cluster_comp")
+	tk.MustExec("create table tbl_cluster_comp(a int, b int, c int, d int, e int, primary key clustered(a, b), key idx_c_d(c,d))")
+	tk.MustExec("insert into tbl_cluster_comp values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) order by d desc limit 2,1").Check(testkit.Rows("3 3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) where d > 1 order by c*10 desc limit 2,1").Check(testkit.Rows("3 3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) where c > 1 and d > 1 order by c*d desc limit 2,1").Check(testkit.Rows("3 3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) where c > 1 order by a desc limit 2,1").Check(testkit.Rows("3 3 3 3 3"))
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) where c > 1 order by a, b limit 2,1").Check(testkit.Rows("4 4 4 4 4"))
+	tk.MustQuery("select * from tbl_cluster_comp use index(idx_c_d) where c > 1 order by abs(c-d), c*d*10 limit 2,1").Check(testkit.Rows("4 4 4 4 4"))
+}

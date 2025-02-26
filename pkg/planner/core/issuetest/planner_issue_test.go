@@ -177,3 +177,30 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestIssue57941(t *testing.T) {
+	// Test the embedding of TopN and use fix_control to disable the fix when encountering an unknown bug.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key,b int,c int,d int,index idx(b, c));")
+
+	tk.MustQuery("explain select /*+ limit_to_cop() */ d from t use index(idx) order by a limit 9000, 1000").
+		Check(testkit.Rows(
+			"Projection_7 1000.00 root  test.t.d",
+			"└─IndexLookUp_16 1000.00 root  limit embedded(offset:9000, count:1000)",
+			"  ├─TopN_15(Build) 10000.00 cop[tikv]  test.t.a, offset:0, count:10000",
+			"  │ └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:idx(b, c) keep order:false, stats:pseudo",
+			"  └─TableRowIDScan_14(Probe) 1000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("SET SESSION tidb_opt_fix_control = '57941:OFF';")
+
+	tk.MustQuery("explain select /*+ limit_to_cop() */ d from t use index(idx) order by a limit 9000, 1000").
+		Check(testkit.Rows(
+			"TopN_9 1000.00 root  test.t.a, offset:9000, count:1000",
+			"└─IndexLookUp_16 10000.00 root  ",
+			"  ├─TopN_15(Build) 10000.00 cop[tikv]  test.t.a, offset:0, count:10000",
+			"  │ └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:idx(b, c) keep order:false, stats:pseudo",
+			"  └─TableRowIDScan_14(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		))
+}
