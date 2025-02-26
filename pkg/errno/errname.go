@@ -217,7 +217,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCrashedOnRepair:                          mysql.Message("Table '%-.192s' is marked as crashed and last (automatic?) repair failed", nil),
 	ErrWarningNotCompleteRollback:               mysql.Message("Some non-transactional changed tables couldn't be rolled back", nil),
 	ErrTransCacheFull:                           mysql.Message("Multi-statement transaction required more than 'maxBinlogCacheSize' bytes of storage; increase this mysqld variable and try again", nil),
-	ErrTooManyUserConnections:                   mysql.Message("User %-.64s already has more than 'maxUserConnections' active connections", nil),
+	ErrTooManyUserConnections:                   mysql.Message("User %-.64s has exceeded the 'max_user_connections' resource", nil),
 	ErrSetConstantsOnly:                         mysql.Message("You may only use constant expressions with SET", nil),
 	ErrLockWaitTimeout:                          mysql.Message("Lock wait timeout exceeded; try restarting transaction", nil),
 	ErrLockTableFull:                            mysql.Message("The total number of locks exceeds the lock table size", nil),
