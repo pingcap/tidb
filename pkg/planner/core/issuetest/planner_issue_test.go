@@ -187,8 +187,8 @@ func TestIssue57941(t *testing.T) {
 
 	tk.MustQuery("explain select /*+ limit_to_cop() */ d from t use index(idx) order by a limit 9000, 1000").
 		Check(testkit.Rows(
-			"Projection_7 1000.00 root  test.t.d",
-			"└─IndexLookUp_16 1000.00 root  limit embedded(offset:9000, count:1000)",
+			"Projection_17 1000.00 root  test.t.d",
+			"└─IndexLookUp_16 1000.00 root  topn embedded(offset:9000, count:1000)",
 			"  ├─TopN_15(Build) 10000.00 cop[tikv]  test.t.a, offset:0, count:10000",
 			"  │ └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:idx(b, c) keep order:false, stats:pseudo",
 			"  └─TableRowIDScan_14(Probe) 1000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
