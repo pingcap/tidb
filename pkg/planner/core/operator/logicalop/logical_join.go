@@ -1264,7 +1264,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					if IsEqualCondition(binop.FuncName.L) {
+					switch binop.FuncName.L {
+					case ast.EQ, ast.NullEQ:
 						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue

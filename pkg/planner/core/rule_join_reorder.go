@@ -517,10 +517,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				funcName := ast.EQ
-				if logicalop.IsEqualCondition(edge.FuncName.L) {
-					funcName = edge.FuncName.L
-				}
+				funcName := edge.FuncName.L
 				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 
 				// after creating the new EQCondition function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,

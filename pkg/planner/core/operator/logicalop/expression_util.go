@@ -16,7 +16,6 @@ package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
@@ -50,13 +49,4 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return dual
 	}
 	return nil
-}
-
-// IsEqualCondition checks if the function name is equal condition.
-func IsEqualCondition(funcName string) bool {
-	switch funcName {
-	case ast.EQ, ast.NullEQ:
-		return true
-	}
-	return false
 }
