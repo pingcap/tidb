@@ -472,7 +472,7 @@ func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	return cloned
 }
 
-// Clone clones this pushed-down list.
+// Clone clones this pushed-down topN.
 func (p *PushedDownTopN) Clone() *PushedDownTopN {
 	if p == nil {
 		return nil
