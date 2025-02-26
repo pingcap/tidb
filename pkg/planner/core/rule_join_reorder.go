@@ -615,9 +615,6 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
 func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan) base.LogicalPlan {
-	if !s.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	resultJoinGroup := make([]base.LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
 		resultJoinGroup = resultJoinGroup[:0]
