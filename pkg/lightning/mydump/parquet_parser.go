@@ -16,7 +16,6 @@ package mydump
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"math"
@@ -353,8 +352,6 @@ type ParquetParser struct {
 	lastRow Row
 	logger  log.Logger
 
-	base64 bool
-
 	memoryUsage int
 	memLimiter  *membuf.Limiter
 }
@@ -644,14 +641,6 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 				continue
 			}
 			setFunc(storeOffset+i, col, val)
-			if pp.base64 {
-				var decoded []byte
-				decoded, err = base64.StdEncoding.DecodeString(pp.rows[storeOffset+i][col].GetString())
-				if err != nil {
-					return 0, err
-				}
-				pp.rows[storeOffset+i][col].SetString(string(decoded), "utf8mb4_bin")
-			}
 		}
 	}
 
@@ -999,7 +988,6 @@ func NewParquetParser(
 		columnNames: columnNames,
 		alloc:       allocator,
 		logger:      log.FromContext(ctx),
-		base64:      meta.Base64,
 		memoryUsage: memoryUsage,
 		memLimiter:  readerMemoryLimiter,
 	}
@@ -1089,7 +1077,6 @@ func SampleStatisticsFromParquet(
 		colMetas:    columnMetas,
 		columnNames: columnNames,
 		logger:      log.FromContext(ctx),
-		base64:      fileMeta.ParquetMeta.Base64,
 	}
 	if err := parser.Init(); err != nil {
 		return 0, 0, 0, errors.Trace(err)
