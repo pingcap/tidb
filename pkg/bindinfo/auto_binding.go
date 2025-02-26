@@ -65,7 +65,7 @@ func (h *globalBindingHandle) writeAutoBindings(bindings []*Binding) (err error)
 			binding.OriginalSQL, binding.BindSQL, binding.Db, binding.Charset,
 			binding.Collation, binding.SQLDigest, binding.PlanDigest)
 
-		fmt.Println(stmtInsert)
+		//fmt.Println(stmtInsert)
 
 		err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 			_, err = exec(sctx, stmtInsert)
