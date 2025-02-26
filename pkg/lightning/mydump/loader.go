@@ -410,11 +410,11 @@ func ParallelProcess[T any](
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
-				return nil
+				return egCtx.Err()
 			default:
 			}
 
-			v, err := hdl(ctx, file)
+			v, err := hdl(egCtx, file)
 			if err != nil {
 				return err
 			}
