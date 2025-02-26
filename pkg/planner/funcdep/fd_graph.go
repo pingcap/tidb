@@ -899,10 +899,7 @@ func (s FDSet) FindPrimaryKey() (*intset.FastIntSet, bool) {
 func (s FDSet) StrictKeyCovered(cols intset.FastIntSet) bool {
 	allCols := s.AllCols()
 	closure := s.closureOfStrict(cols)
-	if allCols.SubsetOf(closure) {
-		return true
-	}
-	return false
+	return allCols.SubsetOf(closure)
 }
 
 // AllCols returns all columns in the current set.
