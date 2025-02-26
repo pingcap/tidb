@@ -161,8 +161,8 @@ func (tsr *topnSelectResults) initChunks(ectx expression.EvalContext, maxChunkSi
 func (tsr *topnSelectResults) buildFieldTypes(ectx expression.EvalContext) []*types.FieldType {
 	// Get field types for ORDER BY expressions
 	orderByFieldTypes := make([]*types.FieldType, 0, len(tsr.byItems))
-	for i, item := range tsr.byItems {
-		orderByFieldTypes[i] = item.Expr.GetType(ectx)
+	for _, item := range tsr.byItems {
+		orderByFieldTypes = append(orderByFieldTypes, item.Expr.GetType(ectx))
 	}
 	indexMap := make(map[uint32]int)
 	for newIndex, oldIndex := range tsr.inputOffsets {

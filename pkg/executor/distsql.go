@@ -733,7 +733,7 @@ func (e *IndexLookUpExecutor) getRetTpsForPushedDownTopN() []*types.FieldType {
 	// Extract expressions and their corresponding types from byItems.
 	for i, byItem := range e.byItems {
 		exprs[i] = byItem.Expr
-		tps[i] = byItem.Expr.GetType(e.ectx.GetEvalCtx())
+		tps = append(tps, byItem.Expr.GetType(e.ectx.GetEvalCtx()))
 	}
 
 	// Create a map to track existing Column indexes in exprs.
