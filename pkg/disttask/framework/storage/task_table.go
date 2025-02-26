@@ -607,10 +607,14 @@ func (mgr *TaskManager) SwitchTaskStep(
 ) error {
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
-		if vars.MemQuotaQuery < variable.DefTiDBMemQuotaQuery {
+		// in most cases the def memory quota is enough, but when importing 200TiB
+		// data using global sort, when transiting to write&ingest step, the txn
+		// might be cancelled, so we double it.
+		targetQuota := 2 * variable.DefTiDBMemQuotaQuery
+		if int(vars.MemQuotaQuery) < targetQuota {
 			bak := vars.MemQuotaQuery
 			if err := vars.SetSystemVar(variable.TiDBMemQuotaQuery,
-				strconv.Itoa(variable.DefTiDBMemQuotaQuery)); err != nil {
+				strconv.Itoa(targetQuota)); err != nil {
 				return err
 			}
 			defer func() {
