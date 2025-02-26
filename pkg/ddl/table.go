@@ -286,6 +286,9 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	tbInfo.State = model.StateNone
 
 	oldTableID, err := findTableIDByName(d, t, schemaID, tbInfo.Name.L)
+	if err == nil && oldTableID > 0 {
+		err = infoschema.ErrTableExists
+	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
