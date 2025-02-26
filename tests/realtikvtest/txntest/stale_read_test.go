@@ -867,7 +867,7 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 	tk.MustExec("CREATE USER IF NOT EXISTS 'newuser' IDENTIFIED BY 'mypassword';")
 	for _, testcase := range testcases {
 		time.Sleep(time.Second)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW();`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		require.Equal(t, true, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
 		tk.MustExec(testcase.sql)
 		require.Equal(t, testcase.sameSession, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
@@ -1509,12 +1509,22 @@ func TestStaleReadNoBackoff(t *testing.T) {
 
 func TestStaleReadAllCombinations(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-
 	// Save old config to restore later
 	oldConfig := *config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(&oldConfig)
 
 	tk := testkit.NewTestKit(t, store)
+
+	if !*realtikvtest.WithRealTiKV {
+		safePointName := "tikv_gc_safe_point"
+		safePointValue := "20160102-15:04:05 -0700"
+		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+		tk.MustExec(updateSafePoint)
+	}
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v int)")
