@@ -270,6 +270,9 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0

@@ -351,7 +351,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 var errGetHistMeta = errors.New("fail to get stats version for this histogram")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {

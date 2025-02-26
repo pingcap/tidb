@@ -298,7 +298,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 				StatsVer:   statsVer,
 			}
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
-			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			if col.StatsAvailable() {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
@@ -683,7 +685,7 @@ func (h *Handle) initStatsBuckets(cache util.StatsCache, totalMemory uint64) err
 			return errors.Trace(err)
 		}
 	} else {
-		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
+		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1 order by table_id, is_index, hist_id, bucket_id"
 		rc, err := util.Exec(h.initStatsCtx, sql)
 		if err != nil {
 			return errors.Trace(err)
@@ -736,7 +738,7 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index = 1 and table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
