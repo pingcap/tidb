@@ -246,7 +246,10 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 
 // TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
 // compatible with mysql.
-func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *types.FieldType) {
+func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *types.FieldType) error {
+	if a.Name != ast.AggFuncSum {
+		return errors.Errorf("expect sum func, but got %s", a.Name)
+	}
 	if _, ok := a.Args[0].(*expression.Column); ok {
 		a.typeInfer4Sum(ctx)
 	} else {
@@ -254,6 +257,7 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *
 			a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
 		}
 	}
+	return nil
 }
 
 // TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
