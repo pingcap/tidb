@@ -109,7 +109,7 @@ func (e *SQLBindExec) setBindingStatusByDigest() error {
 	}
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(
 		e.details[0].NewStatus,
-		e.details[0].SQLDigest,
+		e.details[0].PlanDigest,
 	)
 	if err == nil && !ok {
 		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
