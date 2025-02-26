@@ -382,6 +382,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+	// default format is empty, will parse format in InitDataFiles()
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -506,7 +507,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		// if format is empty, will parse format in InitDataFiles()
+		// allow format is empty, which will be parsed in InitDataFiles()
 		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != "" {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
