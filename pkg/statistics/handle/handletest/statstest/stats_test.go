@@ -315,6 +315,12 @@ func TestInitStats2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
+	// stats of pk will be loaded.
+	require.Equal(t, true, table0.Columns[1].IsAllEvicted())
+	require.Equal(t, true, table1.Columns[1].IsFullLoad())
+	delete(table0.Columns, 1)
+	delete(table1.Columns, 1)
+	// result part is not changed.
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
