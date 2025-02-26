@@ -24,7 +24,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/copr/metrics",
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/error",

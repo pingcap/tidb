@@ -24,7 +24,7 @@ go_test(
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store",
         "//pkg/store/driver",

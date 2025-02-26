@@ -35,7 +35,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/helper",
         "//pkg/store/mockstore",

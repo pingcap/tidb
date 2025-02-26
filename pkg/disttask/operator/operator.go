@@ -94,8 +94,8 @@ func (c *AsyncOperator[T, R]) SetSink(ch DataChannel[R]) {
 }
 
 // TuneWorkerPoolSize tunes the worker pool size.
-func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32) {
-	c.pool.Tune(workerNum)
+func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32, wait bool) {
+	c.pool.Tune(workerNum, wait)
 }
 
 // GetWorkerPoolSize returns the worker pool size.

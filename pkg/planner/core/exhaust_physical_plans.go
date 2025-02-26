@@ -388,7 +388,7 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 		}
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.AntiSemiJoin, logicalop.SemiJoin:
 		return true
 	default:
 		return false
@@ -1352,10 +1352,11 @@ func constructInnerIndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:     indexConds,
-		TableFilters:     tblConds,
-		CountAfterIndex:  rowCount,
-		CountAfterAccess: rowCount,
+		IndexFilters:         indexConds,
+		TableFilters:         tblConds,
+		CountAfterIndex:      rowCount,
+		CountAfterAccess:     rowCount,
+		CorrCountAfterAccess: 0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {

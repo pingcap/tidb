@@ -791,3 +791,48 @@ func TestDropTableAccessibleInInfoSchema(t *testing.T) {
 	}
 	require.True(t, len(errs) > 0)
 }
+
+func TestCreateViewTwice(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_raw (id int)")
+	tk2.MustExec("use test")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	first := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+		if first {
+			first = false
+			go func() {
+				defer wg.Done()
+				tk2.MustExecToErr("create view v as select * from t_raw where id > 666")
+			}()
+		}
+	})
+	tk.MustExec("create view v as select * from t_raw")
+	wg.Wait()
+}
+
+func TestIssue59238(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t ( a INT, b INT, INDEX idx(b))" +
+		" PARTITION BY RANGE(a) (" +
+		" PARTITION p1 VALUES LESS THAN (10000)," +
+		" PARTITION p2 VALUES LESS THAN (20000)," +
+		" PARTITION p3 VALUES LESS THAN (MAXVALUE))")
+
+	rs := tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").String()
+
+	tk.MustExec("alter table t truncate partition p1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+
+	tk.MustExec("create table t1 (a int, b int, index idx(b))")
+	tk.MustExec("alter table t exchange partition p1 with table t1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+}

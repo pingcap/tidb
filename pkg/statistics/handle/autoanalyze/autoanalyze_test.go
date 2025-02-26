@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -61,7 +62,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	// Enable auto analyze priority queue.
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
-	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
+	require.True(t, vardef.EnableAutoAnalyzePriorityQueue.Load())
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)

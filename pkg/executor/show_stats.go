@@ -562,7 +562,7 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
-	rows, err := dataForAnalyzeStatusHelper(ctx, e.BaseExecutor.Ctx())
+	rows, err := dataForAnalyzeStatusHelper(ctx, nil, e.BaseExecutor.Ctx())
 	if err != nil {
 		return err
 	}

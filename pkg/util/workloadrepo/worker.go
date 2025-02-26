@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -84,7 +85,6 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
 
 	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
@@ -92,10 +92,12 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", ""},
 
-	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
+	// TODO: These tables are excluded for now, because reading from them adds unnecessary load to the PD.
+	//{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
 	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
 }
 
 type sessionPool interface {
@@ -120,17 +122,26 @@ type worker struct {
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
-	snapshotChan     chan struct{}
 	retentionDays    int32
 }
 
 var workerCtx = worker{}
 
-func takeSnapshot() error {
-	if workerCtx.snapshotChan == nil {
-		return errors.New("Workload repository is not enabled yet")
+func takeSnapshot(ctx context.Context) error {
+	workerCtx.Lock()
+	defer workerCtx.Unlock()
+
+	if !workerCtx.enabled {
+		return errWorkloadNotStarted.GenWithStackByArgs()
 	}
-	workerCtx.snapshotChan <- struct{}{}
+
+	snapID, err := workerCtx.takeSnapshot(ctx)
+	if err != nil {
+		logutil.BgLogger().Info("workload repository manual snapshot failed", zap.String("owner", workerCtx.instanceID), zap.NamedError("err", err))
+		return errCouldNotStartSnapshot.GenWithStackByArgs()
+	}
+
+	logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
 	return nil
 }
 
@@ -138,21 +149,21 @@ func init() {
 	executor.TakeSnapshot = takeSnapshot
 
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope: variable.ScopeGlobal,
+		Scope: vardef.ScopeGlobal,
 		Name:  repositoryDest,
-		Type:  variable.TypeStr,
+		Type:  vardef.TypeStr,
 		Value: "",
 		SetGlobal: func(ctx context.Context, _ *variable.SessionVars, val string) error {
 			return workerCtx.setRepositoryDest(ctx, val)
 		},
-		Validation: func(_ *variable.SessionVars, norm, _ string, _ variable.ScopeFlag) (string, error) {
+		Validation: func(_ *variable.SessionVars, norm, _ string, _ vardef.ScopeFlag) (string, error) {
 			return validateDest(norm)
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositoryRetentionDays,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defRententionDays),
 		MinValue: 0,
 		MaxValue: 365,
@@ -161,9 +172,9 @@ func init() {
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositorySamplingInterval,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defSamplingInterval),
 		MinValue: 0,
 		MaxValue: 600,
@@ -172,9 +183,9 @@ func init() {
 		},
 	})
 	variable.RegisterSysVar(&variable.SysVar{
-		Scope:    variable.ScopeGlobal,
+		Scope:    vardef.ScopeGlobal,
 		Name:     repositorySnapshotInterval,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		Value:    strconv.Itoa(defSnapshotInterval),
 		MinValue: 900,
 		MaxValue: 7200,
@@ -355,11 +366,10 @@ func (w *worker) start() error {
 	}
 
 	if w.etcdClient == nil {
-		return errors.New("etcd client required for workload repository")
+		return errUnsupportedEtcdRequired.GenWithStackByArgs()
 	}
 
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
-	w.snapshotChan = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -387,7 +397,6 @@ func (w *worker) stop() {
 	}
 
 	w.cancel = nil
-	w.snapshotChan = nil
 }
 
 // setRepositoryDest will change the dest of workload snapshot.

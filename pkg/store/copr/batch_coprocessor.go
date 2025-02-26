@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1345,7 +1345,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	}
 
 	rgName := b.req.ResourceGroupName
-	if !variable.EnableResourceControl.Load() {
+	if !vardef.EnableResourceControl.Load() {
 		rgName = ""
 	}
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{

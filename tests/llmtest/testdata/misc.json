@@ -1,0 +1,74 @@
+{
+  "cte": [
+    {
+      "sql": "CREATE TABLE t1 AS SELECT 1 AS id, NULL AS val UNION ALL SELECT 2, '5' UNION ALL SELECT 3, 'abc';WITH cte AS (SELECT id, val FROM t1) SELECT id, COALESCE(val, 'default') FROM cte ORDER BY id;DROP TABLE t1;",
+      "args": null,
+      "pass": false,
+      "known": true,
+      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+    },
+    {
+      "sql": "WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n + '1' FROM cte WHERE n \u003c 5) SELECT * FROM cte ORDER BY n;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t2 AS SELECT '5' AS id, 5 AS x;WITH cte1 AS (SELECT '5' AS id), cte2 AS (SELECT 5 AS num) SELECT t2.x FROM t2 JOIN cte1 ON t2.id = cte1.id JOIN cte2 ON t2.x = cte2.num;DROP TABLE t2;",
+      "args": null,
+      "pass": false,
+      "known": true,
+      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+    },
+    {
+      "sql": "WITH cte AS (SELECT 10 AS col UNION ALL SELECT '20' UNION ALL SELECT 30) SELECT SUM(col) AS total FROM cte;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "WITH RECURSIVE cte(s) AS (SELECT 'a' UNION ALL SELECT CONCAT(s, 'a') FROM cte WHERE LENGTH(s) \u003c 5) SELECT s FROM cte ORDER BY LENGTH(s);",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "CREATE TABLE t3 AS SELECT 1 AS a UNION ALL SELECT NULL UNION ALL SELECT 3;WITH cte AS (SELECT NULL AS b) SELECT t3.a, cte.b FROM t3 LEFT JOIN cte ON t3.a = cte.b ORDER BY a;DROP TABLE t3;",
+      "args": null,
+      "pass": false,
+      "known": true,
+      "comment": "'CREATE TABLE ... SELECT' is not implemented yet"
+    },
+    {
+      "sql": "WITH cte AS (SELECT CASE WHEN 1=1 THEN 5 ELSE 'text' END AS mixed) SELECT mixed FROM cte;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "WITH cte1 AS (SELECT 1.5 AS num), cte2 AS (SELECT num + '2.5' AS total FROM cte1) SELECT * FROM cte2;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "WITH RECURSIVE dates AS (SELECT DATE('2023-01-01') AS dt UNION ALL SELECT dt + INTERVAL 1 DAY FROM dates WHERE dt \u003c '2023-01-03') SELECT * FROM dates ORDER BY dt;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    },
+    {
+      "sql": "WITH cte1 AS (SELECT 5 AS id), cte2 AS (SELECT '5' AS id) SELECT * FROM cte1 JOIN cte2 ON cte1.id = cte2.id;",
+      "args": null,
+      "pass": true,
+      "known": false,
+      "comment": ""
+    }
+  ]
+}

@@ -904,7 +904,16 @@ func TestDropColumnArgs(t *testing.T) {
 		args, err := GetTableColumnArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
+		if v == JobVersion1 {
+			require.Len(t, j2.args, 4)
+		}
 	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &TableColumnArgs{Col: &ColumnInfo{}}, JobVersion1, ActionDropColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 2)
 }
 
 func TestAddColumnArgs(t *testing.T) {

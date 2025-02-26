@@ -14,7 +14,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/planner/util/coretestsdk",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

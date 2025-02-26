@@ -21,7 +21,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

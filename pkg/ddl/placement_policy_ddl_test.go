@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -125,7 +125,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.State = model.StatePublic
 	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t4)
 
-	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},

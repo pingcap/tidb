@@ -22,26 +22,7 @@ import (
 	"github.com/docker/go-units"
 )
 
-// subtask state machine for normal subtask:
-//
-// NOTE: `running` -> `pending` only happens when some node is taken as dead, so
-// its running subtask is balanced to other node, and the subtask is idempotent,
-// we do this to make the subtask can be scheduled to other node again, it's NOT
-// a normal state transition.
-//
-//	               ┌──────────────┐
-//	               │          ┌───┴──┐
-//	               │ ┌───────►│paused│
-//	               ▼ │        └──────┘
-//	┌───────┐    ┌───┴───┐    ┌───────┐
-//	│pending├───►│running├───►│succeed│
-//	└───────┘    └┬──┬───┘    └───────┘
-//	     ▲        │  │        ┌──────┐
-//	     └────────┘  ├───────►│failed│
-//	                 │        └──────┘
-//	                 │        ┌────────┐
-//	                 └───────►│canceled│
-//	                          └────────┘
+// see doc.go for more details.
 const (
 	SubtaskStatePending  SubtaskState = "pending"
 	SubtaskStateRunning  SubtaskState = "running"

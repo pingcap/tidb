@@ -53,6 +53,10 @@ const (
 	recoveryMaxAttempts  = 16
 	recoveryDelayTime    = 30 * time.Second
 	recoveryMaxDelayTime = 4 * time.Minute
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
 )
 
 // BackoffStrategy implements a backoff strategy for retry operations.
@@ -374,6 +378,17 @@ func NewChecksumBackoffStrategy() BackoffStrategy {
 		WithRemainingAttempts(ChecksumRetryTime),
 		WithDelayTime(ChecksumWaitInterval),
 		WithErrorContext(NewZeroRetryContext("checksum")),
+		WithRetryErrorFunc(alwaysTrueFunc()),
+		WithNonRetryErrorFunc(alwaysFalseFunc()),
+	)
+}
+
+func NewRawClientBackoffStrategy() BackoffStrategy {
+	return NewBackoffStrategy(
+		WithRemainingAttempts(rawClientMaxAttempts),
+		WithDelayTime(rawClientDelayTime),
+		WithMaxDelayTime(rawClientMaxDelayTime),
+		WithErrorContext(NewZeroRetryContext("raw client")),
 		WithRetryErrorFunc(alwaysTrueFunc()),
 		WithNonRetryErrorFunc(alwaysFalseFunc()),
 	)

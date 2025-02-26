@@ -882,36 +882,42 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 
 func TestTraffic(t *testing.T) {
 	tests := []struct {
-		sql  string
-		cols int
+		sql   string
+		cols  int
+		privs []string
 	}{
 		{
-			sql: "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+			sql:   "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN"},
 		},
 		{
-			sql: "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+			sql:   "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+			privs: []string{"TRAFFIC_REPLAY_ADMIN"},
 		},
 		{
-			sql:  "show traffic jobs",
-			cols: 7,
+			sql:   "show traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
+			cols:  7,
 		},
 		{
-			sql: "cancel traffic jobs",
+			sql:   "cancel traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
 		},
 	}
 
 	parser := parser.New()
 	sctx := MockContext()
 	ctx := context.TODO()
-	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	for _, test := range tests {
+		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 		stmt, err := parser.ParseOneStmt(test.sql, "", "")
-		require.NoError(t, err)
+		require.NoError(t, err, test.sql)
 		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
-		require.NoError(t, err)
+		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
-		require.True(t, ok)
-		require.Equal(t, test.cols, len(traffic.names))
+		require.True(t, ok, test.sql)
+		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }
 

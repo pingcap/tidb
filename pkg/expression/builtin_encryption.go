@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1063,7 +1064,7 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.
 	} else if len([]rune(str)) < 4 {
 		return 0, false, nil
 	}
-	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+	if validation, err := globalVars.GetGlobalSysVar(vardef.ValidatePasswordEnable); err != nil {
 		return 0, true, err
 	} else if !variable.TiDBOptOn(validation) {
 		return 0, false, nil

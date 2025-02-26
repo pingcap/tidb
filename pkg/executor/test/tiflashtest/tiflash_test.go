@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -884,7 +885,6 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
-	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
 }
 
@@ -1409,7 +1409,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 		conf.DisaggregatedTiFlash = false
 		conf.UseAutoScaler = false
 	})
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1429,7 +1429,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
@@ -1448,7 +1448,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	})
 
 	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.InvalidASStr, "tmpAddr", "tmpClusterID", false)
 	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1589,7 +1589,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	useASs := []bool{true, false}
@@ -2220,4 +2220,29 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
 			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+}
+
+func TestIssue59703(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err")
+
+	err = tk.ExecToErr("select count(*) from t")
+	require.Contains(t, err.Error(), "mock mpp error")
+	require.Equal(t, mppcoordmanager.InstanceMPPCoordinatorManager.GetCoordCount(), 0)
 }

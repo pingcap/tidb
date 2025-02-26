@@ -22,6 +22,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/exec",

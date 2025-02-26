@@ -21,7 +21,7 @@ go_test(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/tablecodec",
         "//pkg/testkit",

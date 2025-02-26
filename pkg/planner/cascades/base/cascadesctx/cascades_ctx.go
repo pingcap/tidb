@@ -15,6 +15,7 @@
 package cascadesctx
 
 import (
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
@@ -29,4 +30,5 @@ type Context interface {
 	GetScheduler() base.Scheduler
 	PushTask(task base.Task)
 	GetMemo() *memo.Memo
+	GetRuleMask() *bitset.BitSet
 }

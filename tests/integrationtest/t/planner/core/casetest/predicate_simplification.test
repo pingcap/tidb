@@ -282,3 +282,30 @@ SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
 SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
 
 # end of test for https://github.com/pingcap/tidb/issues/58171
+
+# Test removing redundant branches from OR list
+drop table if exists t1;
+create table t1 (a int, b decimal(65,30), c int);
+explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
+explain format=brief select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
+explain format=brief select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
+explain format=brief select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format=brief select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
+explain format=brief select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
+explain format=brief select * from t1 where (rand() * 10 = 1) or (rand() * 10 = 1);
+explain format=brief select * from t1 where (@a:=@a+1) or (@a:=@a+1);
+
+drop table if exists t2;
+create table t2 (a datetime(6), b timestamp(6), index ia(a), index iab(a,b));
+explain format=brief select * from t2 where a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00';
+explain format=brief select * from t2 where (a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00' or a = '2025-01-01 00:00:00') and (b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00' or b = '2025-01-01 00:00:00');
+
+drop table if exists t3;
+create table t3 (a varchar(10) collate utf8mb4_general_ci, b varchar(10) collate utf8mb4_bin, index ia(a), index ib(b));
+explain format=brief select * from t3 where a = 'a' or a = 'a' or a = 'A';
+explain format=brief select * from t3 where a = 'a' or a = 'a' or a = 'A' or b = _utf8mb4'b' or b = _latin1'b' or b = 'B';
+explain format=brief select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
+
+drop table if exists t4;
+create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));
+explain format=brief select /*+ use_index_merge(t4) */ * from t4 where a = 1 and (b = 2 or c = 4 or b = 12 or c = 5 or d = 6 or c = 4 or c = 5 or d = 6);

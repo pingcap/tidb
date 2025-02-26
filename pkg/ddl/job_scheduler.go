@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -43,13 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -497,7 +499,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 		for {
 			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, jobW)
 			if err != nil {
-				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", jobW))
+				logutil.DDLLogger().Info("transit one job step and wait sync failed", zap.Error(err), zap.Stringer("job", jobW))
 			} else if jobW.InFinalState() {
 				return
 			}
@@ -513,7 +515,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 					break
 				}
 
-				if err == systable.ErrNotFound {
+				if goerrors.Is(err, systable.ErrNotFound) {
 					logutil.DDLLogger().Info("job not found, might already finished",
 						zap.Int64("job_id", jobID))
 					return
@@ -530,7 +532,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,
@@ -541,6 +543,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 		eventPublishStore:    s.eventPublishStore,
+		sysTblMgr:            s.sysTblMgr,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(
@@ -564,15 +567,17 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// current owner.
 	job := jobW.Job
 	if jobCtx.isUnSynced(job.ID) || (job.Started() && !jobCtx.maybeAlreadyRunOnce(job.ID)) {
-		if variable.EnableMDL.Load() {
+		if vardef.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
+				jobCtx.logger.Info("the job have schema version un-synced",
+					zap.Int64("version", version), zap.Stringer("job", job))
 				err = waitVersionSynced(s.schCtx, jobCtx, job, version)
 				if err != nil {
 					return err
 				}
 				s.cleanMDLInfo(job, ownerID)
-			} else if err != systable.ErrNotFound {
+			} else if !goerrors.Is(err, systable.ErrNotFound) {
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
@@ -586,9 +591,9 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
 	if err != nil {
-		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err
 	}
 	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
@@ -620,7 +625,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	defer func() {
 		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
 	}()
-	if !variable.EnableMDL.Load() {
+	if !vardef.EnableMDL.Load() {
 		return
 	}
 	var sql string

@@ -766,14 +766,21 @@ type TableColumnArgs struct {
 	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
 
 	// for drop column.
-	// below 2 fields are filled during running.
+	// below 2 fields are filled during running, and PartitionIDs is only effective
+	// when len(IndexIDs) > 0.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
 func (a *TableColumnArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionDropColumn {
-		return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		// if this job is submitted by new version node, but run with older version
+		// node, older node will try to append args at runtime, so we check it here
+		// to make sure the appended args can be decoded.
+		if len(a.IndexIDs) > 0 {
+			return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		}
+		return []any{a.Col.Name, a.IgnoreExistenceErr}
 	}
 	return []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
 }

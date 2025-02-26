@@ -796,11 +796,6 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
-		if jsonItem.TypeCode != types.JSONTypeCodeObject {
-			result.AppendNull()
-			continue
-		}
-
 		res, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 		if !exists || res.TypeCode != types.JSONTypeCodeObject {
 			result.AppendNull()

@@ -391,3 +391,28 @@ func TestAddQueryWatchStmtRestore(t *testing.T) {
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
+
+func TestRedactTrafficStmt(t *testing.T) {
+	testCases := []struct {
+		input   string
+		secured string
+	}{
+		{
+			input:   "traffic capture to 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' duration='1m'",
+			secured: "TRAFFIC CAPTURE TO 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' DURATION = '1m'",
+		},
+		{
+			input:   "traffic replay from 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' user='root' password='123456'",
+			secured: "TRAFFIC REPLAY FROM 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' USER = 'root' PASSWORD = 'xxxxxx'",
+		},
+	}
+
+	p := parser.New()
+	for _, tc := range testCases {
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, tc.input)
+		n, ok := node.(ast.SensitiveStmtNode)
+		require.True(t, ok, tc.input)
+		require.Equal(t, tc.secured, n.SecureText(), tc.input)
+	}
+}
