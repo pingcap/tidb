@@ -115,7 +115,9 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		PRIMARY KEY (Host, User));`
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
+		PRIMARY KEY (Host, User),
+		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
@@ -1244,8 +1246,11 @@ const (
 	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
 	version224 = 224
 
+	// version225 add Max_user_connections into mysql.user.
+	version225 = 225
+
 	// ...
-	// [version224, version238] is the version range reserved for patches of 8.5.x
+	// [version225, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
@@ -1253,7 +1258,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version224
+var currentBootstrapVersion int64 = version225
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1433,6 +1438,7 @@ var (
 		upgradeToVer222,
 		upgradeToVer223,
 		upgradeToVer224,
+		upgradeToVer225,
 	}
 )
 
@@ -3316,6 +3322,14 @@ func upgradeToVer224(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
