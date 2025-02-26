@@ -340,6 +340,7 @@ func (e *ShowExec) fetchBindingPlans() error {
 			binding.Binding.OriginalSQL,
 			hintStr,
 			binding.Plan,
+			binding.PlanDigest,
 			binding.AvgLatency,
 			float64(binding.ExecTimes),
 			binding.AvgScanRows,
