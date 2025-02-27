@@ -18,7 +18,6 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -117,8 +115,8 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 	return tables, nil
 }
 
-// initStatsHistogramsSQLGen generates the SQL to load all stats_histograms records.
-func initStatsHistogramsSQLGen(isPaging bool) string {
+// genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
+func genInitStatsHistogramsSQL(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -311,7 +309,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 }
 
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := initStatsHistogramsSQLGen(false)
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -334,7 +332,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.St
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := initStatsHistogramsSQLGen(false)
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -371,7 +369,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache uti
 	}()
 
 	sctx := se.(sessionctx.Context)
-	sql := initStatsHistogramsSQLGen(true)
+	sql := genInitStatsHistogramsSQL(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -585,14 +583,13 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 
 func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
-	unspecifiedLengthTp := types.NewFieldType(mysql.TypeBlob)
 	var (
 		hasErr        bool
 		failedTableID int64
 		failedHistID  int64
 	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+		tableID, histID := row.GetInt64(0), row.GetInt64(1)
 		if table == nil || table.PhysicalID != tableID {
 			if table != nil {
 				for _, index := range table.Indices {
@@ -609,63 +606,13 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
-		if isIndex > 0 {
-			index, ok := table.Indices[histID]
-			if !ok {
-				continue
-			}
-			hist = &index.Histogram
-			lower, upper = types.NewBytesDatum(row.GetBytes(5)), types.NewBytesDatum(row.GetBytes(6))
-		} else {
-			column, ok := table.Columns[histID]
-			if !ok {
-				continue
-			}
-			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
-				continue
-			}
-			hist = &column.Histogram
-			d := types.NewBytesDatum(row.GetBytes(5))
-			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
-			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.AllowInvalidDate = true
-			sc.IgnoreZeroInDate = true
-			var err error
-			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
-				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-				// original value.
-				// But there's additional conversion logic for new collation data, and the collate key might be longer than
-				// the FieldType.flen.
-				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-				// or "Data too long".
-				// So we change it to TypeBlob to bypass those logics here.
-				lower, err = d.ConvertTo(sc, unspecifiedLengthTp)
-			} else {
-				lower, err = d.ConvertTo(sc, &column.Info.FieldType)
-			}
-			if err != nil {
-				hasErr = true
-				failedTableID = tableID
-				failedHistID = histID
-				delete(table.Columns, histID)
-				continue
-			}
-			d = types.NewBytesDatum(row.GetBytes(6))
-			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
-				upper, err = d.ConvertTo(sc, unspecifiedLengthTp)
-			} else {
-				upper, err = d.ConvertTo(sc, &column.Info.FieldType)
-			}
-			if err != nil {
-				hasErr = true
-				failedTableID = tableID
-				failedHistID = histID
-				delete(table.Columns, histID)
-				continue
-			}
+		index, ok := table.Indices[histID]
+		if !ok {
+			continue
 		}
-		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
+		hist = &index.Histogram
+		lower, upper = types.NewBytesDatum(row.GetBytes(4) /*lower_bound*/), types.NewBytesDatum(row.GetBytes(5) /*upper_bound*/)
+		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -685,7 +632,7 @@ func (h *Handle) initStatsBuckets(cache util.StatsCache, totalMemory uint64) err
 			return errors.Trace(err)
 		}
 	} else {
-		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1 order by table_id, is_index, hist_id, bucket_id"
+		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1 order by table_id, is_index, hist_id, bucket_id"
 		rc, err := util.Exec(h.initStatsCtx, sql)
 		if err != nil {
 			return errors.Trace(err)
@@ -738,7 +685,7 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index = 1 and table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index = 1 and table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
