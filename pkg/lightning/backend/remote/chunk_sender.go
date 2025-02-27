@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // PutChunkResult is json data that returned by remote server PUT API.
@@ -81,7 +79,6 @@ func (t *chunkTask) done(chunkID uint64) {
 
 type chunkSender struct {
 	id uint64
-	wg sync.WaitGroup
 
 	e           *engine
 	httpClient  *http.Client
@@ -107,7 +104,6 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 	ctx, cancel := context.WithCancel(ctx)
 	c := &chunkSender{
 		id: id,
-		wg: sync.WaitGroup{},
 
 		e:           engine,
 		httpClient:  engine.httpClient,
@@ -123,7 +119,6 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 	}
 	c.state.Store(&chunksState{})
 
-	c.wg.Add(1)
 	go c.chunkSenderLoop(ctx)
 
 	c.logger.Info("chunk sender started")
@@ -131,7 +126,19 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 }
 
 func (c *chunkSender) putChunk(ctx context.Context, data []byte) (uint64, error) {
-	task := newChunkTask(slices.Clone(data), false)
+	return c.submit(ctx, data, false)
+}
+
+func (c *chunkSender) flush(ctx context.Context) error {
+	if c.getFlushedChunkID() == c.getLastChunkID() {
+		return nil
+	}
+	_, err := c.submit(ctx, nil, true)
+	return err
+}
+
+func (c *chunkSender) submit(ctx context.Context, data []byte, flush bool) (uint64, error) {
+	task := newChunkTask(data, true)
 
 	select {
 	case <-ctx.Done():
@@ -149,31 +156,6 @@ func (c *chunkSender) putChunk(ctx context.Context, data []byte) (uint64, error)
 	case <-c.loopDoneChan:
 		return 0, c.err
 	}
-}
-
-func (c *chunkSender) flush(ctx context.Context) error {
-	if c.getFlushedChunkID() == c.getLastChunkID() {
-		return nil
-	}
-
-	task := newChunkTask(nil, true)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case c.taskChan <- task:
-	case <-c.loopDoneChan:
-		return c.err
-	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-task.resp:
-	case <-c.loopDoneChan:
-		return c.err
-	}
-
-	return nil
 }
 
 func (c *chunkSender) getNextChunkID() uint64 {
@@ -195,7 +177,6 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 		if err != nil {
 			c.logger.Warn("failed to close chunk cache", zap.Error(err))
 		}
-		c.wg.Done()
 	}()
 
 	ticker := time.NewTicker(updateFlushedChunkDuration)
@@ -404,7 +385,8 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 func (c *chunkSender) close() error {
 	// notify chunkSenderLoop to quit
 	c.cancel()
-	c.wg.Wait()
+	// wait for chunkSenderLoop to quit
+	<-c.loopDoneChan
 
 	return c.err
 }
