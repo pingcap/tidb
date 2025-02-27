@@ -1838,7 +1838,11 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
+=======
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
+>>>>>>> b61e0e16ef8 (privilege, domain: reduce the memory jitter of privilege reload activity for 2M users (#59487))
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
