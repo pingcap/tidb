@@ -26,6 +26,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -190,7 +191,8 @@ func TestCapturePath(t *testing.T) {
 	ctx := context.TODO()
 	tempCtx := fillCtxWithTiProxyAddr(ctx, ports)
 	suite := newTrafficTestSuite(t, 10)
-	exec := suite.build(ctx, "traffic capture to 's3://bucket/tmp' duration='1s'")
+	prefix, suffix := "s3://bucket/tmp", "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true"
+	exec := suite.build(ctx, fmt.Sprintf("traffic capture to '%s?%s' duration='1s'", prefix, suffix))
 	require.NoError(t, exec.Next(tempCtx, nil))
 
 	paths := make([]string, 0, tiproxyNum)
@@ -198,8 +200,9 @@ func TestCapturePath(t *testing.T) {
 	for i := 0; i < tiproxyNum; i++ {
 		httpHandler := handlers[i]
 		output := httpHandler.getForm().Get("output")
-		require.True(t, strings.HasPrefix(output, "s3://bucket/tmp/"), output)
-		paths = append(paths, output[len("s3://bucket/tmp/"):])
+		require.True(t, strings.HasPrefix(output, prefix), output)
+		require.True(t, strings.HasSuffix(output, suffix), output)
+		paths = append(paths, output[len(prefix)+1:len(output)-len(suffix)-1])
 		expectedPaths = append(expectedPaths, fmt.Sprintf("tiproxy-%d", i))
 	}
 	sort.Strings(paths)
@@ -236,40 +239,47 @@ func TestReplayPath(t *testing.T) {
 			formPaths: []string{},
 		},
 		{
-			paths:     []string{"tiproxy-0"},
+			paths:     []string{"tiproxy-0/meta", "tiproxy-0/traffic-1.log", "tiproxy-0/traffic-2.log"},
 			formPaths: []string{"tiproxy-0"},
 			warn:      "tiproxy instances number (2) is greater than input paths number (1)",
 		},
 		{
-			paths:     []string{"tiproxy-0", "tiproxy-1"},
+			paths:     []string{"tiproxy-0/meta", "tiproxy-1/meta", "tiproxy-2"},
 			formPaths: []string{"tiproxy-0", "tiproxy-1"},
 		},
 		{
-			paths:     []string{"tiproxy-0", "tiproxy-1", "tiproxy-2"},
+			paths:     []string{"tiproxy-0/meta", "tiproxy-0/traffic-1.log", "tiproxy-1/meta", "tiproxy-1/traffic-1.log"},
+			formPaths: []string{"tiproxy-0", "tiproxy-1"},
+		},
+		{
+			paths:     []string{"tiproxy-0/meta", "tiproxy-1/meta", "tiproxy-2/meta"},
 			formPaths: []string{},
 			err:       "tiproxy instances number (2) is less than input paths number (3)",
 		},
 	}
 	ctx := context.TODO()
+	store := &mockExternalStorage{}
 	ctx = fillCtxWithTiProxyAddr(ctx, ports)
+	ctx = context.WithValue(ctx, trafficStoreKey, store)
+	prefix, suffix := "s3://bucket/tmp", "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http://minio:8000&force-path-style=true"
 	for i, test := range tests {
-		tempCtx := context.WithValue(ctx, trafficPathKey, test.paths)
+		store.paths = test.paths
 		suite := newTrafficTestSuite(t, 10)
-		exec := suite.build(ctx, "traffic replay from 's3://bucket/tmp' user='root'")
+		exec := suite.build(ctx, fmt.Sprintf("traffic replay from '%s?%s' user='root'", prefix, suffix))
 		for j := 0; j < tiproxyNum; j++ {
 			handlers[j].reset()
 		}
-		err := exec.Next(tempCtx, nil)
+		err := exec.Next(ctx, nil)
 		if test.err != "" {
-			require.ErrorContains(t, err, test.err)
+			require.ErrorContains(t, err, test.err, "case %d", i)
 		} else {
-			require.NoError(t, err)
+			require.NoError(t, err, "case %d", i)
 			warnings := suite.stmtCtx().GetWarnings()
 			if test.warn != "" {
-				require.Len(t, warnings, 1)
-				require.ErrorContains(t, warnings[0].Err, test.warn)
+				require.Len(t, warnings, 1, "case %d", i)
+				require.ErrorContains(t, warnings[0].Err, test.warn, "case %d", i)
 			} else {
-				require.Len(t, warnings, 0)
+				require.Len(t, warnings, 0, "case %d", i)
 			}
 		}
 
@@ -278,14 +288,15 @@ func TestReplayPath(t *testing.T) {
 			httpHandler := handlers[j]
 			if httpHandler.getMethod() != "" {
 				form := httpHandler.getForm()
-				require.NotEmpty(t, form)
+				require.NotEmpty(t, form, "case %d", i)
 				input := form.Get("input")
-				require.True(t, strings.HasPrefix(input, "s3://bucket/tmp/"), input)
-				formPaths = append(formPaths, input[len("s3://bucket/tmp/"):])
+				require.True(t, strings.HasPrefix(input, prefix), input)
+				require.True(t, strings.HasSuffix(input, suffix), input)
+				formPaths = append(formPaths, input[len(prefix)+1:len(input)-len(suffix)-1])
 			}
 		}
 		sort.Strings(formPaths)
-		require.Equal(t, test.formPaths, formPaths, "case %d", i)
+		require.Equal(t, test.formPaths, formPaths, "case %d", i, "case %d", i)
 	}
 }
 
@@ -578,4 +589,20 @@ type mockPrivManager struct {
 
 func (m *mockPrivManager) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
 	return m.Called(activeRoles, privName, grantable).Bool(0)
+}
+
+var _ storage.ExternalStorage = (*mockExternalStorage)(nil)
+
+type mockExternalStorage struct {
+	storage.ExternalStorage
+	paths []string
+}
+
+func (s *mockExternalStorage) WalkDir(ctx context.Context, _ *storage.WalkOption, fn func(string, int64) error) error {
+	for _, path := range s.paths {
+		if err := fn(path, 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
