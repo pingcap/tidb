@@ -873,6 +873,7 @@ import (
 	pessimistic                "PESSIMISTIC"
 	region                     "REGION"
 	regions                    "REGIONS"
+	distributions              "DISTRIBUTIONS"
 	reset                      "RESET"
 	run                        "RUN"
 	sampleRate                 "SAMPLERATE"
@@ -7205,6 +7206,7 @@ TiDBKeyword:
 |	"PESSIMISTIC"
 |	"WIDTH"
 |	"REGIONS"
+|	"DISTRIBUTIONS"
 |	"REGION"
 |	"RESET"
 |	"DRY"
@@ -11590,6 +11592,18 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -13801,7 +13815,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}

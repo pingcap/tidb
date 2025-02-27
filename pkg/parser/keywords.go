@@ -661,6 +661,7 @@ var Keywords = []KeywordsType{
 	{"PESSIMISTIC", false, "tidb"},
 	{"REGION", false, "tidb"},
 	{"REGIONS", false, "tidb"},
+	{"DISTRIBUTIONS", false, "tidb"},
 	{"RESET", false, "tidb"},
 	{"RUN", false, "tidb"},
 	{"SAMPLERATE", false, "tidb"},

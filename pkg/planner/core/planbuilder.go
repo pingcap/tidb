@@ -3518,6 +3518,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+	case ast.ShowDistributions:
+		tableInfo, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table distributions")
+		}
 	case ast.ShowReplicaStatus:
 		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW {REPLICA | SLAVE} STATUS")
 	}
