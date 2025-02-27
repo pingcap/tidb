@@ -1158,7 +1158,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
 	}
-	if err2 = e.checkeCSVOnlyOptions(); err2 != nil {
+	if err2 = e.checkCSVOnlyOptions(); err2 != nil {
 		return err2
 	}
 
@@ -1351,8 +1351,8 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// check options in csvOnlyOptions is default or not when format is not csv.
-func (p *Plan) checkeCSVOnlyOptions() error {
+// check csvOnlyOptions is default or not when format is not csv.
+func (p *Plan) checkCSVOnlyOptions() error {
 	if p.Format == DataFormatCSV {
 		return nil
 	}

@@ -341,8 +341,11 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
 	c := LoadDataController{
 		Plan: &Plan{
-			Format:       DataFormatCSV,
-			InImportInto: true,
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
 		},
 		logger: zap.NewExample(),
 	}
@@ -437,7 +440,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 
-	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
+	csvFiles := []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz.gz", "file1.CSV.GZIP", "file1.CSV.gzip.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"}
 	for _, csvFile := range csvFiles {
 		c.Format = DataFormatNone
 		c.Path = path.Join(tempDir, csvFile)
@@ -446,7 +449,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		require.NoError(t, c.InitDataFiles(ctx))
 		require.Equal(t, DataFormatCSV, c.Format)
 	}
-	sqlFiles := []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zst", "file2.sql.snappy"}
+	sqlFiles := []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd.zstd", "file2.sql.zst", "file2.sql.zst.zst", "file2.sql.snappy"}
 	for _, sqlFile := range sqlFiles {
 		c.Format = DataFormatNone
 		c.Path = path.Join(tempDir, sqlFile)
@@ -455,7 +458,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		require.NoError(t, c.InitDataFiles(ctx))
 		require.Equal(t, DataFormatSQL, c.Format)
 	}
-	parquetFiles := []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy"}
+	parquetFiles := []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy.snappy"}
 	for _, parquetFile := range parquetFiles {
 		c.Format = DataFormatNone
 		c.Path = path.Join(tempDir, parquetFile)
