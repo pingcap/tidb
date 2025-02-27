@@ -263,7 +263,6 @@ func NewBackend(
 		importTaskID:      cfg.TaskID,
 		chunkSize:         cfg.ChunkSize,
 		chunkCacheDir:     cfg.ChunkCacheDir,
-		chunkCacheInMem:   cfg.ChunkCacheInMem,
 		checkpointEnabled: cfg.CheckpointEnabled,
 		dupeDetectEnabled: cfg.DupeDetectEnabled,
 		reportErrOnDup:    cfg.DuplicateDetectOpt.ReportErrOnDup,
@@ -289,7 +288,6 @@ type BackendConfig struct {
 	DuplicateResolution config.DuplicateResolutionAlgorithm
 	ResourceGroupName   string
 	TaskType            string
-	ChunkCacheInMem     bool
 	DupeDetectEnabled   bool
 	DuplicateDetectOpt  common.DupDetectOpt
 }
@@ -308,8 +306,8 @@ func NewBackendConfig(cfg *config.Config, keyspaceName, resourceGroupName, taskT
 		DuplicateResolution: cfg.TikvImporter.DuplicateResolution,
 		DupeDetectEnabled:   cfg.Conflict.Strategy != config.NoneOnDup,
 		DuplicateDetectOpt:  common.DupDetectOpt{ReportErrOnDup: cfg.Conflict.Strategy == config.ErrorOnDup},
+		ChunkSize:           cfg.TikvImporter.ChunkSize,
 		ChunkCacheDir:       cfg.TikvImporter.ChunkCacheDir,
-		ChunkCacheInMem:     cfg.TikvImporter.ChunkCacheInMem,
 	}
 }
 
@@ -338,7 +336,6 @@ type Backend struct {
 	checkpointEnabled bool
 	localStoreDir     string
 	chunkCacheDir     string
-	chunkCacheInMem   bool
 }
 
 // Close the connection to the backend.
@@ -418,7 +415,7 @@ func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, eng
 		backend:        b,
 	})
 	engine := e.(*engine)
-	if cfg.Remote.RecoverFromCheckpoint {
+	if cfg.Remote.HasRecoverableEngineProgress {
 		exist, err := b.ensureTaskExists(ctx, loadDataTaskID)
 		if err != nil {
 			return errors.Trace(err)
@@ -786,7 +783,7 @@ func (b *Backend) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig,
 	if err != nil {
 		return nil, err
 	}
-	cache, err := newChunksCache(engine.loadDataTaskID, writerID, b.chunkCacheDir, b.chunkCacheInMem)
+	cache, err := newChunksCache(engine.loadDataTaskID, writerID, b.chunkCacheDir)
 	if err != nil {
 		return nil, err
 	}

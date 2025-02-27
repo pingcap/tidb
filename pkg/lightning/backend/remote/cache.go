@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// cacheData holds the data and metadata for a chunk.
 type cacheData struct {
 	chunkData []byte
 	size      int
@@ -34,29 +35,24 @@ type cacheData struct {
 type chunksCache struct {
 	chunks  map[uint64]cacheData // chunkID -> cacheData
 	baseDir string
-	// If `usingMem`` is true, chunkData will be used, and the chunk data will be stored in memory.
+	// If `useMemory` is true, chunkData will be stored in memory.
 	// Otherwise, the chunk data will be stored in a file.
 	//
-	// The default value of `usingMem` is false.
-	// We found when the concurrency is high(means that there are many `chunk_sender`), writing to the file system is slow.
-	// So we add a new parameter `usingMem` to control whether to store the chunk data in memory.
-	usingMem bool
+	// We found when the concurrency is high (many `chunk_sender`), writing to the file system is slow.
+	// So we add a new parameter `useMemory` to control whether to store the chunk data in memory.
+	useMemory bool
 }
 
-func newChunksCache(loadDataTaskID string, writerID uint64, basePath string, usingMem bool) (*chunksCache, error) {
-	if usingMem {
+// newChunksCache creates a new chunksCache.
+func newChunksCache(loadDataTaskID string, writerID uint64, basePath string) (*chunksCache, error) {
+	if len(basePath) == 0 {
 		return &chunksCache{
-			chunks:   map[uint64]cacheData{},
-			usingMem: true,
+			chunks:    map[uint64]cacheData{},
+			useMemory: true,
 		}, nil
 	}
 
-	path := getDefaultTempDir()
-	if len(basePath) != 0 {
-		path = basePath
-	}
-
-	baseDir := filepath.Join(path, loadDataTaskID, strconv.FormatUint(writerID, 10))
+	baseDir := filepath.Join(basePath, loadDataTaskID, strconv.FormatUint(writerID, 10))
 	// cleanup the directory if it exists
 	_ = os.RemoveAll(baseDir)
 
@@ -70,12 +66,13 @@ func newChunksCache(loadDataTaskID string, writerID uint64, basePath string, usi
 	}, nil
 }
 
+// get retrieves the chunk data for the given chunkID.
 func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 	meta, ok := c.chunks[chunkID]
 	if !ok {
 		return nil, errors.Errorf("chunk-%d not found", chunkID)
 	}
-	if c.usingMem {
+	if c.useMemory {
 		return meta.chunkData, nil
 	}
 
@@ -97,8 +94,9 @@ func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 	return buf, nil
 }
 
+// put stores the chunk data for the given chunkID.
 func (c *chunksCache) put(chunkID uint64, buf []byte) error {
-	if c.usingMem {
+	if c.useMemory {
 		c.chunks[chunkID] = cacheData{chunkData: buf}
 		return nil
 	}
@@ -110,9 +108,10 @@ func (c *chunksCache) put(chunkID uint64, buf []byte) error {
 	return os.WriteFile(fileName, buf, 0o600)
 }
 
+// clean removes the chunk data for the given chunkID.
 func (c *chunksCache) clean(chunkID uint64) error {
 	delete(c.chunks, chunkID)
-	if c.usingMem {
+	if c.useMemory {
 		return nil
 	}
 
@@ -120,19 +119,17 @@ func (c *chunksCache) clean(chunkID uint64) error {
 	return os.Remove(fileName)
 }
 
+// close cleans up the cache.
 func (c *chunksCache) close() error {
 	c.chunks = nil
-	if c.usingMem {
+	if c.useMemory {
 		return nil
 	}
 
 	return os.RemoveAll(c.baseDir)
 }
 
+// getChunkFilePath returns the file path for the given chunkID.
 func (c *chunksCache) getChunkFilePath(chunkID uint64) string {
 	return filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
-}
-
-func getDefaultTempDir() string {
-	return filepath.Join(os.TempDir(), "lightning", "remote", "chunks")
 }

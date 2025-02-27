@@ -36,7 +36,7 @@ const (
 	taskExitsMsg          = "task exists"
 
 	// The format of load data task id: ${keyspaceID}-${importTaskID}-${tableID}-${engineID}
-	loadDatatTaskIDFormat = "%d-%d-%d-%d"
+	loadDataTaskIDFormat = "%d-%d-%d-%d"
 
 	sleepDuration = 3 * time.Second
 	retryCount    = 6000 // 3s * 6000 = 5h
@@ -44,16 +44,19 @@ const (
 	updateFlushedChunkDuration = 10 * time.Second
 )
 
+// genLoadDataTaskID generates a load data task ID based on the provided parameters.
 func genLoadDataTaskID(keyspaceID uint32, importTaskID int64, cfg *backend.EngineConfig) string {
-	return fmt.Sprintf(loadDatatTaskIDFormat, keyspaceID, importTaskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
+	return fmt.Sprintf(loadDataTaskIDFormat, keyspaceID, importTaskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
 }
 
+// retryableHTTPStatusCode checks if the given HTTP status code is retryable.
 func retryableHTTPStatusCode(statusCode int) bool {
 	return statusCode == http.StatusServiceUnavailable || // 503
 		statusCode == http.StatusInternalServerError || // 500
 		statusCode == http.StatusRequestTimeout // 408
 }
 
+// sendRequestWithRetry sends an HTTP request with retries on retryable status codes.
 func sendRequestWithRetry(ctx context.Context, httpClient *http.Client, method, url string, data []byte) (*http.Response, error) {
 	var (
 		req  *http.Request
@@ -86,6 +89,7 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client, method, 
 	return resp, err
 }
 
+// sendRequest sends an HTTP request and returns the response body.
 func sendRequest(ctx context.Context, httpClient *http.Client, method, url string, data []byte) ([]byte, error) {
 	resp, err := sendRequestWithRetry(ctx, httpClient, method, url, data)
 	if err != nil {
@@ -100,6 +104,7 @@ func sendRequest(ctx context.Context, httpClient *http.Client, method, url strin
 	return io.ReadAll(resp.Body)
 }
 
+// parseRemoteWorkerURL parses the remote worker URL from the response.
 func parseRemoteWorkerURL(resp *http.Response, enableTLS bool) string {
 	base := strings.TrimSuffix(resp.Header.Get("Location"), "/load_data")
 	if !enableTLS && strings.HasPrefix(base, "https") {
@@ -136,8 +141,8 @@ func EstimateEngineDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.Ti
 	return totalSize
 }
 
-// RecoverFromEngineCp checks whether the engine recover from the engine checkpoint.
-func RecoverFromEngineCp(cp *checkpoints.EngineCheckpoint) bool {
+// HasRecoverableEngineProgress checks whether the engine has any recoverable progress from its checkpoint.
+func HasRecoverableEngineProgress(cp *checkpoints.EngineCheckpoint) bool {
 	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
 		cp.Status >= checkpoints.CheckpointStatusImported {
 		return false
