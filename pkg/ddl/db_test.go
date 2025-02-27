@@ -1318,6 +1318,11 @@ func TestGetAllTableInfos(t *testing.T) {
 	for _, tbl := range tblInfos2 {
 		println(fmt.Sprintf("table id: %d, db id: %d", tbl.ID, tbl.DBID))
 	}
+
+	for _, tbl := range tblInfos1 {
+		println(fmt.Sprintf("table id: %d, db id: %d", tbl.ID, tbl.DBID))
+	}
+
 	require.Equal(t, len(tblInfos1), len(tblInfos2))
 	for i := range tblInfos1 {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)

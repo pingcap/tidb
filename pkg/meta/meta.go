@@ -1007,13 +1007,13 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
 	idBatch := math.MaxInt64
-	if concurrency >= 15 {
-		concurrency = 15
+	if concurrency >= 10 {
+		concurrency = 10
 	}
 	if hintMaxDBID == 0 {
 		concurrency = 1
 	} else {
-		idBatch = max(int(hintMaxDBID)/concurrency+1, 1)
+		idBatch = max(int(9999999999999)/concurrency+1, 1)
 	}
 
 	mu := sync.Mutex{}
@@ -1023,8 +1023,15 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 		workGroup.Go(func() error {
-			startKey := DBkey(int64(i * idBatch))
-			endKey := DBkey(int64((i + 1) * idBatch))
+			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			startKey = codec.EncodeBytes(startKey, []byte(strconv.Itoa(i*idBatch)))
+			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			if i == concurrency-1 {
+				endKey = codec.EncodeBytes(endKey, []byte("9999999999999"))
+			} else {
+				endKey = codec.EncodeBytes(endKey, []byte(strconv.Itoa((i+1)*idBatch)))
+			}
+			endKey = kv.Key(endKey).PrefixNext()
 			c := 0
 			defer func() {
 				logutil.Logger(ctx).Info("iterate all tables", zap.Int("count", c), zap.Int("concurrency", concurrency), zap.Int("idBatch", int(idBatch)), zap.Int("i", i))
@@ -1056,7 +1063,7 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 				tbInfo.DBID = dbID
 
 				mu.Lock()
-				logutil.BgLogger().Warn("put table info", zap.Int("dbID", int(dbID)), zap.Int64("tableID", tbInfo.ID), zap.Int("j", j), zap.Any("startKey", kv.Key(startKey)), zap.Any("decodekey", kv.Key(key)))
+				logutil.BgLogger().Warn("put table info", zap.Int("dbID", int(dbID)), zap.Int64("tableID", tbInfo.ID), zap.Int("j", j), zap.Any("startKey", kv.Key(startKey)), zap.Any("endKey", kv.Key(endKey)), zap.Any("decodekey", kv.Key(key)))
 				err = fn(tbInfo)
 				mu.Unlock()
 				c++
