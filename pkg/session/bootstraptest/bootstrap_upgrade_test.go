@@ -499,18 +499,8 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 			ch <- struct{}{}
 			jobID = job.ID
 		}
-<<<<<<< HEAD
 	}
 	dom.DDL().SetHook(hook)
-=======
-	})
-	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
-		if job != nil && job.ID == jobID {
-			once.Do(func() { ch <- struct{}{} })
-		}
-	})
->>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495))
 	go func() {
 		_, err = execute(context.Background(), seV, "alter table mysql.upgrade_tbl add column b int")
 	}()
