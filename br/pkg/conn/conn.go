@@ -238,6 +238,7 @@ func NewMgr(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		se.Close()
 		err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
 		if err != nil {
 			return nil, errors.Trace(err)
