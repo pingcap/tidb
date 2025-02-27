@@ -19,6 +19,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -361,6 +362,11 @@ func (ctl *StatusController) Close() error {
 	if ctl.meta != nil {
 		if err := ctl.meta.Close(); err != nil {
 			return errors.Trace(err)
+		}
+	}
+	if ctl.mgr != nil {
+		if mgr, ok := ctl.mgr.(*conn.Mgr); ok {
+			mgr.Close()
 		}
 	}
 	return nil
