@@ -29,8 +29,8 @@ func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Con
 		return GetCommonStepExecutor(ctrl, task.Step, runSubtaskFn), nil
 	})
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, task, param)
 			s.Extension = executorExt
 			return s
 		},

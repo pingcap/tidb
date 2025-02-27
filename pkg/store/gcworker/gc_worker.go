@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	util2 "github.com/pingcap/tidb/pkg/util"
@@ -243,7 +244,7 @@ func createSession(store kv.Storage) sessiontypes.Session {
 }
 
 // GetScope gets the status variables scope.
-func (w *GCWorker) GetScope(status string) variable.ScopeFlag {
+func (w *GCWorker) GetScope(status string) vardef.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 

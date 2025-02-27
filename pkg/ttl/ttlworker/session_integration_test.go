@@ -20,11 +20,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -183,5 +185,66 @@ func TestGetSessionWithFault(t *testing.T) {
 		se, err := ttlworker.GetSessionForTest(pool)
 		logutil.BgLogger().Info("get session", zap.Int("error after count", i), zap.Bool("session is nil", se == nil), zap.Bool("error is nil", err == nil))
 		require.True(t, se != nil || err != nil)
+	}
+}
+
+func TestNewScanSession(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := newFaultSessionPool(dom.SysSessionPool())
+	pool.setFault(newFaultWithFilter(func(s string) bool { return false }, newFaultAfterCount(0)))
+	se, err := ttlworker.GetSessionForTest(pool)
+	require.NoError(t, err)
+
+	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=123")
+	require.NoError(t, err)
+	require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+
+	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=ON")
+	require.NoError(t, err)
+	require.True(t, se.GetSessionVars().EnablePaging)
+
+	for _, errSQL := range []string{
+		"",
+		"set @@tidb_distsql_scan_concurrency=1",
+		"set @@tidb_enable_paging=OFF",
+	} {
+		t.Run("test err in SQL: "+errSQL, func(t *testing.T) {
+			var faultCnt atomic.Int64
+			pool.setFault(newFaultWithFilter(func(s string) bool {
+				if s == errSQL && s != "" {
+					faultCnt.Add(1)
+					return true
+				}
+				return false
+			}, newFaultAfterCount(0)))
+			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+			if errSQL == "" {
+				// success case
+				require.NoError(t, err)
+				require.NotNil(t, tblSe)
+				require.NotNil(t, restore)
+				require.Same(t, se, tblSe.Session)
+				require.Equal(t, int64(0), faultCnt.Load())
+
+				// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
+				require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
+				require.False(t, se.GetSessionVars().EnablePaging)
+
+				// restore should restore the session variables
+				restore()
+				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+				require.True(t, se.GetSessionVars().EnablePaging)
+			} else {
+				// error case
+				require.Equal(t, int64(1), faultCnt.Load())
+				require.EqualError(t, err, "fault in test")
+				require.Nil(t, tblSe)
+				require.Nil(t, restore)
+
+				// NewScanSession should not change session state if error occurs
+				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+				require.True(t, se.GetSessionVars().EnablePaging)
+			}
+		})
 	}
 }

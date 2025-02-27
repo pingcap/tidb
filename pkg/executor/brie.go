@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -372,11 +371,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Tables) != 0:
 		tables := make([]filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
-			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
+			table := filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O}
+			tables = append(tables, table)
+			cfg.FilterStr = append(cfg.FilterStr, table.String())
 		}
 		cfg.TableFilter = filter.NewTablesFilter(tables...)
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+		for _, schema := range s.Schemas {
+			cfg.FilterStr = append(cfg.FilterStr, fmt.Sprintf("`%s`.*", schema))
+		}
 	default:
 		cfg.TableFilter = filter.All()
 	}
@@ -792,7 +796,7 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName ast.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 

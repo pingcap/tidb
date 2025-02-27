@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -279,7 +280,7 @@ func main() {
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
@@ -741,48 +742,48 @@ func setGlobalVars() {
 	kv.TxnEntrySizeLimit.Store(cfg.Performance.TxnEntrySizeLimit)
 
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
-	variable.ForcePriority = int32(priority)
+	vardef.ForcePriority = int32(priority)
 
-	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
-	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
-	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
-	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
-	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
-	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
-	atomic.StoreUint64(&variable.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
+	vardef.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
+	vardef.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	vardef.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
+	vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
+	atomic.StoreUint32(&vardef.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
+	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
+	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
-		variable.SetSysVar(variable.Version, cfg.ServerVersion)
+		variable.SetSysVar(vardef.Version, cfg.ServerVersion)
 	}
 
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
-		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
+		variable.SetSysVar(vardef.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
-		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
+		variable.SetSysVar(vardef.VersionComment, cfg.VersionComment)
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
-	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
-	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
-	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
-	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
+	variable.SetSysVar(vardef.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(vardef.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
+	variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
-	variable.SetSysVar(variable.Socket, cfg.Socket)
-	variable.SetSysVar(variable.DataDir, cfg.Path)
-	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
-	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
-	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
-	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
-	variable.SetSysVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
+	variable.SetSysVar(vardef.Socket, cfg.Socket)
+	variable.SetSysVar(vardef.DataDir, cfg.Path)
+	variable.SetSysVar(vardef.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
+	variable.SetSysVar(vardef.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
+	variable.SetSysVar(vardef.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
+	vardef.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
+	variable.SetSysVar(vardef.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
 	if hostname, err := os.Hostname(); err == nil {
-		variable.SetSysVar(variable.Hostname, hostname)
+		variable.SetSysVar(vardef.Hostname, hostname)
 	}
-	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	vardef.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()
@@ -790,7 +791,7 @@ func setGlobalVars() {
 
 	// For CI environment we default enable prepare-plan-cache.
 	if config.CheckTableBeforeDrop { // only for test
-		variable.SetSysVar(variable.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
+		variable.SetSysVar(vardef.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
 	}
 	// use server-memory-quota as max-plan-cache-memory
 	plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
@@ -827,7 +828,7 @@ func setGlobalVars() {
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 
 	if len(cfg.Instance.TiDBServiceScope) > 0 {
-		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
+		vardef.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
 	}
 }
 

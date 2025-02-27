@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
 )
@@ -41,11 +41,11 @@ func TestGetTableSchema(t *testing.T) {
 	defer m.Stop()
 	dom := m.Domain
 
-	_, err = restore.GetTableSchema(dom, model.NewCIStr("test"), model.NewCIStr("tidb"))
+	_, err = restore.GetTableSchema(dom, ast.NewCIStr("test"), ast.NewCIStr("tidb"))
 	require.Error(t, err)
-	tableInfo, err := restore.GetTableSchema(dom, model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	tableInfo, err := restore.GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb"))
 	require.NoError(t, err)
-	require.Equal(t, model.NewCIStr("tidb"), tableInfo.Name)
+	require.Equal(t, ast.NewCIStr("tidb"), tableInfo.Name)
 }
 
 func TestAssertUserDBsEmpty(t *testing.T) {

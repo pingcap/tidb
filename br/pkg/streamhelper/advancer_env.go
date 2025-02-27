@@ -75,7 +75,7 @@ func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
 // Limit limits the maximum number of regions returned.
 func (c PDRegionScanner) RegionScan(ctx context.Context, key, endKey []byte, limit int) ([]RegionWithLeader, error) {
 	//nolint:staticcheck
-	rs, err := c.Client.ScanRegions(ctx, key, endKey, limit)
+	rs, err := c.Client.ScanRegions(ctx, key, endKey, limit, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err
 	}

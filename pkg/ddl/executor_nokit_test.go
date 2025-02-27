@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,14 +75,14 @@ func TestMergeCreateTableJobsOfSameSchema(t *testing.T) {
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Query:      "create table db1.t1 (c1 int, c2 int)",
-	}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.CIStr{O: "t1", L: "t1"}}}, false)
+	}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.CIStr{O: "t1", L: "t1"}}}, false)
 	job2 := NewJobWrapperWithArgs(&model.Job{
 		Version:    model.GetJobVerInUse(),
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Query:      "create table db1.t2 (c1 int, c2 int);",
-	}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.CIStr{O: "t2", L: "t2"}}, FKCheck: true}, false)
+	}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.CIStr{O: "t2", L: "t2"}}, FKCheck: true}, false)
 	job, err := mergeCreateTableJobsOfSameSchema([]*JobWrapper{job1, job2})
 	require.NoError(t, err)
 	require.Equal(t, "create table db1.t1 (c1 int, c2 int); create table db1.t2 (c1 int, c2 int);", job.Query)
@@ -102,10 +102,10 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("non create table are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t1")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t1")}}},
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionAddColumn}},
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t2")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t2")}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
@@ -123,9 +123,9 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("jobs of pre allocated ids are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t1")}}, IDAllocated: true},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t1")}}, IDAllocated: true},
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t2")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t2")}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
@@ -142,7 +142,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
 				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}}},
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t2")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t2")}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
@@ -157,9 +157,9 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("jobs of different schema are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db1", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t1")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t1")}}},
 			{Job: &model.Job{Version: model.GetJobVerInUse(), SchemaName: "db2", Type: model.ActionCreateTable},
-				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t2")}}},
+				JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t2")}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
@@ -173,7 +173,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 		jobWs := make([]*JobWrapper, 0, 100)
 		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "db0", Type: model.ActionAddColumn}, false))
 		jobW := NewJobWrapperWithArgs(&model.Job{Version: model.GetJobVerInUse(), SchemaName: "db1", Type: model.ActionCreateTable},
-			&model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t1")}}, true)
+			&model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t1")}}, true)
 		jobWs = append(jobWs, jobW)
 		jobW = NewJobWrapperWithArgs(&model.Job{Version: model.GetJobVerInUse(), SchemaName: "db2", Type: model.ActionCreateTable},
 			&model.CreateTableArgs{TableInfo: &model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}}, false)
@@ -186,7 +186,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			for i := 0; i < cnt; i++ {
 				tblName := fmt.Sprintf("t%d", i)
 				jobW := NewJobWrapperWithArgs(&model.Job{Version: model.GetJobVerInUse(), SchemaName: db, Type: model.ActionCreateTable},
-					&model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr(tblName)}}, false)
+					&model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr(tblName)}}, false)
 				jobWs = append(jobWs, jobW)
 			}
 		}

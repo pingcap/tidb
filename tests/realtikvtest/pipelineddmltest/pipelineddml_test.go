@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -182,12 +182,12 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// for deprecated batch-dml
 	tk.Session().GetSessionVars().BatchDelete = true
 	tk.Session().GetSessionVars().DMLBatchSize = 1
-	variable.EnableBatchDML.Store(true)
+	vardef.EnableBatchDML.Store(true)
 	tk.MustExec("insert into t values(7, 7)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode")
 	tk.Session().GetSessionVars().BatchDelete = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
-	variable.EnableBatchDML.Store(false)
+	vardef.EnableBatchDML.Store(false)
 
 	// for explain and explain analyze
 	tk.MustExec("explain insert into t values(8, 8)")

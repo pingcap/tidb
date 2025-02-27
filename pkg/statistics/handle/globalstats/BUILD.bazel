@@ -45,11 +45,11 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",

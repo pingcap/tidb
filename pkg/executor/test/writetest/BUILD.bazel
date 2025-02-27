@@ -16,7 +16,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/mydump",
         "//pkg/meta/autoid",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/sessionctx",

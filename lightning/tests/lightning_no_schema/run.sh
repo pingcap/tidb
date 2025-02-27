@@ -19,10 +19,19 @@ set -eu
 # keep this test for check the compatibility of noschema config.
 run_sql "DROP DATABASE IF EXISTS noschema;"
 run_sql "create database noschema;"
-run_sql "create table noschema.t (x int primary key);"
+run_sql "create table noschema.invalid (x int primary key);"
+! run_lightning --no-schema=1
+grep -Fq 'schema not found' $TEST_DIR/lightning.log
 
-# Starting importing
+run_sql "drop table noschema.invalid;"
+run_sql "create table noschema.t (x int primary key);"
+! run_lightning --no-schema=1
+grep -Fq 'invalid schema statement:' $TEST_DIR/lightning.log
+
+run_sql "create table noschema.invalid (x int primary key);"
 run_lightning --no-schema=1
 
 run_sql "SELECT sum(x) FROM noschema.t;"
 check_contains 'sum(x): 120'
+run_sql "SELECT sum(x) FROM noschema.invalid;"
+check_contains 'sum(x): 1'

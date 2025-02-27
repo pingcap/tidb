@@ -23,7 +23,6 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",

@@ -43,9 +43,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -180,11 +181,11 @@ func SyntaxWarn(err error) error {
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = ast.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = ast.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -449,7 +450,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence ast.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
@@ -692,4 +693,23 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
 }

@@ -14,6 +14,8 @@
 
 package tiflash
 
+import "github.com/pingcap/tidb/pkg/sessionctx/vardef"
+
 // ReplicaRead is the policy to select TiFlash nodes.
 type ReplicaRead int
 
@@ -24,15 +26,6 @@ const (
 	ClosestAdaptive
 	// ClosestReplicas means using only the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will report an error, and show an error message. Because of the feature of TiFlash remote read, a small number of regions  in other zones is acceptable, but performance will be affected. The threshold is fixed, 3 regions per tiflash node.
 	ClosestReplicas
-)
-
-const (
-	// AllReplicaStr is the string value of AllReplicas.
-	AllReplicaStr = "all_replicas"
-	// ClosestAdaptiveStr is the string value of ClosestAdaptive.
-	ClosestAdaptiveStr = "closest_adaptive"
-	// ClosestReplicasStr is the string value of ClosestReplicas.
-	ClosestReplicasStr = "closest_replicas"
 )
 
 // IsAllReplicas return whether the policy is AllReplicas.
@@ -49,24 +42,24 @@ func (policy ReplicaRead) IsClosestReplicas() bool {
 func GetTiFlashReplicaRead(policy ReplicaRead) string {
 	switch policy {
 	case AllReplicas:
-		return AllReplicaStr
+		return vardef.AllReplicaStr
 	case ClosestAdaptive:
-		return ClosestAdaptiveStr
+		return vardef.ClosestAdaptiveStr
 	case ClosestReplicas:
-		return ClosestReplicasStr
+		return vardef.ClosestReplicasStr
 	default:
-		return AllReplicaStr
+		return vardef.AllReplicaStr
 	}
 }
 
 // GetTiFlashReplicaReadByStr return corresponding policy in string.
 func GetTiFlashReplicaReadByStr(str string) ReplicaRead {
 	switch str {
-	case AllReplicaStr:
+	case vardef.AllReplicaStr:
 		return AllReplicas
-	case ClosestAdaptiveStr:
+	case vardef.ClosestAdaptiveStr:
 		return ClosestAdaptive
-	case ClosestReplicasStr:
+	case vardef.ClosestReplicasStr:
 		return ClosestReplicas
 	default:
 		return AllReplicas

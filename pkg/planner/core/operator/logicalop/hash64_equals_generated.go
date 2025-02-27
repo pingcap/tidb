@@ -868,6 +868,7 @@ func (op *LogicalTableDual) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalTopN) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeTopN)
+	op.LogicalSchemaProducer.Hash64(h)
 	if op.ByItems == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -901,6 +902,9 @@ func (op *LogicalTopN) Equals(other any) bool {
 		return op2 == nil
 	}
 	if op2 == nil {
+		return false
+	}
+	if !op.LogicalSchemaProducer.Equals(&op2.LogicalSchemaProducer) {
 		return false
 	}
 	if (op.ByItems == nil && op2.ByItems != nil) || (op.ByItems != nil && op2.ByItems == nil) || len(op.ByItems) != len(op2.ByItems) {

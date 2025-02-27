@@ -31,7 +31,7 @@ import (
 )
 
 type mergeSortExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	jobID         int64
 	idxNum        int
 	ptbl          table.PhysicalTable
@@ -86,7 +86,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
-	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
 	err = external.MergeOverlappingFiles(
@@ -97,7 +97,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
-		subtask.Concurrency,
+		int(res.CPU.Capacity()),
 		true,
 	)
 	if err != nil {

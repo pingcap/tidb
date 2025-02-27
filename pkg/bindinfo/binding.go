@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"unsafe"
@@ -24,30 +26,32 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
-	// Enabled is the bind info's in enabled status.
+	// StatusEnabled is the bind info's in enabled status.
 	// It is the same as the previous 'Using' status.
 	// Only use 'Enabled' status in the future, not the 'Using' status.
 	// The 'Using' status is preserved for compatibility.
-	Enabled = "enabled"
-	// Disabled is the bind info's in disabled status.
-	Disabled = "disabled"
-	// Using is the bind info's in use status.
+	StatusEnabled = "enabled"
+	// StatusDisabled is the bind info's in disabled status.
+	StatusDisabled = "disabled"
+	// StatusUsing is the bind info's in use status.
 	// The 'Using' status is preserved for compatibility.
-	Using = "using"
-	// deleted is the bind info's deleted status.
-	deleted = "deleted"
-	// Manual indicates the binding is created by SQL like "create binding for ...".
-	Manual = "manual"
-	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
-	Builtin = "builtin"
-	// History indicate the binding is created from statement summary by plan digest
-	History = "history"
+	StatusUsing = "using"
+	// StatusDeleted is the bind info's deleted status.
+	StatusDeleted = "deleted"
+	// StatusBuiltin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	StatusBuiltin = "builtin"
+	// SourceManual indicates the binding is created by SQL like "create binding for ...".
+	SourceManual = "manual"
+	// SourceHistory indicate the binding is created from statement summary by plan digest
+	SourceHistory = "history"
 )
 
 // Binding stores the basic bind hint info.
@@ -77,7 +81,7 @@ type Binding struct {
 
 // IsBindingEnabled returns whether the binding is enabled.
 func (b *Binding) IsBindingEnabled() bool {
-	return b.Status == Enabled || b.Status == Using
+	return b.Status == StatusEnabled || b.Status == StatusUsing
 }
 
 // size calculates the memory size of a bind info.
@@ -128,7 +132,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, WithoutDB(true))
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -161,7 +165,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
+	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return bindingNoDBDigest, nil
 }
 
@@ -272,7 +276,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	}()
 
 	p := parser.New()
-	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
+	if (binding.Hint != nil && binding.ID != "") || binding.Status == StatusDeleted {
 		return nil
 	}
 	dbName := binding.Db
@@ -281,8 +285,8 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isCrossDBBinding(bindingStmt)
-	if isFuzzy {
+	isCrossDB := isCrossDBBinding(bindingStmt)
+	if isCrossDB {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
@@ -290,14 +294,10 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	if err != nil {
 		return err
 	}
-	if sctx != nil && !isFuzzy {
-		paramChecker := &paramMarkerChecker{}
-		stmt.Accept(paramChecker)
-		if !paramChecker.hasParamMarker {
-			_, err = getHintsForSQL(sctx, binding.BindSQL)
-			if err != nil {
-				return err
-			}
+	if !isCrossDB && !hasParam(stmt) {
+		// TODO: how to check cross-db binding and bindings with parameters?
+		if err = checkBindingValidation(sctx, binding.BindSQL); err != nil {
+			return err
 		}
 	}
 	hintsStr, err := hintsSet.Restore()
@@ -353,7 +353,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	// filter deleted bindings
 	n = 0
 	for _, binding := range bindings {
-		if binding.Status != deleted {
+		if binding.Status != StatusDeleted {
 			bindings[n] = binding
 			n++
 		}
@@ -367,44 +367,19 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	return bindings[0]
 }
 
-type option struct {
-	specifiedDB string
-	noDB        bool
-}
-
-type optionFunc func(*option)
-
-// WithoutDB specifies whether to eliminate schema names.
-func WithoutDB(noDB bool) optionFunc {
-	return func(user *option) {
-		user.noDB = noDB
-	}
-}
-
-// WithSpecifiedDB specifies the specified DB name.
-func WithSpecifiedDB(specifiedDB string) optionFunc {
-	return func(user *option) {
-		user.specifiedDB = specifiedDB
-	}
-}
-
-// NormalizeStmtForBinding normalizes a statement for binding.
-// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
-	opt := &option{}
-	for _, option := range options {
-		option(opt)
-	}
-	return normalizeStmt(stmtNode, opt.specifiedDB, opt.noDB)
+// RestoreDBForBinding restores the DB name for the binding.
+func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
+	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
+// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
@@ -469,4 +444,60 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(nil, sql[:len(sql)-1])
 	}
+}
+
+type paramChecker struct {
+	hasParam bool
+}
+
+func (e *paramChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParam = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*paramChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// hasParam checks whether the statement contains any parameters.
+// For example, `create binding using select * from t where a=?` contains a parameter '?'.
+func hasParam(stmt ast.Node) bool {
+	p := new(paramChecker)
+	stmt.Accept(p)
+	return p.hasParam
+}
+
+// CheckBindingStmt checks whether the statement is valid.
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
+	origVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
+
+	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+	// the statement won't be able to "break out" from EXPLAIN.
+	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			if rerr := rs.Close(); rerr != nil {
+				bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
+			}
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
+	}
+	if err != nil {
+		return err
+	}
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return err
+	}
+	return nil
 }

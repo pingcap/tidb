@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -51,11 +51,11 @@ func TestDropAndTruncatePartition(t *testing.T) {
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
 	tbl := &model.TableInfo{
-		Name: pmodel.NewCIStr("t"),
+		Name: ast.NewCIStr("t"),
 	}
 	tbl.MaxColumnID++
 	col := &model.ColumnInfo{
-		Name:      pmodel.NewCIStr("c"),
+		Name:      ast.NewCIStr("c"),
 		Offset:    0,
 		State:     model.StatePublic,
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -71,33 +71,33 @@ func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableIn
 	partIDs, err := genGlobalIDs(store, 5)
 	require.NoError(t, err)
 	partInfo := &model.PartitionInfo{
-		Type:   pmodel.PartitionTypeRange,
+		Type:   ast.PartitionTypeRange,
 		Expr:   tbl.Columns[0].Name.L,
 		Enable: true,
 		Definitions: []model.PartitionDefinition{
 			{
 				ID:       partIDs[0],
-				Name:     pmodel.NewCIStr("p0"),
+				Name:     ast.NewCIStr("p0"),
 				LessThan: []string{"100"},
 			},
 			{
 				ID:       partIDs[1],
-				Name:     pmodel.NewCIStr("p1"),
+				Name:     ast.NewCIStr("p1"),
 				LessThan: []string{"200"},
 			},
 			{
 				ID:       partIDs[2],
-				Name:     pmodel.NewCIStr("p2"),
+				Name:     ast.NewCIStr("p2"),
 				LessThan: []string{"300"},
 			},
 			{
 				ID:       partIDs[3],
-				Name:     pmodel.NewCIStr("p3"),
+				Name:     ast.NewCIStr("p3"),
 				LessThan: []string{"400"},
 			},
 			{
 				ID:       partIDs[4],
-				Name:     pmodel.NewCIStr("p4"),
+				Name:     ast.NewCIStr("p4"),
 				LessThan: []string{"500"},
 			},
 		},
@@ -241,7 +241,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (8000000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (10000000),\n" +
 		" PARTITION `p5` VALUES LESS THAN (MAXVALUE))"))
-	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	require.Nil(t, tbl.Meta().Partition.AddingDefinitions)

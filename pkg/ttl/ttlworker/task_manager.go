@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -143,11 +143,11 @@ func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCa
 }
 
 func (m *taskManager) resizeWorkersWithSysVar() {
-	err := m.resizeScanWorkers(int(variable.TTLScanWorkerCount.Load()))
+	err := m.resizeScanWorkers(int(vardef.TTLScanWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize scan workers", zap.Error(err))
 	}
-	err = m.resizeDelWorkers(int(variable.TTLDeleteWorkerCount.Load()))
+	err = m.resizeDelWorkers(int(vardef.TTLDeleteWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize delete workers", zap.Error(err))
 	}
@@ -727,24 +727,24 @@ func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus)
 }
 
 func getMaxRunningTasksLimit(store kv.Storage) int {
-	ttlRunningTask := variable.TTLRunningTasks.Load()
+	ttlRunningTask := vardef.TTLRunningTasks.Load()
 	if ttlRunningTask != -1 {
 		return int(ttlRunningTask)
 	}
 
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	regionCache := tikvStore.GetRegionCache()
 	if regionCache == nil {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	limit := len(regionCache.GetStoresByType(tikvrpc.TiKV))
-	if limit > variable.MaxConfigurableConcurrency {
-		limit = variable.MaxConfigurableConcurrency
+	if limit > vardef.MaxConfigurableConcurrency {
+		limit = vardef.MaxConfigurableConcurrency
 	}
 
 	return limit

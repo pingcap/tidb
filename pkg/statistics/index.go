@@ -27,15 +27,13 @@ import (
 
 // Index represents an index histogram.
 type Index struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.IndexInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag     int64
 	// PhysicalID is the physical table id,
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
@@ -49,10 +47,8 @@ func (idx *Index) Copy() *Index {
 	}
 	nc := &Index{
 		PhysicalID: idx.PhysicalID,
-		Flag:       idx.Flag,
 		StatsVer:   idx.StatsVer,
 	}
-	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if idx.CMSketch != nil {
 		nc.CMSketch = idx.CMSketch.Copy()
 	}

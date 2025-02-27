@@ -19,11 +19,12 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/domain"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -137,6 +138,8 @@ type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
+
+	RestoreUUID uuid.UUID `json:"restore-uuid"`
 }
 
 func LoadCheckpointMetadataForSnapshotRestore(
@@ -173,7 +176,7 @@ func ExistsSstRestoreCheckpoint(
 	// we only check the existence of the checkpoint data table
 	// because the checkpoint metadata is not used for restore
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointDataTableName))
+		TableExists(ast.NewCIStr(dbName), ast.NewCIStr(checkpointDataTableName))
 }
 
 func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {

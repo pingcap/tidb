@@ -44,7 +44,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/property",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
@@ -95,7 +94,7 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 // checkTTLInfoValid checks the TTL settings for a table.
 // The argument `isForForeignKeyCheck` is used to check the table should not be referenced by foreign key.
 // If `isForForeignKeyCheck` is `nil`, it will skip the foreign key check.
-func checkTTLInfoValid(schema pmodel.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
+func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
 	if tblInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrTempTableNotAllowedWithTTL
 	}

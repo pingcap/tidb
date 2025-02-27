@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,7 +97,7 @@ func TestGroupExists(t *testing.T) {
 }
 
 func TestGroupFingerPrint(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	p := parser.New()
 	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestFirstElemAfterDelete(t *testing.T) {
 }
 
 func TestBuildKeyInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	defer func() {

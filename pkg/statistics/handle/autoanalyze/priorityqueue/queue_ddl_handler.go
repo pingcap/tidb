@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -114,7 +115,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 	stats *statistics.Table,
 ) error {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -168,7 +169,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	})
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {

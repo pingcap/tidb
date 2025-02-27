@@ -36,7 +36,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,12 +49,12 @@ func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, m.Storage)
+	err := client.InitConnections(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	client.SetBatchDdlSize(1)
@@ -66,10 +66,10 @@ func TestCreateTables(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -120,7 +120,7 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// not set filter and first run with checkpoint
@@ -150,13 +150,13 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -167,13 +167,13 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.SetCharset("binary")
@@ -181,10 +181,10 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 		DB: dbSchema,
 		Info: &model.TableInfo{
 			ID:   int64(1),
-			Name: pmodel.NewCIStr("t"),
+			Name: ast.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{{
 				ID:        1,
-				Name:      pmodel.NewCIStr("id"),
+				Name:      ast.NewCIStr("id"),
 				FieldType: *intField,
 				State:     model.StatePublic,
 			}},
@@ -202,7 +202,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// explicit filter

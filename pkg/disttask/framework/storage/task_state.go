@@ -31,8 +31,9 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where id = %? and state in (%?, %?)`,
+		 where id = %? and state in (%?, %?, %?)`,
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
+		proto.TaskStateAwaitingResolution,
 	)
 	return err
 }
@@ -43,8 +44,10 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?)`,
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
+		 where task_key = %? and state in (%?, %?, %?)`,
+		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
+		proto.TaskStateAwaitingResolution,
+	)
 	return err
 }
 
@@ -64,15 +67,24 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 
 // RevertTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateReverting, taskErr)
+}
+
+func (mgr *TaskManager) transitTaskStateOnErr(ctx context.Context, taskID int64, currState, targetState proto.TaskState, taskErr error) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		update mysql.tidb_global_task
 		set state = %?,
 			error = %?,
 			state_update_time = CURRENT_TIMESTAMP()
 		where id = %? and state = %?`,
-		proto.TaskStateReverting, serializeErr(taskErr), taskID, taskState,
+		targetState, serializeErr(taskErr), taskID, currState,
 	)
 	return err
+}
+
+// AwaitingResolveTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateAwaitingResolution, taskErr)
 }
 
 // RevertedTask implements the scheduler.TaskManager interface.

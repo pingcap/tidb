@@ -32,13 +32,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -66,7 +66,8 @@ var (
 type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
-	txn           wrapTxn    // mock global variable
+	txn           wrapTxn // mock global variable
+	dom           any
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -518,8 +519,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
-	return false, pmodel.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, ast.TableLockType) {
+	return false, ast.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
@@ -639,6 +640,16 @@ func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
 }
 
+// BindDomain bind domain into ctx.
+func (c *Context) BindDomain(dom any) {
+	c.dom = dom
+}
+
+// GetDomain get domain from ctx.
+func (c *Context) GetDomain() any {
+	return c.dom
+}
+
 // NewContextDeprecated creates a new mocked sessionctx.Context.
 // Deprecated: This method is only used for some legacy code.
 // DO NOT use mock.Context in new production code, and use the real Context instead.
@@ -668,15 +679,15 @@ func newContext() *Context {
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-	vars.EnablePaging = variable.DefTiDBEnablePaging
-	vars.MinPagingSize = variable.DefMinPagingSize
-	vars.CostModelVersion = variable.DefTiDBCostModelVer
+	vars.EnablePaging = vardef.DefTiDBEnablePaging
+	vars.MinPagingSize = vardef.DefMinPagingSize
+	vars.CostModelVersion = vardef.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
-	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
-	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
-	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, "utf8mb4"); err != nil {
 		panic(err)
 	}
 	return sctx

@@ -491,6 +491,13 @@ CREATE USER 'default_sha2_role'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '
 select plugin from mysql.user where user = 'default_sha2_role';
 plugin
 caching_sha2_password
+drop user default_sha2_user;
+drop user native_plugin_user;
+create user default_sha2_user identified by '1234';
+create user native_plugin_user identified with 'mysql_native_password' by '1234';
+select count(distinct authentication_string) from mysql.user where user = 'default_sha2_user' or user = 'native_plugin_user';
+count(distinct authentication_string)
+2
 alter user default_sha2_user identified with 'tidb_sm3_password';
 show create user default_sha2_user;
 CREATE USER for default_sha2_user@%
@@ -498,20 +505,42 @@ CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'tidb_sm3_password' AS '' RE
 select plugin from mysql.user where user = 'default_sha2_user';
 plugin
 tidb_sm3_password
-alter user default_sha2_user identified with 'authentication_ldap_simple';
-show create user default_sha2_user;
-CREATE USER for default_sha2_user@%
-CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'authentication_ldap_simple' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+drop user default_sha2_user;
+create user default_sha2_user identified by '1234';
+set password for default_sha2_user = '12345';
+alter user default_sha2_user identified by '123456';
 select plugin from mysql.user where user = 'default_sha2_user';
 plugin
-authentication_ldap_simple
-alter user default_sha2_user identified with 'authentication_ldap_sasl';
-show create user default_sha2_user;
-CREATE USER for default_sha2_user@%
-CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'authentication_ldap_sasl' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+caching_sha2_password
+alter user default_sha2_user identified with 'mysql_native_password' by '123456';
 select plugin from mysql.user where user = 'default_sha2_user';
 plugin
-authentication_ldap_sasl
+mysql_native_password
+alter user default_sha2_user identified with 'caching_sha2_password';
+select plugin, length(authentication_string) from mysql.user where user = 'default_sha2_user';
+plugin	length(authentication_string)
+caching_sha2_password	0
+set sql_mode = '';
+select @@sql_mode;
+@@sql_mode
+
+select user, host, plugin from mysql.user where user = 'non_exist_user';
+user	host	plugin
+grant select on test.* to non_exist_user;
+select user, host, plugin from mysql.user where user = 'non_exist_user';
+user	host	plugin
+non_exist_user	%	caching_sha2_password
+set @@sql_mode = default;
+alter user non_exist_user identified with 'mysql_native_password';
+show create user non_exist_user;
+CREATE USER for non_exist_user@%
+CREATE USER 'non_exist_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+update mysql.user set plugin = '' where user = 'non_exist_user';
+flush privileges;
+show create user non_exist_user;
+CREATE USER for non_exist_user@%
+CREATE USER 'non_exist_user'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+drop user non_exist_user;
 drop user default_sm3_user;
 drop user default_sha2_user;
 drop user native_plugin_user;

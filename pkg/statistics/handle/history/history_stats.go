@@ -22,11 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -56,7 +57,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 		return 0, errors.Trace(err)
 	}
 	if js == nil {
-		logutil.BgLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
+		statslogutil.StatsLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
 		return 0, nil
 	}
 	var version uint64
@@ -67,32 +68,55 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	return version, err
 }
 
-// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
-func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool) {
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64) {
 	if version == 0 {
 		return
 	}
-	if !enforce {
-		tbl, ok := sh.statsHandle.Get(tableID)
-		if !ok {
-			return
-		}
-		if !tbl.IsInitialized() {
-			return
+
+	var targetedTableIDs []int64
+	if enforce {
+		targetedTableIDs = tableIDs
+	} else {
+		targetedTableIDs = make([]int64, 0, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tbl, ok := sh.statsHandle.Get(tableID)
+			if tableID == 0 || !ok || !tbl.IsInitialized() {
+				continue
+			}
+			targetedTableIDs = append(targetedTableIDs, tableID)
 		}
 	}
+	shouldSkipHistoricalStats := false
 	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
+			shouldSkipHistoricalStats = true
 			return nil
 		}
-		return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, tableID, version, source)
+		return nil
 	}, handleutil.FlagWrapTxn)
-	if err != nil { // just log the error, hide the error from the outside caller.
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
+	if err != nil {
+		statslogutil.StatsLogger().Error("failed to check historical stats enable status",
 			zap.Uint64("version", version),
 			zap.String("source", source),
+			zap.Int64s("tableIDs", tableIDs),
+			zap.Int64s("targetedTableIDs", targetedTableIDs),
 			zap.Error(err))
+		return
+	}
+	if !shouldSkipHistoricalStats {
+		for _, tableID := range targetedTableIDs {
+			err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+				return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableID)
+			}, handleutil.FlagWrapTxn)
+			if err != nil {
+				statslogutil.StatsLogger().Error("record historical stats meta failed",
+					zap.Uint64("version", version),
+					zap.String("source", source),
+					zap.Int64("tableID", tableID),
+					zap.Error(err))
+			}
+		}
 	}
 }
 
@@ -105,32 +129,36 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta.
+// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with the given version and source.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	tableID int64,
 	version uint64,
 	source string,
+	tableID int64,
 ) error {
+	intest.Assert(version != 0, "version should not be zero")
+	intest.Assert(tableID != 0, "tableID should not be zero")
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
+
 	rows, _, err := handleutil.ExecRowsWithCtx(
 		ctx,
 		sctx,
-		"select modify_count, count from mysql.stats_meta where table_id = %? and version = %?",
+		"SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = %? and version = %? FOR UPDATE",
 		tableID,
 		version,
 	)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	intest.Assert(len(rows) != 0, "no historical meta stats can be recorded")
 	if len(rows) == 0 {
 		return errors.New("no historical meta stats can be recorded")
 	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
+	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
 	if _, err := handleutil.ExecWithCtx(
 		ctx,
@@ -145,6 +173,7 @@ func RecordHistoricalStatsMeta(
 		return errors.Trace(err)
 	}
 	cache.TableRowStatsCache.Invalidate(tableID)
+
 	return nil
 }
 

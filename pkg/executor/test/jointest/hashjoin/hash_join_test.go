@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -372,12 +372,12 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	require.Equal(t, 8, len(rows))
 	require.Regexp(t, "IndexHashJoin.*", rows[0][0])
-	require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[0][5])
+	require.Regexp(t, "time:.*, open:.*, close:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[0][5])
 	// Test for hash join.
 	rows = tk.MustQuery("explain analyze select /*+ HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	require.Equal(t, 7, len(rows))
 	require.Regexp(t, "HashJoin.*", rows[0][0])
-	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch and wait:.*}", rows[0][5])
+	require.Regexp(t, "time:.*, open:.*, close:.*, loops:.*, build_hash_table:{concurrency:.*, time:.*, fetch:.*, max_partition:.*, total_partition:.*, max_build:.*, total_build:.*}, probe:{concurrency:.*, time:.*, fetch_and_wait:.*, max_worker_time:.*, total_worker_time:.*, max_probe:.*, total_probe:.*}", rows[0][5])
 
 	// TestExplainAnalyzeIndexHashJoin
 	// Issue 43597
@@ -397,7 +397,7 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 		require.Equal(t, 7, len(rows))
 		require.Regexp(t, "IndexHashJoin.*", rows[1][0])
 		// When innerWorkerRuntimeStats.join is negative, `join:` will not print.
-		require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[1][5])
+		require.Regexp(t, "time:.*, open:.*, close:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[1][5])
 	}
 }
 
@@ -432,7 +432,7 @@ func TestIssue31129(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))

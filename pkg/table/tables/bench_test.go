@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -44,10 +44,10 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
@@ -98,10 +98,10 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)
@@ -159,7 +159,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
 	// Pre-create data to be inserted and then updated

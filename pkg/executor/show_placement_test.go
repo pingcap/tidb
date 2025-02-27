@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -506,7 +506,7 @@ func TestShowPlacementHandleRegionStatus(t *testing.T) {
 
 	mockGetState := func(tblName, partition string, state string) *mock.Call {
 		is := tk.Session().GetDomainInfoSchema()
-		tbl, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID
 		if partition != "" {

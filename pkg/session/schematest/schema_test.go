@@ -18,14 +18,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -114,7 +113,7 @@ func TestTableReaderChunk(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
 	require.NoError(t, err)
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
@@ -122,7 +121,7 @@ func TestTableReaderChunk(t *testing.T) {
 	tk.Session().GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -319,7 +318,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
 	}
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
 	require.NoError(t, err)
 	indexStart := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Indices()[0].Meta().ID)
 	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
@@ -386,7 +385,7 @@ func TestValidationRecursion(t *testing.T) {
 	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
 	// function because it might cause infinite recursion.
 	// See: https://github.com/pingcap/tidb/issues/30255
-	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+	sv := variable.SysVar{Scope: vardef.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
 	}}
 	variable.RegisterSysVar(&sv)
@@ -396,181 +395,7 @@ func TestValidationRecursion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	val, err := sv.Validate(tk.Session().GetSessionVars(), "test2", variable.ScopeGlobal)
+	val, err := sv.Validate(tk.Session().GetSessionVars(), "test2", vardef.ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "test", val)
-}
-
-func TestGlobalAndLocalTxn(t *testing.T) {
-	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
-	// so we will skip this test for now.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=dc-1]'")
-	tk.MustExec("create placement policy p2 leader_constraints='[+zone=dc-2]'")
-	tk.MustExec(`create table t1 (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (100) placement policy p1,
-	PARTITION p1 VALUES LESS THAN (200) placement policy p2
-);`)
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	// set txn_scope to global
-	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", kv.GlobalTxnScope))
-	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
-
-	// test global txn auto commit
-	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
-	result = tk.MustQuery("select * from t1")    // read dc-1 and dc-2 with global scope
-	require.Equal(t, 1, len(result.Rows()))
-
-	// begin and commit with global txn scope
-	tk.MustExec("begin")
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().TxnCtx.TxnScope)
-	require.True(t, txn.Valid())
-	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
-	result = tk.MustQuery("select * from t1")    // read dc-1 and dc-2 with global scope
-	require.Equal(t, 2, len(result.Rows()))
-	require.True(t, txn.Valid())
-	tk.MustExec("commit")
-	result = tk.MustQuery("select * from t1")
-	require.Equal(t, 2, len(result.Rows()))
-
-	// begin and rollback with global txn scope
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(true)
-	require.NoError(t, err)
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().TxnCtx.TxnScope)
-	require.True(t, txn.Valid())
-	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
-	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
-	require.Equal(t, 3, len(result.Rows()))
-	require.True(t, txn.Valid())
-	tk.MustExec("rollback")
-	result = tk.MustQuery("select * from t1")
-	require.Equal(t, 2, len(result.Rows()))
-
-	timeBeforeWriting := time.Now()
-	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
-	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
-	require.Equal(t, 3, len(result.Rows()))
-
-	failpoint.Enable("tikvclient/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("tikvclient/injectTxnScope")
-	// set txn_scope to local
-	tk.MustExec("set @@session.txn_scope = 'local';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("local"))
-
-	// test local txn auto commit
-	tk.MustExec("insert into t1 (c) values (1)")          // write dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1 where c = 1") // point get dc-1 with dc-1 scope
-	require.Equal(t, 3, len(result.Rows()))
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	require.Equal(t, 3, len(result.Rows()))
-
-	// begin and commit with dc-1 txn scope
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(true)
-	require.NoError(t, err)
-	require.Equal(t, "dc-1", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.True(t, txn.Valid())
-	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	require.Equal(t, 4, len(result.Rows()))
-	require.True(t, txn.Valid())
-	tk.MustExec("commit")
-	result = tk.MustQuery("select * from t1 where c < 100")
-	require.Equal(t, 4, len(result.Rows()))
-
-	// begin and rollback with dc-1 txn scope
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(true)
-	require.NoError(t, err)
-	require.Equal(t, "dc-1", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.True(t, txn.Valid())
-	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	require.Equal(t, 5, len(result.Rows()))
-	require.True(t, txn.Valid())
-	tk.MustExec("rollback")
-	result = tk.MustQuery("select * from t1 where c < 100")
-	require.Equal(t, 4, len(result.Rows()))
-
-	// test wrong scope local txn auto commit
-	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*out of txn_scope.*", err)
-	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	tk.MustExec("begin")
-	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	tk.MustExec("commit")
-
-	// begin and commit reading & writing the data in dc-2 with dc-1 txn scope
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(true)
-	require.NoError(t, err)
-	require.Equal(t, "dc-1", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.True(t, txn.Valid())
-	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
-	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	tk.MustExec("insert into t1 (c) values (99)")           // write dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	require.Equal(t, 5, len(result.Rows()))
-	require.True(t, txn.Valid())
-	_, err = tk.Exec("commit")
-	require.Error(t, err)
-	require.Regexp(t, ".*out of txn_scope.*", err)
-	// Won't read the value 99 because the previous commit failed
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	require.Equal(t, 4, len(result.Rows()))
-
-	// Stale Read will ignore the cross-dc txn scope.
-	require.Equal(t, "dc-1", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("local"))
-	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
-	require.Error(t, err)
-	require.Regexp(t, ".*can not be read by.*", err)
-	// Read dc-2 with Stale Read (in dc-1 scope)
-	timestamp := timeBeforeWriting.Format(time.RFC3339Nano)
-	// TODO: check the result of Stale Read when we figure out how to make the time precision more accurate.
-	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c = 101", timestamp))
-	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
-	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
-	tk.MustExec("select * from t1 where c = 101")
-	tk.MustExec("select * from t1 where c > 100")
-	tk.MustExec("commit")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
-	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
-	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
-	tk.MustExec("select * from t1 where c = 101")
-	tk.MustExec("select * from t1 where c > 100")
-	tk.MustExec("commit")
-
-	tk.MustExec("set global tidb_enable_local_txn = off;")
 }

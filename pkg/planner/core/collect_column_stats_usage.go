@@ -30,9 +30,6 @@ import (
 // TODO: The collected predicate columns will be used to decide whether to load statistics for the columns. And we need some special handling for partition table
 // when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
 type columnStatsUsageCollector struct {
-	// histNeeded indicates whether to collect histogram-needed columns.
-	// TODO: It's used for the special handling for partition table when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
-	histNeeded bool
 	// predicateCols records predicate columns.
 	// The bool value indicates whether we need a full stats for it.
 	// If its value is false, we just need the least meta info(like NDV) of the column in this SQL.
@@ -58,12 +55,14 @@ type columnStatsUsageCollector struct {
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
 	tblID2PartitionIDs map[int64][]int64
+
+	// operatorNum is the number of operators in the logical plan.
+	operatorNum uint64
 }
 
-func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
-		histNeeded: histNeeded,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
@@ -138,7 +137,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
-	if tblID != ds.PhysicalTableID && c.histNeeded {
+	if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
@@ -304,6 +303,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 		}
 	}
+	c.operatorNum++
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
@@ -312,17 +312,18 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 // First return value: predicate columns
 // Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
 // Third return value: the visited partition IDs. Used for static partition pruning.
-// Forth return value: the recorded asked column group for each datasource table, which will require collecting composite index for it's group ndv info.
+// Forth return value: the number of operators in the logical plan.
 // TODO: remove the third return value when the static partition pruning is totally deprecated.
-func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
+	uint64,
 ) {
-	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
+	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
 }

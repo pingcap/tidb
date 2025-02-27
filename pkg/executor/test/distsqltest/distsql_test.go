@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -62,7 +62,7 @@ func TestDistsqlPartitionTableConcurrency(t *testing.T) {
 	// 20-ranges-partitioned table checker
 	ctx3 := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, req.KeyRanges.PartitionNum(), 20)
-		require.Equal(t, req.Concurrency, variable.DefDistSQLScanConcurrency)
+		require.Equal(t, req.Concurrency, vardef.DefDistSQLScanConcurrency)
 	})
 	ctxs := []context.Context{ctx1, ctx2, ctx3}
 	for i, tbl := range []string{"t1", "t2", "t3"} {

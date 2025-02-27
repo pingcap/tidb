@@ -385,15 +385,15 @@ func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call 
 }
 
 // Run mocks base method.
-func (m *MockTaskExecutor) Run(arg0 *proto.StepResource) {
+func (m *MockTaskExecutor) Run() {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Run", arg0)
+	m.ctrl.Call(m, "Run")
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockTaskExecutorMockRecorder) Run(arg0 any) *gomock.Call {
+func (mr *MockTaskExecutorMockRecorder) Run() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockTaskExecutor)(nil).Run), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockTaskExecutor)(nil).Run))
 }
 
 // MockExtension is a mock of Extension interface.

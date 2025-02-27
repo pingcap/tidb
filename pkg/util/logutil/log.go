@@ -28,7 +28,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -259,7 +259,7 @@ func ErrVerboseLogger() *zap.Logger {
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger
-func LoggerWithTraceInfo(logger *zap.Logger, info *model.TraceInfo) *zap.Logger {
+func LoggerWithTraceInfo(logger *zap.Logger, info *tracing.TraceInfo) *zap.Logger {
 	if logger == nil {
 		logger = log.L()
 	}
@@ -287,7 +287,7 @@ func WithCategory(ctx context.Context, category string) context.Context {
 }
 
 // WithTraceFields attaches trace fields to context
-func WithTraceFields(ctx context.Context, info *model.TraceInfo) context.Context {
+func WithTraceFields(ctx context.Context, info *tracing.TraceInfo) context.Context {
 	if info == nil {
 		return WithFields(ctx)
 	}
@@ -297,7 +297,7 @@ func WithTraceFields(ctx context.Context, info *model.TraceInfo) context.Context
 	)
 }
 
-func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
+func fieldsFromTraceInfo(info *tracing.TraceInfo) []zap.Field {
 	if info == nil {
 		return nil
 	}
@@ -315,7 +315,7 @@ func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
 }
 
 // WithTraceLogger attaches trace identifier to context
-func WithTraceLogger(ctx context.Context, info *model.TraceInfo) context.Context {
+func WithTraceLogger(ctx context.Context, info *tracing.TraceInfo) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
@@ -325,7 +325,7 @@ func WithTraceLogger(ctx context.Context, info *model.TraceInfo) context.Context
 	return context.WithValue(ctx, CtxLogKey, wrapTraceLogger(ctx, info, logger))
 }
 
-func wrapTraceLogger(ctx context.Context, info *model.TraceInfo, logger *zap.Logger) *zap.Logger {
+func wrapTraceLogger(ctx context.Context, info *tracing.TraceInfo, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		tl := &traceLog{ctx: ctx}
 		// cfg.Format == "", never return error
