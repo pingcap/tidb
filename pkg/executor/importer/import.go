@@ -161,6 +161,8 @@ var (
 
 	// default character set
 	defaultCharacterSet = "utf8mb4"
+	// default field null def
+	defaultFieldNullDef = []string{`\N`}
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -399,16 +401,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		format = DataFormatNone
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
-	// those are the default values for lightning CSV format too
-	lineFieldsInfo := plannercore.LineFieldsInfo{
-		FieldsTerminatedBy: `,`,
-		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\`,
-		LinesStartingBy:    ``,
-		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
-		// But user cannot set this to empty explicitly.
-		LinesTerminatedBy: ``,
-	}
+	lineFieldsInfo := newDefaultLineFieldsInfo()
 
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
@@ -419,7 +412,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		Path:           plan.Path,
 		Format:         format,
 		Restrictive:    restrictive,
-		FieldNullDef:   []string{`\N`},
+		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
@@ -437,6 +430,19 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		return nil, err
 	}
 	return p, nil
+}
+
+func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
+	// those are the default values for lightning CSV format too
+	return plannercore.LineFieldsInfo{
+		FieldsTerminatedBy: `,`,
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `\`,
+		LinesStartingBy:    ``,
+		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+		// But user cannot set this to empty explicitly.
+		LinesTerminatedBy: ``,
+	}
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -1351,25 +1357,26 @@ func (p *Plan) checkeCSVOnlyOptions() error {
 	if *p.Charset != defaultCharacterSet {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(characterSetOption, "non-CSV format")
 	}
-	if p.FieldsTerminatedBy != "" {
+	defaultLineFieldsInfo := newDefaultLineFieldsInfo()
+	if p.FieldsTerminatedBy != defaultLineFieldsInfo.FieldsTerminatedBy {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsTerminatedByOption, "non-CSV format")
 	}
-	if p.FieldsEnclosedBy != "" {
+	if p.FieldsEnclosedBy != defaultLineFieldsInfo.FieldsEnclosedBy {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEnclosedByOption, "non-CSV format")
 	}
-	if p.FieldsEscapedBy != "" {
+	if p.FieldsEscapedBy != defaultLineFieldsInfo.FieldsEscapedBy {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEscapedByOption, "non-CSV format")
 	}
-	if len(p.FieldNullDef) != 0 {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsDefinedNullByOption, "non-CSV format")
-	}
-	if p.LinesTerminatedBy != "" {
+	if p.LinesTerminatedBy != defaultLineFieldsInfo.LinesTerminatedBy {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(linesTerminatedByOption, "non-CSV format")
+	}
+	if len(p.FieldNullDef) != len(defaultFieldNullDef) || p.FieldNullDef[0] != defaultFieldNullDef[0] {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsDefinedNullByOption, "non-CSV format")
 	}
 	if p.IgnoreLines != 0 {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(skipRowsOption, "non-CSV format")
 	}
-	if !p.SplitFile {
+	if p.SplitFile != false {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(splitFileOption, "non-CSV format")
 	}
 	return nil
