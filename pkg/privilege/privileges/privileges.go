@@ -393,7 +393,7 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 			zap.String("user", user))
 	}
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchIdentity(p.Handle.sctx, user, host, skipNameResolve)
+	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
 	if record != nil {
 		return record.User, record.Host, true
 	}
