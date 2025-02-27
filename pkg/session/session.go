@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -519,10 +518,8 @@ func (s *session) doCommit(ctx context.Context) error {
 			return plannererrors.ErrSQLInReadOnlyMode
 		}
 	}
-	err := s.checkPlacementPolicyBeforeCommit(ctx)
-	if err != nil {
-		return err
-	}
+	var err error
+
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) {
@@ -4014,7 +4011,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 }
 
 // PrepareTSFuture uses to try to get ts future.
-func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future) error {
 	if s.txn.Valid() {
 		return errors.New("cannot prepare ts future when txn is valid")
 	}
@@ -4032,7 +4029,6 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	s.txn.changeToPending(&txnFuture{
 		future:    future,
 		store:     s.store,
-		txnScope:  scope,
 		pipelined: s.usePipelinedDmlOrWarn(ctx),
 	})
 	return nil
@@ -4212,75 +4208,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			}
 		}
 	}
-}
-
-func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
-	var err error
-	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
-	if txnScope == "" {
-		txnScope = kv.GlobalTxnScope
-	}
-	if txnScope != kv.GlobalTxnScope {
-		is := s.GetInfoSchema().(infoschema.InfoSchema)
-		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
-		for physicalTableID := range deltaMap {
-			var tableName string
-			var partitionName string
-			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
-			if tblInfo != nil && partInfo != nil {
-				tableName = tblInfo.Meta().Name.String()
-				partitionName = partInfo.Name.String()
-			} else {
-				tblInfo, _ := is.TableByID(ctx, physicalTableID)
-				tableName = tblInfo.Meta().Name.String()
-			}
-			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
-			if !ok {
-				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
-					tableName, txnScope)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
-						tableName, partitionName, txnScope)
-				}
-				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
-			if !ok {
-				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
-				}
-				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			if dcLocation != txnScope {
-				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
-				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
-						tableName, partitionName, dcLocation, txnScope)
-				}
-				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				break
-			}
-			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
-			// if the physicalTableID belongs to a Table.
-			partitionID := physicalTableID
-			tbl, _, partitionDefInfo := is.FindTableByPartitionID(partitionID)
-			if tbl != nil {
-				tblInfo := tbl.Meta()
-				state := tblInfo.Partition.GetStateByID(partitionID)
-				if state == model.StateGlobalTxnOnly {
-					err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
-							tblInfo.Name, partitionDefInfo.Name))
-					break
-				}
-			}
-		}
-	}
-	return err
 }
 
 func (s *session) SetPort(port string) {

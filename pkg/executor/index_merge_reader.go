@@ -392,7 +392,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
 					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
@@ -496,7 +495,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
 					dagPB:                      e.dagPBs[workID],
 					startTS:                    e.startTS,
-					txnScope:                   e.txnScope,
 					readReplicaScope:           e.readReplicaScope,
 					isStaleness:                e.isStaleness,
 					plans:                      e.partialPlans[workID],
@@ -807,7 +805,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:                      tbl,
 		dagPB:                      e.tableRequest,
 		startTS:                    e.startTS,
-		txnScope:                   e.txnScope,
 		readReplicaScope:           e.readReplicaScope,
 		isStaleness:                e.isStaleness,
 		columns:                    e.columns,

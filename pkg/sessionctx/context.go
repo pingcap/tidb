@@ -175,7 +175,7 @@ type Context interface {
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
-	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
+	PrepareTSFuture(ctx context.Context, future oracle.Future) error
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture

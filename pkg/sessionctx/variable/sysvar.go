@@ -708,19 +708,6 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		return (*SetPDClientDynamicOption.Load())(vardef.PDEnableFollowerHandleRegion, val)
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableLocalTxn, Value: BoolToOnOff(vardef.DefTiDBEnableLocalTxn), Hidden: true, Type: vardef.TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
-		return BoolToOnOff(vardef.EnableLocalTxn.Load()), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		oldVal := vardef.EnableLocalTxn.Load()
-		newVal := TiDBOptOn(val)
-		// Make sure the TxnScope is always Global when disable the Local Txn.
-		// ON -> OFF
-		if oldVal && !newVal {
-			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		}
-		vardef.EnableLocalTxn.Store(newVal)
-		return nil
-	}},
 	{
 		Scope:    vardef.ScopeGlobal,
 		Name:     vardef.TiDBAutoAnalyzeRatio,

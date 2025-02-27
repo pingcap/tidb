@@ -1405,7 +1405,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
-	req.TxnScope = worker.req.TxnScope
 	if task.meetLockFallback {
 		req.DisableStaleReadMeetLock()
 	} else if worker.req.IsStaleness {

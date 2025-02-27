@@ -723,9 +723,6 @@ const (
 	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
 	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
 
-	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
-	TiDBEnableLocalTxn = "tidb_enable_local_txn"
-
 	// TiDBEnableMDL indicates whether to enable MDL.
 	TiDBEnableMDL = "tidb_enable_metadata_lock"
 
@@ -1386,8 +1383,7 @@ const (
 	DefTiDBTrackAggregateMemoryUsage                  = true
 	DefCTEMaxRecursionDepth                           = 1000
 	DefTiDBTmpTableMaxSize                            = 64 << 20 // 64MB.
-	DefTiDBEnableLocalTxn                             = false
-	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
+	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0      // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = true
 	DefTiDBEnableOrderedResultMode                    = false
@@ -1611,7 +1607,6 @@ var (
 	ExpensiveTxnTimeThreshold     uint64 = DefTiDBExpensiveTxnTimeThreshold
 	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
 	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
-	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)

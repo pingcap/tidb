@@ -16,17 +16,14 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -74,7 +70,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(p, false),
-		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
 		isStaleness:        b.isStaleness,
 		partitionNames:     p.PartitionNames,
@@ -143,7 +138,6 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -245,9 +239,6 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	var err error
 	e.txn, err = e.Ctx().Txn(false)
 	if err != nil {
-		return err
-	}
-	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
@@ -685,31 +676,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		return e.snapshot.Get(ctxWithTimeout, key)
 	}
 	return e.snapshot.Get(ctx, key)
-}
-
-func (e *PointGetExecutor) verifyTxnScope() error {
-	if e.txnScope == "" || e.txnScope == kv.GlobalTxnScope {
-		return nil
-	}
-
-	var partName string
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	tblInfo, _ := is.TableByID(context.Background(), e.tblInfo.ID)
-	tblName := tblInfo.Meta().Name.String()
-	tblID := GetPhysID(tblInfo.Meta(), e.partitionDefIdx)
-	if tblID != tblInfo.Meta().ID {
-		partName = tblInfo.Meta().GetPartitionInfo().Definitions[*e.partitionDefIdx].Name.String()
-	}
-	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
-	if valid {
-		return nil
-	}
-	if len(partName) > 0 {
-		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, e.txnScope))
-	}
-	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, e.txnScope))
 }
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.

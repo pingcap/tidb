@@ -210,7 +210,6 @@ type IndexReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
-	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	netDataSize      float64
@@ -335,7 +334,6 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
@@ -749,7 +747,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.dctx).
@@ -857,7 +854,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table:                      table,
 		dagPB:                      e.tableRequest,
 		startTS:                    e.startTS,
-		txnScope:                   e.txnScope,
 		readReplicaScope:           e.readReplicaScope,
 		isStaleness:                e.isStaleness,
 		columns:                    e.columns,

@@ -15,7 +15,6 @@
 package distsql
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -71,10 +70,6 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 			panic("request builder get staleness option fail")
 		}
 	})
-	err := builder.verifyTxnScope()
-	if err != nil {
-		builder.err = err
-	}
 	if builder.Request.KeyRanges == nil {
 		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(nil)
 	}
@@ -389,50 +384,6 @@ func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder
 // SetExplicitRequestSourceType sets the explicit request source type.
 func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
 	builder.RequestSource.ExplicitRequestSourceType = sourceType
-	return builder
-}
-
-func (builder *RequestBuilder) verifyTxnScope() error {
-	txnScope := builder.TxnScope
-	if txnScope == "" || txnScope == kv.GlobalReplicaScope || builder.is == nil {
-		return nil
-	}
-	visitPhysicalTableID := make(map[int64]struct{})
-	tids, err := tablecodec.VerifyTableIDForRanges(builder.Request.KeyRanges)
-	if err != nil {
-		return err
-	}
-	for _, tid := range tids {
-		visitPhysicalTableID[tid] = struct{}{}
-	}
-
-	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(txnScope, phyTableID, builder.is)
-		if !valid {
-			var tblName string
-			var partName string
-			tblInfo, _, partInfo := builder.is.FindTableInfoByPartitionID(phyTableID)
-			if tblInfo != nil && partInfo != nil {
-				tblName = tblInfo.Name.String()
-				partName = partInfo.Name.String()
-			} else {
-				tblInfo, _ = builder.is.TableInfoByID(phyTableID)
-				tblName = tblInfo.Name.String()
-			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, txnScope)
-			if len(partName) > 0 {
-				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, txnScope)
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-// SetTxnScope sets request TxnScope
-func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
-	builder.TxnScope = scope
 	return builder
 }
 

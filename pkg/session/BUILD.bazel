@@ -21,7 +21,6 @@ go_library(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/serverstate",
         "//pkg/distsql/context",

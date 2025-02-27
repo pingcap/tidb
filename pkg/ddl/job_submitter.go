@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikv "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )

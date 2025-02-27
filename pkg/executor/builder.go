@@ -106,7 +106,6 @@ type executorBuilder struct {
 	hasLock bool
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
-	txnScope         string
 	readReplicaScope string
 	inUpdateStmt     bool
 	inDeleteStmt     bool
@@ -139,7 +138,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *execu
 		ctx:              ctx,
 		is:               is,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
-		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
 }
@@ -3619,7 +3617,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v, true),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
 		netDataSize:                v.GetNetDataSize(),
@@ -3958,7 +3955,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v, true),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
 		netDataSize:                v.GetNetDataSize(),
@@ -4721,7 +4717,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetStartTS(startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).

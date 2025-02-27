@@ -160,7 +160,7 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 
 func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx)
 	return func() (ts uint64, err error) {
 		if ts, err = future.Wait(); err != nil {
 			return

@@ -706,7 +706,6 @@ func TestOrderByDependency(t *testing.T) {
 		vardef.TiDBEnableNoopFuncs:                     "1",
 		vardef.TiDBEnforceMPPExecution:                 "1",
 		vardef.TiDBAllowMPPExecution:                   "1",
-		vardef.TiDBEnableLocalTxn:                      "1",
 		vardef.TiDBEnablePlanReplayerContinuousCapture: "1",
 		vardef.TiDBEnableHistoricalStats:               "1",
 	}

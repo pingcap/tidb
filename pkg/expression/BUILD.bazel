@@ -76,7 +76,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/expression",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/exprctx",

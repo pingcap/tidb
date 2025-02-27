@@ -538,7 +538,7 @@ func (*Context) HasLockedTables() bool {
 }
 
 // PrepareTSFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTSFuture(_ context.Context, future oracle.Future, _ string) error {
+func (c *Context) PrepareTSFuture(_ context.Context, future oracle.Future) error {
 	c.txn.Transaction = nil
 	c.txn.tsFuture = future
 	return nil
