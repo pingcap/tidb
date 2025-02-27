@@ -495,7 +495,7 @@ func TestValidateAndFillRanges(t *testing.T) {
 		mkRange("d", "e"),
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestTuneTableScanWorkerBatchSize(t *testing.T) {

@@ -576,11 +576,8 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			e := r.EndKey
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
-			} else if bytes.Compare(e, endKey) < 0 {
-				errMsg := fmt.Sprintf("get empty range at the end of ranges, expected %s, but got %s",
-					hex.EncodeToString(endKey), hex.EncodeToString(e))
-				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
 			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
