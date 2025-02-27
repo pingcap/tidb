@@ -848,8 +848,6 @@ type writer struct {
 	keyspace []byte
 }
 
-const batchSize int = 8 * 1024 * 1024
-
 func (w *writer) AppendRows(
 	ctx context.Context,
 	_ []string,
