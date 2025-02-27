@@ -208,13 +208,20 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
+	var keys []kv.Key
 	err := t.IterateHash(key, func(field []byte, _ []byte) error {
 		k := t.encodeHashDataKey(key, field)
-		return errors.Trace(t.readWriter.Delete(k))
+		keys = append(keys, k)
+		return nil
 	})
-
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, k := range keys {
+		if err := t.readWriter.Delete(k); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
