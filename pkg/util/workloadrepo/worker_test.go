@@ -169,13 +169,13 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 	require.Len(t, res, 0)
 
 	// manually trigger snapshot by sending a tick to all workers
-	wrk1.snapshotChan <- struct{}{}
+	wrk1.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 1
 	}, time.Minute, time.Second)
 
-	wrk2.snapshotChan <- struct{}{}
+	wrk2.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 2
@@ -670,16 +670,16 @@ func TestCreatePartition(t *testing.T) {
 	// Should not create any partitions on a table with a partition for the day after tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 2)}
-	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "CLUSTER_LOAD", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "DEADLOCKS", partitions, expectedParts)
 
 	// Should not fill in missing partitions on a table with a partition for dates beyond tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 3)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 3)}
-	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_HOT_REGIONS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_INDEX_USAGE", partitions, expectedParts)
 
 	// this table should be updated when the repository is enabled
 	partitions = []time.Time{now}
-	createTableWithParts(ctx, t, tk, getTable(t, "DEADLOCKS", wrk), sess, partitions)
+	createTableWithParts(ctx, t, tk, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
 	now = time.Now()
@@ -748,17 +748,17 @@ func TestDropOldPartitions(t *testing.T) {
 	// should trim one partition
 	partitions = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "CLUSTER_LOAD", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "DEADLOCKS", partitions, 2, false, expectedParts)
 
 	// validate that it works when not dropping any partitions
 	partitions = []time.Time{now.AddDate(0, 0, -1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_HOT_REGIONS", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_INDEX_USAGE", partitions, 2, false, expectedParts)
 
 	// there must be partitions, so this should error
 	partitions = []time.Time{now.AddDate(0, 0, -2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIKV_STORE_STATUS", partitions, 1, true, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_STATEMENTS_STATS", partitions, 1, true, expectedParts)
 }
 
 func TestAddNewPartitionsOnStart(t *testing.T) {

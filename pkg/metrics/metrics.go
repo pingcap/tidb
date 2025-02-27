@@ -303,6 +303,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(InternalSessions)
 	prometheus.MustRegister(ActiveUser)
 
+	prometheus.MustRegister(NetworkTransmissionStats)
+
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics

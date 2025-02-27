@@ -19,11 +19,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -191,7 +193,32 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 
 // CanPushToCop inherits BaseLogicalPlan.LogicalPlan.<21st> implementation.
 
-// ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
+// ExtractFD implement base.LogicalPlan.<22nd> interface.
+func (p *LogicalUnionAll) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	childFDs := make([]*fd.FDSet, 0, len(p.children))
+	for _, child := range p.children {
+		childFD := child.ExtractFD()
+		childFDs = append(childFDs, childFD)
+	}
+	// check the output columns' not-null property.
+	res := &fd.FDSet{}
+	notNullCols := intset.NewFastIntSet()
+	for _, col := range p.Schema().Columns {
+		notNullCols.Insert(int(col.UniqueID))
+	}
+	for _, childFD := range childFDs {
+		notNullCols.IntersectionWith(childFD.NotNullCols)
+	}
+	res.MakeNotNull(notNullCols)
+	// check the equivalency between children.
+	equivs := fd.FindCommonEquivClasses(childFDs)
+	for _, equiv := range equivs {
+		res.AddEquivalenceUnion(equiv)
+	}
+	p.fdSet = res
+	return res
+}
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 

@@ -131,28 +131,6 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over (order by md5(deptid)) a from employee) tmp; -- 8. some scalar function not supported.",
-        "Plan": [
-          "Projection_10 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, Column#9",
-          "└─Shuffle_27 10000.00 root  execution info: concurrency:5, data sources:[Window_14]",
-          "  └─Window_12 10000.00 root  sum(cast(Column#7, decimal(20,0) BINARY))->Column#9 over(partition by test.employee.deptid)",
-          "    └─Sort_26 10000.00 root  test.employee.deptid",
-          "      └─ShuffleReceiver_28 10000.00 root  ",
-          "        └─Window_14 10000.00 root  row_number()->Column#7 over(order by Column#6 rows between current row and current row)",
-          "          └─Sort_25 10000.00 root  Column#6",
-          "            └─Projection_19 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, md5(cast(test.employee.deptid, var_string(20)))->Column#6",
-          "              └─TableReader_24 10000.00 root  MppVersion: 3, data:ExchangeSender_23",
-          "                └─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "                  └─TableFullScan_22 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
-        ]
-      },
-      {
         "SQL": "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
         "Plan": [
           "TableReader_78 8000.00 root  MppVersion: 3, data:ExchangeSender_77",
@@ -240,71 +218,6 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, sum(empid) over () FROM employee -- 2. agg functions",
-        "Plan": [
-          "Window_8 10000.00 root  sum(cast(test.employee.empid, decimal(10,0) BINARY))->Column#6 over()",
-          "└─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "  └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
-        ]
-      },
-      {
-        "SQL": "explain select *, count(empid) over () FROM employee",
-        "Plan": [
-          "Window_8 10000.00 root  count(test.employee.empid)->Column#6 over()",
-          "└─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "  └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `count` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `count` or its arguments are not supported now."
-        ]
-      },
-      {
-        "SQL": "explain select *, min(empid) over () FROM employee",
-        "Plan": [
-          "Window_8 10000.00 root  min(test.employee.empid)->Column#6 over()",
-          "└─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "  └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `min` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `min` or its arguments are not supported now."
-        ]
-      },
-      {
-        "SQL": "explain select *, max(empid) over () FROM employee",
-        "Plan": [
-          "Window_8 10000.00 root  max(test.employee.empid)->Column#6 over()",
-          "└─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "  └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `max` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `max` or its arguments are not supported now."
-        ]
-      },
-      {
-        "SQL": "explain select *, avg(empid) over () FROM employee",
-        "Plan": [
-          "Window_8 10000.00 root  avg(cast(test.employee.empid, decimal(10,0) BINARY))->Column#6 over()",
-          "└─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
-          "  └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `avg` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `avg` or its arguments are not supported now."
-        ]
-      },
-      {
         "SQL": "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame",
         "Plan": [
           "TableReader_25 10000.00 root  MppVersion: 3, data:ExchangeSender_24",
@@ -317,22 +230,6 @@
         ],
         "Warn": [
           "[planner:3599]Window function 'row_number' ignores the frame clause of window '<unnamed window>' and aggregates over the whole partition"
-        ]
-      },
-      {
-        "SQL": "explain select *, sum(salary) over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee",
-        "Plan": [
-          "Shuffle_15 10000.00 root  execution info: concurrency:5, data sources:[TableReader_13]",
-          "└─Window_8 10000.00 root  sum(test.employee.salary)->Column#6 over(partition by test.employee.empid order by test.employee.salary range between 1 preceding and 1 following)",
-          "  └─Sort_14 10000.00 root  test.employee.empid, test.employee.salary",
-          "    └─ShuffleReceiver_16 10000.00 root  ",
-          "      └─TableReader_13 10000.00 root  MppVersion: 3, data:ExchangeSender_12",
-          "        └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "          └─TableFullScan_11 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
-          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]

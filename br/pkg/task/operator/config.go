@@ -32,8 +32,11 @@ const (
 type PauseGcConfig struct {
 	task.Config
 
-	SafePoint uint64        `json:"safepoint" yaml:"safepoint"`
-	TTL       time.Duration `json:"ttl" yaml:"ttl"`
+	SafePoint uint64 `json:"safepoint" yaml:"safepoint"`
+	// SafePointID is used to identify a specific safepoint.
+	// This field is only used in ***TEST*** now, you shouldn't use it in the src codes.
+	SafePointID string        `json:"safepoint-id" yaml:"safepoint-id"`
+	TTL         time.Duration `json:"ttl" yaml:"ttl"`
 
 	OnAllReady func() `json:"-" yaml:"-"`
 	OnExit     func() `json:"-" yaml:"-"`
