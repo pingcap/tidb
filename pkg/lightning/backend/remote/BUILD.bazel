@@ -33,7 +33,6 @@ go_library(
         "@com_github_tikv_pd_client//pkg/caller",
         "@com_github_tikv_pd_client//servicediscovery",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -44,12 +43,20 @@ go_test(
     srcs = [
         "cache_test.go",
         "chunk_sender_test.go",
+        "remote_test.go",
+        "util_test.go",
     ],
     embed = [":remote"],
     flaky = True,
+    shard_count = 9,
     deps = [
         "//pkg/lightning/checkpoints",
+        "//pkg/lightning/config",
         "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/meta/model",
+        "@com_github_google_uuid//:uuid",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

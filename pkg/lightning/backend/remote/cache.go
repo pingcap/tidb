@@ -17,7 +17,6 @@ package remote
 import (
 	"fmt"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,12 +80,8 @@ func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 	}
 
 	fileName := c.getChunkFilePath(chunkID)
-	file, err := os.Open(filepath.Clean(fileName))
-	if err != nil {
-		return nil, err
-	}
 
-	buf, err := io.ReadAll(file)
+	buf, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +94,7 @@ func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 	if checksum != meta.checksum {
 		return nil, errors.Errorf("chunk-%d checksum mismatch", chunkID)
 	}
-	return buf, file.Close()
+	return buf, nil
 }
 
 func (c *chunksCache) put(chunkID uint64, buf []byte) error {
@@ -108,28 +103,11 @@ func (c *chunksCache) put(chunkID uint64, buf []byte) error {
 		return nil
 	}
 
-	fileName := c.getChunkFilePath(chunkID)
-	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-
 	checksum := crc32.ChecksumIEEE(buf)
-	for {
-		n, err := file.Write(buf)
-		if err != nil {
-			file.Close()
-			_ = os.Remove(fileName)
-			return err
-		}
-		if n == len(buf) {
-			break
-		}
-		buf = buf[n:]
-	}
-
 	c.chunks[chunkID] = cacheData{size: len(buf), checksum: checksum}
-	return file.Close()
+
+	fileName := c.getChunkFilePath(chunkID)
+	return os.WriteFile(fileName, buf, 0o600)
 }
 
 func (c *chunksCache) clean(chunkID uint64) error {
