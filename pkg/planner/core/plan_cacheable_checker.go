@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -492,6 +493,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
 		return in, !checker.cacheable
+	case *ast.WithClause, *ast.CommonTableExpression, *ast.SubqueryExpr:
+		return in, !checker.cacheable
+	default:
+		fmt.Println(">>>>>>>>>>> ", reflect.TypeOf(in))
 	}
 
 	checker.cacheable = false // unexpected cases
