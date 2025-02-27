@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -730,7 +731,8 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
-func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
+func (w *worker) HandleDDLJobTable(d *ddlCtx, jobW *model.JobW) (int64, error) {
+	failpoint.InjectCall("beforeHandleDDLJobTable", jobW.ID, jobW.TableName)
 	var (
 		err       error
 		schemaVer int64
@@ -740,6 +742,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		w.unlockSeqNum(err)
 	}()
 
+	job := jobW.Job
 	err = w.sess.Begin()
 	if err != nil {
 		return 0, err
@@ -765,6 +768,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
+
+	// we are using optimistic txn in nearly all DDL related transactions, if
+	// time range of another concurrent job updates, such as 'cancel/pause' job
+	// or on owner change, overlap with us, we will report 'write conflict', but
+	// if they don't overlap, we query and check inside our txn to detect the conflict.
+	currBytes, err := getJobBytesByIDWithSe(d.ctx, w.sess, job.ID)
+	if err != nil {
+		// TODO maybe we can unify where to rollback, they are scatting around.
+		w.sess.Rollback()
+		return 0, err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		w.sess.Rollback()
+		return 0, errors.New("job meta changed by others")
+	}
 
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
@@ -860,6 +878,18 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func getJobBytesByIDWithSe(ctx context.Context, se *sess.Session, jobID int64) ([]byte, error) {
+	sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
+	rows, err := se.Execute(ctx, sql, "get-job-by-id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("not found")
+	}
+	return rows[0].GetBytes(0), nil
 }
 
 func (w *worker) checkBeforeCommit() error {

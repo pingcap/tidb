@@ -366,3 +366,26 @@ func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
 	require.Error(t, ddlErr)
 	require.Equal(t, "context canceled", ddlErr.Error())
 }
+
+func TestCancelJobBeforeRun(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+
+	// Prepare schema.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+
+	counter := 0
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeHandleDDLJobTable", func(jobID int64, tableName string) {
+		if counter == 0 && tableName == "t" {
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			counter++
+		}
+	}))
+
+	tk.MustGetErrCode("truncate table t", errno.ErrCancelledDDLJob)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+}
