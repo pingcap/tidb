@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strings"
 	"sync"
 
@@ -398,6 +397,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	return in, !checker.cacheable
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
@@ -493,10 +493,8 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
 		return in, !checker.cacheable
-	case *ast.WithClause, *ast.CommonTableExpression, *ast.SubqueryExpr:
-		return in, !checker.cacheable
 	default:
-		fmt.Println(">>>>>>>>>>> ", reflect.TypeOf(in))
+		return in, !checker.cacheable
 	}
 
 	checker.cacheable = false // unexpected cases
