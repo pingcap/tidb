@@ -538,7 +538,10 @@ func deleteFile(credentialPath, fileName string) {
 }
 
 func showFiles(credentialPath string) {
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	// gcs
+	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	// aws
+	op := storage.BackendOptions{S3: storage.S3BackendOptions{}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
 		panic(err)
@@ -1071,7 +1074,10 @@ func main() {
 
 	var wgWriter sync.WaitGroup
 	// Start writer workers
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
+	// gcs
+	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
+	// aws
+	op := storage.BackendOptions{S3: storage.S3BackendOptions{}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
 		panic(err)
