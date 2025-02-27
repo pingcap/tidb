@@ -601,7 +601,7 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
-		if len(r.StartKey) == 0 || len(r.EndKey) == 0 {
+		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
 			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
