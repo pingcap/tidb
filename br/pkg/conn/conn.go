@@ -231,6 +231,8 @@ func NewMgr(
 		}
 	}
 
+	// CreateSession must be called after domain created. Otherwise, stats handler
+	// can not be created inside `GetDomain`.
 	if se, err := g.CreateSession(storage); err != nil {
 		return nil, errors.Trace(err)
 	} else if se != nil {
@@ -243,6 +245,17 @@ func NewMgr(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	if !needDomain {
+		// If we don't need domain, we should close the storage now. It is created
+		// in `CreateSession`. Othersie, the domain will not be closed. Because
+		// we don't assign it to the mgr.
+		dom2, err := g.GetDomain(storage)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dom2.Close()
 	}
 
 	mgr := &Mgr{
