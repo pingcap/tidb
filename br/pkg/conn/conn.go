@@ -231,18 +231,17 @@ func NewMgr(
 		}
 	}
 
-	se, err := g.CreateSession(storage)
-	if err != nil {
+	if se, err := g.CreateSession(storage); err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
-	if err != nil {
-		return nil, errors.Trace(err)
+	} else if se != nil {
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	mgr := &Mgr{
