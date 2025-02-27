@@ -1839,7 +1839,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
-	do.privHandle.Update()
+	if err := do.privHandle.Update(); err != nil {
+		return errors.Trace(err)
+	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
