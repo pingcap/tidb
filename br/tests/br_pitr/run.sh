@@ -22,9 +22,15 @@ CUR=$(cd `dirname $0`; pwd)
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
+
 # start a new cluster
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
@@ -93,8 +99,7 @@ done
 # ...
 
 # start a new cluster
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 # PITR restore
 echo "run pitr"
@@ -116,8 +121,7 @@ check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 bash $CUR/check/check_ingest_repair.sh
 
 # start a new cluster for corruption
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "corrupt a log file"
 filename=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta" | tail -n 1)
