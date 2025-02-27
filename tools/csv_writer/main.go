@@ -313,7 +313,12 @@ func generateDecimal(num int, res []string) {
 
 func generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
+		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= 8 {
+			// 80% null value
+			res[i] = "\\N"
+		} else {
+			res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
+		}
 	}
 }
 
