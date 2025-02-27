@@ -212,7 +212,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+		oldV, skipped, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+		if skipped {
+			continue
+		}
 		if err != nil {
 			sessVars.StmtCtx.AppendWarning(err)
 		}
@@ -282,7 +285,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				oldV, skipped, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				if skipped {
+					continue
+				}
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}

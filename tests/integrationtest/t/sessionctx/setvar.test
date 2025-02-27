@@ -703,3 +703,24 @@ select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
 select @@max_execution_time;
 set @@global.max_execution_time=default;
 disconnect conn1;
+
+set @@max_execution_time=2000;
+select @@max_execution_time;
+# explain should not change the session var value after execution finished
+explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
+select @@max_execution_time;
+drop table if exists t;
+create table t(a int);
+create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);
+select * from t where a = 1 and sleep(0.1);
+# execute with should not change the session var value after execution finished
+select @@last_plan_from_binding;
+select @@max_execution_time;
+# explain binded should not change the session var value after execution finished
+explain select * from t where a = 1 and sleep(0.1);
+select @@last_plan_from_binding;
+select @@max_execution_time;
+drop global binding for select * from t where a = 2 and sleep(0.1);
+
+# set one var multiple times, only the first time takes effect
+select /*+ set_var(max_execution_time=500), set_var(max_execution_time=1000) */ @@max_execution_time;
