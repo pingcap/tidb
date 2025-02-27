@@ -1376,7 +1376,7 @@ func (p *Plan) checkeCSVOnlyOptions() error {
 	if p.IgnoreLines != 0 {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(skipRowsOption, "non-CSV format")
 	}
-	if p.SplitFile != false {
+	if p.SplitFile {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(splitFileOption, "non-CSV format")
 	}
 	return nil
