@@ -223,7 +223,7 @@ type Plan struct {
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil and default to defaultCharacterSet.
+	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
 	Charset          *string
 	ImportantSysVars map[string]string
 
