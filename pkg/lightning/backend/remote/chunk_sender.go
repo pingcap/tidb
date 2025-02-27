@@ -138,7 +138,7 @@ func (c *chunkSender) flush(ctx context.Context) error {
 }
 
 func (c *chunkSender) submit(ctx context.Context, data []byte, flush bool) (uint64, error) {
-	task := newChunkTask(data, true)
+	task := newChunkTask(data, flush)
 
 	select {
 	case <-ctx.Done():
