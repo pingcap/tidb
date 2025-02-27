@@ -72,7 +72,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -84,6 +84,7 @@ go_test(
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
