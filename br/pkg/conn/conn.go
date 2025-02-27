@@ -215,20 +215,6 @@ func NewMgr(
 		return nil, berrors.ErrKVNotTiKV
 	}
 
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	var dom *domain.Domain
 	if needDomain {
 		dom, err = g.GetDomain(storage)
@@ -243,6 +229,20 @@ func NewMgr(
 		if err != nil {
 			return nil, errors.Annotate(err, "unable to check cluster version for ddl")
 		}
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr := &Mgr{
