@@ -901,6 +901,8 @@ func addUserFilterCondition(sql string, userList map[string]struct{}) string {
 	return b.String()
 }
 
+// loadTable loads the table data by executing the sql and decoding the result data.
+// NOTE: the chunk Row passed to decodeTableRow function is reused, so decodeTableRow should clone when necessary.
 func loadTable(exec sqlexec.SQLExecutor, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
@@ -929,10 +931,7 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 				return errors.Trace(err)
 			}
 		}
-		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
-		// The result will reference memory in the chunk, so the chunk must not be reused
-		// here, otherwise some werid bug will happen!
-		req = chunk.Renew(req, 1024)
+		req.GrowAndReset(1024)
 	}
 }
 
@@ -1137,7 +1136,10 @@ func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(userList map[string]struct{}
 		for i, f := range fs {
 			switch f.ColumnAsName.L {
 			case "priv":
-				value.PrivilegeName = strings.ToUpper(row.GetString(i))
+				// When all characters are upper, strings.ToUpper returns a reference instead of a new copy.
+				// so strings.Clone is required here.
+				tmp := strings.Clone(row.GetString(i))
+				value.PrivilegeName = strings.ToUpper(tmp)
 			case "with_grant_option":
 				value.GrantOption = row.GetEnum(i).String() == "Y"
 			default:
@@ -1166,7 +1168,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(userList map[string]struct{}) func(chu
 		for i, f := range fs {
 			switch {
 			case f.ColumnAsName.L == "db":
-				value.DB = row.GetString(i)
+				value.DB = strings.Clone(row.GetString(i))
 				value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBinary(strings.ToUpper(value.DB), '\\')
 			case f.Column.GetType() == mysql.TypeEnum:
 				if row.GetEnum(i).String() != "Y" {
@@ -1203,9 +1205,9 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(userList map[string]struct{}) 
 		for i, f := range fs {
 			switch f.ColumnAsName.L {
 			case "db":
-				value.DB = row.GetString(i)
+				value.DB = strings.Clone(row.GetString(i))
 			case "table_name":
-				value.TableName = row.GetString(i)
+				value.TableName = strings.Clone(row.GetString(i))
 			case "table_priv":
 				value.TablePriv = decodeSetToPrivilege(row.GetSet(i))
 			case "column_priv":
@@ -1235,13 +1237,13 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.Resul
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
 		case "from_host":
-			fromHost = row.GetString(i)
+			fromHost = strings.Clone(row.GetString(i))
 		case "from_user":
-			fromUser = row.GetString(i)
+			fromUser = strings.Clone(row.GetString(i))
 		case "to_host":
-			toHost = row.GetString(i)
+			toHost = strings.Clone(row.GetString(i))
 		case "to_user":
-			toUser = row.GetString(i)
+			toUser = strings.Clone(row.GetString(i))
 		}
 	}
 	fromKey := auth.RoleIdentity{
@@ -1267,9 +1269,9 @@ func (p *MySQLPrivilege) decodeDefaultRoleTableRow(userList map[string]struct{})
 		for i, f := range fs {
 			switch f.ColumnAsName.L {
 			case "default_role_host":
-				value.DefaultRoleHost = row.GetString(i)
+				value.DefaultRoleHost = strings.Clone(row.GetString(i))
 			case "default_role_user":
-				value.DefaultRoleUser = row.GetString(i)
+				value.DefaultRoleUser = strings.Clone(row.GetString(i))
 			default:
 				value.assignUserOrHost(row, i, f)
 			}
@@ -1296,11 +1298,11 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{})
 		for i, f := range fs {
 			switch f.ColumnAsName.L {
 			case "db":
-				value.DB = row.GetString(i)
+				value.DB = strings.Clone(row.GetString(i))
 			case "table_name":
-				value.TableName = row.GetString(i)
+				value.TableName = strings.Clone(row.GetString(i))
 			case "column_name":
-				value.ColumnName = row.GetString(i)
+				value.ColumnName = strings.Clone(row.GetString(i))
 			case "timestamp":
 				var err error
 				value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
