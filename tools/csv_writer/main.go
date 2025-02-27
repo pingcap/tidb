@@ -277,7 +277,7 @@ func generateLetterWithNum(len int, randomLen bool) string {
 	var builder strings.Builder
 
 	if randomLen {
-		len = faker.Number(1, len) // Random length for varbinary
+		len = faker.Number(0, len) // Random length for varbinary
 	}
 	// If length is less than or equal to 1000, generate directly
 	if len <= 1000 {
@@ -413,7 +413,13 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 			uuid := faker.UUID()
 			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			res[i] = generateLetterWithNum(len, true)
+			if faker.Number(1, 10) <= 8 {
+				// 80% null value
+				res[i] = "\\N"
+			} else {
+				// todo: remove 1024
+				res[i] = generateLetterWithNum(1024, true)
+			}
 		}
 	}
 }
