@@ -158,6 +158,9 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
+
+	// default character set
+	defaultCharacterSet = "utf8mb4"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -218,7 +221,7 @@ type Plan struct {
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil.
+	// for IMPORT INTO, it is always non-nil and default to defaultCharacterSet.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -556,7 +559,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = vardef.CloudStorageURI.Load()
 
-	v := "utf8mb4"
+	v := defaultCharacterSet
 	p.Charset = &v
 }
 
@@ -1345,7 +1348,7 @@ func (p *Plan) checkeCSVOnlyOptions() error {
 	if p.Format == DataFormatCSV {
 		return nil
 	}
-	if p.Charset != nil {
+	if *p.Charset != defaultCharacterSet {
 		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(characterSetOption, "non-CSV format")
 	}
 	if p.FieldsTerminatedBy != "" {
