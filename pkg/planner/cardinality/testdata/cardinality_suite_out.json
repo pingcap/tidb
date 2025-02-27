@@ -3918,16 +3918,16 @@
                             "histR": 252201579132747780,
                             "lPercent": 0,
                             "rPercent": 0,
-                            "rowCount": 1
+                            "rowCount": 392.8571428571429
                           },
                           {
-                            "Result": 1
+                            "Result": 100
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 100,
                           "Type": "Range"
                         }
                       }
@@ -3935,7 +3935,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 100
                   }
                 ]
               },
@@ -4088,11 +4088,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.032467532467532464,
                 "partial cover": false
               },
               {
-                "Result": 1.9066503965832828e-7
+                "Result": 0.000019066503965832824
               }
             ]
           }
