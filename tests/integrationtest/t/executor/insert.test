@@ -573,6 +573,11 @@ create table t1 (a bit primary key) engine=innodb;
 insert into t1 values (b'0');
 -- error 1062
 insert into t1 values (b'0');
+drop table t1;
+create table t1(a binary(2) primary key);
+insert into t1 values (0x7e7f);
+-- error 1062
+insert into t1 values (0x7e7f);
 
 # TestIssue16366
 drop table if exists t;

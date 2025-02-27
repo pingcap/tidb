@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
@@ -32,11 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -67,59 +63,29 @@ type Manager struct {
 		taskExecutors map[int64]TaskExecutor
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id          string
-	wg          tidbutil.WaitGroupWrapper
-	executorWG  tidbutil.WaitGroupWrapper
-	ctx         context.Context
-	cancel      context.CancelFunc
-	logger      *zap.Logger
-	slotManager *slotManager
-
-	totalCPU int
-	totalMem int64
+	id           string
+	wg           tidbutil.WaitGroupWrapper
+	executorWG   tidbutil.WaitGroupWrapper
+	ctx          context.Context
+	cancel       context.CancelFunc
+	logger       *zap.Logger
+	slotManager  *slotManager
+	nodeResource *proto.NodeResource
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
-	totalMem, err := memory.MemTotal()
-	if err != nil {
-		// should not happen normally, as in main function of tidb-server, we assert
-		// that memory.MemTotal() will not fail.
-		return nil, err
-	}
-	totalCPU := cpu.GetCPUCount()
-	if totalCPU <= 0 || totalMem <= 0 {
-		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
-	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
-	}
-	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
-		zap.String("total-mem", units.BytesSize(float64(totalMem))))
+
 	m := &Manager{
-		id:          id,
-		taskTable:   taskTable,
-		logger:      logger,
-		slotManager: newSlotManager(totalCPU),
-		totalCPU:    totalCPU,
-		totalMem:    int64(totalMem),
+		id:           id,
+		taskTable:    taskTable,
+		logger:       logger,
+		slotManager:  newSlotManager(resource.TotalCPU),
+		nodeResource: resource,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
@@ -379,8 +345,9 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	return true
 }
 
-func (m *Manager) getNodeResource() *NodeResource {
-	return NewNodeResource(m.totalCPU, m.totalMem)
+func (m *Manager) getNodeResource() *proto.NodeResource {
+	ret := *m.nodeResource
+	return &ret
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
@@ -434,28 +401,4 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 		m.logger.Warn(msg, zap.Error(err1))
 	}
 	return err1
-}
-
-// NodeResource is the resource of the node.
-// exported for test.
-type NodeResource struct {
-	totalCPU int
-	totalMem int64
-}
-
-// NewNodeResource creates a new NodeResource.
-// exported for test.
-func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
-	return &NodeResource{
-		totalCPU: totalCPU,
-		totalMem: totalMem,
-	}
-}
-
-func (nr *NodeResource) getStepResource(concurrency int) *proto.StepResource {
-	return &proto.StepResource{
-		CPU: proto.NewAllocatable(int64(concurrency)),
-		// same proportion as CPU
-		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(nr.totalCPU) * float64(nr.totalMem))),
-	}
 }

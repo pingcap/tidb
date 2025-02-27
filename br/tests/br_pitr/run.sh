@@ -102,7 +102,7 @@ check_result() {
 # start a new cluster
 restart_services_allowing_huge_index
 
-# non-compliant operation
+# non-compliant operation, need full backup specified for the first time PiTR
 echo "non compliant operation"
 restore_fail=0
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1

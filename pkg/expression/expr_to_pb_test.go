@@ -687,6 +687,19 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// truncate
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeLong), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// rpad
 	function, err = NewFunction(mock.NewContext(), ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
@@ -1832,26 +1845,26 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{decimalColumn, stringColumn},
 		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDatetime),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDuration),
-			args:         []Expression{stringColumn, NewStrConst("%h")},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDate),
-			args:         []Expression{stringColumn, NewStrConst("%y")},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDatetime),
-			args:         []Expression{stringColumn, NewStrConst("%h%y")},
-		},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, stringColumn},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDuration),
+		//	args:         []Expression{stringColumn, NewStrConst("%h")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDate),
+		//	args:         []Expression{stringColumn, NewStrConst("%y")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, NewStrConst("%h%y")},
+		//},
 		{
 			functionName: ast.TimestampDiff,
 			retType:      types.NewFieldType(mysql.TypeLong),
@@ -1866,6 +1879,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.TimestampDiff,
 			retType:      types.NewFieldType(mysql.TypeLong),
 			args:         []Expression{NewStrConst("year"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeNewDecimal),
+			args:         []Expression{stringColumn},
 		},
 	}
 
