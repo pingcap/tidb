@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/copr"
+	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -403,18 +405,19 @@ func loadTableRanges(
 		return []kv.KeyRange{}, nil
 	}
 
+	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
 		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
 			zap.String("storage", fmt.Sprintf("%T", store)),
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
-		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
+		return []kv.KeyRange{kvRange}, nil
 	}
 
-	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
+	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
+	rc := copr.NewRegionCache(s.GetRegionCache())
 	var ranges []kv.KeyRange
 	maxRetryTimes := util.DefaultMaxRetries
 	failpoint.Inject("loadTableRangesNoRetry", func() {
@@ -425,13 +428,9 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
-		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
+		ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
 		if err != nil {
 			return false, errors.Trace(err)
-		}
-		ranges = make([]kv.KeyRange, 0, len(rs))
-		for _, r := range rs {
-			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
 		}
 		err = validateAndFillRanges(ranges, startKey, endKey)
 		if err != nil {
