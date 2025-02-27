@@ -416,7 +416,7 @@ func loadTableRanges(
 	}
 
 	maxSleep := 10000 // ms
-	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
+	bo := backoff.NewBackofferWithVars(ctx, maxSleep, nil)
 	rc := copr.NewRegionCache(s.GetRegionCache())
 	var ranges []kv.KeyRange
 	maxRetryTimes := util.DefaultMaxRetries
