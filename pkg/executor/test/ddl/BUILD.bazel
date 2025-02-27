@@ -21,6 +21,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",

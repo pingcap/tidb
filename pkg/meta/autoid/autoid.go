@@ -977,8 +977,9 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
-		return 0, 0, ErrAutoincReadFailed
+		return 0, 0, errors.Trace(ErrAutoincReadFailed)
 	}
+
 	// The local rest is not enough for alloc, skip it.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
 		var newBase, newEnd int64

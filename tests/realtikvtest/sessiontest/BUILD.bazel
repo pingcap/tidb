@@ -17,7 +17,7 @@ go_test(
         "//pkg/meta",
         "//pkg/parser/ast",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/testkit",
         "//pkg/util/sqlkiller",

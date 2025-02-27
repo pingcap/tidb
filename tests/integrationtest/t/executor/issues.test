@@ -695,7 +695,7 @@ insert into pt (val) select (val) from pt;
 insert into pt (val) select (val) from pt;
 insert into pt (val) select (val) from pt;
 split table pt between (0) and (40960) regions 30;
-analyze table pt;
+analyze table pt all columns;
 
 set @@tidb_distsql_scan_concurrency = default;
 -- replace_column 8 <memory> 9 <disk> 3 <actRows>

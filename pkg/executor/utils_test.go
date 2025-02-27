@@ -15,9 +15,9 @@
 package executor
 
 import (
-	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -181,7 +181,7 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	require.Equal(t, "", pwd)
 }
 
-func TestGoPool(t *testing.T) {
+func TestWorkerPool(t *testing.T) {
 	var (
 		list []int
 		lock sync.Mutex
@@ -196,12 +196,16 @@ func TestGoPool(t *testing.T) {
 		list = list[:0]
 		lock.Unlock()
 	}
+	sleep := func(ms int) {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
 
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            1,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 1 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -210,11 +214,11 @@ func TestGoPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})
@@ -225,8 +229,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TwoWorkers", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 0,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 0
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -235,11 +240,11 @@ func TestGoPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})
@@ -250,8 +255,9 @@ func TestGoPool(t *testing.T) {
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
 		clean()
 		pool := &workerPool{
-			TolerablePendingTasks: 1,
-			MaxWorkers:            2,
+			needSpawn: func(workers, tasks uint32) bool {
+				return workers < 2 && tasks > 1
+			},
 		}
 		wg := sync.WaitGroup{}
 		wg.Add(1)
@@ -260,11 +266,11 @@ func TestGoPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				runtime.Gosched()
+				sleep(10)
 				push(4)
 				wg.Done()
 			})
-			runtime.Gosched()
+			sleep(1)
 			push(2)
 			wg.Done()
 		})

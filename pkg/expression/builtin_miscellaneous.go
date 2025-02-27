@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -222,7 +223,7 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
-	maxTimeout := int64(variable.GetSysVar(variable.InnodbLockWaitTimeout).MaxValue)
+	maxTimeout := int64(variable.GetSysVar(vardef.InnodbLockWaitTimeout).MaxValue)
 	timeout, isNullTimeout, err := b.args[1].EvalInt(ctx, row)
 	if err != nil {
 		return 0, false, err

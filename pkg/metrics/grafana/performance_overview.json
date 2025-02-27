@@ -1122,7 +1122,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_request_time_counter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type, source)",
+              "expr": "sum(rate(tidb_tikvclient_source_request_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type, source)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -1132,7 +1132,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_tikvclient_request_time_counter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
+              "expr": "sum(rate(tidb_tikvclient_source_request_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "kv request total time",

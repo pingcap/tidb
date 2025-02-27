@@ -16,9 +16,11 @@ package workloadrepo
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -80,8 +82,13 @@ func (w *worker) resetSamplingInterval(newRate int32) {
 
 func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
+
+	failpoint.Inject("FastRunawayGC", func() {
+		err = errors.New("fake error")
+	})
+
 	if err != nil {
-		return err
+		return errWrongValueForVar.GenWithStackByArgs(repositorySamplingInterval, d)
 	}
 
 	w.Lock()

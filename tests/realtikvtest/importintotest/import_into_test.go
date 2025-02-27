@@ -239,6 +239,20 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 			querySQL:     "select * from t order by b",
 			lastInsertID: 6,
 		},
+		// partition table
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t order by c",
+		},
+		// partition table + global index
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int, index idx(c) global) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t use index(idx) order by c",
+		},
 	}
 
 	loadDataSQL := fmt.Sprintf(`import into t %%s FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'

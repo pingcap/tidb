@@ -188,3 +188,19 @@ func TestTargetScope(t *testing.T) {
 		})
 	}
 }
+
+func TestTiDBMaxDistTaskNodesSettings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set global tidb_max_dist_task_nodes=-1`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("-1"))
+	tk.MustExec(`set global tidb_max_dist_task_nodes=1`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_max_dist_task_nodes=128`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("128"))
+
+	tk.MustGetErrMsg(`set global tidb_max_dist_task_nodes=0`, "max_dist_task_nodes should be -1 or [1, 128]")
+	tk.MustExec(`set global tidb_max_dist_task_nodes=129`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("128"))
+}

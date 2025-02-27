@@ -43,7 +43,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 }
 
 func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
-	sch := ImportSchedulerExt{}
+	sch := importScheduler{}
 	task := &proto.Task{Meta: []byte("{}")}
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	eligibleInstances, err := sch.GetEligibleInstances(ctx, task)
@@ -66,7 +66,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	sch := ImportSchedulerExt{}
+	sch := importScheduler{}
 	require.Equal(s.T(), int64(0), sch.currTaskID.Load())
 	require.False(s.T(), sch.disableTiKVImportMode.Load())
 
@@ -99,7 +99,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
-	s.False(sch.Extension.(*ImportSchedulerExt).GlobalSort)
+	s.False(sch.Extension.(*importScheduler).GlobalSort)
 
 	meta.Plan.CloudStorageURI = "s3://test"
 	bytes, err = json.Marshal(meta)
@@ -110,19 +110,19 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
-	s.True(sch.Extension.(*ImportSchedulerExt).GlobalSort)
+	s.True(sch.Extension.(*importScheduler).GlobalSort)
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
 	task := &proto.TaskBase{Step: proto.StepInit}
-	ext := &ImportSchedulerExt{}
+	ext := &importScheduler{}
 	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
 	task.Step = proto.StepInit
-	ext = &ImportSchedulerExt{GlobalSort: true}
+	ext = &importScheduler{GlobalSort: true}
 	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
@@ -136,7 +136,7 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 }
 
 func TestIsImporting2TiKV(t *testing.T) {
-	ext := &ImportSchedulerExt{}
+	ext := &importScheduler{}
 	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepEncodeAndSort}}))
 	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepMergeSort}}))
 	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepPostProcess}}))

@@ -38,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -77,15 +79,17 @@ type versionAndTimestamp struct {
 }
 
 // btreeSet updates the btree.
-// It is concurrent safe for one writer and multiple reader,
-// but not safe for multiple writing concurrently.
+// Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
-	var t *btree.BTreeG[T] = ptr.Load()
-	t2 := t.Clone()
-	t2.ReplaceOrInsert(item)
-	succ := ptr.CompareAndSwap(t, t2)
-	if !succ {
-		panic("concurrently multiple writes are not allowed")
+	succ := false
+	for !succ {
+		var t *btree.BTreeG[T] = ptr.Load()
+		t2 := t.Clone()
+		t2.ReplaceOrInsert(item)
+		succ = ptr.CompareAndSwap(t, t2)
+		if !succ {
+			logutil.BgLogger().Info("infoschema v2 btree concurrently multiple writes detected, this should be rare")
+		}
 	}
 }
 
@@ -317,8 +321,16 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 		byNameNew.Delete(item)
 		byIDNew.Delete(item)
 	}
-	isd.byName.CompareAndSwap(byNameOld, byNameNew)
-	isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	succ1 := isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	var succ2 bool
+	if succ1 {
+		succ2 = isd.byName.CompareAndSwap(byNameOld, byNameNew)
+	}
+	if !succ1 || !succ2 {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict, leave it to the next time.",
+			zap.Bool("byID success", succ1),
+			zap.Bool("byName success", succ2))
+	}
 	return len(deletes), total
 }
 
@@ -722,17 +734,14 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
-		return
-	}
-
+// TableItemByID implements the InfoSchema interface.
+// It only contains memory operations, no worries about accessing the storage.
+func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	itm, ok := is.searchTableItemByID(tableID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-
-	return itm.dbName, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
 }
 
 // TableItem is exported from tableItem.
@@ -1094,9 +1103,7 @@ func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	var ok bool
-	var pi partitionItem
+func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi partitionItem, ok bool) {
 	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
@@ -1107,12 +1114,37 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 				return true
 			}
 			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
 				pi = item
+				ok = !item.tomb
 				return false
 			}
 			return true
-		})
+		},
+	)
+	return pi, ok
+}
+
+// TableItemByPartitionID implements InfoSchema.TableItemByPartitionID.
+// It returns the lightweight meta info, no worries about access the storage.
+func (is *infoschemaV2) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return TableItem{}, false
+	}
+	return is.TableItemByID(pi.tableID)
+}
+
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoschemaV2) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
+	if !ok {
+		return
+	}
+	return pi.tableID, true
+}
+
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+	pi, ok := is.searchPartitionItemByPartitionID(partitionID)
 	if !ok {
 		return nil, nil, nil
 	}

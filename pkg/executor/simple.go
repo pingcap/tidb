@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -93,6 +94,17 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+}
+
+// resourceOptionsInfo represents the resource infomations to limit user.
+// It contains 'MAX_QUERIES_PER_HOUR', 'MAX_UPDATES_PER_HOUR', 'MAX_CONNECTIONS_PER_HOUR' and 'MAX_USER_CONNECTIONS'.
+// It only implements the option of 'MAX_USER_CONNECTIONS' now.
+// To do: implement the other three options.
+type resourceOptionsInfo struct {
+	maxQueriesPerHour     int64
+	maxUpdatesPerHour     int64
+	maxConnectionsPerHour int64
+	maxUserConnections    int64
 }
 
 type passwordOrLockOptionsInfo struct {
@@ -608,7 +620,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// collation if this one is not supported.
 	// The SetSystemVar will also update the CharsetDatabase
 	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
-	return sessionVars.SetSystemVarWithoutValidation(variable.CollationDatabase, dbCollate)
+	return sessionVars.SetSystemVarWithoutValidation(vardef.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -816,18 +828,34 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (info *resourceOptionsInfo) loadResourceOptions(userResource []*ast.ResourceOption) error {
+	for _, option := range userResource {
+		switch option.Type {
+		case ast.MaxQueriesPerHour:
+			info.maxQueriesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUpdatesPerHour:
+			info.maxUpdatesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxConnectionsPerHour:
+			info.maxConnectionsPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUserConnections:
+			info.maxUserConnections = min(option.Count, math.MaxInt16)
+		}
+	}
+	return nil
+}
+
 func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	var passwdSaveNum, passwdSaveTime int64
 	// If the user specifies a default, read the global variable.
 	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
 		passwdSaveNum = plOptions.passwordHistory
 	} else {
-		passwdSaveNum = variable.PasswordHistory.Load()
+		passwdSaveNum = vardef.PasswordHistory.Load()
 	}
 	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
 		passwdSaveTime = plOptions.passwordReuseInterval
 	} else {
-		passwdSaveTime = variable.PasswordReuseInterval.Load()
+		passwdSaveTime = vardef.PasswordReuseInterval.Load()
 	}
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
@@ -1011,7 +1039,7 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
-	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return false
 	}
@@ -1041,6 +1069,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	if err != nil {
+		return err
+	}
+
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		maxUserConnections:    0,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
 	if err != nil {
 		return err
 	}
@@ -1076,7 +1116,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	if s.ResourceGroupNameOption != nil {
-		if !variable.EnableResourceControl.Load() {
+		if !vardef.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
 		if s.IsCreateRole {
@@ -1113,14 +1153,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
 		sqlescape.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
 	}
-	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1199,7 +1239,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime, userResource.maxUserConnections)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1326,12 +1366,12 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 		if !row.IsNull(1) {
 			res.passwordReuseInterval = int64(row.GetUint64(1))
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	if plOptions.passwordHistoryChange {
@@ -1339,7 +1379,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordHistory != notSpecified {
 			res.passwordHistory = plOptions.passwordHistory
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 	}
 	if plOptions.passwordReuseIntervalChange {
@@ -1347,7 +1387,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordReuseInterval != notSpecified {
 			res.passwordReuseInterval = plOptions.passwordReuseInterval
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	return res, nil
@@ -1489,7 +1529,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1539,7 +1579,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1585,7 +1625,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 				err = closeErr
 			}
 		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1694,6 +1734,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
+		// so we use -1(invalid value) as default.
+		maxUserConnections: -1,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
+	if err != nil {
+		return err
+	}
+
 	plOptions := passwordOrLockOptionsInfo{
 		lockAccount:                 "",
 		passwordExpired:             "",
@@ -1754,7 +1808,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 	for _, spec := range s.Specs {
 		user := e.Ctx().GetSessionVars().User
-		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		alterPassword := false
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
+			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
+				alterPassword = true
+			}
+		}
+		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
@@ -1923,6 +1984,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
 		}
 
+		if userResource.maxUserConnections >= 0 {
+			// need `CREATE USER` privilege for the operation of modifying max_user_connections.
+			if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			fields = append(fields, alterField{"max_user_connections=%?", userResource.maxUserConnections})
+		}
+
 		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -1932,7 +2001,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil {
-			if !variable.EnableResourceControl.Load() {
+			if !vardef.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
 			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
@@ -2794,7 +2863,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
+	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
 	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))

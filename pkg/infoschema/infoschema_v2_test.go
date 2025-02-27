@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,10 +152,10 @@ func TestV2Basic(t *testing.T) {
 
 	for _, tt := range schemaNameByTableIDTests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+			gotItem, gotOK := is.TableItemByID(tt.tableID)
 
 			require.Equal(t, tt.wantOK, gotOK)
-			require.Equal(t, tt.wantSchema, gotSchema)
+			require.Equal(t, tt.wantSchema, gotItem.DBName)
 		})
 	}
 
@@ -168,7 +168,7 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -291,7 +291,7 @@ func TestBundles(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("test")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -412,7 +412,7 @@ func TestReferredFKInfo(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -518,7 +518,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
@@ -625,7 +625,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)

@@ -13,7 +13,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/duration",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn/staleread",
         "//pkg/util",
         "//pkg/util/chunk",

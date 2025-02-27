@@ -103,10 +103,9 @@ type TableInfo struct {
 	Constraints []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys []*FKInfo         `json:"fk_info"`
 	State       SchemaState       `json:"state"`
-	// PKIsHandle is true when primary key is a single integer column.
+	// PKIsHandle is true when PK is clustered and a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
-	// IsCommonHandle is true when clustered index feature is
-	// enabled and the primary key is not a single integer column.
+	// IsCommonHandle is true when PK is clustered and not a single integer column.
 	IsCommonHandle bool `json:"is_common_handle"`
 	// CommonHandleVersion is the version of the clustered index.
 	// 0 for the clustered index created == 5.0.0 RC.
@@ -137,7 +136,8 @@ type TableInfo struct {
 	MaxForeignKeyID int64 `json:"max_fk_id"`
 	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
-	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	// These changing schema operations don't include 'truncate table', 'rename table',
+	// 'rename tables', 'truncate partition' and 'exchange partition'.
 	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
@@ -499,7 +499,7 @@ func (t *TableInfo) IsSequence() bool {
 	return t.Sequence != nil
 }
 
-// IsBaseTable checks to see the table is neither a view or a sequence.
+// IsBaseTable checks to see the table is neither a view nor a sequence.
 func (t *TableInfo) IsBaseTable() bool {
 	return t.Sequence == nil && t.View == nil
 }

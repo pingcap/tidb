@@ -13,7 +13,7 @@ go_test(
         "//pkg/config",
         "//pkg/kv",
         "//pkg/meta/autoid",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

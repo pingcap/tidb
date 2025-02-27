@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -138,7 +139,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		defer debugtrace.LeaveContextCommon(pctx)
 	}
 
-	if !sessVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+	if !sessVars.InRestrictedSQL && (vardef.RestrictedReadOnly.Load() || vardef.VarTiDBSuperReadOnly.Load()) {
 		allowed, err := allowInReadOnlyMode(pctx, node.Node)
 		if err != nil {
 			return nil, nil, err
@@ -180,10 +181,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer func() {
 		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
-			if variable.EnableResourceControl.Load() {
+			if vardef.EnableResourceControl.Load() {
 				hasPriv := true
 				// only check dynamic privilege when strict-mode is enabled.
-				if variable.EnableResourceControlStrictMode.Load() {
+				if vardef.EnableResourceControlStrictMode.Load() {
 					checker := privilege.GetPrivilegeManager(sctx)
 					if checker != nil {
 						hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)

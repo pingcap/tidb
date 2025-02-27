@@ -21,9 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/circuitbreaker"
 )
 
 // initDomainSysVars() is called when a domain is initialized.
@@ -45,6 +48,8 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 
 	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
+
+	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdPct = changePDMetadataCircuitBreakerErrorRateThresholdPct
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -58,7 +63,7 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 
 func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 	switch name {
-	case variable.TiDBTSOClientBatchMaxWaitTime:
+	case vardef.TiDBTSOClientBatchMaxWaitTime:
 		val, err := strconv.ParseFloat(sVal, 64)
 		if err != nil {
 			return err
@@ -67,15 +72,15 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
-		variable.MaxTSOBatchWaitInterval.Store(val)
-	case variable.TiDBEnableTSOFollowerProxy:
+		vardef.MaxTSOBatchWaitInterval.Store(val)
+	case vardef.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
 		err := do.updatePDClient(opt.EnableTSOFollowerProxy, val)
 		if err != nil {
 			return err
 		}
-		variable.EnableTSOFollowerProxy.Store(val)
-	case variable.PDEnableFollowerHandleRegion:
+		vardef.EnableTSOFollowerProxy.Store(val)
+	case vardef.PDEnableFollowerHandleRegion:
 		val := variable.TiDBOptOn(sVal)
 		// Note: EnableFollowerHandle is only used for region API now.
 		// If pd support more APIs in follower, the pd option may be changed.
@@ -83,16 +88,16 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
-		variable.EnablePDFollowerHandleRegion.Store(val)
-	case variable.TiDBTSOClientRPCMode:
+		vardef.EnablePDFollowerHandleRegion.Store(val)
+	case vardef.TiDBTSOClientRPCMode:
 		var concurrency int
 
 		switch sVal {
-		case variable.TSOClientRPCModeDefault:
+		case vardef.TSOClientRPCModeDefault:
 			concurrency = 1
-		case variable.TSOClientRPCModeParallel:
+		case vardef.TSOClientRPCModeParallel:
 			concurrency = 2
-		case variable.TSOClientRPCModeParallelFast:
+		case vardef.TSOClientRPCModeParallelFast:
 			concurrency = 4
 		default:
 			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
@@ -149,4 +154,10 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	}
 	do.infoCache.Data.SetCacheCapacity(size)
 	return nil
+}
+
+func changePDMetadataCircuitBreakerErrorRateThresholdPct(errorRatePct uint32) {
+	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
+		config.ErrorRateThresholdPct = errorRatePct
+	})
 }

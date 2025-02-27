@@ -766,14 +766,21 @@ type TableColumnArgs struct {
 	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
 
 	// for drop column.
-	// below 2 fields are filled during running.
+	// below 2 fields are filled during running, and PartitionIDs is only effective
+	// when len(IndexIDs) > 0.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
 func (a *TableColumnArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionDropColumn {
-		return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		// if this job is submitted by new version node, but run with older version
+		// node, older node will try to append args at runtime, so we check it here
+		// to make sure the appended args can be decoded.
+		if len(a.IndexIDs) > 0 {
+			return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		}
+		return []any{a.Col.Name, a.IgnoreExistenceErr}
 	}
 	return []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
 }
@@ -1688,6 +1695,12 @@ type ModifyColumnArgs struct {
 }
 
 func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
+	// during upgrade, if https://github.com/pingcap/tidb/issues/54689 triggered,
+	// older node might run the job submitted by new version, but it expects 5
+	// args initially, and append the later 3 at runtime.
+	if a.ChangingColumn == nil {
+		return []any{a.Column, a.OldColumnName, a.Position, a.ModifyColumnType, a.NewShardBits}
+	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
 		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,

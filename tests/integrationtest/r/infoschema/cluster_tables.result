@@ -10,3 +10,51 @@ select /*+ ignore_index(t, a) */ * from t where a = 1;
 id	a
 create session binding from history using plan digest '20cf414ff6bd6fff3de17a266966020e81099b9fd1a29c4fd4b8aaf212f5c2c0';
 drop binding for sql digest '83de0854921816c038565229b8008f5d679d373d16bf6b2a5cacd5937e11ea21';
+explain select * from information_schema.cluster_slow_query order by time limit 1;
+id	estRows	task	access object	operator info
+TopN_7	1.00	root		information_schema.cluster_slow_query.time, offset:0, count:1
+└─TableReader_16	1.00	root		data:Limit_15
+  └─Limit_15	1.00	cop[tidb]		offset:0, count:1
+    └─MemTableScan_14	1.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query order by time;
+id	estRows	task	access object	operator info
+Sort_4	10000.00	root		information_schema.cluster_slow_query.time
+└─TableReader_8	10000.00	root		data:MemTableScan_7
+  └─MemTableScan_7	10000.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query order by time desc limit 1;
+id	estRows	task	access object	operator info
+TopN_7	1.00	root		information_schema.cluster_slow_query.time:desc, offset:0, count:1
+└─TableReader_16	1.00	root		data:Limit_15
+  └─Limit_15	1.00	cop[tidb]		offset:0, count:1
+    └─MemTableScan_14	1.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query order by time desc;
+id	estRows	task	access object	operator info
+Sort_4	10000.00	root		information_schema.cluster_slow_query.time:desc
+└─TableReader_8	10000.00	root		data:MemTableScan_7
+  └─MemTableScan_7	10000.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query WHERE (time between '2020-09-24 15:23:41.421396' and '2020-09-25 17:57:35.047111') and query != 'x' order by time limit 1;
+id	estRows	task	access object	operator info
+TopN_8	1.00	root		information_schema.cluster_slow_query.time, offset:0, count:1
+└─TableReader_18	1.00	root		data:Limit_17
+  └─Limit_17	1.00	cop[tidb]		offset:0, count:1
+    └─Selection_16	1.00	cop[tidb]		ne(information_schema.cluster_slow_query.query, "x")
+      └─MemTableScan_15	1.50	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query WHERE (time between '2020-09-24 15:23:41.421396' and '2020-09-25 17:57:35.047111') and query != 'x' order by time;
+id	estRows	task	access object	operator info
+Sort_5	166.42	root		information_schema.cluster_slow_query.time
+└─TableReader_10	166.42	root		data:Selection_9
+  └─Selection_9	166.42	cop[tidb]		ne(information_schema.cluster_slow_query.query, "x")
+    └─MemTableScan_8	250.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query WHERE (time between '2020-09-24 15:23:41.421396' and '2020-09-25 17:57:35.047111') and query != 'x' order by time desc limit 1;
+id	estRows	task	access object	operator info
+TopN_8	1.00	root		information_schema.cluster_slow_query.time:desc, offset:0, count:1
+└─TableReader_18	1.00	root		data:Limit_17
+  └─Limit_17	1.00	cop[tidb]		offset:0, count:1
+    └─Selection_16	1.00	cop[tidb]		ne(information_schema.cluster_slow_query.query, "x")
+      └─MemTableScan_15	1.50	cop[tidb]	table:CLUSTER_SLOW_QUERY	
+explain select * from information_schema.cluster_slow_query WHERE (time between '2020-09-24 15:23:41.421396' and '2020-09-25 17:57:35.047111') and query != 'x' order by time desc;
+id	estRows	task	access object	operator info
+Sort_5	166.42	root		information_schema.cluster_slow_query.time:desc
+└─TableReader_10	166.42	root		data:Selection_9
+  └─Selection_9	166.42	cop[tidb]		ne(information_schema.cluster_slow_query.query, "x")
+    └─MemTableScan_8	250.00	cop[tidb]	table:CLUSTER_SLOW_QUERY	

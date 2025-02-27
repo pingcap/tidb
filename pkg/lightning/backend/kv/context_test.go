@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -154,11 +155,11 @@ func TestLitExprContext(t *testing.T) {
 
 			// system vars
 			timeZone := "SYSTEM"
-			expectedMaxAllowedPacket := variable.DefMaxAllowedPacket
-			expectedDivPrecisionInc := variable.DefDivPrecisionIncrement
-			expectedDefaultWeekFormat := variable.DefDefaultWeekFormat
-			expectedBlockEncryptionMode := variable.DefBlockEncryptionMode
-			expectedGroupConcatMaxLen := variable.DefGroupConcatMaxLen
+			expectedMaxAllowedPacket := vardef.DefMaxAllowedPacket
+			expectedDivPrecisionInc := vardef.DefDivPrecisionIncrement
+			expectedDefaultWeekFormat := vardef.DefDefaultWeekFormat
+			expectedBlockEncryptionMode := vardef.DefBlockEncryptionMode
+			expectedGroupConcatMaxLen := vardef.DefGroupConcatMaxLen
 			for k, v := range c.sysVars {
 				switch strings.ToLower(k) {
 				case "time_zone":
@@ -260,7 +261,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	require.NoError(t, err)
 	checkCommon(t, tblCtx)
 	require.Equal(t, variable.AssertionLevelOff, tblCtx.TxnAssertionLevel())
-	require.Equal(t, variable.DefTiDBEnableMutationChecker, tblCtx.EnableMutationChecker())
+	require.Equal(t, vardef.DefTiDBEnableMutationChecker, tblCtx.EnableMutationChecker())
 	require.False(t, tblCtx.EnableMutationChecker())
 	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: false,
@@ -268,7 +269,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	}, tblCtx.GetRowEncodingConfig())
 	g := tblCtx.GetRowIDShardGenerator()
 	require.NotNil(t, g)
-	require.Equal(t, variable.DefTiDBShardAllocateStep, g.GetShardStep())
+	require.Equal(t, vardef.DefTiDBShardAllocateStep, g.GetShardStep())
 
 	// test for load vars
 	sysVars := map[string]string{
@@ -288,13 +289,13 @@ func TestLitTableMutateContext(t *testing.T) {
 	}, tblCtx.GetRowEncodingConfig())
 	g = tblCtx.GetRowIDShardGenerator()
 	require.NotNil(t, g)
-	require.NotEqual(t, variable.DefTiDBShardAllocateStep, g.GetShardStep())
+	require.NotEqual(t, vardef.DefTiDBShardAllocateStep, g.GetShardStep())
 	require.Equal(t, 1234567, g.GetShardStep())
 
 	// test for `RowEncodingConfig.IsRowLevelChecksumEnabled` which should be loaded from global variable.
-	require.False(t, variable.EnableRowLevelChecksum.Load())
-	defer variable.EnableRowLevelChecksum.Store(false)
-	variable.EnableRowLevelChecksum.Store(true)
+	require.False(t, vardef.EnableRowLevelChecksum.Load())
+	defer vardef.EnableRowLevelChecksum.Store(false)
+	vardef.EnableRowLevelChecksum.Store(true)
 	sysVars = map[string]string{
 		"tidb_row_format_version": "2",
 	}
