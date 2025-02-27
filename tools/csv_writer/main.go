@@ -300,9 +300,14 @@ func generateLetterWithNum(len int, randomLen bool) string {
 
 func generateDecimal(num int, res []string) {
 	for i := 0; i < num; i++ {
-		intPart := rand.Int63n(1_000_000_000_000_000_000)
-		decimalPart := rand.Intn(1_000_000_000)
-		res[i] = fmt.Sprintf("%d.%010d", intPart, decimalPart)
+		if faker.Number(1, 10) <= 8 {
+			// 80% null value
+			res[i] = "\\N"
+		} else {
+			intPart := rand.Int63n(1_000_000_000_000_000_000)
+			decimalPart := rand.Intn(1_000_000_000)
+			res[i] = fmt.Sprintf("%d.%010d", intPart, decimalPart)
+		}
 	}
 }
 
