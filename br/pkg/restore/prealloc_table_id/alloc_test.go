@@ -8,17 +8,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
+	"github.com/pingcap/tidb/br/pkg/mock"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
-	"github.com/pingcap/tidb/pkg/parser/model"
-=======
-	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,20 +44,12 @@ func TestAllocator(t *testing.T) {
 			hasAllocatedTo:        6,
 			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     8,
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
-=======
-			msg:                   "ID:[7,8)",
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 		},
 		{
 			tableIDs:              []int64{4, 6, 9, 2},
 			hasAllocatedTo:        1,
 			successfullyAllocated: []int64{2, 4, 6, 9},
 			shouldAllocatedTo:     10,
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
-=======
-			msg:                   "ID:[2,10)",
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 		},
 		{
 			tableIDs:              []int64{1, 2, 3, 4},
@@ -75,10 +62,6 @@ func TestAllocator(t *testing.T) {
 			hasAllocatedTo:        3,
 			successfullyAllocated: []int64{5, 6},
 			shouldAllocatedTo:     7,
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
-=======
-			msg:                   "ID:[4,7)",
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
@@ -88,10 +71,6 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
-=======
-			msg: "ID:[7,13)",
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
@@ -101,10 +80,6 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/alloc_test.go
-=======
-			msg: "ID:[10,14)",
->>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/alloc_test.go
 		},
 	}
 
@@ -147,13 +122,17 @@ func TestAllocator(t *testing.T) {
 }
 
 func TestAllocatorBound(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	mock, err := mock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, mock.Start())
+	defer mock.Stop()
+
+	tk := testkit.NewTestKit(t, mock.Storage)
 	tk.MustExec("CREATE TABLE test.t1 (id int);")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
 	currentGlobalID := int64(0)
-	err := kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) (err error) {
-		allocator := meta.NewMutator(txn)
+	err = kv.RunInNewTxn(ctx, mock.Store(), true, func(_ context.Context, txn kv.Transaction) (err error) {
+		allocator := meta.NewMeta(txn)
 		currentGlobalID, err = allocator.GetGlobalID()
 		return err
 	})
@@ -168,8 +147,8 @@ func TestAllocatorBound(t *testing.T) {
 	}
 	ids := prealloctableid.New(tableInfos)
 	lastGlobalID := currentGlobalID
-	err = kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		allocator := meta.NewMutator(txn)
+	err = kv.RunInNewTxn(ctx, mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		allocator := meta.NewMeta(txn)
 		if err := ids.Alloc(allocator); err != nil {
 			return err
 		}
