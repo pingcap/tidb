@@ -428,7 +428,8 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
-		ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
+		var err error
+		ranges, err = rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
