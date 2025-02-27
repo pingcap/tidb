@@ -538,9 +538,10 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
+	time.Sleep(200 * time.Millisecond)
 
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
-	time1 := time.Now()
+	time1 := time.Now().Add(-100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
 
 	// confirm schema changed
@@ -861,7 +862,7 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 	tk.MustExec("CREATE USER IF NOT EXISTS 'newuser' IDENTIFIED BY 'mypassword';")
 	for _, testcase := range testcases {
 		time.Sleep(time.Second)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3) - INTERVAL 100000 microsecond;`)
 		require.Equal(t, true, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
 		tk.MustExec(testcase.sql)
 		require.Equal(t, testcase.sameSession, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
@@ -1495,9 +1496,7 @@ func TestStaleReadNoBackoff(t *testing.T) {
 
 func TestStaleReadAllCombinations(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	// Save old config to restore later
-	oldConfig := *config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(&oldConfig)
+	defer config.RestoreFunc()()
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -1515,21 +1514,19 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	// Insert row #1
 	tk.MustExec("insert into t values (1, 10)")
-	time.Sleep(500 * time.Millisecond)
-	// Record approximate insert time for row #1 (offset: 250ms)
-	firstTime := time.Now().Add(-250 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
+	firstTime := time.Now().Add(-500 * time.Millisecond)
 	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
 	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	if err != nil {
 		t.Fatalf("failed to get TSO: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
-	time.Sleep(500 * time.Millisecond)
-	// Record approximate insert time for row #2 (offset: 250ms)
-	secondTime := time.Now().Add(-250 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
+	secondTime := time.Now().Add(-500 * time.Millisecond)
 
 	staleReadMethods := []struct {
 		name   string
@@ -1541,7 +1538,7 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		{
 			name: "tidb_read_staleness",
 			setup: func() {
-				tk.MustExec("set @@tidb_read_staleness='-1'")
+				tk.MustExec("set @@tidb_read_staleness='-2'")
 			},
 			query: "select * from t",
 			clean: func() {
