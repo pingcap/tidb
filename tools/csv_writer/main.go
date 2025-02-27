@@ -56,6 +56,8 @@ const (
 	totalOrdered   = "TOTAL ORDERED"
 	partialOrdered = "PARTIAL ORDERED"
 	totalRandom    = "TOTAL RANDOM"
+	id             = ""
+	key            = ""
 )
 
 var faker *gofakeit.Faker
@@ -522,7 +524,15 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 }
 
 func deleteFile(credentialPath, fileName string) {
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	// gcs
+	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
+	// aws
+	op := storage.BackendOptions{S3: storage.S3BackendOptions{
+		Region:          "us-west-2",
+		AccessKey:       id,
+		SecretAccessKey: key,
+		Provider:        "AWS",
+	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
 		panic(err)
@@ -543,8 +553,8 @@ func showFiles(credentialPath string) {
 	// aws
 	op := storage.BackendOptions{S3: storage.S3BackendOptions{
 		Region:          "us-west-2",
-		AccessKey:       "",
-		SecretAccessKey: "",
+		AccessKey:       id,
+		SecretAccessKey: key,
 		Provider:        "AWS",
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
@@ -1082,7 +1092,12 @@ func main() {
 	// gcs
 	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
 	// aws
-	op := storage.BackendOptions{S3: storage.S3BackendOptions{}}
+	op := storage.BackendOptions{S3: storage.S3BackendOptions{
+		Region:          "us-west-2",
+		AccessKey:       id,
+		SecretAccessKey: key,
+		Provider:        "AWS",
+	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
 		panic(err)
